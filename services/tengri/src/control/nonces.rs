@@ -130,5 +130,15 @@ async fn commit(pool: &Pool, batch: &[Submission]) -> Result<Vec<Outcome>, Statu
         ))
         .await
         .map_err(super::sql_error)?;
+    let now: i64 = client
+        .query_one("SELECT tengri.now_ms()", &[])
+        .await
+        .map_err(super::sql_error)?
+        .get(0);
+    for (submission, outcome) in batch.iter().zip(&mut outcomes) {
+        if outcome.is_ok() && submission.expires_at_ms <= now {
+            *outcome = Err(Status::unauthenticated("request nonce deadline expired"));
+        }
+    }
     Ok(outcomes)
 }

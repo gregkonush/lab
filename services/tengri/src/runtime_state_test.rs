@@ -132,6 +132,31 @@ async fn runtime_shared_state_nonce_commits_are_batched_without_premature_admiss
         database.consume_nonce(&failed, deadline),
         database.consume_nonce(&innocent, deadline),
     );
+    admin
+        .batch_execute("SELECT pg_advisory_lock(726635522923)")
+        .await
+        .unwrap();
+    let now = admin
+        .query_one("SELECT tengri.now_ms()", &[])
+        .await
+        .unwrap()
+        .get::<_, i64>(0);
+    let mut expires_during_commit = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    expires_during_commit[0] = 254;
+    let mut stays_valid = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    stays_valid[0] = 252;
+    let late_database = database.clone();
+    let late_batch = tokio::spawn(async move {
+        tokio::join!(
+            late_database.consume_nonce(&expires_during_commit, now + 300),
+            late_database.consume_nonce(&stays_valid, now + 5000),
+        )
+    });
+    admin
+        .batch_execute("SELECT pg_sleep(0.4); SELECT pg_advisory_unlock(726635522923)")
+        .await
+        .unwrap();
+    let (expired_after_commit, live_after_commit) = late_batch.await.unwrap();
     admin.batch_execute("DROP TRIGGER fixture_nonce_commit ON tengri.replay_nonces; DROP FUNCTION tengri.fixture_nonce_commit();").await.unwrap();
     let peer = Database::shared_fixture().await;
     let replay = peer.consume_nonce(&nonces[0], deadline).await;
@@ -174,6 +199,15 @@ async fn runtime_shared_state_nonce_commits_are_batched_without_premature_admiss
     );
     assert!(valid_input.is_ok());
     assert_eq!(invalid_input.unwrap_err().code(), Code::Unauthenticated);
+    assert_eq!(
+        expired_after_commit.unwrap_err().code(),
+        Code::Unauthenticated,
+        "a nonce committed after its admission deadline was accepted"
+    );
+    assert!(
+        live_after_commit.is_ok(),
+        "another claim's expiry rejected a still-valid claim"
+    );
 }
 
 #[tokio::test]

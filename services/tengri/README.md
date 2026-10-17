@@ -39,8 +39,9 @@ Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces
 independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
 durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
 Each controller batches up to 32 nonce claims over five milliseconds through one connection and a bounded queue.
-Every claim still uses the shared SQL replay check. Admission waits for the outer transaction to commit, a malformed
-claim rolls back its own savepoint, and a failed commit admits none of the batch. This leaves the request pool available
+Every claim still uses the shared SQL replay check. Admission waits for the outer transaction to commit and rechecks
+each claim's expiry against the database clock. A malformed claim rolls back its own savepoint, and a failed commit
+admits none of the batch. This leaves the request pool available
 while durable writes wait on storage. The queue never falls back to local replay state.
 Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
 PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
