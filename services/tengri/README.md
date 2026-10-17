@@ -38,6 +38,11 @@ It preserves every unexpired nonce while replacing bucket transaction locks with
 Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces in the same bucket can commit
 independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
 durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
+Each controller batches up to 32 nonce claims over five milliseconds through one connection and a bounded queue.
+Every claim still uses the shared SQL replay check. Admission waits for the outer transaction to commit and rechecks
+each claim's expiry against the database clock. A malformed claim rolls back its own savepoint, and a failed commit
+admits none of the batch. This leaves the request pool available
+while durable writes wait on storage. The queue never falls back to local replay state.
 Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
 PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
 rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
@@ -278,10 +283,10 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
-Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
-An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
-controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
-Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
+Replay admission hashes each nonce into one of 64 buckets with 128 fixed slots. An expired slot is claimed with
+`FOR UPDATE SKIP LOCKED`; unrelated nonces can proceed even in the same bucket. Duplicate rejection remains atomic
+across replicas, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Ofz must apply
 all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,

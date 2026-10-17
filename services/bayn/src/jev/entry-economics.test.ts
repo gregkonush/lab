@@ -42,7 +42,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   },
 )
 
-test('property: crypto break-even bid covers the coin debit and cent-rounded exit fee at the entry price ceiling', () => {
+test('property: crypto break-even bid covers both adverse limits, the coin debit and cent-rounded exit fee', () => {
   checkProperty(
     'crypto-entry-break-even',
     fc.property(
@@ -74,13 +74,19 @@ test('property: crypto break-even bid covers the coin debit and cent-rounded exi
         const received = quantity - (quantity * 25n + 9999n) / 10_000n
         const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
         const net = (bid: bigint) => {
-          const proceeds = (bid * received) / 1_000_000_000n
+          const boundary = (bid * 9990n + 9999n) / 10000n
+          const notional = (boundary * received + 999_999_999n) / 1_000_000_000n
+          const exitLimit = (notional * 1_000_000_000n + received - 1n) / received
+          const proceeds = (exitLimit * received) / 1_000_000_000n
           const fee = ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
           return proceeds - fee
         }
         const bid = BigInt(Math.round(economics.breakEvenExitBidUsd * 1_000_000))
         expect(net(bid)).toBeGreaterThanOrEqual(acquired)
-        expect(net(bid - 1n)).toBeLessThan(acquired)
+        expect(net(bid - 1n)).toBeLessThan(acquired + 10_000n)
+        const centInPrice = (10_000n * 1_000_000_000n + received - 1n) / received
+        for (const step of [1n, 5n, 10n, 20n])
+          expect(net(bid + (centInPrice * step + 19n) / 20n)).toBeGreaterThanOrEqual(acquired)
         expect(economics.estimatedEntryFeesUsd).toBeGreaterThan(0)
         expect(economics.operatingCostCoverage).toBe('UNKNOWN')
       },

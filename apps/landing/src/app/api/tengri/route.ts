@@ -177,7 +177,7 @@ async function runAction(request: Request) {
         result = await startCodexLogin(identity, action.agentId)
         break
       case 'codex-models':
-        result = await listCodexModels(identity, action.agentId, action.cursor)
+        result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
         break
       case 'create-thread':
         result = await createCodexThread(identity, action.agentId, {
