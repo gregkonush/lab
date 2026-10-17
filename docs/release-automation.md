@@ -50,6 +50,14 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+Ofz, Tengri and Proompteng publish an `ai.proompteng.tengri-schema` OCI index annotation derived from the ordered
+runtime migration names and contents. Their Warehouses admit only artifacts whose three schema fingerprints match.
+A hard schema migration therefore waits for the qualified Tengri images and both compatible consumers before any
+automatic Stage can promote it. Ordinary releases can reuse existing companion images with the same schema;
+they do not require those services to rebuild for the same commit. Existing source, native qualification and build
+receipt checks still apply. The Ofz migration hook installs the new schema before its API rolls out; the BFF,
+controller and supervisor verify the exact installed migration checksums before using it.
+
 Every application image follows this transaction:
 
 1. Merge the reviewed source pull request to `main`.
