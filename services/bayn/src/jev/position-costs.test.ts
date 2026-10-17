@@ -92,19 +92,25 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const entryFees = 25 + cashFeeMicros / 1_000_000
       expect(state.position.entryFeesUsd).toBe(entryFees)
       expect(state.position.estimatedExitFeesUsd).toBeGreaterThan(25)
-      expect(state.position.netLiquidationPnlUsd).toBeCloseTo(
+      const liquidationCash = (bid: bigint) => {
+        const boundary = (bid * 9990n + 9999n) / 10000n
+        const notional = (boundary * 99_750_000_000n + 999_999_999n) / 1_000_000_000n
+        const limit = (notional * 1_000_000_000n + 99_750_000_000n - 1n) / 99_750_000_000n
+        const proceeds = (limit * 99_750_000_000n) / 1_000_000_000n
+        return proceeds - ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
+      }
+      const observedBid = BigInt(Math.floor(state.candidate.quote.bid * 1_000_000))
+      expect(state.position.netLiquidationPnlUsd).toBe(
+        Number(liquidationCash(observedBid) - 10_000_000_000n - BigInt(cashFeeMicros)) / 1_000_000,
+      )
+      expect(state.position.netLiquidationPnlUsd).toBeLessThan(
         state.position.unrealizedPnlAtBidUsd - entryFees - state.position.estimatedExitFeesUsd,
-        6,
       )
       expect(state.position.remainingHoldingMinutes).toBe(15)
       const breakEvenBid = BigInt(Math.round(state.position.breakEvenExitBidUsd * 1_000_000))
-      const liquidationCash = (bid: bigint) => {
-        const proceeds = (bid * 99_750_000_000n) / 1_000_000_000n
-        return proceeds - (proceeds * 25n + 9999n) / 10000n
-      }
       const acquired = 10_000_000_000n + BigInt(cashFeeMicros)
       expect(liquidationCash(breakEvenBid)).toBeGreaterThanOrEqual(acquired)
-      expect(liquidationCash(breakEvenBid - 1n)).toBeLessThan(acquired)
+      expect(liquidationCash(breakEvenBid - 1n)).toBeLessThan(acquired + 10_000n)
     },
   )
 }

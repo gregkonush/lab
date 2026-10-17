@@ -26,6 +26,7 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics, JevEntryEconomicsAssessment } from './entry-economics'
+import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -276,7 +277,7 @@ export const jevTradingQuestions = {
   net_economics: {
     type: 'choice',
     instructions:
-      'Does the current evidence support the exit bid exceeding entryEconomics.breakEvenExitBidUsd within the stated horizon? This threshold includes the observed spread, bounded adverse entry pricing and estimated transaction fees. Assess magnitude as well as direction. Upward momentum alone is insufficient. Use uncertain when evidence cannot support this magnitude or entryEconomics is null. Operating costs are unknown. Model assessments are uncalibrated and cannot establish realized profit.',
+      'Does the current evidence support the exit bid exceeding entryEconomics.breakEvenExitBidUsd within the stated horizon? This threshold includes the observed spread, bounded adverse entry and exit pricing and estimated transaction fees. Assess magnitude as well as direction. Upward momentum alone is insufficient. Use uncertain when evidence cannot support this magnitude or entryEconomics is null. Operating costs are unknown. Model assessments are uncalibrated and cannot establish realized profit.',
     criteria: {
       [JevEntryEconomicsAssessment.Supported]:
         'The available evidence supports upward continuation beyond the explicit transaction-cost break-even bid within the holding horizon.',
@@ -347,12 +348,16 @@ const requestFromSnapshot = (
       const entryFees =
         native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n) +
         BigInt(native.portfolio.entryInventoryDebit.costBasisMicros)
-      const feeBps = BigInt(jevMarketForSymbol(symbol).estimatedTakerFeeBps)
-      const exitFees = (proceeds * feeBps + 9999n) / 10000n
-      const netPnl = pnl - entryFees - exitFees
+      const liquidation = { protocol: native.protocol, symbol, quantityAtoms: quantity }
+      const exit = yield* jevLiquidationValue({ ...liquidation, bidMicros: candidate.prices.bid })
+      const exitFees = exit.feesMicros
+      const netPnl = exit.netMicros - cost - entryFees
       const acquisitionCost = cost + entryFees
-      const breakEvenProceeds = (acquisitionCost * 10000n + 9999n - feeBps) / (10000n - feeBps)
-      const breakEvenBid = (breakEvenProceeds * 1_000_000_000n + quantity - 1n) / quantity
+      const breakEvenBid = yield* jevBreakEvenExitBid({
+        ...liquidation,
+        acquisitionCostMicros: acquisitionCost,
+        upperBidMicros: ((acquisitionCost * 1_000_000_000n + quantity - 1n) / quantity) * 2n,
+      })
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {
         symbol,

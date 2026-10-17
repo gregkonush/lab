@@ -5,6 +5,11 @@ decides what should happen, Effect interprets one bounded pass, PostgreSQL store
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v8` and native Dorvud feature contracts.
+Entry and position-management break-even bids use the native sell limit, instrument price rounding and session fee
+calculation. The common 10 bp adverse limit applies on both sides. Estimated net liquidation includes that sell
+allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
+per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
+predictive edge or profit.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
