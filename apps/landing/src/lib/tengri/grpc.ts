@@ -635,8 +635,9 @@ export async function issueEditorSession(
   identity: TengriIdentity,
   agentId: string,
   windowId: string,
+  signal: AbortSignal,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000)
+  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000, signal)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),

@@ -286,7 +286,7 @@ describe('momentum-first Jev admission', () => {
     const f = fixture()
     const { batchId: _, ...material } = f.plan
     expect(Result.getOrThrow(loadActiveStrategyProtocol())).toEqual(defaultJevProtocolDocument)
-    for (const schemaVersion of ['bayn.jev.protocol.v1', 'bayn.jev.protocol.v2'])
+    for (const schemaVersion of ['bayn.jev.protocol.v1', 'bayn.jev.protocol.v2', 'bayn.jev.protocol.v8'])
       expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
     for (const schemaVersion of ['bayn.jev-batch-plan.v1', 'bayn.jev-batch-plan.v2', 'bayn.jev-batch-plan.v3'])
       expect(Result.isFailure(makeJevBatchPlan({ ...material, schemaVersion }))).toBe(true)
