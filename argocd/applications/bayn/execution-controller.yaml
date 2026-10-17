@@ -188,6 +188,15 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"2aa5d3b64d3a0b4e2b879690412f8bf3ccdfde27614e15f41b0cf318a9d2d401","authoredActivation":{"sourceRevision":"42ce11bddb6742996b6623d5a1933b51ce4a2726","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:84126302b9403a4ba88fef40e7927b9ace7e549ed567249432b0fae082d55dc1"},"activation":{"sourceRevision":"42ce11bddb6742996b6623d5a1933b51ce4a2726","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:84126302b9403a4ba88fef40e7927b9ace7e549ed567249432b0fae082d55dc1"}}'
             - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
               value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
           startupProbe:

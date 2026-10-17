@@ -1242,11 +1242,17 @@ and latest broker-event timestamp across every event kind. Identity, terminal-or
 and exact-reconciliation predicates are unchanged; the indexes do not grant authority or cache mutable evidence.
 Migration 0095 builds these indexes transactionally through normal startup migration. Schedule its first rollout
 while the account is flat outside the regular session because ordinary index creation blocks table writes.
-Startup migrations use a private single-connection pool with a five-minute overall deadline, a 295-second SQL
-deadline and a 297.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
+PostgreSQL initialization warms each client with a read-only `SELECT 1` before exposing it. An initial
+`ECONNREFUSED` permits at most three attempts, one second apart. Failed acquisition scopes close before retry;
+a successful client remains owned by its application scope. Composition layers do not rebuild a failed client.
+Authentication failures and other errors propagate immediately. Caller statements and trading mutations retain their existing execution behavior. Persistent
+connection refusal preserves the original failure and prevents startup.
+
+Startup migrations use a private single-connection pool with a fifteen-minute overall deadline, an 895-second SQL
+deadline and an 897.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
 query, socket and trading deadlines remain unchanged. The additive indexes and compatible completion predicate can remain when
 rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
-The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
+The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
 The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.
