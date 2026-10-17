@@ -103,14 +103,16 @@ See the [profile contract and upstream references](../../../services/tengri/secc
 
 ## Ceph HDD write scheduling
 
-Turin and Altra apply `ceph-hdd-write-deadline.yaml` to their three Ceph HDDs. It sets the `mq-deadline`
-write expiry to 500 ms, matching the read expiry. The kernel checks these soft deadlines between request batches;
+Turin and Altra apply `ceph-hdd-write-deadline.yaml` to their three Ceph HDDs. Its udev rules match the six verified
+OSD WWIDs, so disk renumbering cannot retarget the setting. They set the `mq-deadline` write expiry to 500 ms,
+matching the read expiry. The kernel checks these soft deadlines between request batches;
 this does not guarantee a 500 ms database commit. See the [Linux scheduler contract](https://docs.kernel.org/block/deadline-iosched.html).
 
 Use the secret-safe Omni workflow above and require both targets to accept the patch with a Talos
 `--mode no-reboot --dry-run` before syncing. Read back all six scheduler values, verify Ceph recovery and synchronous
 PostgreSQL replication, then compare WAL waits and authenticated Tengri operations under the existing workload.
-Restore `write_expire` to `5000` through Omni if the comparison fails. Removing the patch does not reset a live sysfs value.
+Talos reloads the rules and retriggers devices when they change. Restore the rules' `write_expire` assignment to
+`5000` through Omni if the comparison fails. Removing a rule does not reset its previously assigned kernel value.
 
 ## CI scratch reclamation
 
