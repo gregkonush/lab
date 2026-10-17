@@ -200,6 +200,10 @@ impl Database {
                 3,
                 include_str!("../../tengri/migrations/0003_replay_slots.sql"),
             ),
+            (
+                4,
+                include_str!("../../tengri/migrations/0004_leadership_window.sql"),
+            ),
         ];
         let mut client = self
             .pool
