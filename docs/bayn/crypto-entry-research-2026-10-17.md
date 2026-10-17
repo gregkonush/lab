@@ -50,6 +50,9 @@ legitimate intermediate case. The PostgreSQL regression reproduced that deadlock
 zero-target cycles only when every generation-bound decision matches the terminal account, plan, strategy, protocol,
 cycle, snapshot and submission deadline, with no generation intents or active cycles. Planned targets, mismatched
 bindings and non-dispatchable decisions cannot authorize that recovery. Fresh exact flat reconciliation and native OBSERVE-to-PAPER activation still apply.
+Recovery also applies the normal decision-creation bounds: at or after cycle creation and submission open, and at or
+before the durable cycle update. Regression cases cover every mismatched binding and each temporal bound both before
+and after restriction.
 
 ## What the primary research supports
 

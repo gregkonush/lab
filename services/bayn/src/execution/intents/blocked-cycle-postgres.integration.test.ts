@@ -620,7 +620,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
-              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL
+              cycle_id text PRIMARY KEY, decision_hash text NOT NULL, document jsonb NOT NULL,
+              created_at timestamptz NOT NULL DEFAULT CURRENT_TIMESTAMP
             ) ON COMMIT DROP`
             yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
               SELECT md5(n::text) || md5('cycle-' || n::text),
@@ -693,18 +694,29 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     { decisionEvidence: 'planned-target', terminalAfterRestriction: false },
     { decisionEvidence: 'zero-target', terminalAfterRestriction: true },
     { decisionEvidence: 'planned-target', terminalAfterRestriction: true },
-    ...(['account', 'qualification', 'strategy', 'protocol', 'snapshot', 'cutoff', 'missing'] as const).flatMap(
-      (decisionEvidence) => [
-        { decisionEvidence, terminalAfterRestriction: false },
-        { decisionEvidence, terminalAfterRestriction: true },
-      ],
-    ),
+    ...(
+      [
+        'account',
+        'qualification',
+        'strategy',
+        'protocol',
+        'snapshot',
+        'cutoff',
+        'missing',
+        'created-before-cycle',
+        'created-before-open',
+        'created-after-update',
+      ] as const
+    ).flatMap((decisionEvidence) => [
+      { decisionEvidence, terminalAfterRestriction: false },
+      { decisionEvidence, terminalAfterRestriction: true },
+    ]),
   ] as const)(
     'settles only zero-target NO_TRADE generations: decisionEvidence=$decisionEvidence terminalAfterRestriction=$terminalAfterRestriction',
     async ({ decisionEvidence, terminalAfterRestriction }) => {
       const now = Date.now()
       const fixture = {
-        ...makeFixture(true),
+        ...makeFixture(decisionEvidence !== 'created-before-open'),
         acquiredAt: instant(now - 20_000),
         cycleActivatedAt: instant(now - 19_000),
         restrictedAt: instant(now - 16_000),
@@ -743,6 +755,12 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             const terminalAt = instant(
               Date.parse(fixture.restrictedAt) + (ordinal === 2 && terminalAfterRestriction ? 1000 : -1000),
             )
+            const documentAt =
+              ordinal === 2 && decisionEvidence === 'created-before-cycle'
+                ? instant(Date.parse(fixture.acquiredAt) - 1000)
+                : ordinal === 2 && decisionEvidence === 'created-after-update'
+                  ? instant(Date.parse(terminalAt) + 1000)
+                  : decisionAt
             yield* cycles.acquire(draft, fixture.acquiredAt)
             yield* cycles.activate(cycleId, fixture.cycleActivatedAt)
             yield* sql.withTransaction(
@@ -777,13 +795,13 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
                   ? instant(Date.parse(draft.window.submissionCutoffAt) - 1000)
                   : draft.window.submissionCutoffAt,
               contentHash: decisionHash,
-              createdAt: decisionAt,
+              createdAt: documentAt,
               orderedIntentIds: [],
               targetPlan: {
                 status: 'NO_TRADE',
                 intentTargets: ordinal === 2 && decisionEvidence === 'planned-target' ? [{ symbol: 'AAPL' }] : [],
               },
-            })},${decisionAt})`
+            })},${documentAt})`
                 yield* sql`UPDATE autonomous_cycles SET snapshot_id=${snapshotId},decision_hash=${decisionHash},state_version=state_version+1,
             updated_at=${decisionAt} WHERE cycle_id=${cycleId}`
                 yield* sql`UPDATE autonomous_cycles SET state='NO_TRADE',state_version=state_version+1,

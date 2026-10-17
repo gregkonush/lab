@@ -15,6 +15,8 @@ accepts those completed decisions only when every generation-bound decision matc
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
 no intents or active cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE
 before the approved PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
+Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
+required by normal cycle recovery.
 
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
