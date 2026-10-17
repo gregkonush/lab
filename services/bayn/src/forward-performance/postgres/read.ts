@@ -5,6 +5,7 @@ import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
 import { readCashReportingOffsets } from './cash-reporting'
+import { StoredCashSettlementSchema } from '../../accounting/cash-settlement'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 import { StoredFeeSchema, brokerFeeCashDeltaMicros } from '../../accounting/broker-fees'
 import { decodeAccountingReceipt } from '../../execution/contracts'
@@ -299,9 +300,13 @@ export const readForwardPerformancePostgresDataFirst = (
               opening_snapshot.cash_micros
             FROM opening_snapshot
           ), pre_window_accounted_cash AS (
-            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) AS cash_delta_micros
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0)
+              +COALESCE(sum(settlement.rounding_delta_micros),0) AS cash_delta_micros
             FROM accounting_transactions AS transaction
             CROSS JOIN opening_snapshot
+            CROSS JOIN latest_reconciliation
+            LEFT JOIN broker_cash_settlements settlement ON settlement.transaction_id=transaction.transaction_id
+              AND settlement.posted_at<=latest_reconciliation.reconciled_at
             WHERE transaction.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at < opening_snapshot.observed_at
@@ -321,7 +326,8 @@ export const readForwardPerformancePostgresDataFirst = (
             ORDER BY event.observed_at DESC, event.source_sequence DESC, event.event_id COLLATE "C" DESC
             LIMIT 1
           ), accounted_cash AS (
-            SELECT COALESCE(sum(transaction.cash_delta_micros), 0) + COALESCE((
+            SELECT COALESCE(sum(transaction.cash_delta_micros), 0)
+              +COALESCE(sum(settlement.rounding_delta_micros),0) + COALESCE((
               SELECT sum(fee.cash_delta_micros) FROM broker_cash_fee_deltas AS fee
               CROSS JOIN closing_snapshot
               CROSS JOIN latest_reconciliation AS fee_reconciliation
@@ -333,6 +339,8 @@ export const readForwardPerformancePostgresDataFirst = (
             FROM accounting_transactions AS transaction
             CROSS JOIN latest_reconciliation
             CROSS JOIN opening_snapshot
+            LEFT JOIN broker_cash_settlements settlement ON settlement.transaction_id=transaction.transaction_id
+              AND settlement.posted_at<=latest_reconciliation.reconciled_at
             WHERE transaction.account_id = ${accountId}
               AND ${generationScope(sql, accountId, authorityGenerationHash, 'transaction')}
               AND transaction.occurred_at >= opening_snapshot.observed_at
@@ -428,6 +436,27 @@ export const readForwardPerformancePostgresDataFirst = (
         const ledgerTransactionRows = yield* ledgerTransactionQuery(sql, accountId, accountReconciledAt).pipe(
           Effect.flatMap(decodeTransactions),
         )
+        const cashSettlementRecords = yield* sql`
+          SELECT settlement_id,data,rounding_delta_micros::text AS rounding_delta_micros,
+            content_hash,ledger_plan_hash,tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
+            tigerbeetle_ledger::integer AS tigerbeetle_ledger,
+            posted_at IS NOT NULL AND posted_at<=${accountReconciledAt ?? null}::timestamptz AS posted
+          FROM broker_cash_settlements WHERE account_id=${accountId}
+            AND (data->>'occurredAt')::timestamptz<=${accountReconciledAt ?? null}::timestamptz
+          ORDER BY transaction_id COLLATE "C"
+        `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
+        const [unaccountedCashSettlements] = yield* sql`
+          SELECT count(*)::integer AS count FROM accounting_transactions t
+          WHERE t.account_id=${accountId} AND t.occurred_at<=${accountReconciledAt ?? null}::timestamptz
+            AND mod(t.cash_delta_micros,(
+              SELECT reporting.quantum_micros FROM account_cash_reporting reporting
+              JOIN account_snapshots a ON a.event_id=reporting.account_event_id
+              JOIN broker_events e ON e.event_id=a.event_id
+              WHERE a.account_id=t.account_id AND e.observed_at<=${accountReconciledAt ?? null}::timestamptz
+              ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1))<>0
+            AND NOT EXISTS(SELECT 1 FROM broker_cash_settlements s WHERE s.transaction_id=t.transaction_id
+              AND s.posted_at<=${accountReconciledAt ?? null}::timestamptz)
+        `.pipe(Effect.flatMap(decodeCount))
         const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeReceipts),
         )
@@ -960,6 +989,8 @@ export const readForwardPerformancePostgresDataFirst = (
                 },
               }),
           brokerFeeAccrualRecords,
+          cashSettlementRecords,
+          unaccountedCashSettlementCount: unaccountedCashSettlements.count,
           brokerFeeRecords: brokerFeeRows.map(
             ({
               includes_generation: _owned,

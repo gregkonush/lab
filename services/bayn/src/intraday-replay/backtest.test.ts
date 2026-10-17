@@ -25,7 +25,7 @@ const fixture = () => {
     inference: {
       mode: 'measured-provider',
       model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v3',
+      inputDefinition: 'bayn.jev-trading-signal-state.v7',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
     allocatedDataCostPerSessionMicros: '0',
@@ -40,7 +40,10 @@ const fixture = () => {
     },
     openingCashMicros: '100000000000',
     fractionalTrading: false,
-    calendar: [...source.input.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+    calendar: [
+      ...source.input.input.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+    ],
     assets: equityMarketProfile.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
       symbol,
@@ -82,8 +85,9 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v3')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v8')
   expect(prepared.protocol.model).toBe(jevModel)
+  expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
   const strategy = prepared.strategy.provenance.strategy
   const proof = {
@@ -145,6 +149,7 @@ test('native backtest rejects retired momentum inputs, missing inference provena
     { ...input, inference: undefined },
     { ...input, inference: { ...input.inference, mode: 'constant-response' } },
     { ...input, inference: { ...input.inference, model: 'unverified' } },
+    { ...input, inference: { ...input.inference, inputDefinition: 'bayn.jev-trading-signal-state.v4' } },
     {
       ...input,
       inference: { ...input.inference, costs: { ...input.inference.costs, inputMicrosPerMillionTokens: '0' } },
@@ -228,7 +233,10 @@ test('prior calendar sessions fail preparation before a fresh database can be oc
   const input = fixture()
   const result = prepareBacktest({
     ...input,
-    calendar: [{ date: '2026-09-03', open: '09:30', close: '16:00' }, ...input.calendar],
+    calendar: [
+      { session_open: '0930', session_close: '1600', date: '2026-09-03', open: '09:30', close: '16:00' },
+      ...input.calendar,
+    ],
   })
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result))
@@ -263,7 +271,10 @@ test('one backtest binds consecutive sessions and normalizes their order', () =>
   const input = {
     ...base,
     sessionDates: ['2026-09-04', '2026-09-08'],
-    calendar: [...base.calendar, { date: '2026-09-09', open: '09:30', close: '16:00' }],
+    calendar: [
+      ...base.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+    ],
     source: {
       ...base.source,
       coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
@@ -288,8 +299,8 @@ test('continuous backtesting rejects an omitted intervening trading session', ()
     sessionDates: ['2026-09-04', '2026-09-09'],
     calendar: [
       ...base.calendar,
-      { date: '2026-09-09', open: '09:30', close: '16:00' },
-      { date: '2026-09-10', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-09-10', open: '09:30', close: '16:00' },
     ],
   }
   const result = prepareWithCapture(input, retainedReplayCaptureFixture(input.source))

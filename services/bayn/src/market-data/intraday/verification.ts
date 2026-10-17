@@ -1,7 +1,13 @@
-import { continuousMarketHours, isContinuousMarket, snapshotMarketCloseAt } from '../../market-hours'
+import {
+  continuousMarketHours,
+  isContinuousMarket,
+  snapshotMarketCloseAt,
+  marketHoursAreCanonical,
+} from '../../market-hours'
 import { InstrumentSymbolSchema } from '../../instruments'
-import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
+import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
+import { equityClockSession } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import { marketCalendarSchemaVersion, marketCalendarSource } from '../../broker/alpaca/model'
@@ -160,6 +166,7 @@ const calendarMaterial = (
   requestedRange: calendar.requestedRange,
   timeZone: calendar.timeZone,
   sessions: calendar.sessions,
+  providerSessions: calendar.providerSessions,
 })
 
 const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, IntradaySnapshotFailure> => {
@@ -191,7 +198,7 @@ const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, I
       failure('request', 'intraday calendar observation is not canonically hashable', undefined, expectedHash.failure),
     )
   }
-  if (expectedHash.success !== calendar.normalizedResponseHash) {
+  if (expectedHash.success !== calendar.normalizedResponseHash || !marketHoursAreCanonical(calendar)) {
     return Result.fail(failure('request', 'intraday calendar observation hash does not match its normalized content'))
   }
   let previousDate: string | undefined
@@ -591,7 +598,12 @@ export const validateIdentity = (
       record.universeId !== request.universeId ||
       record.universeSymbolHash !== request.universeSymbolHash ||
       record.feed !== request.feed ||
-      record.marketSession !== (request.feed === 'us' ? 'continuous' : 'regular') ||
+      record.marketSession !==
+        (request.feed === 'us'
+          ? 'continuous'
+          : request.feed === 'iex'
+            ? equityClockSession(record.eventAt)
+            : 'regular') ||
       record.delayClass !== request.delayClass ||
       !symbols.has(record.symbol)
     ) {
@@ -707,16 +719,12 @@ export const validateBarCoverage = (
   request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   for (const bar of bars) {
-    const maximumAvailabilityDelay = millisecondsAsNanos(
-      (publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision
-        ? maximumBarPublicationDelayMs(bar)
-        : (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) +
-          minuteMs +
-          request.maximumQuoteAgeMs) + clockSkewMs,
-    )
+    // Historical inputs retain their actual recovery time. Only the current completed
+    // minute needs timely publication; executable quote freshness is checked separately.
+    if (intradayInstantNanos(bar.eventAt) < intradayInstantNanos(request.rangeEndAt) - 60_000_000_000n) continue
+    const maximumAvailabilityDelay = millisecondsAsNanos(maximumBarPublicationDelayMs(bar) + clockSkewMs)
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
         new IntradaySnapshotFailure({
@@ -970,7 +978,6 @@ export const candidateAvailability = (
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -992,7 +999,6 @@ export const candidateAvailability = (
           symbolRequest,
           bars.filter((bar) => bar.symbol === symbol),
           clockSkewMs,
-          publicationPolicy,
         ),
         () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )

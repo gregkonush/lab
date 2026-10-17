@@ -134,6 +134,7 @@ impl RpcClient {
             .sign(&method, target, &value.encode_to_vec())
             .await?;
         let mut request = Request::new(value);
+        crate::telemetry::inject(&mut request);
         request
             .metadata_mut()
             .insert("authorization", self.authorization.clone());

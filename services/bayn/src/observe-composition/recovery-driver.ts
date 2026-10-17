@@ -141,9 +141,10 @@ export const reconciliationForPreparation = <R>(
             cached !== undefined &&
             reusableUntil !== undefined &&
             freshUntil !== undefined &&
-            now + minimumRemainingMs < Math.min(reusableUntil, freshUntil)
+            now < reusableUntil &&
+            now + minimumRemainingMs < freshUntil
           )
-            return { reconciliation: cached, freshUntil: Math.min(reusableUntil, freshUntil) }
+            return { reconciliation: cached, freshUntil }
           const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis
@@ -252,13 +253,14 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
   lifecycleAdvance: Effect.Effect<A, E, R>,
   timeoutMs: number,
   onTimeout: (error: CycleRunnerError) => Effect.Effect<A, E, R>,
+  stage: 'bayn.execution.bounded-pass' | 'bayn.execution.generation-pass' = 'bayn.execution.bounded-pass',
 ): Effect.Effect<A, E, R> =>
   Effect.gen(function* () {
     const startedAt = yield* operationCurrentTimeMillis
     const activeStages = (yield* ActiveExecutionStages) ?? new Map<symbol, ActiveExecutionStage>()
     let interruptionRequestedAt = startedAt
     return yield* operationPermit.withPermit(lifecycleAdvance).pipe(
-      withObservedStage('bayn.execution.bounded-pass'),
+      withObservedStage(stage),
       Effect.provideService(ActiveExecutionStages, activeStages),
       operationTimeoutOrElse({
         duration: Duration.millis(timeoutMs),
@@ -268,6 +270,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
             return Effect.logWarning('Bayn execution pass interruption requested').pipe(
               Effect.annotateLogs({
                 service: 'bayn',
+                stage,
                 timeoutMs,
                 executionElapsedMs: Math.max(0, requestedAt - startedAt),
                 activeStages: [...activeStages.values()].map(({ startedAt: stageStartedAt, ...stage }) => ({
@@ -284,6 +287,7 @@ export const runRestateAdvanceWithinTimeout = <A, E, R>(
               Effect.logError('Bayn execution pass deadline exceeded').pipe(
                 Effect.annotateLogs({
                   service: 'bayn',
+                  stage,
                   timeoutMs,
                   elapsedMs: Math.max(0, finishedAt - startedAt),
                   deadlineOverrunMs: Math.max(0, finishedAt - startedAt - timeoutMs),

@@ -1,3 +1,5 @@
+import { quantityScale } from '../quantity'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
@@ -155,7 +157,9 @@ const loadExecutionRiskPolicyDataFirst = (
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [isQuoteBoundExecutionModel(executionModel) ? OrderType.Limit : OrderType.Market],
-    allowedTimeInForce: [isQuoteBoundExecutionModel(executionModel) ? TimeInForce.ImmediateOrCancel : TimeInForce.Day],
+    allowedTimeInForce: isQuoteBoundExecutionModel(executionModel)
+      ? [TimeInForce.Day, TimeInForce.ImmediateOrCancel]
+      : [TimeInForce.Day],
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })
@@ -183,7 +187,7 @@ const loadQuoteBoundExecutionRiskPolicyDataFirst = (
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [OrderType.Limit],
-    allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })
@@ -914,7 +918,7 @@ const compileObserveStrategyDecision = <R>(
       decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
     )
     const query = yield* Effect.fromResult(
-      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt),
+      jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
     const { snapshot, evidence } = yield* evaluateJevObservationFromSnapshot(
       {
@@ -1115,7 +1119,11 @@ export const prepareObservePlanner = <R>(
               allocationCapitalMicros: overrides.allocationCapitalMicros,
               executionTerms: {
                 orderType: OrderType.Limit,
-                timeInForce: TimeInForce.ImmediateOrCancel,
+                timeInForce: cashSpotLimitTimeInForce(
+                  input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+                    ? MarketKind.Crypto
+                    : MarketKind.Equity,
+                ),
                 priceReference: 'verified-adverse-quote-boundary' as const,
                 snapshotId: compiled.executionMarketData.snapshotId,
                 snapshotContentHash: compiled.executionMarketData.contentHash,
@@ -1553,7 +1561,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const executionModel = preparation.executionModel
-    if (executionModel.schemaVersion !== 'bayn.execution-model.v5' || !isIntradayAutonomousCycle(cycle)) {
+    if (executionModel.schemaVersion !== 'bayn.execution-model.v6' || !isIntradayAutonomousCycle(cycle)) {
       return yield* mutationRunnerError({
         message: 'execution close requires the active intraday execution contract',
         failure: 'contract',
@@ -1623,6 +1631,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       })
     }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
+    if (evaluatedAt >= closeExpiresAt)
+      return yield* new ExecutionCloseAwaitingMarketData({
+        message: 'execution close lease expired before construction',
+        observedAt: evaluatedAt,
+      })
     if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
@@ -1673,8 +1686,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       if (
         closingPass.kind === 'broker-position' ||
         source === 'reconciled-position' ||
-        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
-          evaluatedAt >= cycle.window.executionCloseAt)
+        evaluatedAt >= cycle.window.executionCloseAt
       ) {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
@@ -1816,6 +1828,13 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             askPriceMicros: closeExecutionMarketData.askPriceMicros,
           }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const reconciledEquityLimit =
+      reconciledPositionClose &&
+      symbols.every(
+        (symbol) =>
+          instrumentMarket(symbol) === MarketKind.Equity &&
+          (positionQuantities.get(symbol) ?? 0n) % quantityScale === 0n,
+      )
     const plannerInput: TargetPlannerInput = {
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
       ...commonPlannerInput,
@@ -1830,7 +1849,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       executionTerms: reconciledPositionClose
         ? {
             executionPurpose: 'forced-close',
-            orderType: OrderType.Market,
+            orderType: reconciledEquityLimit ? OrderType.Limit : OrderType.Market,
             timeInForce: symbols.every((symbol) => instrumentMarket(symbol) === MarketKind.Crypto)
               ? TimeInForce.GoodUntilCanceled
               : TimeInForce.Day,
@@ -1854,7 +1873,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
           : {
               executionPurpose: 'forced-close',
               orderType: OrderType.Limit,
-              timeInForce: TimeInForce.ImmediateOrCancel,
+              timeInForce: cashSpotLimitTimeInForce(
+                cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+                  ? MarketKind.Crypto
+                  : MarketKind.Equity,
+              ),
               priceReference: 'verified-adverse-quote-boundary',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
@@ -1866,7 +1889,9 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const closeLimitSlippageBps =
-      reconciledPositionClose || requiresFractionalClose ? undefined : policy.maxAdverseSlippageBps
+      (reconciledPositionClose && !reconciledEquityLimit) || requiresFractionalClose
+        ? undefined
+        : policy.maxAdverseSlippageBps
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
         limitSlippageBps: closeLimitSlippageBps ?? 0,

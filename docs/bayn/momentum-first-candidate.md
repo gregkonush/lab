@@ -6,20 +6,23 @@ The retained control has not established positive net economics.
 
 ## Exact entry policy
 
-`bayn.positive-relative-momentum-entry.v1` admits a flat-portfolio candidate only when its verified current midpoint
-is strictly above its 30-minute reference and its exact return minus SPY's exact return is strictly positive. Comparisons
+`bayn.positive-relative-observed-momentum-entry.v1` admits a flat-portfolio candidate only when its verified current midpoint
+is strictly above the first actual reference minute common to the candidate and benchmark, and its exact return
+minus the benchmark's exact return is strictly positive. Comparisons
 use integer price micros and exact rational arithmetic; rounded displayed basis points never decide admission. A positive
 stock return can qualify while SPY is declining. There is no restored 15 bp absolute threshold, 10 bp excess threshold,
 breakout threshold, range-location threshold, new technical indicator, or calibrated profit claim.
 
-Existing source identity, complete window, freshness, two-sided displayed-size and maximum 5 bp entry-spread checks
-remain. The complete recorded candidate universe survives as requested candidates or explicit exclusions. Missing,
+Existing source identity, latest completed minute, freshness, two-sided displayed-size and market-specific entry-spread checks remain.
+The entry spread ceiling is 5 bp for equities and 25 bp for crypto. The complete recorded candidate universe survives as requested candidates or explicit exclusions. Missing,
 future, malformed or stale evidence cannot become a valid non-signal. If every candidate is positively verified but
 fails an entry gate, the batch makes zero model calls and produces zero targets. A fully non-requested batch containing
 unknown source candidates remains unusable.
 
-Jev receives only admitted signals. It retains the existing `enter`/`wait`/`avoid` question and 0.65 chosen-enter
-probability boundary. Among accepted signals, selection retains descending Jev enter probability, then symbol for ties.
+Jev receives only admitted signals. It retains the existing `enter`/`wait`/`avoid` question. A valid chosen `enter`
+action is eligible only with a `supported` net-economics assessment, without an additional probability floor. `wait` and `avoid` never authorize entry. Among chosen
+enter actions, selection retains descending Jev enter probability, then symbol for ties. The action distribution
+is not a calibrated probability of net profit.
 This is a momentum eligibility gate before Jev, not a new momentum-ranked portfolio. Choosing the highest exact
 relative-return candidate among accepted signals is a separate research hypothesis: it changed 5 of 26 selections in
 an exposed retained-state projection. Gate-only admitted all 26 old projected selections, but that does not establish
@@ -28,23 +31,18 @@ unchanged future decisions, timing, orders, fills, or P&L.
 Sizing remains one position and the existing 0.2 gross/symbol target weight, subject to all lower execution/account
 limits. Jev cannot create an ineligible signal or override risk. Management retains the current held-position Jev
 hold/exit evaluation, threshold, 50 bp protective stop, 15-minute maximum hold, and session-close liquidation. Entry
-momentum and spread filters never suppress required management or protective exits. The separate management-horizon
-prompt ambiguity is not changed here.
+momentum and spread filters never suppress required management or protective exits. Management also receives booked entry fees, estimated exit fees and net liquidation P&L. Sunk entry fees
+never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- Protocol `bayn.jev.protocol.v2` requires the explicit entry policy; v1 forbids it. Its different parameter and strategy
-  identity prevents the changed admission rule from inheriting a retained protocol or capital grant
-- Batch `bayn.jev-batch-plan.v4` requires protocol v2 and permits explicit `momentum` exclusions. Old v1–v3 batches keep
-  their original admission, request and replay identities. Policy identity stays outside the model prompt: an identical
-  surviving snapshot and portfolio produces byte-identical state, questions and model. The new cycle/authority,
-  observation, protocol and batch identities bind the changed admission rule; management question payloads stay unchanged
-- The candidate behavior hash is `sha256('bayn.jev.momentum-first.behavior.v1')`. Execution-decision validation accepts
-  only the exact source-controlled candidate protocol paired with that behavior and batch v4. This is evidence
-  compatibility, not authority. Default strategy composition selects protocol v2 and the momentum-first behavior;
-  retained v1 decisions remain reproducible and cannot start new active cycles
-- Native evaluation and control-management replay select the matching batch version from the supplied protocol. New
-  entry pricing keeps the existing v3 separate fresh-quote lifetime, with unchanged final spread/size and risk checks
+- The only active protocol is `bayn.jev.protocol.v8`, with `cost-supported-model-action` entry selection and
+  `capital-weighted-session-limit` sizing. Both an enter action and supported net economics are required. Retired protocols and their numeric entry floor are rejected by the runtime
+- The current behavior is `bayn.jev.cost-supported-cash-spot.behavior.v1`. Protocol, behavior, observation, batch v4,
+  cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles
+- Trading-signal input v7 includes an explicit fee break-even exit bid and a net-economics question. Entry
+  pricing retains its fresh-quote lifetime and must stay within the inference-bound price ceiling, in addition to
+  final spread, displayed-size and risk checks. Migration 116 requires flat settled inventory before this cutover
 - Keep one durable observation per completed signal minute/purpose/cycle, the existing minute-plus-two-second window,
   pending-batch recovery, ten-second original deadline, at most fifteen eligible concurrent requests, and no queued
   historical catch-up. Every requested result must finish validly before selection. No top-K cutoff is introduced
@@ -52,7 +50,7 @@ prompt ambiguity is not changed here.
   polling intervals, add model retries or add quote subscriptions. The paired sandbox mandate activates the separately
   approved $1,000,000 daily turnover limit; all other limits remain unchanged
 
-The exposed workload projection retained 132 of 300 entry requests; 127 belonged to usable batches. These are
+The historical protocol-v6 workload projection retained 132 of 300 entry requests; 127 belonged to usable batches. These are
 same-state workload counts, not a causal forecast of saved money or activity. Smaller batches can change execution
 latency and later portfolio state. Count every attempted, rejected, failed and late call in evaluation costs.
 
@@ -62,16 +60,16 @@ Activation pairs `strategy.ts`, the compiled Nix strategy identities, runtime ma
 mandate. It does not add an environment toggle or generic strategy registry. The mandate retains the same sandbox
 account, credentials, exposure/loss limits, protective exits and existing account/day turnover history.
 
-The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v2 policy.
-Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 0090 permits v2/v4 evidence
-and preserves all existing payload, strategy-pair and append-only constraints; it does not modify any retained row.
+The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v6 policy.
+Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 111 admits the v6 authority
+identity after flat, settled, freshly reconciled cutover. Historical evidence and account/day turnover remain immutable. A new PAPER mandate must bind the published v6 image and strategy.
 
 PAPER research activation requires an explicit immutable Research mandate, current build/strategy/account/risk bindings,
 and fresh exact, flat sandbox reconciliation. It does not require a previously profitable result. Before making an
 economic qualification claim:
 
-1. Review the exact merged source and passing unit, type, lint, build, native persistence and CI evidence. Verify old
-   decision replay and new source/behavior/protocol/mandate hashes end to end. Drain/reconcile existing cycles through
+1. Review the exact merged source and passing unit, type, lint, build, native persistence and CI evidence. Verify current
+   decision replay and source, behavior, protocol and mandate hashes end to end. Drain/reconcile existing cycles through
    the established activation path; never rebind an existing grant to a changed selection policy
 2. Freeze candidate, all mandatory controls, source, parameters, unchanged questions/input representation plus the
    admission policy, timing, costs, universe, execution assumptions and registered calendar before the first untouched open.
@@ -88,5 +86,6 @@ economic qualification claim:
    accounting, loss/drawdown or authority failure while preserving risk-reducing management. Do not tune during the
    registered window; a material revision needs another immutable attempt and untouched evaluation
 
-No higher trading frequency or volume is forced. This candidate reduces irrelevant model evaluation; any economic
-improvement remains an empirical question under the unchanged risk and cost constraints.
+No missing signal or unavailable evidence becomes an order to satisfy an activity target. Removing the numeric
+entry floor changes the PAPER policy and requires a new prospective comparison; retained v5 outcomes do not
+qualify v6. Any economic improvement remains an empirical question under the unchanged risk and cost limits.

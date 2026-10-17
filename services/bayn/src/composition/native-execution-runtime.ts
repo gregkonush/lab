@@ -35,7 +35,6 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  type ExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
@@ -76,7 +75,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
  * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
  * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
  */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v2')
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
   readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
@@ -247,8 +246,6 @@ const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): Execut
   }
 }
 
-const legacyUnboundControllerPlanHash = '0'.repeat(64)
-
 const persistControllerStatus = (
   statusStore: ExecutionControllerStatusStoreShape,
   status: ExecutionControllerStatus,
@@ -321,11 +318,9 @@ const replayProjectedAdvance = (
   planHash: string,
 ): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
   if (status === null || status.epoch < command.epoch) return Result.succeed(null)
-  const legacyPlanCanBind =
-    status.planHash === legacyUnboundControllerPlanHash && status.nextSequence <= command.sequence
   if (
     status.controllerKey !== command.controllerKey ||
-    (status.planHash !== planHash && !legacyPlanCanBind) ||
+    status.planHash !== planHash ||
     status.epoch !== command.epoch
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
@@ -689,16 +684,13 @@ export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<Kafk
 
 export const acquireNativeExecutionRuntime = (
   plan: ApplicationPlanFor<'AutonomousService'>,
-  previousBinding?: ExecutionControllerBinding,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
-    const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
+    const config = yield* Effect.fromResult(executionControllerConfig(plan))
     const metricIdentity = Layer.mergeAll(
       Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
       Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
     )
-    const config: ExecutionControllerConfig =
-      previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
     const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),

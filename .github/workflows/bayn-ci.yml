@@ -41,6 +41,8 @@ jobs:
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/normalize-bayn-bun-deps.sh'
+              - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/images/bun-workspace-deps-source.nix'
               - 'nix/images/bun-workspace-deps-source.test.sh'
@@ -71,6 +73,8 @@ jobs:
               - 'services/bayn/**'
               - 'nix/images/bayn.nix'
               - 'nix/images/bayn-runtime-root.nix'
+              - 'nix/images/normalize-bayn-bun-deps.sh'
+              - 'nix/images/normalize-bayn-bun-deps.test.sh'
               - 'nix/images/bun-workspace-service.nix'
               - 'nix/images/bun-workspace-deps-source.nix'
               - 'nix/packages.nix'
@@ -292,13 +296,7 @@ jobs:
           docker logs bayn-replay-tigerbeetle
           exit 1
       - name: Verify replay accounting with PostgreSQL and TigerBeetle
-        run: |
-          bun test services/bayn/src/intraday-replay/durable-broker.integration.test.ts
-          bun test services/bayn/src/intraday-replay/runtime.integration.test.ts
-          bun test services/bayn/src/intraday-replay/backtest.integration.test.ts
-          bun test services/bayn/src/intraday-replay/restart.integration.test.ts
-          bun test services/bayn/src/inference-expense-postgres.integration.test.ts services/bayn/src/inference-expense-tigerbeetle.integration.test.ts
-          bun test services/bayn/src/research-inference/store.integration.test.ts
+        run: bun run --cwd services/bayn test:ledger
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true
@@ -325,6 +323,7 @@ jobs:
             substituters = https://cache.nixos.org/
       - name: Prove dependency source boundary
         run: |
+          bash nix/images/normalize-bayn-bun-deps.test.sh
           bash nix/images/bun-workspace-deps-source.test.sh
           bash nix/verify-bayn-image-command.test.sh
 

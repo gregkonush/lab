@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Option, Result } from 'effect'
@@ -43,14 +44,14 @@ const context: CycleRunContext = {
   buildDecisionEvidence: forbidden,
 }
 const session = { date: '2026-09-18', openAt: '2026-09-18T13:30:00.000Z', closeAt: '2026-09-18T20:00:00.000Z' }
-const calendar: MarketCalendarObservation = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+const calendar: MarketCalendarObservation = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
   source: 'alpaca-v2-calendar',
   requestedRange: { start: session.date, end: session.date },
   timeZone: 'UTC',
   sessions: [session],
   normalizedResponseHash: '5'.repeat(64),
-}
+})
 const blockedAt = '2026-09-18T13:05:00.000Z'
 const rearmAt = '2026-09-18T14:06:00.000Z'
 const blockedCycle = (ordinal = 1, overrides: Record<string, unknown> = {}): AutonomousCycle =>

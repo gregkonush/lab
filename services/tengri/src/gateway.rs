@@ -22,6 +22,7 @@ use tokio_tungstenite::{
         Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
     },
 };
+use tracing::Instrument;
 
 use crate::{
     activity::ActivityTracker,
@@ -196,6 +197,7 @@ impl GatewayState {
         Ok(access)
     }
 
+    #[tracing::instrument(name = "preview.authority.watch", skip_all, fields(otel.status_code = tracing::field::Empty))]
     pub(crate) async fn wait_for_preview_revocation(
         &self,
         session: &PreviewSessionRecord,
@@ -210,11 +212,17 @@ impl GatewayState {
                     access.require(),
                 )
             };
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(2), valid).await,
-                Ok(Ok(_))
-            ) {
-                return;
+            match tokio::time::timeout(Duration::from_secs(2), valid).await {
+                Ok(Ok(_)) => {}
+                result => {
+                    let code = match result {
+                        Ok(Err(error)) => error.code(),
+                        _ => tonic::Code::DeadlineExceeded,
+                    };
+                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    tracing::warn!(?code, "preview authority recheck closed the connection");
+                    return;
+                }
             }
         }
     }
@@ -317,6 +325,14 @@ pub fn control_router(state: GatewayState) -> Router {
             get(serve_open_preview_bootstrap_script),
         )
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
+        )
 }
 
 pub fn preview_router(state: GatewayState) -> Router {
@@ -328,6 +344,14 @@ pub fn preview_router(state: GatewayState) -> Router {
         .route("/_tengri/editor/open", get(open_editor_bootstrap))
         .fallback(preview_host_proxy)
         .with_state(state)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
+        )
 }
 
 async fn readiness(State(state): State<GatewayState>) -> StatusCode {
@@ -751,13 +775,17 @@ async fn preview_host_proxy(
         } else {
             websocket
         };
+        let connection_span = tracing::Span::current();
         return websocket
-            .on_upgrade(move |socket| async move {
-                let revoked = state.wait_for_preview_revocation(&session, &access);
-                tokio::select! {
-                    _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
-                    _ = revoked => {},
+            .on_upgrade(move |socket| {
+                async move {
+                    let revoked = state.wait_for_preview_revocation(&session, &access);
+                    tokio::select! {
+                        _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
+                        _ = revoked => {},
+                    }
                 }
+                .instrument(connection_span)
             })
             .into_response();
     }
@@ -855,7 +883,8 @@ async fn proxy_http(
         .http
         .request(parts.method, target)
         .bearer_auth(guest.token())
-        .headers(proof);
+        .headers(proof)
+        .headers(crate::telemetry::headers());
     for (name, value) in &parts.headers {
         if forward_request_header(name) || (editor_asset && name == header::ACCEPT_ENCODING) {
             if name == header::COOKIE {

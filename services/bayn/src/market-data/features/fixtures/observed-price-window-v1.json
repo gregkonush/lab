@@ -1,8 +1,8 @@
 {
   "material": {
     "schemaVersion": "dorvud.market-feature.v1",
-    "definitionId": "dorvud.rolling-price-30m.v1",
-    "definitionHash": "f9c3d3e8146e17ed2c143aad3cbcb8f1d741d2203bb98df7d240bf66306630de",
+    "definitionId": "dorvud.observed-price-window.v2",
+    "definitionHash": "3ae356af1526d69047af3a773606433a0da7c46c71b377c5133257c7a7ce1590",
     "provider": "alpaca",
     "feed": "iex",
     "delayClass": "real_time_exchange_only",
@@ -10,7 +10,7 @@
     "universeSymbolHash": "1eb44d625271a4eb75016f276d13783617c012685cb598f20ae93249164c0121",
     "symbol": "AAPL",
     "sessionDate": "2026-09-11",
-    "sessionPolicy": "alpaca.regular.new-york-date.v1",
+    "sessionPolicy": "alpaca.iex-clock-segments.new-york.v2",
     "windowStartMs": 1789133400000,
     "windowEndMs": 1789135200000,
     "inputs": [
@@ -263,7 +263,7 @@
       "totalVolumeMicros": "307500000"
     }
   },
-  "featureId": "d0b7607f571893fa4564d286f8b5865169eb4d4f572c0ca7aec521a3a822d697",
+  "featureId": "9e08919282196dd51ac892ddd1b8e70355995ce63414a4de875405613e57a7f0",
   "computedAtMs": 1789135202000,
   "producerRevision": "test-revision"
 }

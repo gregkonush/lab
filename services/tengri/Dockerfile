@@ -66,12 +66,14 @@ RUN curl -fsSL --retry 3 -o /tmp/firecracker-source.tgz \
     rm /tmp/firecracker-source.tgz
 COPY firecracker-memory-direct-io.patch /tmp/firecracker-memory-direct-io.patch
 COPY firecracker-async-workers.patch /tmp/firecracker-async-workers.patch
+COPY firecracker-memory-sparse.patch /tmp/firecracker-memory-sparse.patch
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-registry \
     --mount=type=cache,target=/firecracker/target,id=tengri-firecracker-target-${TARGETARCH} \
     set -eu; \
     test "$(dpkg --print-architecture)" = "$TARGETARCH"; \
     patch --fuzz=0 -p1 < /tmp/firecracker-memory-direct-io.patch; \
     patch --fuzz=0 -p1 < /tmp/firecracker-async-workers.patch; \
+    patch --fuzz=0 -p1 < /tmp/firecracker-memory-sparse.patch; \
     case "$TARGETARCH" in \
       amd64) fc_target=x86_64-unknown-linux-musl ;; \
       arm64) fc_target=aarch64-unknown-linux-musl ;; \
@@ -79,12 +81,18 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     esac; \
     test -s "resources/seccomp/${fc_target}.json"; \
     rustup target add "$fc_target"; \
+    cargo test --locked --release --target "$fc_target" -p vmm --lib \
+      vstate::memory::tests::test_sparse_full_snapshot_bytes_and_existing_zero_overwrite -- --exact; \
+    cargo test --locked --release --target "$fc_target" -p vmm --lib vstate::memory::tests::test_dump; \
     cargo build --locked --release --target "$fc_target" --bin firecracker; \
     cp "target/${fc_target}/release/firecracker" /out-firecracker; \
     file /out-firecracker | grep -E 'statically linked|static-pie linked'; \
     /out-firecracker --version
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
+
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \

@@ -1,5 +1,7 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import '@xterm/xterm/css/xterm.css'
 
 import type { SearchAddon } from '@xterm/addon-search'
@@ -495,6 +497,7 @@ export function TerminalApp({
             } else if (control.type === 'pong') {
               markAlive()
             } else if (control.type === 'error') {
+              reportBrowserFailure('terminal.control')
               const message = control.message || 'Terminal reported an error'
               updateConnection({ phase: 'error', message, action: 'reconnect' })
               terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`)
@@ -533,6 +536,7 @@ export function TerminalApp({
         nextSocket.addEventListener('error', () => {
           if (disposed || socket !== nextSocket) return
           setInputEnabled(false)
+          reportBrowserFailure('terminal.websocket')
           updateConnection({ phase: 'error', message: 'Terminal connection failed', action: 'reconnect' })
           nextSocket.close()
         })

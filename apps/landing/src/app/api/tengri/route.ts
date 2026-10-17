@@ -1,4 +1,5 @@
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { observeRequest } from '@/lib/observability/server'
 import {
   createAgent,
   createCodexThread,
@@ -50,6 +51,10 @@ import type { TengriDesktopSnapshot } from '@/lib/tengri/types'
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri.snapshot', () => getSnapshot(request))
+}
+
+async function getSnapshot(request: Request) {
   try {
     requireSameOriginGet(request)
     const authConfigured = isTengriAuthConfigured()
@@ -76,6 +81,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  return observeRequest(request, 'tengri.action', () => runAction(request))
+}
+
+async function runAction(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)

@@ -1,5 +1,6 @@
 import { equityMarketProfile } from '../jev/markets'
-import { makeJevEntryQuery } from '../jev/observation-query'
+import { makeJevEntryQuery, jevHistoryStartMs } from '../jev/observation-query'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import {
@@ -172,7 +173,7 @@ const ridgeControlStudyDefinition = {
   policies: [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean],
   qualification: 'UNQUALIFIED',
   controllerCoverage: 'UNKNOWN',
-  featureWindow: 'Six completed minutes at the unchanged native 30-minute-plus-two-second entry eligibility.',
+  featureWindow: 'First-completed-minute entry eligibility; six-bar controls require six actual completed bars.',
   comparison:
     'Independent portfolios with identical initial capital and rules. This is a policy comparison, not exposure-matched alpha.',
   baseline:
@@ -321,7 +322,7 @@ export const runControlSession = (input: {
     const openMs = Date.parse(session.openAt)
     const closeMs = Date.parse(session.closeAt)
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
-    const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
+    const warmupMs = openMs + intradayMinimumCompletedHistoryMs + protocol.decisionDelaySeconds * 1000
     const opportunities = {
       schemaVersion: opportunityAccountingDefinition.schemaVersion,
       schedule: {
@@ -544,7 +545,9 @@ export const runControlSession = (input: {
           sessionDate,
           calendar: input.calendar,
           observedAt,
-          rangeStartAt: utcInstantFromEpochMillis(rangeEndMs - protocol.lookbackMinutes * 60_000),
+          rangeStartAt: utcInstantFromEpochMillis(
+            jevHistoryStartMs(input.calendar, sessionDate, rangeEndMs, protocol.lookbackMinutes),
+          ),
           rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
           universeId: equityMarketProfile.universeId,
           universeSymbolHash: equityMarketProfile.universeSymbolHash,
@@ -988,7 +991,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
     if (
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
-        prepared.protocol.maximumSpreadBps !== residualShockDefinition.maximumSpreadBps ||
+        prepared.protocol.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
         prepared.protocol.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)

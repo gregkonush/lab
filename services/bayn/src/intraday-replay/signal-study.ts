@@ -1,3 +1,5 @@
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { quantityFromNumber } from '../quantity'
@@ -59,7 +61,7 @@ export const signalStudyDefinition = {
     DETERMINISTIC_BREAKOUT:
       'Apply the retained momentum thresholds to every available candidate, ranked by exact benchmark-relative return then symbol.',
     RELATIVE_MOMENTUM:
-      'Strictly positive exact 30-minute return and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
+      'Strictly positive exact return from the common observed reference and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
   },
   breakoutThresholds: {
     lookbackReturnBps: defaultIntradayMomentumProtocolDocument.minimumLookbackReturnBps,
@@ -178,8 +180,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]:
-          (yield* jevMomentumEntryCandidates(snapshot, observation.protocol))[0]?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]: (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }
@@ -307,7 +308,7 @@ export const studyOrder = (input: {
       orderType: input.orderType,
       timeInForce:
         input.orderType === OrderType.Limit
-          ? TimeInForce.ImmediateOrCancel
+          ? cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
           : jevMarketForSymbol(input.symbol).market === 'CRYPTO'
             ? TimeInForce.GoodUntilCanceled
             : TimeInForce.Day,
@@ -370,7 +371,7 @@ export const studyEntryQuantity = (input: {
       symbol: input.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* priceNumberToMicros(input.referencePrice, 'study.reference', 'UP'),
       executionModel: input.protocol.executionModel,

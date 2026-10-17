@@ -78,7 +78,7 @@ export const matchedCommittedDecisionFixture = (
       allocationCapitalMicros,
       executionTerms: {
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
         priceReference: 'verified-adverse-quote-boundary' as const,
         snapshotId: market.snapshotId,
         snapshotContentHash: market.contentHash,

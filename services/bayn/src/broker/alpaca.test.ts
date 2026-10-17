@@ -650,20 +650,36 @@ describe('Alpaca paper reads', () => {
     expect(requestedUrl?.pathname).toBe('/v2/calendar')
     expect(requestedUrl?.searchParams.toString()).toBe('start=2026-03-06&end=2026-03-10&date_type=TRADING')
     const normalized = {
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       requestedRange: { start: '2026-03-06', end: '2026-03-10' },
       timeZone: 'UTC',
       sessions: [
         {
           date: '2026-03-06',
-          openAt: '2026-03-06T14:30:00.000Z',
-          closeAt: '2026-03-06T21:00:00.000Z',
+          openAt: '2026-03-06T13:00:00.000Z',
+          closeAt: '2026-03-06T22:00:00.000Z',
         },
         {
           date: '2026-03-09',
-          openAt: '2026-03-09T13:30:00.000Z',
-          closeAt: '2026-03-09T20:00:00.000Z',
+          openAt: '2026-03-09T12:00:00.000Z',
+          closeAt: '2026-03-09T21:00:00.000Z',
+        },
+      ],
+      providerSessions: [
+        {
+          date: '2026-03-06',
+          regularOpenAt: '2026-03-06T14:30:00.000Z',
+          regularCloseAt: '2026-03-06T21:00:00.000Z',
+          sessionOpenAt: '2026-03-06T09:00:00.000Z',
+          sessionCloseAt: '2026-03-07T01:00:00.000Z',
+        },
+        {
+          date: '2026-03-09',
+          regularOpenAt: '2026-03-09T13:30:00.000Z',
+          regularCloseAt: '2026-03-09T20:00:00.000Z',
+          sessionOpenAt: '2026-03-09T08:00:00.000Z',
+          sessionCloseAt: '2026-03-10T00:00:00.000Z',
         },
       ],
     } as const
@@ -718,8 +734,8 @@ describe('Alpaca paper reads', () => {
     })
 
     response = [
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
     ]
     const duplicate = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(duplicate).toMatchObject({
@@ -728,7 +744,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
 
-    response = [{ date: '2026-03-11', open: '09:30', close: '16:00' }]
+    response = [{ session_open: '0930', session_close: '1600', date: '2026-03-11', open: '09:30', close: '16:00' }]
     const outsideRange = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(outsideRange).toMatchObject({
       operation: 'market-calendar',
