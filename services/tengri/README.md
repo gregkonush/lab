@@ -38,6 +38,8 @@ context and recovery generation. Each controller consumes nonces in one shared p
 128 live entries, expiring at the signed five-second deadline. A restart chooses a different audience; requests
 captured for the previous process or another replica fail before effects, even when their signatures are otherwise
 valid. Replacing only the audience invalidates the HMAC. Live entries are never evicted to admit more work, and no
+expired assertion can become valid again after a backwards clock correction: the replay window keeps a nondecreasing
+clock floor for its process audience. No
 request is automatically replayed if its receiver changes between audience lookup and submission. There is no v1
 signature path. Regenerate the independent Rust/TypeScript vector with
 `node services/tengri/fixtures/generate-ofz-request-v2.mjs`.

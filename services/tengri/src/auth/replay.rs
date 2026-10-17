@@ -1,4 +1,7 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    sync::atomic::{AtomicU64, Ordering},
+};
 
 use tokio::sync::Mutex;
 use tonic::Status;
@@ -8,12 +11,14 @@ const CAPACITY_PER_BUCKET: usize = 128;
 
 pub(super) struct Window {
     buckets: [Mutex<HashMap<[u8; 32], u64>>; BUCKETS],
+    clock_floor: AtomicU64,
 }
 
 impl Default for Window {
     fn default() -> Self {
         Self {
             buckets: std::array::from_fn(|_| Mutex::new(HashMap::new())),
+            clock_floor: AtomicU64::new(0),
         }
     }
 }
@@ -21,7 +26,11 @@ impl Default for Window {
 impl Window {
     pub(super) async fn consume(&self, nonce: [u8; 32], deadline: u64) -> Result<(), Status> {
         let mut bucket = self.buckets[nonce[0] as usize % BUCKETS].lock().await;
-        let now = crate::ofz::now_ms()?;
+        let observed = crate::ofz::now_ms()?;
+        let now = self
+            .clock_floor
+            .fetch_max(observed, Ordering::Relaxed)
+            .max(observed);
         if deadline <= now || deadline > now + 5000 {
             return Err(Status::unauthenticated("request nonce deadline expired"));
         }
@@ -40,6 +49,22 @@ impl Window {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_backwards_clock_cannot_reopen_an_expired_replay_window() {
+        let window = Window::default();
+        let now = crate::ofz::now_ms().unwrap();
+        let deadline = now + 5000;
+        window.consume([0; 32], deadline).await.unwrap();
+        // Model expiry/cleanup followed by a wall-clock correction back into the old lifetime.
+        window.clock_floor.store(now + 6000, Ordering::Relaxed);
+        window.buckets[0].lock().await.clear();
+        assert_eq!(
+            window.consume([0; 32], deadline).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+        assert!(window.buckets[0].lock().await.is_empty());
+    }
 
     #[tokio::test]
     async fn simultaneous_replay_has_one_winner_and_live_entries_are_never_evicted() {
