@@ -256,7 +256,7 @@ They are excluded from the active application until coordinated release, identit
 ## API image delivery
 
 `nix build .#ofz-image` builds the API for the native Linux architecture from the locked Cargo dependencies, canonical
-authorization protobuf, policy catalog, and both database migrations. The runtime contains the API and certificate
+authorization protobuf, policy catalog, and all three database migrations. The runtime contains the API and certificate
 roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`,
 `migrate-runtime`, `bootstrap` and `activate`.
 

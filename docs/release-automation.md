@@ -50,13 +50,18 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
-Ofz, Tengri and Proompteng publish an `ai.proompteng.tengri-schema` OCI index annotation derived from the ordered
-runtime migration names and contents. Their Warehouses admit only artifacts whose three schema fingerprints match.
-A hard schema migration therefore waits for the qualified Tengri images and both compatible consumers before any
-automatic Stage can promote it. Ordinary releases can reuse existing companion images with the same schema;
-they do not require those services to rebuild for the same commit. Existing source, native qualification and build
-receipt checks still apply. The Ofz migration hook installs the new schema before its API rolls out; the BFF,
-controller and supervisor verify the exact installed migration checksums before using it.
+Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
+must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
+successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
+production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+
+The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
+Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
+`proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot
+promote directly from the Warehouse. A failed migration therefore prevents either consumer from rolling out.
+The BFF, controller and supervisor independently verify the installed migration checksums before serving.
+The retired per-consumer Warehouses are removed; existing Freight has no Warehouse owner reference and remains
+subject to the existing retention policy.
 
 Every application image follows this transaction:
 

@@ -282,7 +282,7 @@ Replay admission hashes each nonce into one of 64 independently locked buckets, 
 An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
 controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
 Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
-both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
