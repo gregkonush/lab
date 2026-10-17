@@ -727,6 +727,26 @@ async fn control_integration_durability_authority_and_quota() {
     ))
     .await;
     Box::pin(verify_archive_fencing(&fixture, &workspace, grant_id)).await;
+    // Renew the synthetic administrators before the independent runtime/ownership phase.
+    let administrator_sessions: Vec<Uuid> = fixture.identities[..2]
+        .iter()
+        .map(|(_, session)| Uuid::parse_str(session).unwrap())
+        .collect();
+    assert_eq!(
+        fixture
+            .admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=ANY($1) AND NOT revoked",
+                &[&administrator_sessions],
+            )
+            .await
+            .unwrap(),
+        2
+    );
     let runtime_epoch = Box::pin(verify_runtime_transfer(&fixture, &workspace)).await;
     Box::pin(verify_offboarding(&fixture, &workspace)).await;
     Box::pin(verify_runtime_removal(
