@@ -65,6 +65,7 @@ import {
 } from '../reconciliation/algebra'
 import { Pipeable } from '../pipeable'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
+import { firstSessionEquityQuery, peakEquityQuery } from './risk-valuation-query'
 import { postCashSettlements, prepareCashSettlements, type CashSettlementAccounting } from './cash-settlements'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import { prepareFeeActivities, postBrokerFeePlans, type BrokerFeeAccounting } from './broker-fees'
@@ -79,6 +80,7 @@ import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { FeeActivity } from '../broker/alpaca'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
+import { withObservedStage } from '../telemetry'
 
 export interface IntentBinding {
   readonly intentId: string
@@ -354,10 +356,7 @@ const readFinalExecutionRiskContextDataFirst = (
             AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
         ), '0') AS daily_traded_notional_micros,
         (
-          SELECT max(valuation.equity_micros)::text
-          FROM valuations AS valuation
-          WHERE valuation.account_id = ${accountId}
-            AND valuation.as_of <= ${observedAt}
+          ${peakEquityQuery(sql, accountId, observedAt)}
         ) AS peak_equity_micros
         FROM boundary
       `.pipe(Effect.flatMap(decodeFinalExecutionRiskContext))
@@ -739,19 +738,10 @@ export const makeReconciliation = (
                 AND (transaction.occurred_at AT TIME ZONE 'America/New_York')::date = boundary.trading_date
             ), '0') AS daily_traded_notional_micros,
             (
-              SELECT valuation.equity_micros::text
-              FROM valuations AS valuation
-              WHERE valuation.account_id = ${accountId}
-                AND valuation.as_of <= ${reconciledAt}
-                AND (valuation.as_of AT TIME ZONE 'America/New_York')::date = boundary.trading_date
-              ORDER BY valuation.as_of, valuation.valuation_id COLLATE "C"
-              LIMIT 1
+              ${firstSessionEquityQuery(sql, accountId, reconciledAt)}
             ) AS day_start_equity_micros,
             (
-              SELECT max(valuation.equity_micros)::text
-              FROM valuations AS valuation
-              WHERE valuation.account_id = ${accountId}
-                AND valuation.as_of <= ${reconciledAt}
+              ${peakEquityQuery(sql, accountId, reconciledAt)}
             ) AS peak_equity_micros
           FROM boundary
           LEFT JOIN authority_state AS authority ON authority.singleton
@@ -768,17 +758,29 @@ export const makeReconciliation = (
       Effect.gen(function* () {
         const accountId = snapshot.account.accountId
         yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`ALPACA:${accountId}`}, 0))`
-        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle)
-        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle)
-        const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle)
-        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals, cashSettlements)
-        const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting)
-        const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt)
+        const cashSettlements = yield* postCashSettlements(sql, journal, accountId, config.tigerBeetle).pipe(
+          withObservedStage('bayn.reconciliation.cash-settlement'),
+        )
+        const feeAccounting = yield* postBrokerFeePlans(sql, journal, accountId, config.tigerBeetle).pipe(
+          withObservedStage('bayn.reconciliation.fee-posting'),
+        )
+        const accruals = yield* readFeeAccruals(sql, accountId, config.tigerBeetle).pipe(
+          withObservedStage('bayn.reconciliation.accrual-read', { dependency: 'postgresql' }),
+        )
+        const accounting = yield* readAccountingPhase(accountId, feeAccounting, accruals, cashSettlements).pipe(
+          withObservedStage('bayn.reconciliation.accounting-verify'),
+        )
+        const { accountingHash, comparison } = yield* readComparisonPhase(accountId, snapshot, accounting).pipe(
+          withObservedStage('bayn.reconciliation.compare'),
+        )
+        const reconciliation = yield* writeReconciliationPhase(accountId, comparison, snapshot.reconciledAt).pipe(
+          withObservedStage('bayn.reconciliation.record', { dependency: 'postgresql' }),
+        )
         const riskContext = yield* readRiskContextPhase(
           accountId,
           snapshot.reconciledAt,
           accounting.unknownMutationCount,
-        )
+        ).pipe(withObservedStage('bayn.reconciliation.risk-context', { dependency: 'postgresql' }))
         return { reconciliation, metrics: comparison.metrics, accountingHash, riskContext }
       }),
     )

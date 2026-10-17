@@ -126,7 +126,7 @@ spec:
             - name: RESTATE_INGRESS_ORIGIN
               value: http://restate.restate.svc.cluster.local:8080
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
