@@ -227,6 +227,10 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       ...(request.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: request.candidateEvidencePolicy }),
+      ...(request.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: request.benchmarkEvidencePolicy }),
+      ...(request.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: request.benchmarkSymbols }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,

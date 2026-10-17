@@ -74,7 +74,9 @@ read-only SPIFFE CSI socket. `SPIFFE_ID` selects its exact `spiffe://proompteng.
 identity; `TENGRI_SPIFFE_ID` pins `spiffe://proompteng.ai/ns/tengri/sa/tengri`. The server-only Workload API
 client validates the URI, private-key match, validity window, and CA bundle before creating a TLS gRPC client.
 Renewal creates a new client; existing streams retain their previous client until that certificate expires and then
-reconnect with their event cursor. HMAC metadata still binds every request to its authenticated GitHub owner.
+reconnect with their event cursor. Before signing a request, the BFF reads that controller process's random audience
+over the pinned mTLS channel. The v2 HMAC binds the audience, authenticated GitHub owner, session, method, payload,
+runtime, deadline and recovery generation. A changed receiver rejects the request; the BFF does not replay it.
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 

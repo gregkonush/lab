@@ -10,13 +10,12 @@ use prost::Message;
 use sha2::{Digest, Sha256};
 use tonic::{Request, Status};
 
-use crate::{
-    control::Database,
-    ofz::{
-        self,
-        proto::{Action, RequestContext, actor::Identity},
-    },
+use crate::ofz::{
+    self,
+    proto::{Action, RequestContext, actor::Identity},
 };
+
+mod replay;
 
 #[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -56,6 +55,7 @@ pub(crate) fn signed_fixture_request<T: Message>(
     message: T,
     principal: &Principal,
     rpc_path: &str,
+    audience: &str,
 ) -> Request<T> {
     let mut request = Request::new(message);
     let bytes = principal.context.encode_to_vec();
@@ -68,6 +68,7 @@ pub(crate) fn signed_fixture_request<T: Message>(
             &nonce,
             &bytes,
             principal.recovery_generation,
+            audience,
         )
         .as_bytes(),
     );
@@ -78,6 +79,9 @@ pub(crate) fn signed_fixture_request<T: Message>(
     request
         .metadata_mut()
         .insert("x-tengri-nonce", nonce.parse().unwrap());
+    request
+        .metadata_mut()
+        .insert("x-tengri-audience", audience.parse().unwrap());
     request.metadata_mut().insert(
         "x-tengri-recovery-generation",
         principal.recovery_generation.to_string().parse().unwrap(),
@@ -94,7 +98,8 @@ pub(crate) fn signed_fixture_request<T: Message>(
 #[derive(Clone)]
 pub struct Authenticator {
     key: SigningKey,
-    database: Arc<Database>,
+    audience: Arc<str>,
+    replay: Arc<replay::Window>,
     origin: Arc<str>,
 }
 
@@ -114,7 +119,7 @@ fn parse_key(key: &str) -> anyhow::Result<[u8; 32]> {
 }
 
 impl Authenticator {
-    pub fn new(database: Arc<Database>, key_file: &Path, origin: String) -> anyhow::Result<Self> {
+    pub fn new(key_file: &Path, origin: String) -> anyhow::Result<Self> {
         let key = std::fs::read_to_string(key_file)?;
         parse_key(&key)?;
         let url = reqwest::Url::parse(&origin)?;
@@ -127,20 +132,27 @@ impl Authenticator {
         );
         Ok(Self {
             key: SigningKey::Mounted(Arc::new(key_file.to_owned())),
-            database,
+            audience: uuid::Uuid::new_v4().to_string().into(),
+            replay: Arc::new(replay::Window::default()),
             origin: origin.into(),
         })
     }
 
     #[cfg(test)]
-    pub fn fixture(database: Arc<Database>, origin: String) -> Self {
+    pub fn fixture(origin: String) -> Self {
         Self {
             key: SigningKey::Fixture([0x68; 32]),
-            database,
+            audience: uuid::Uuid::new_v4().to_string().into(),
+            replay: Arc::new(replay::Window::default()),
             origin: origin.into(),
         }
     }
 
+    pub fn audience(&self) -> &str {
+        &self.audience
+    }
+
+    #[tracing::instrument(name = "auth.verify_request", skip_all)]
     pub async fn authorize<T: Message>(
         &self,
         request: &Request<T>,
@@ -161,6 +173,10 @@ impl Authenticator {
             return Err(Status::unauthenticated("noncanonical signed context"));
         }
         let nonce = header(request, "x-tengri-nonce")?;
+        let audience = header(request, "x-tengri-audience")?;
+        if audience != self.audience.as_ref() {
+            return Err(Status::unauthenticated("request receiver changed"));
+        }
         if !URL_SAFE_NO_PAD
             .decode(&nonce)
             .is_ok_and(|bytes| bytes.len() == 32 && URL_SAFE_NO_PAD.encode(bytes) == nonce)
@@ -186,6 +202,7 @@ impl Authenticator {
             &nonce,
             &bytes,
             recovery_generation,
+            &audience,
         );
         let key = match &self.key {
             SigningKey::Mounted(path) => parse_key(
@@ -226,8 +243,8 @@ impl Authenticator {
             .ok_or_else(|| Status::permission_denied("unknown RPC contract"))?;
         let action = ofz::action("controller", method)?;
         let replay_key = Sha256::digest(format!("{}\n{nonce}", context.session_id)).to_vec();
-        self.database
-            .consume_nonce(&replay_key, context.deadline_unix_ms as i64)
+        self.replay
+            .consume(replay_key.try_into().unwrap(), context.deadline_unix_ms)
             .await?;
         Ok(Principal {
             owner_hash: human,
@@ -257,9 +274,10 @@ pub fn signing_payload(
     nonce: &str,
     context: &[u8],
     generation: u64,
+    audience: &str,
 ) -> String {
     format!(
-        "tengri.ofz.v1\n{rpc_path}\n{:x}\n{nonce}\n{}\n{generation}",
+        "tengri.ofz.v2\n{audience}\n{rpc_path}\n{:x}\n{nonce}\n{}\n{generation}",
         Sha256::digest(body),
         URL_SAFE_NO_PAD.encode(context)
     )
@@ -292,71 +310,214 @@ pub fn deterministic_agent_id(owner_hash: &str, reservation_id: &str) -> String 
 mod tests {
     use super::*;
 
+    #[tokio::test]
+    async fn signed_authentication_does_not_wait_for_postgresql() {
+        let auth = Authenticator::fixture("https://proompteng.ai".into());
+        let principal = Principal::fixture(&"a".repeat(64), "", Action::WorkspaceMetadataRead);
+        let path = "/proompteng.runtime.v1.MicroVMControlPlane/ListAgents";
+        let request = signed_fixture_request(
+            crate::grpc::proto::ListAgentsRequest {},
+            &principal,
+            path,
+            auth.audience(),
+        );
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(100),
+            auth.authorize(&request, path),
+        )
+        .await;
+        assert!(
+            matches!(result, Ok(Ok(_))),
+            "signed authentication waited for PostgreSQL: {result:?}"
+        );
+        assert_eq!(
+            auth.clone()
+                .authorize(&request, path)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        let restarted = Authenticator::fixture("https://proompteng.ai".into());
+        assert_eq!(
+            restarted
+                .authorize(&request, path)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        let mut rebound = request;
+        rebound
+            .metadata_mut()
+            .insert("x-tengri-audience", restarted.audience().parse().unwrap());
+        assert_eq!(
+            restarted
+                .authorize(&rebound, path)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        let fresh = signed_fixture_request(
+            crate::grpc::proto::ListAgentsRequest {},
+            &principal,
+            path,
+            restarted.audience(),
+        );
+        assert!(restarted.authorize(&fresh, path).await.is_ok());
+    }
+
+    #[tokio::test]
+    async fn altered_or_expired_requests_and_duplicate_headers_fail_closed() {
+        let auth = Authenticator::fixture("https://proompteng.ai".into());
+        let principal = Principal::fixture(&"a".repeat(64), "", Action::WorkspaceMetadataRead);
+        let path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
+        let request = signed_fixture_request(
+            crate::grpc::proto::GetAgentRequest { id: "agent".into() },
+            &principal,
+            path,
+            auth.audience(),
+        );
+        let mut changed = Request::new(crate::grpc::proto::GetAgentRequest {
+            id: "another".into(),
+        });
+        *changed.metadata_mut() = request.metadata().clone();
+        assert_eq!(
+            auth.authorize(&changed, path).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+        for deadline in [ofz::now_ms().unwrap() - 1, ofz::now_ms().unwrap() + 5500] {
+            let mut expired = principal.clone();
+            expired.context.deadline_unix_ms = deadline;
+            let request = signed_fixture_request(
+                crate::grpc::proto::GetAgentRequest { id: "agent".into() },
+                &expired,
+                path,
+                auth.audience(),
+            );
+            assert_eq!(
+                auth.authorize(&request, path).await.unwrap_err().code(),
+                tonic::Code::Unauthenticated
+            );
+        }
+        let mut duplicated = request;
+        let mut legacy = Request::new(crate::grpc::proto::GetAgentRequest { id: "agent".into() });
+        *legacy.metadata_mut() = duplicated.metadata().clone();
+        let context = principal.context.encode_to_vec();
+        let nonce = header(&legacy, "x-tengri-nonce").unwrap();
+        let payload = format!(
+            "tengri.ofz.v1\n{path}\n{:x}\n{nonce}\n{}\n{}",
+            Sha256::digest(legacy.get_ref().encode_to_vec()),
+            URL_SAFE_NO_PAD.encode(context),
+            principal.recovery_generation
+        );
+        let mut mac = Hmac::<Sha256>::new_from_slice(&[0x68; 32]).unwrap();
+        mac.update(payload.as_bytes());
+        legacy.metadata_mut().insert(
+            "x-tengri-signature",
+            format!("{:x}", mac.finalize().into_bytes())
+                .parse()
+                .unwrap(),
+        );
+        assert_eq!(
+            auth.authorize(&legacy, path).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+        legacy.metadata_mut().remove("x-tengri-audience");
+        assert_eq!(
+            auth.authorize(&legacy, path).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+        let audience = duplicated
+            .metadata()
+            .get("x-tengri-audience")
+            .unwrap()
+            .clone();
+        duplicated
+            .metadata_mut()
+            .append("x-tengri-audience", audience);
+        assert_eq!(
+            auth.authorize(&duplicated, path).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+    }
+
     #[test]
     fn bff_protobuf_and_independent_hmac_vector_match_rust() {
         let vector: serde_json::Value =
-            serde_json::from_str(include_str!("../fixtures/ofz-request-v1.json")).unwrap();
+            serde_json::from_str(include_str!("../fixtures/ofz-request-v2.json")).unwrap();
         let field = |name: &str| vector[name].as_str().unwrap();
         let context = base64::engine::general_purpose::STANDARD
             .decode(field("contextBase64"))
             .unwrap();
-        let decoded = RequestContext::decode(context.as_slice()).unwrap();
-        assert_eq!(decoded.encode_to_vec(), context);
         assert_eq!(
-            decoded.workspace_uid,
-            "33333333-3333-4333-8333-333333333333"
+            RequestContext::decode(context.as_slice())
+                .unwrap()
+                .encode_to_vec(),
+            context
         );
+        let body = decode_hex(field("bodyHex")).unwrap();
         let payload = signing_payload(
             field("rpcPath"),
-            &decode_hex(field("bodyHex")).unwrap(),
+            &body,
             field("nonce"),
             &context,
             7,
+            field("audience"),
         );
         let mut mac = Hmac::<Sha256>::new_from_slice(&parse_key(field("keyHex")).unwrap()).unwrap();
         mac.update(payload.as_bytes());
         mac.verify_slice(&decode_hex(field("signature")).unwrap())
             .unwrap();
-    }
-
-    #[test]
-    fn signed_contract_binds_every_field_and_has_no_key_bundle() {
-        let payload = signing_payload(
-            "/rpc",
-            b"body",
-            "nonce",
-            b"actor/session/uid/epoch/origin/deadline",
-            7,
-        );
         for changed in [
             signing_payload(
                 "/other",
-                b"body",
-                "nonce",
-                b"actor/session/uid/epoch/origin/deadline",
+                &body,
+                field("nonce"),
+                &context,
                 7,
+                field("audience"),
             ),
             signing_payload(
-                "/rpc",
-                b"changed",
-                "nonce",
-                b"actor/session/uid/epoch/origin/deadline",
+                field("rpcPath"),
+                b"other",
+                field("nonce"),
+                &context,
                 7,
+                field("audience"),
             ),
             signing_payload(
-                "/rpc",
-                b"body",
-                "replay",
-                b"actor/session/uid/epoch/origin/deadline",
+                field("rpcPath"),
+                &body,
+                "other",
+                &context,
                 7,
+                field("audience"),
             ),
-            signing_payload("/rpc", b"body", "nonce", b"different-context", 7),
             signing_payload(
-                "/rpc",
-                b"body",
-                "nonce",
-                b"actor/session/uid/epoch/origin/deadline",
+                field("rpcPath"),
+                &body,
+                field("nonce"),
+                b"other",
+                7,
+                field("audience"),
+            ),
+            signing_payload(
+                field("rpcPath"),
+                &body,
+                field("nonce"),
+                &context,
                 8,
+                field("audience"),
+            ),
+            signing_payload(
+                field("rpcPath"),
+                &body,
+                field("nonce"),
+                &context,
+                7,
+                "88888888-8888-4888-8888-888888888888",
             ),
         ] {
             assert_ne!(payload, changed);
