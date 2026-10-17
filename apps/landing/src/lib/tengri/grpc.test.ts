@@ -1368,7 +1368,8 @@ describe('Tengri gRPC BFF transport', () => {
 
     expect(await rejection(resumeCodexThread(identity, 'agent-test', 'invalid-sequence'))).toMatchObject({
       message: 'Tengri control plane returned an invalid Codex event cursor',
-      status: 503,
+      status: 502,
+      code: 'conversation_history_invalid',
     })
   })
 

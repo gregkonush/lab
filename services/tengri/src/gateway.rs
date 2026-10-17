@@ -37,6 +37,7 @@ const MAX_BOOTSTRAP_BODY: usize = 4 << 10;
 const MAX_WEBSOCKET_FRAME: usize = 2 << 20;
 const MAX_WEBSOCKET_MESSAGE: usize = 8 << 20;
 const MAX_WEBSOCKET_WRITE_BUFFER: usize = 16 << 20;
+const PREVIEW_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
 const NANOAGENT_AUTH_FAILURE_HEADER: &str = "x-tengri-nanoagent-auth-failure";
@@ -1042,8 +1043,19 @@ async fn bridge_open_websocket(
     agent_id: String,
 ) {
     let (mut upstream_write, mut upstream_read) = upstream.split();
+    let mut keepalive = tokio::time::interval_at(
+        tokio::time::Instant::now() + PREVIEW_KEEPALIVE_INTERVAL,
+        PREVIEW_KEEPALIVE_INTERVAL,
+    );
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = keepalive.tick() => {
+                if browser.send(AxumMessage::Ping(Default::default())).await.is_err()
+                    || upstream_write.send(TungsteniteMessage::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             browser_message = browser.recv() => {
                 let Some(Ok(message)) = browser_message else { break };
                 let message = match message {
@@ -1053,7 +1065,9 @@ async fn bridge_open_websocket(
                     AxumMessage::Pong(value) => TungsteniteMessage::Pong(value),
                     AxumMessage::Close(_) => TungsteniteMessage::Close(None),
                 };
-                activity.touch(&agent_id);
+                if matches!(&message, TungsteniteMessage::Text(_) | TungsteniteMessage::Binary(_)) {
+                    activity.touch(&agent_id);
+                }
                 if upstream_write.send(message).await.is_err() { break; }
             }
             upstream_message = upstream_read.next() => {
@@ -1066,7 +1080,9 @@ async fn bridge_open_websocket(
                     TungsteniteMessage::Close(_) => AxumMessage::Close(None),
                     TungsteniteMessage::Frame(_) => continue,
                 };
-                activity.touch(&agent_id);
+                if matches!(&message, AxumMessage::Text(_) | AxumMessage::Binary(_)) {
+                    activity.touch(&agent_id);
+                }
                 if browser.send(message).await.is_err() { break; }
             }
         }
@@ -1407,6 +1423,8 @@ fn forward_response_header(name: &HeaderName) -> bool {
 
 #[cfg(test)]
 mod editor_browser_fixture;
+#[cfg(test)]
+mod preview_transport_test;
 
 #[cfg(test)]
 mod tests {
