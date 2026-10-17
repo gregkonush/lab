@@ -889,7 +889,7 @@ describe('native OCI build workflows', () => {
       expect(workflow).toContain("- '.github/workflows/nix-oci-build-common.yml'")
       expect(workflow).toContain("- 'packages/scripts/src/shared/oci.ts'")
       expect(workflow).toContain("- 'nix/oci-push.sh'")
-      if (workflow !== hermesToolchainBuildWorkflow) {
+      if (workflow !== hermesToolchainBuildWorkflow && workflow !== productNixWorkflow) {
         expect(workflow).not.toContain("- '.github/actions/setup-nix-toolchain/**'")
       }
     }

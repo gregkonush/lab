@@ -81,8 +81,10 @@ async fn runtime_shared_state_independent_nonces_do_not_share_a_transaction_lock
     let (database, _, _) = fixture().await;
     let mut held = database.connection().await.unwrap();
     let tx = held.transaction().await.unwrap();
-    let first = vec![0_u8; 32];
-    let second = vec![1_u8; 32];
+    let mut first = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let mut second = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    first[0] = 0;
+    second[0] = 64;
     assert!(
         tx.query_one(
             "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
@@ -624,14 +626,14 @@ async fn runtime_shared_state_replay_writes_cannot_starve_runtime_authority() {
         let tx = held.transaction().await.unwrap();
         let mut nonces = Vec::new();
         for bucket in 0..capacity {
+            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+            nonce[0] = bucket as u8;
             tx.query_one(
-                "SELECT pg_advisory_xact_lock($1)",
-                &[&(726635523000_i64 + bucket as i64)],
+                "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
+                &[&nonce],
             )
             .await
             .unwrap();
-            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-            nonce[0] = bucket as u8;
             nonces.push(nonce);
         }
         let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;

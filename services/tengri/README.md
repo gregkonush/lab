@@ -32,9 +32,14 @@ Every proof that could have executed before a crash therefore expires before the
 The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
 unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
 Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
-Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Ofz policy
-checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
-PostgreSQL commit inside the short-lived Ofz decision window. This changes no signed fields or database schema;
+Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Schema
+verification requires migration `0003_replay_slots.sql` in the same release as the BFF, controller and supervisor.
+It preserves every unexpired nonce while replacing bucket transaction locks with 128 fixed rows per bucket.
+Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces in the same bucket can commit
+independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
+durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
+Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
+PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
 rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
 capacity follows the opening message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
 header; previews reserve their bounded body size. Capacity checks never queue large reservations ahead of smaller
@@ -277,7 +282,7 @@ Replay admission hashes each nonce into one of 64 independently locked buckets, 
 An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
 controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
 Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
-both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.

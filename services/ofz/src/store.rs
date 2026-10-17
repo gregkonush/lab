@@ -21,12 +21,15 @@ use crate::{
 
 pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog";
 
+mod audit;
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
     config: Config,
     tls: MakeRustlsConnect,
     command_slots: Arc<Semaphore>,
+    audit_writer: Arc<audit::AuditWriter>,
     #[cfg(test)]
     migration_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
@@ -101,6 +104,7 @@ impl Database {
             .runtime(deadpool_postgres::Runtime::Tokio1)
             .build()?;
         Ok(Self {
+            audit_writer: Arc::new(audit::AuditWriter::new(pool.clone())),
             pool,
             config,
             tls,
@@ -191,6 +195,10 @@ impl Database {
             (
                 2,
                 include_str!("../../tengri/migrations/0002_replay_buckets.sql"),
+            ),
+            (
+                3,
+                include_str!("../../tengri/migrations/0003_replay_slots.sql"),
             ),
         ];
         let mut client = self
@@ -327,21 +335,7 @@ impl Database {
 
     #[tracing::instrument(name = "db.audit", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
-        let mut client = self
-            .pool
-            .get()
-            .await
-            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-        let tx = client.transaction().await.map_err(sql_error)?;
-        tx.batch_execute("SET LOCAL statement_timeout = 5000")
-            .await
-            .map_err(sql_error)?;
-        record_audit(&*tx, receipt, target).await?;
-        if !record_activity(&*tx, receipt).await? {
-            return Err(Status::unauthenticated("session expired or revoked"));
-        }
-        tx.commit().await.map_err(sql_error)?;
-        Ok(receipt.id.clone())
+        self.audit_writer.record(receipt, target).await
     }
 }
 
