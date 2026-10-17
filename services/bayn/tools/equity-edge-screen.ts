@@ -1,5 +1,5 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem, Path, Schema } from 'effect'
+import { Effect, FileSystem, Path, Schema, Stdio, Stream } from 'effect'
 
 import { canonicalHashV1, canonicalJsonV1Result, sha256 } from '../src/hash'
 import { decodeEquityEdgeInput, decodeEquityEdgeSource } from '../src/intraday-replay/equity-edge-source'
@@ -13,6 +13,8 @@ import {
 } from '../src/intraday-replay/equity-edge-screen'
 
 const maximumSourceBytes = 128 * 1024 * 1024
+export const equityEdgeScreenUsage =
+  'Usage: bayn-equity-edge-screen --input input.json --input-sha256 <sha256> --source pages.ndjson --output new-report.json | --help'
 const policyIdentity = (policy: EquityScreenPolicy) =>
   `${policy.signal}:${policy.holdingMinutes}:${policy.volatilityRisk === true ? 'volatility' : 'fixed'}`
 
@@ -123,7 +125,7 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
             ),
         )
       const report = {
-        schemaVersion: 'bayn.equity-edge-screen-report.v1',
+        schemaVersion: 'bayn.equity-edge-screen-report.v2',
         inputHash: expectedInputHash,
         input,
         source: source.source,
@@ -170,11 +172,20 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
     }),
   )
 
+export const equityEdgeScreenCli = (args: readonly string[]) =>
+  Effect.gen(function* () {
+    if (args.length === 1 && args[0] === '--help') {
+      const stdio = yield* Stdio.Stdio
+      return yield* Stream.run(Stream.make(`${equityEdgeScreenUsage}\n`), stdio.stdout())
+    }
+    const receipt = yield* equityEdgeScreenProgram(args)
+    yield* Effect.logInfo('Offline equity screen completed').pipe(Effect.annotateLogs(receipt))
+  })
+
 if (import.meta.main)
   NodeRuntime.runMain(
-    equityEdgeScreenProgram(process.argv.slice(2)).pipe(
-      Effect.tap((receipt) => Effect.logInfo('Offline equity screen completed').pipe(Effect.annotateLogs(receipt))),
-      // @effect-diagnostics-next-line strictEffectProvide:off -- offline command owns filesystem resources only
+    equityEdgeScreenCli(process.argv.slice(2)).pipe(
+      // @effect-diagnostics-next-line strictEffectProvide:off -- offline command owns filesystem and standard output only
       Effect.provide(NodeServices.layer),
     ),
   )

@@ -1,12 +1,29 @@
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Exit, ManagedRuntime } from 'effect'
 
-import { sha256 } from '../src/hash'
-import { equityEdgeScreenProgram } from './equity-edge-screen'
+import { canonicalHashV1, sha256 } from '../src/hash'
+import { equityEdgeScreenProgram, equityEdgeScreenUsage } from './equity-edge-screen'
+
+test('standalone research help needs no broker, model, database or input files', () => {
+  const result = spawnSync(
+    process.execPath,
+    [fileURLToPath(new URL('./equity-edge-screen.ts', import.meta.url)), '--help'],
+    {
+      encoding: 'utf8',
+      timeout: 10000,
+      env: {},
+    },
+  )
+  expect(result.status).toBe(0)
+  expect(result.stdout).toBe(`${equityEdgeScreenUsage}\n`)
+  expect(result.stderr).toBe('')
+})
 
 test('offline command validates pins, preserves zero-activity sessions and never overwrites retained evidence', async () => {
   const directory = mkdtempSync(join(tmpdir(), 'bayn-equity-edge-fixture-'))
@@ -22,15 +39,40 @@ test('offline command validates pins, preserves zero-activity sessions and never
     }))
     const source =
       [
-        { kind: 'calendar', observedAt, data: calendar },
-        { kind: 'bars', page: 0, requestPageToken: null, observedAt, data: { bars: {}, next_page_token: null } },
+        {
+          kind: 'calendar',
+          requestUrl: 'https://paper-api.alpaca.markets/v2/calendar?start=2026-08-03&end=2026-08-19',
+          observedAt,
+          data: calendar,
+        },
+        {
+          kind: 'bars',
+          page: 0,
+          requestPageToken: null,
+          requestUrl:
+            'https://data.alpaca.markets/v2/stocks/bars?' +
+            new URLSearchParams({
+              symbols: 'SPY,AAPL',
+              timeframe: '1Min',
+              start: '2026-08-03T00:00:00Z',
+              end: '2026-08-19T23:59:59Z',
+              feed: 'iex',
+              adjustment: 'raw',
+              sort: 'asc',
+              limit: '10000',
+              asof: '2026-08-19',
+            }).toString(),
+          observedAt,
+          data: { bars: {}, next_page_token: null },
+        },
         { kind: 'complete', pages: 1, bars: 0, observedAt, feed: 'iex', adjustment: 'raw' },
       ]
         .map((row) => JSON.stringify(row))
         .join('\n') + '\n'
     const input = JSON.stringify({
-      schemaVersion: 'bayn.equity-edge-screen-input.v1',
+      schemaVersion: 'bayn.equity-edge-screen-input.v2',
       sourceSha256: sha256(source),
+      calendar: { start: '2026-08-03', end: '2026-08-19', expectedHash: canonicalHashV1(calendar) },
       symbols: ['SPY', 'AAPL'],
       development: { start: '2026-08-17', end: '2026-08-17' },
       validation: { start: '2026-08-18', end: '2026-08-18' },

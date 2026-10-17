@@ -5,6 +5,11 @@ bar-based policies without constructing a broker client, using a model, changing
 controller. It does not replace the original-arrival and execution witnesses required by the
 [matched-entry experiment](matched-entry-study.md) or [portfolio controls](control-portfolios.md).
 
+The Bayn image also installs `bayn-equity-edge-screen`, backed by `dist/equity-edge-screen.js`. `--help` needs no
+configuration. Invoke the same arguments shown below in an independent research process with bounded private storage;
+the command does not run at API/controller startup and has no broker, database or model dependency. Image builds
+exercise the actual compiled Node help entry point on both architectures.
+
 ## Frozen hypotheses
 
 The source definition retains six late-session candidates: positive benchmark-relative momentum, opening-range
@@ -48,11 +53,21 @@ Missing tokens, spliced chains, repeated tokens, and impossible calendar timesta
 Earlier captures without request-token evidence remain superseded diagnostics; do not infer those tokens from
 responses or retrofit them into old captures. Acquire and pin new source bytes instead.
 
-The strict input is `bayn.equity-edge-screen-input.v1` with `sourceSha256`, `symbols` including benchmark-only SPY,
+The strict input is `bayn.equity-edge-screen-input.v2` with `sourceSha256`, `symbols` including benchmark-only SPY,
 and `development`, `validation`, and `holdout` objects, each containing ISO `start` and `end` dates. Partition
 endpoints must be retained exchange sessions, periods must be chronological and disjoint, and at least fourteen
 earlier calendar sessions must be available. Keep input, raw data, reports, and registrations on private research
 storage outside Git and CI artifacts.
+
+The required `calendar` object supplies `start`, `end`, and `expectedHash`: the canonical hash of the complete
+native `MarketCalendarResponseSchema` decoded inventory from an independently retained calendar read. Pin this
+inventory before evaluating source; deriving the pin only from the source being checked cannot establish completeness.
+The header must retain its actual calendar request URL with those exact bounds. An omitted interior day, changed
+hours, or a narrower request is rejected against the independent inventory. The page's actual request URL must
+bind the same range, symbols, feed, `1Min`, raw adjustment, ascending order, page size 10000, end-date symbol mapping,
+and actual continuation token. Unknown or duplicate query parameters and out-of-range bars fail. The current
+request origins are the existing PAPER calendar API and market-data API. Version 1 inputs without these bindings
+are rejected. This pin still requires independent source review; it is not cryptographic proof of provider authenticity.
 
 The optional `feed` is `iex` by default or explicitly `sip` for historical consolidated-data research. The completion
 receipt must match that pinned feed. Historical SIP access does not establish real-time entitlement, the native live

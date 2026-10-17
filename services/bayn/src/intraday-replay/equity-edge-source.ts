@@ -24,8 +24,9 @@ export enum EquityHistoricalFeed {
   Sip = 'sip',
 }
 export const EquityEdgeInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.equity-edge-screen-input.v1'),
+  schemaVersion: Schema.Literal('bayn.equity-edge-screen-input.v2'),
   sourceSha256: Sha256Schema,
+  calendar: Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema, expectedHash: Sha256Schema }),
   feed: Schema.optionalKey(Schema.Enum(EquityHistoricalFeed)),
   symbols: Schema.Array(SymbolSchema),
   development: Period,
@@ -46,11 +47,13 @@ const Bar = Schema.Struct({
 })
 const Header = Schema.Struct({
   kind: Schema.Literal('calendar'),
+  requestUrl: StrictNonEmptyStringSchema,
   observedAt: UtcInstantSchema,
   data: MarketCalendarResponseSchema,
 })
 const Page = Schema.Struct({
   kind: Schema.Literal('bars'),
+  requestUrl: StrictNonEmptyStringSchema,
   page: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
   requestPageToken: Schema.NullOr(StrictNonEmptyStringSchema),
   observedAt: UtcInstantSchema,
@@ -67,6 +70,26 @@ const End = Schema.Struct({
   adjustment: Schema.Literal('raw'),
   observedAt: UtcInstantSchema,
 })
+
+const requestMatches = (
+  value: string,
+  origin: string,
+  pathname: string,
+  parameters: Readonly<Record<string, string>>,
+) => {
+  if (!URL.canParse(value)) return false
+  const url = new URL(value)
+  const entries = Object.entries(parameters)
+  return (
+    url.origin === origin &&
+    url.pathname === pathname &&
+    url.username === '' &&
+    url.password === '' &&
+    url.hash === '' &&
+    [...url.searchParams].length === entries.length &&
+    entries.every(([key, expected]) => url.searchParams.get(key) === expected)
+  )
+}
 
 const instant = (date: string, time: string) => {
   const value = DateTime.makeZoned(
@@ -93,6 +116,9 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
       return yield* Result.fail(new EquityScreenError({ message: 'Historical source SHA-256 mismatch' }))
     const periods = [input.development, input.validation, input.holdout]
     if (
+      input.calendar.start > input.calendar.end ||
+      input.calendar.start > input.development.start ||
+      input.calendar.end < input.holdout.end ||
       periods.some((p) => p.start > p.end) ||
       input.development.end >= input.validation.start ||
       input.validation.end >= input.holdout.start
@@ -111,6 +137,19 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
       return yield* Result.fail(new EquityScreenError({ message: 'Source paging envelope is incomplete or excessive' }))
     const header = yield* Schema.decodeUnknownResult(Schema.fromJsonString(Header))(first)
     const end = yield* Schema.decodeUnknownResult(Schema.fromJsonString(End))(last)
+    if (
+      !requestMatches(header.requestUrl, 'https://paper-api.alpaca.markets', '/v2/calendar', {
+        start: input.calendar.start,
+        end: input.calendar.end,
+      }) ||
+      canonicalHashV1(header.data) !== input.calendar.expectedHash ||
+      header.data.some((day) => day.date < input.calendar.start || day.date > input.calendar.end)
+    )
+      return yield* Result.fail(
+        new EquityScreenError({
+          message: 'Calendar differs from its independently pinned range and session inventory',
+        }),
+      )
     if (end.feed !== (input.feed ?? EquityHistoricalFeed.Iex))
       return yield* Result.fail(
         new EquityScreenError({ message: 'Historical feed differs from the pinned research input' }),
@@ -143,6 +182,22 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
       const line = lines[i]
       if (line === undefined) return yield* Result.fail(new EquityScreenError({ message: 'Missing page' }))
       const page = yield* Schema.decodeUnknownResult(Schema.fromJsonString(Page))(line)
+      const parameters: Record<string, string> = {
+        symbols: input.symbols.join(','),
+        timeframe: '1Min',
+        start: `${input.calendar.start}T00:00:00Z`,
+        end: `${input.calendar.end}T23:59:59Z`,
+        feed: input.feed ?? EquityHistoricalFeed.Iex,
+        adjustment: 'raw',
+        sort: 'asc',
+        limit: '10000',
+        asof: input.calendar.end,
+      }
+      if (page.requestPageToken !== null) parameters['page_token'] = page.requestPageToken
+      if (!requestMatches(page.requestUrl, 'https://data.alpaca.markets', '/v2/stocks/bars', parameters))
+        return yield* Result.fail(
+          new EquityScreenError({ message: 'Historical page request differs from its pinned query and continuation' }),
+        )
       const acquiredAt = Date.parse(page.observedAt)
       if (acquiredAt < lastAcquiredAt || acquiredAt > Date.parse(end.observedAt))
         return yield* Result.fail(new EquityScreenError({ message: 'Source acquisition clock regressed' }))
@@ -164,6 +219,10 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
           return yield* Result.fail(new EquityScreenError({ message: 'Source contains a foreign symbol' }))
         for (const bar of rows) {
           const at = Date.parse(bar.t)
+          if (at < Date.parse(parameters['start'] ?? '') || at > Date.parse(parameters['end'] ?? ''))
+            return yield* Result.fail(
+              new EquityScreenError({ message: 'Historical bar is outside the requested range' }),
+            )
           const previous = lastSymbolAt.get(symbol)
           if (!Number.isFinite(at) || (previous !== undefined && at <= previous))
             return yield* Result.fail(
@@ -212,6 +271,8 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         feed: end.feed,
         adjustment: end.adjustment,
         calendarHash: canonicalHashV1(days),
+        calendarEvidenceHash: input.calendar.expectedHash,
+        calendarRequest: { start: input.calendar.start, end: input.calendar.end },
         sourceCoverage: 'RECONSTRUCTED_HISTORICAL_BARS',
         originalArrivalTiming: 'UNKNOWN',
         executionCapacity: 'UNKNOWN',
