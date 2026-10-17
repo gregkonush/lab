@@ -243,6 +243,10 @@ Finder's **Open in Code** sends a file-opening request through the owner-scoped 
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
 Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
 extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
+Editor launches retain the backend's cold-start budget. Completed transient failures retry twice after one and two
+seconds using the same window identity. Closing the window cancels its pending request through the editor RPC and
+clears its retry timer; authorization denials
+surface immediately, and exhausted retries expose the normal Retry control.
 Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
 Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
 the desktop keeps the user signed in and shows the error so they can retry.

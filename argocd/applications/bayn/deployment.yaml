@@ -64,7 +64,7 @@ spec:
                 name: bayn-valkey-connection
           env:
             - name: BAYN_CODE_REVISION
-              value: 0580a88b1d3fd91d5aff7566ad79e166a7d93aab
+              value: ea804cd06edb9596c6ccf1b2dd1cfffc9a903481
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
               value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: BAYN_GLITCHTIP_DSN
@@ -84,16 +84,16 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:9583cb9bacc70cd63dbfbd893212bf8816f3e7929f5b2b911e02225c3ca9d4ed
+              value: sha256:4382b44028c153535647fa6086cd85e947766bd0a46c8957d6436ee02ed095c9
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "841d4b920b53df1401daf0e5c91a318fcb80136797b6f86f1df19d80c1db098b"
+              value: "b12adaa9febc0a207c07b4b6a773b833cced9731e71dc06d4b7686608fea8ac5"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "e6824aa82ffc70a11428916b4bf114f66e7fed4186f1fc84da18f3b7bf1ed74c"
+              value: "ca77ee9e9a5bbab64e74164a3547f5e70be699b10f49f6880e4f4e144e4a379d"
             # Runtime verifies the reviewed activation identity against its compiled strategy contract.
             - name: BAYN_STRATEGY_NAME
               value: jev
             - name: BAYN_STRATEGY_PROTOCOL_HASH
-              value: "04bf5314a5ab7886f1802f6aa5da64f4a080cb695b37c9adf042dbedf5fb3fba"
+              value: "fa9c70c5d13c1944989c27db970393031cabb5d63bce82e613eba7a69718e0c6"
             - name: BAYN_EXECUTION_RISK_POLICY_HASH
               value: "3e3748bb0c9f614a82b03076a57cefd51711524639d400f6559d5a8ee954e75d"
             - name: BAYN_BROKER_ACCESS
@@ -164,15 +164,6 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:9583cb9bacc70cd63dbfbd893212bf8816f3e7929f5b2b911e02225c3ca9d4ed\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"0580a88b1d3fd91d5aff7566ad79e166a7d93aab\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:84126302b9403a4ba88fef40e7927b9ace7e549ed567249432b0fae082d55dc1\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"42ce11bddb6742996b6623d5a1933b51ce4a2726\"\n  },\n  \"requestHash\": \"2aa5d3b64d3a0b4e2b879690412f8bf3ccdfde27614e15f41b0cf318a9d2d401\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
           startupProbe:
             httpGet:
               path: /livez
