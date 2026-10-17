@@ -447,12 +447,17 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function listCodexModels(identity: TengriIdentity, agentId: string, cursor?: string) {
-  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000)
+export async function listCodexModels(
+  identity: TengriIdentity,
+  agentId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000, signal)
   try {
     return parseCodexModelPage(stringValue(response.rawJson))
   } catch {
-    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog')
+    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog', 502, 'model_catalog_invalid')
   }
 }
 
