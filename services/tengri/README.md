@@ -50,6 +50,13 @@ session, grant, origin, workspace/runtime, action, resource, target and recovery
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
 cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
 Control submissions retain their separate durable audits and session activity updates.
+Controller runtime-state reads and guest health probes use the same bounded receipt cache. Its binding includes the
+current recovery generation, read from Ofz before each lookup. Ofz still checks workload policy and current runtime
+state before and after validating the durable receipt; changing the owner, epoch, membership, archive health or fence
+cannot reuse a previous decision. Terminal cleanup remains a separately audited control submission.
+Transport failures during reconciliation mark readiness `Unknown` and retain the last observed guest phase. The BFF
+reports that uncertainty as unavailable, preserving the existing desktop until a new observation succeeds. A transport
+timeout does not establish that the VM failed; actual lifecycle and invariant failures retain their failure handling.
 Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
 PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
 rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
