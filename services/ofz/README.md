@@ -270,8 +270,10 @@ Ofz image-packaging and documentation changes do not rebuild native Tengri guest
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
 
-
-Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. RPC traces retain the
+numeric status code. Expected session expiry, denied requests and client validation failures remain traceable without
+creating server-error issues; transport, deadline, capacity and internal failures still emit GlitchTip events with a
+bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.

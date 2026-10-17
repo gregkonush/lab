@@ -116,6 +116,11 @@ pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
 
+The offline [equity edge screen](../../docs/bayn/equity-edge-screen.md) compares thirteen fixed bar-based hypotheses
+under chronological partitions, native fee scenarios and serial capital accounting. It retains rejected trials and
+missing coverage, never promotes a strategy, and does not substitute historical bars for original arrival/quote evidence.
+Run it only in a separate research process; it is not part of the live service or its strategy selection.
+
 ## Reproducible image dependencies
 
 The Bayn Nix dependency build normalizes the two CLI symlinks in the
