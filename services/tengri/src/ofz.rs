@@ -17,7 +17,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     io,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{net::TcpStream, time::timeout};
@@ -32,10 +32,12 @@ pub const OFZ_ID: &str = "spiffe://proompteng.ai/ns/ofz/sa/ofz-api";
 const DECISION_TIMEOUT: Duration = Duration::from_secs(2);
 pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 5000;
 const DURABLE_TIMEOUT: Duration = Duration::from_millis(AUDITED_REQUEST_BUDGET_MS);
+mod receipts;
 
 #[derive(Clone)]
 pub struct Client {
     rpc: AuthorizationServiceClient<Channel>,
+    receipts: Arc<receipts::Cache>,
 }
 
 impl Client {
@@ -125,6 +127,7 @@ impl Client {
 
     fn from_channel(channel: Channel) -> Self {
         Self {
+            receipts: Arc::new(receipts::Cache::default()),
             rpc: AuthorizationServiceClient::new(channel)
                 .max_decoding_message_size(1_048_576)
                 .max_encoding_message_size(65536),
@@ -238,26 +241,65 @@ impl Client {
         receipt_id: String,
         recovery_generation: u64,
     ) -> Result<CheckResponse, Status> {
+        let mut check = CheckRequest {
+            context: Some(context),
+            action: action as i32,
+            resource: Some(resource),
+            target,
+            stream_receipt_id: receipt_id,
+        };
+        // Repeated observations retain one durable receipt. Control operations still
+        // audit each submission and renew human activity through that transaction.
+        if !check.stream_receipt_id.is_empty()
+            || !matches!(
+                action,
+                Action::WorkspaceMetadataRead
+                    | Action::FilesObserve
+                    | Action::TerminalObserve
+                    | Action::CodexObserve
+                    | Action::BrowserObserve
+            )
+        {
+            return self.check_request(check, recovery_generation).await;
+        }
+        let slot = self.receipts.slot(&check, recovery_generation).await?;
+        let remaining = remaining_deadline(&check)?.min(DURABLE_TIMEOUT);
+        let mut receipt = timeout(remaining, slot.lock())
+            .await
+            .map_err(|_| Status::deadline_exceeded("authorization receipt deadline expired"))?;
+        if receipt.as_ref().is_some_and(|receipt| !receipt.fresh()) {
+            *receipt = None;
+        }
+        if let Some(receipt) = receipt.as_ref() {
+            check.stream_receipt_id = receipt.id.clone();
+        }
+        if !check.stream_receipt_id.is_empty() {
+            drop(receipt);
+            return self.check_request(check, recovery_generation).await;
+        }
+        let decision = self.check_request(check, recovery_generation).await;
+        if let Ok(decision) = &decision {
+            *receipt = Some(receipts::Receipt {
+                id: decision.audit_receipt_id.clone(),
+                created: std::time::Instant::now(),
+            });
+        }
+        decision
+    }
+
+    async fn check_request(
+        &self,
+        check: CheckRequest,
+        recovery_generation: u64,
+    ) -> Result<CheckResponse, Status> {
         let mut rpc = self.rpc.clone();
-        let duration = if receipt_id.is_empty() {
+        let duration = if check.stream_receipt_id.is_empty() {
             DURABLE_TIMEOUT
         } else {
             DECISION_TIMEOUT
-        };
-        let decision = bounded(
-            duration,
-            rpc.check(request(
-                CheckRequest {
-                    context: Some(context),
-                    action: action as i32,
-                    resource: Some(resource),
-                    target,
-                    stream_receipt_id: receipt_id,
-                },
-                duration,
-            )),
-        )
-        .await?;
+        }
+        .min(remaining_deadline(&check)?);
+        let decision = bounded(duration, rpc.check(request(check, duration))).await?;
         if decision.recovery_generation != recovery_generation {
             return Err(Status::unauthenticated(
                 "authorization recovery generation changed",
@@ -344,6 +386,21 @@ impl Client {
         }
         Err(Status::aborted("workspace policy changed repeatedly"))
     }
+}
+
+fn remaining_deadline(check: &CheckRequest) -> Result<Duration, Status> {
+    let deadline = check
+        .context
+        .as_ref()
+        .expect("client checks always supply context")
+        .deadline_unix_ms;
+    let remaining = deadline.saturating_sub(now_ms()?);
+    if remaining == 0 {
+        return Err(Status::deadline_exceeded(
+            "authorization request deadline expired",
+        ));
+    }
+    Ok(Duration::from_millis(remaining))
 }
 
 fn workload_context() -> Result<RequestContext, Status> {
@@ -434,3 +491,7 @@ pub fn operation_id(uid: &str, action: &str) -> String {
 #[cfg(test)]
 #[path = "ofz_wire_test.rs"]
 mod wire_test;
+
+#[cfg(test)]
+#[path = "ofz_receipt_transport_test.rs"]
+mod receipt_transport_test;
