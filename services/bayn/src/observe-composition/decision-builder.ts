@@ -201,7 +201,7 @@ export const loadQuoteBoundExecutionRiskPolicy = Pipeable.by<
 
 type ObserveStrategy = StrategyRuntime
 
-class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
+export class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
   readonly timeoutMs: number
   readonly message: string
 }> {}
