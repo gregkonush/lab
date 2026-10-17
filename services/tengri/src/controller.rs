@@ -151,6 +151,38 @@ async fn reconcile(
 
 fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
     let mut status = microvm.status.clone().unwrap_or_default();
+    if error.chain().any(|cause| {
+        cause.downcast_ref::<tonic::Status>().is_some_and(|error| {
+            matches!(
+                error.code(),
+                tonic::Code::Cancelled
+                    | tonic::Code::DeadlineExceeded
+                    | tonic::Code::Unavailable
+                    | tonic::Code::ResourceExhausted
+            )
+        }) || cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_timeout() || error.is_connect())
+            || matches!(cause.downcast_ref::<kube::Error>(), Some(kube::Error::Api(error)) if error.code == 409 || error.code == 429 || error.code >= 500)
+    }) {
+        status.guest_ready = false;
+        status.failure_reason = None;
+        status.message = Some("Runtime status cannot be confirmed. Retrying.".into());
+        let last_transition_at = status
+            .conditions
+            .first()
+            .filter(|condition| condition.reason == "ReconcileUnavailable")
+            .map(|condition| condition.last_transition_at.clone())
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        status.conditions = vec![MicroVMCondition {
+            type_: "Ready".into(),
+            status: "Unknown".into(),
+            reason: "ReconcileUnavailable".into(),
+            message: status.message.clone().expect("retry message"),
+            last_transition_at,
+        }];
+        return status;
+    }
     let capacity = error.downcast_ref::<NoPreparedSlot>().is_some();
     let phase = if capacity {
         MicroVMPhase::Pending
@@ -2515,6 +2547,30 @@ mod tests {
                 .is_some()
         );
         assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn transport_failure_does_not_claim_the_running_guest_failed() {
+        let mut microvm = agent();
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            runtime_epoch: microvm.spec.runtime_epoch.clone(),
+            ..Default::default()
+        });
+        let status = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::cancelled("transport timeout")),
+        );
+        assert_eq!(status.phase, MicroVMPhase::Ready);
+        assert!(!status.guest_ready);
+        assert_eq!(status.conditions[0].status, "Unknown");
+        assert_eq!(status.conditions[0].reason, "ReconcileUnavailable");
+        assert!(status.failure_reason.is_none());
+        let failed = failure_status(&microvm, &anyhow::anyhow!("retained-home binding changed"));
+        assert_eq!(failed.phase, MicroVMPhase::Failed);
+        assert!(!failed.guest_ready);
+        assert_eq!(failed.conditions[0].status, "False");
     }
 
     #[tokio::test]
