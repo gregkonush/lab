@@ -43,6 +43,12 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
       return proceeds - fees.cashMicros
     }
     expect(nativeCash(bid)).toBeGreaterThanOrEqual(acquisitionCostMicros)
+    expect(
+      Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: bid })).conservativeNetMicros,
+    ).toBeGreaterThanOrEqual(acquisitionCostMicros)
+    expect(
+      Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: bid - 1n })).conservativeNetMicros,
+    ).toBeLessThan(acquisitionCostMicros)
     expect(nativeCash(bid - 1n)).toBeLessThan(acquisitionCostMicros + 10_000n)
     for (const higher of [1n, 10n, 100n, 1_000n, 10_000n])
       expect(nativeCash(bid + higher)).toBeGreaterThanOrEqual(acquisitionCostMicros)
@@ -89,4 +95,15 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
     expect(
       Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: bid + higher })).netMicros,
     ).toBeGreaterThanOrEqual(acquisitionCostMicros)
+})
+
+test('the conservative cash floor remains monotone across an actual cent fee jump', () => {
+  const input = { protocol: defaultJevProtocolDocument, symbol: 'BTC/USD', quantityAtoms: 1_000_000_000n }
+  const before = Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 92_092_092n }))
+  const after = Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 92_092_093n }))
+  expect(before.netMicros).toBeGreaterThanOrEqual(91_770_000n)
+  expect(after.netMicros).toBeLessThan(91_770_000n)
+  expect(after.conservativeNetMicros).toBeGreaterThanOrEqual(before.conservativeNetMicros)
+  expect(before.conservativeNetMicros).toBeLessThanOrEqual(before.netMicros)
+  expect(after.conservativeNetMicros).toBeLessThanOrEqual(after.netMicros)
 })
