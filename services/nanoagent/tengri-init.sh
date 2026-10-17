@@ -1,6 +1,7 @@
 #!/bin/bash
 set -euo pipefail
 mount -t proc proc /proc
+printf '524288\n' > /proc/sys/fs/inotify/max_user_watches
 mount -t sysfs sysfs /sys
 if ! mountpoint -q /dev; then
   mount -t devtmpfs devtmpfs /dev

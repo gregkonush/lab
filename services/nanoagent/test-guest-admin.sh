@@ -36,6 +36,7 @@ sudo -n apt-get clean
 sudo -n bash -c 'rm -rf /home/nanoagent/.cache/apt/lists/* /home/nanoagent/.cache/apt/archives/*'
 
 if [[ "${1:-}" == --runtime ]]; then
+  test "$(cat /proc/sys/fs/inotify/max_user_watches)" = 524288
   sudo -n mount -t tmpfs -o size=1m,mode=1777 tmpfs "$admin_mount"
   printf 'mounted\n' > "$admin_mount/guest-test"
   test "$(cat "$admin_mount/guest-test")" = mounted
