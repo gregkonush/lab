@@ -42,6 +42,12 @@ in New York; Bayn's separate extended data-session normalization is not used for
 Each symbol's source timestamps must be strictly ascending within and across pages. The decoder rejects ordering
 regressions rather than normalizing malformed source evidence into a sorted map.
 
+Every bars envelope requires `requestPageToken`: `null` for page zero, then exactly the preceding response's
+`next_page_token`. The acquisition process records the token actually sent before following each continuation.
+Missing tokens, spliced chains, repeated tokens, and impossible calendar timestamps are rejected even after rehashing.
+Earlier captures without request-token evidence remain superseded diagnostics; do not infer those tokens from
+responses or retrofit them into old captures. Acquire and pin new source bytes instead.
+
 The strict input is `bayn.equity-edge-screen-input.v1` with `sourceSha256`, `symbols` including benchmark-only SPY,
 and `development`, `validation`, and `holdout` objects, each containing ISO `start` and `end` dates. Partition
 endpoints must be retained exchange sessions, periods must be chronological and disjoint, and at least fourteen
@@ -77,6 +83,8 @@ Fee charges are the delta of the native cumulative session-by-fee-type total. Re
 consume the fee state; every accepted simulated order contributes one fill, retaining per-order TAF caps. Independent
 per-fill cent rounding is not substituted for the native session aggregation. VWAP must also lie inside each bar's
 reported low/high before evaluation, and missing opening/history evidence is recorded before return-based filters.
+Definition v6 searches the maximum affordable whole-share order including its cumulative session fee delta;
+low-priced instruments are not omitted just because fees exceed one share's value.
 
 Protective stops react to a completed bar, then use the next available opening price within three minutes. Losses
 through a stop are not clipped to the stop. A missing exit leaves an incomplete path, never a fabricated flat mark.

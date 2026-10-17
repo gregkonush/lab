@@ -18,6 +18,7 @@ const fixture = () => {
     {
       kind: 'bars',
       page: 0,
+      requestPageToken: null,
       observedAt: at,
       data: {
         bars: { SPY: [{ t: '2026-08-03T13:30:00Z', o: 100, h: 101, l: 99, c: 100, v: 10, vw: 100 }] },
@@ -60,6 +61,56 @@ test('changed source bytes fail even when JSON meaning is unchanged', () => {
   expect(Result.isFailure(decode(text + '\n', input))).toBe(true)
 })
 
+test.each(['missing', 'initial', 'spliced'] as const)('rejects %s request-token evidence', (failure) => {
+  const { text, input } = fixture()
+  let changed = text
+  if (failure === 'missing') changed = text.replace('"requestPageToken":null,', '')
+  if (failure === 'initial') changed = text.replace('"requestPageToken":null', '"requestPageToken":"unexpected"')
+  if (failure === 'spliced') {
+    const [header, page, end] = text.trimEnd().split('\n')
+    if (header === undefined || page === undefined || end === undefined) throw new Error('fixture incomplete')
+    changed =
+      [
+        header,
+        page.replace('"next_page_token":null', '"next_page_token":"next"'),
+        page
+          .replace('"page":0', '"page":1')
+          .replace('13:30', '13:31')
+          .replace('"requestPageToken":null', '"requestPageToken":"other-chain"'),
+        end.replace('"pages":1', '"pages":2').replace('"bars":1', '"bars":2'),
+      ].join('\n') + '\n'
+  }
+  expect(Result.isFailure(decode(changed, { ...input, sourceSha256: sha256(changed) }))).toBe(true)
+})
+
+test('accepts an explicitly witnessed continuation-token chain', () => {
+  const { text, input } = fixture()
+  const [header, page, end] = text.trimEnd().split('\n')
+  if (header === undefined || page === undefined || end === undefined) throw new Error('fixture incomplete')
+  const changed =
+    [
+      header,
+      page.replace('"next_page_token":null', '"next_page_token":"next"'),
+      page
+        .replace('"page":0', '"page":1')
+        .replace('13:30', '13:31')
+        .replace('"requestPageToken":null', '"requestPageToken":"next"'),
+      end.replace('"pages":1', '"pages":2').replace('"bars":1', '"bars":2'),
+    ].join('\n') + '\n'
+  const result = decode(changed, { ...input, sourceSha256: sha256(changed) })
+  if (Result.isFailure(result)) throw result.failure
+  expect(result.success.source.bars).toBe(2)
+})
+
+test.each(['2026-02-30T14:30:00Z', '2026-02-29T14:30:00.000000000Z', '2026-08-03T24:00:00Z'])(
+  'rejects normalized impossible source instant %s',
+  (timestamp) => {
+    const { text, input } = fixture()
+    const changed = text.replace('2026-08-03T13:30:00Z', timestamp)
+    expect(Result.isFailure(decode(changed, { ...input, sourceSha256: sha256(changed) }))).toBe(true)
+  },
+)
+
 test.each(['within one page', 'across pages'] as const)('rejects per-symbol time regression %s', (location) => {
   const { text, input } = fixture()
   const lines = text.trimEnd().split('\n')
@@ -79,7 +130,7 @@ test.each(['within one page', 'across pages'] as const)('rejects per-symbol time
       [
         header,
         page.replace('13:30', '13:31').replace('"next_page_token":null', '"next_page_token":"next"'),
-        page.replace('"page":0', '"page":1'),
+        page.replace('"page":0', '"page":1').replace('"requestPageToken":null', '"requestPageToken":"next"'),
         end.replace('"pages":1', '"pages":2').replace('"bars":1', '"bars":2'),
       ].join('\n') + '\n'
   }

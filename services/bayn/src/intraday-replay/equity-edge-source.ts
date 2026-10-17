@@ -2,7 +2,15 @@ import { DateTime, Result, Schema } from 'effect'
 
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { canonicalHashV1, sha256 } from '../hash'
-import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import {
+  IsoDateSchema,
+  Sha256Schema,
+  SymbolSchema,
+  UtcInstantSchema,
+  UtcSourceTimestampSchema,
+  StrictNonEmptyStringSchema,
+  strictParseOptions,
+} from '../schemas'
 import {
   EquityScreenError,
   indexEquityScreenBars,
@@ -28,7 +36,7 @@ export const EquityEdgeInputSchema = Schema.Struct({
 const Positive = Schema.Finite.check(Schema.isGreaterThan(0))
 const Nonnegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const Bar = Schema.Struct({
-  t: Schema.String.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(?:\.0{1,9})?Z$/)),
+  t: UtcSourceTimestampSchema.check(Schema.isPattern(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:00(?:\.0{1,9})?Z$/)),
   o: Positive,
   h: Positive,
   l: Positive,
@@ -44,10 +52,11 @@ const Header = Schema.Struct({
 const Page = Schema.Struct({
   kind: Schema.Literal('bars'),
   page: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)),
+  requestPageToken: Schema.NullOr(StrictNonEmptyStringSchema),
   observedAt: UtcInstantSchema,
   data: Schema.Struct({
     bars: Schema.Record(Schema.String, Schema.Array(Bar)),
-    next_page_token: Schema.NullOr(Schema.String),
+    next_page_token: Schema.NullOr(StrictNonEmptyStringSchema),
   }),
 })
 const End = Schema.Struct({
@@ -128,6 +137,7 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
     const bars: EquityScreenBar[] = []
     const lastSymbolAt = new Map<string, number>()
     const tokens = new Set<string>()
+    let expectedRequestToken: string | null = null
     let lastAcquiredAt = Date.parse(header.observedAt)
     for (let i = 1; i < lines.length - 1; i++) {
       const line = lines[i]
@@ -138,11 +148,17 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         return yield* Result.fail(new EquityScreenError({ message: 'Source acquisition clock regressed' }))
       lastAcquiredAt = acquiredAt
       const token = page.data.next_page_token
-      if (page.page !== i - 1 || (i === lines.length - 2) !== (token === null) || (token !== null && tokens.has(token)))
+      if (
+        page.requestPageToken !== expectedRequestToken ||
+        page.page !== i - 1 ||
+        (i === lines.length - 2) !== (token === null) ||
+        (token !== null && tokens.has(token))
+      )
         return yield* Result.fail(
           new EquityScreenError({ message: 'Source pagination is not complete and progressive' }),
         )
       if (token !== null) tokens.add(token)
+      expectedRequestToken = token
       for (const [symbol, rows] of Object.entries(page.data.bars)) {
         if (!input.symbols.includes(symbol))
           return yield* Result.fail(new EquityScreenError({ message: 'Source contains a foreign symbol' }))
@@ -192,6 +208,7 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         bytes: new TextEncoder().encode(text).length,
         bars: bars.length,
         pages: end.pages,
+        paginationEvidence: 'OBSERVED_REQUEST_AND_RESPONSE_TOKEN_CHAIN',
         feed: end.feed,
         adjustment: end.adjustment,
         calendarHash: canonicalHashV1(days),

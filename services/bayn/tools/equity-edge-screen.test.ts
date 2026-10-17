@@ -23,7 +23,7 @@ test('offline command validates pins, preserves zero-activity sessions and never
     const source =
       [
         { kind: 'calendar', observedAt, data: calendar },
-        { kind: 'bars', page: 0, observedAt, data: { bars: {}, next_page_token: null } },
+        { kind: 'bars', page: 0, requestPageToken: null, observedAt, data: { bars: {}, next_page_token: null } },
         { kind: 'complete', pages: 1, bars: 0, observedAt, feed: 'iex', adjustment: 'raw' },
       ]
         .map((row) => JSON.stringify(row))

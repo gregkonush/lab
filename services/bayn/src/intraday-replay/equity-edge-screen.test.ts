@@ -227,6 +227,37 @@ test('position size is fixed from completed signal evidence, not a favorable fut
   expect(run(cheaperFuture).trades[0]?.shares).toBe(run(original).trades[0]?.shares)
 })
 
+test('low-price entry finds the maximal whole-share quantity including cumulative fees', () => {
+  const bars = fixture().map((bar) =>
+    bar.symbol === 'AAPL'
+      ? {
+          ...bar,
+          open: bar.open / 10000,
+          high: bar.high / 10000,
+          low: bar.low / 10000,
+          close: bar.close / 10000,
+          vwap: bar.vwap / 10000,
+        }
+      : bar,
+  )
+  const trade = run(bars).trades[0]
+  if (trade === undefined) throw new Error('affordable order was omitted')
+  const shares = BigInt(trade.shares)
+  const price = BigInt(trade.entryPriceMicros)
+  const total = (quantity: bigint) =>
+    quantity * price +
+    unwrap(
+      calculateSessionFees(
+        [{ symbol: 'AAPL', side: 'buy', quantityAtoms: quantity * 1_000_000_000n, notionalMicros: quantity * price }],
+        intradayExecutionModel,
+        1_000_000n,
+      ),
+    ).cashMicros
+  expect(shares).toBeGreaterThan(0n)
+  expect(total(shares)).toBeLessThanOrEqual(20_000_000_000n)
+  expect(total(shares + 1n)).toBeGreaterThan(20_000_000_000n)
+})
+
 test('empty periods have no numeric result and missing position marks remain explicit', () => {
   const index = unwrap(indexEquityScreenBars(fixture()))
   const empty = unwrap(runEquityEdgeScreen(index, ['AAPL', 'SPY'], [day], '2026-09-02', '2026-09-03', policy))

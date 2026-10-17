@@ -37,7 +37,7 @@ export interface EquityScreenPolicy {
 }
 
 export const equityScreenDefinition = Object.freeze({
-  schemaVersion: 'bayn.equity-edge-screen-definition.v5',
+  schemaVersion: 'bayn.equity-edge-screen-definition.v6',
   signalMinutes: 30,
   decisionIntervalMinutes: 5,
   lastEntryMinute: 210,
@@ -496,14 +496,16 @@ export const runEquityEdgeScreen = (
         const riskAllocation = (cash * 10n) / stopBps
         const allocation =
           policy.volatilityRisk === true && riskAllocation < capitalAllocation ? riskAllocation : capitalAllocation
-        let shares = allocation / sizingPrice
-        if (shares <= 0n) continue
-        let reservedFees = yield* fee(candidate.symbol, true, shares, sizingPrice)
-        if (shares * sizingPrice + reservedFees > allocation) {
-          shares--
-          reservedFees = yield* fee(candidate.symbol, true, shares, sizingPrice)
+        // Total buy cost is monotone in whole shares. Search without mutating the accepted session-fee prefix.
+        let shares = 0n
+        let upper = allocation / sizingPrice
+        while (shares < upper) {
+          const proposed = (shares + upper + 1n) / 2n
+          const proposedFees = yield* fee(candidate.symbol, true, proposed, sizingPrice)
+          if (proposed * sizingPrice + proposedFees <= allocation) shares = proposed
+          else upper = proposed - 1n
         }
-        if (shares <= 0n || shares * sizingPrice + reservedFees > allocation) continue
+        if (shares <= 0n) continue
         const entry = index.get(candidate.symbol)?.get(at + minuteMs)
         if (entry === undefined) {
           missingArrivalBars++
