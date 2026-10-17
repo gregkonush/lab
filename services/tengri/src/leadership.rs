@@ -18,7 +18,7 @@ use uuid::Uuid;
 use crate::control::{Database, Fence};
 
 const NAME: &str = "tengri-controller-leader";
-const LEASE_DURATION: Duration = Duration::from_secs(15);
+pub(crate) const LEASE_DURATION: Duration = Duration::from_secs(60);
 const RENEW_INTERVAL: Duration = Duration::from_secs(5);
 const RENEW_TIMEOUT: Duration = Duration::from_secs(2);
 
@@ -90,23 +90,19 @@ impl Election {
 
     pub async fn run(mut self, context: crate::controller::ControllerContext) {
         loop {
-            let acquired = timeout(RENEW_TIMEOUT, self.acquire()).await;
-            let fence = match acquired {
-                Ok(Ok(Some(fence))) => fence,
-                Ok(Ok(None)) => {
+            let authority = match acquire_authority(self.acquire()).await {
+                Ok(Some(authority)) => authority,
+                Ok(None) => {
                     tokio::time::sleep(RENEW_INTERVAL).await;
                     continue;
                 }
-                result => {
-                    tracing::warn!(error=?result, "controller leadership acquisition failed");
+                Err(error) => {
+                    tracing::warn!(error=%error, "controller leadership acquisition failed");
                     tokio::time::sleep(RENEW_INTERVAL).await;
                     continue;
                 }
             };
-            let authority = Authority {
-                fence,
-                deadline: Instant::now() + LEASE_DURATION - RENEW_TIMEOUT,
-            };
+            let fence = authority.fence;
             self.authority.send_replace(Some(authority));
             let guard = Guard {
                 authority: self.authority.subscribe(),
@@ -180,7 +176,7 @@ impl Election {
             return Ok(None);
         }
         spec.holder_identity = Some(self.owner.to_string());
-        spec.lease_duration_seconds = Some(15);
+        spec.lease_duration_seconds = Some(LEASE_DURATION.as_secs() as i32);
         spec.renew_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
         spec.acquire_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
         spec.lease_transitions = Some(
@@ -206,13 +202,28 @@ impl Election {
         if spec.holder_identity.as_deref() != Some(self.owner.to_string().as_str()) {
             return Ok(false);
         }
-        spec.lease_duration_seconds = Some(15);
+        spec.lease_duration_seconds = Some(LEASE_DURATION.as_secs() as i32);
         spec.renew_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
         self.leases
             .replace(NAME, &PostParams::default(), &lease)
             .await?;
         self.database.renew(fence).await.map_err(Into::into)
     }
+}
+
+async fn acquire_authority(
+    acquire: impl Future<Output = anyhow::Result<Option<Fence>>>,
+) -> anyhow::Result<Option<Authority>> {
+    let started = Instant::now();
+    let Some(fence) = timeout(LEASE_DURATION, acquire).await?? else {
+        return Ok(None);
+    };
+    let deadline = started + LEASE_DURATION;
+    ensure!(
+        deadline > Instant::now(),
+        "controller acquisition arrived after expiry"
+    );
+    Ok(Some(Authority { fence, deadline }))
 }
 
 async fn renew_authority<F, R>(
@@ -225,6 +236,7 @@ where
     R: Future<Output = anyhow::Result<bool>>,
 {
     let mut interval = tokio::time::interval(RENEW_INTERVAL);
+    interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     interval.tick().await;
     loop {
         let attempt = async {
@@ -265,6 +277,84 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test(start_paused = true)]
+    async fn observed_commit_tail_keeps_confirmed_leadership_without_restarting_its_clock() {
+        let (sender, guard) = Guard::fixture();
+        let authority = *sender.borrow().as_ref().unwrap();
+        let begun = Instant::now();
+        let renewal = renew_authority(&sender, authority, || async {
+            tokio::time::sleep(Duration::from_secs(21)).await;
+            Ok(true)
+        });
+        tokio::pin!(renewal);
+        tokio::select! {
+            result = &mut renewal => panic!("observed commit delay discarded leadership: {result:?}"),
+            _ = tokio::time::sleep(RENEW_INTERVAL + Duration::from_millis(21_250)) => {}
+        }
+        assert_eq!(
+            sender.borrow().as_ref().unwrap().deadline,
+            begun + RENEW_INTERVAL + LEASE_DURATION
+        );
+        assert!(guard.fence().is_ok());
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn acquisition_waits_for_the_commit_without_extending_the_confirmed_window() {
+        let fence = Fence {
+            owner: Uuid::new_v4(),
+            generation: 1,
+        };
+        let started = Instant::now();
+        let authority = acquire_authority(async {
+            tokio::time::sleep(Duration::from_secs(21)).await;
+            Ok(Some(fence))
+        })
+        .await
+        .unwrap()
+        .unwrap();
+        assert_eq!(authority.fence, fence);
+        assert_eq!(authority.deadline, started + LEASE_DURATION);
+        assert_eq!(
+            authority.deadline - Instant::now(),
+            LEASE_DURATION - Duration::from_secs(21)
+        );
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn delayed_commits_do_not_trigger_a_burst_of_overdue_renewals() {
+        let (sender, _) = Guard::fixture();
+        let authority = *sender.borrow().as_ref().unwrap();
+        let attempts = std::sync::atomic::AtomicUsize::new(0);
+        let renewal = renew_authority(&sender, authority, || {
+            let first = attempts.fetch_add(1, std::sync::atomic::Ordering::SeqCst) == 0;
+            async move {
+                if first {
+                    tokio::time::sleep(Duration::from_secs(21)).await;
+                }
+                Ok(true)
+            }
+        });
+        tokio::pin!(renewal);
+        tokio::select! {
+            result = &mut renewal => panic!("renewal stopped: {result:?}"),
+            _ = tokio::time::sleep(RENEW_INTERVAL + Duration::from_millis(21_250)) => {}
+        }
+        assert_eq!(attempts.load(std::sync::atomic::Ordering::SeqCst), 2);
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn an_unconfirmed_acquisition_never_grants_authority() {
+        let started = Instant::now();
+        assert!(acquire_authority(std::future::pending()).await.is_err());
+        assert_eq!(Instant::now() - started, LEASE_DURATION);
+        assert!(
+            acquire_authority(async { Ok(None) })
+                .await
+                .unwrap()
+                .is_none()
+        );
+    }
 
     #[tokio::test(start_paused = true)]
     async fn slow_renewal_keeps_the_inflight_attempt_and_conservative_deadline() {
