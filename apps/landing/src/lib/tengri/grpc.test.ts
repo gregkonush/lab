@@ -87,6 +87,8 @@ let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
+let catalogRequestStarted: (() => void) | null = null
+let catalogRequestCancelled: (() => void) | null = null
 let codexAccountRequestStarted: (() => void) | null = null
 let codexAccountRequestCancelled: (() => void) | null = null
 let renewingFileWatch: grpc.ServerWritableStream<Record<string, unknown>, Record<string, unknown>> | null = null
@@ -334,6 +336,18 @@ beforeAll(async () => {
       receivedRequest = call.request
       if (call.request.agentId === 'unimplemented-catalog') {
         callback(serviceError(grpc.status.UNIMPLEMENTED, 'model/list is unavailable'), null)
+        return
+      }
+      if (call.request.agentId === 'catalog-cancel') {
+        catalogRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'catalog request was not cancelled'), null),
+          2_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          catalogRequestCancelled?.()
+        })
         return
       }
       callback(null, {
@@ -1247,6 +1261,37 @@ describe('Tengri gRPC BFF transport', () => {
     ])
     codexAccountRequestStarted = null
     codexAccountRequestCancelled = null
+  })
+
+  test('cancels the model catalog gRPC when the browser request aborts', async () => {
+    const { listCodexModels } = await import('./grpc')
+    const started = new Promise<void>((resolve) => {
+      catalogRequestStarted = resolve
+    })
+    const cancelled = new Promise<void>((resolve) => {
+      catalogRequestCancelled = resolve
+    })
+    const controller = new AbortController()
+    const pending = listCodexModels(identity, 'catalog-cancel', undefined, controller.signal).catch(
+      (error: unknown) => error,
+    )
+    try {
+      await started
+      controller.abort()
+      expect(
+        await Promise.race([
+          pending,
+          new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Catalog cancellation timed out')), 300)),
+        ]),
+      ).toMatchObject({ name: 'AbortError' })
+      await Promise.race([
+        cancelled,
+        new Promise<never>((_, reject) => setTimeout(() => reject(new Error('Catalog gRPC was not cancelled')), 300)),
+      ])
+    } finally {
+      catalogRequestStarted = null
+      catalogRequestCancelled = null
+    }
   })
 
   test('restores an active Codex device login without creating another attempt', async () => {

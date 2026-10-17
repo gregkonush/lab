@@ -447,8 +447,13 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function listCodexModels(identity: TengriIdentity, agentId: string, cursor?: string) {
-  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000)
+export async function listCodexModels(
+  identity: TengriIdentity,
+  agentId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000, signal)
   try {
     return parseCodexModelPage(stringValue(response.rawJson))
   } catch {

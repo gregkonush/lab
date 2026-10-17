@@ -166,6 +166,27 @@ test('reports a failed history record from an HTTP 200 stream with its response 
 })
 
 describe('Tengri guest operation coordination', () => {
+  test('keeps lifecycle controls available during a catalog read and cancels it on transition', async () => {
+    const agentId = 'catalog-lifecycle'
+    const started = Promise.withResolvers<void>()
+    globalThis.fetch = (async (_input, init) => {
+      started.resolve()
+      await waitForAbort(init?.signal)
+      throw init?.signal?.reason
+    }) as typeof fetch
+    const pending = runTengriAction({ action: 'codex-models', agentId }).catch((error: unknown) => error)
+    await started.promise
+    const blocked = getTengriGuestOperationSnapshot(agentId)
+    const releaseTransition = beginTengriLifecycleTransition(agentId)
+    try {
+      expect(await pending).toMatchObject({ name: 'AbortError' })
+      expect(blocked).toBe(false)
+      expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
+    } finally {
+      releaseTransition()
+    }
+  })
+
   test('blocks new guest requests and cancels in-flight work before a lifecycle transition', async () => {
     const agentId = 'agent-lifecycle'
     const snapshots: boolean[] = []
@@ -197,6 +218,7 @@ describe('Tengri guest operation coordination', () => {
     const blocked = await runTengriAction({ action: 'list-files', agentId, path: '/' }).catch((error: unknown) => error)
     expect(blocked).toBeInstanceOf(Error)
     expect((blocked as Error).message).toBe('Agent lifecycle transition is in progress')
+    expect(blocked).toMatchObject({ name: 'AbortError' })
     expect(actions).toHaveLength(callsBeforeBlockedRequest)
 
     expect(

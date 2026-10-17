@@ -34,7 +34,7 @@ type TengriActionOptions = {
 }
 
 type GuestOperationScope = {
-  active: Set<AbortController>
+  active: Map<AbortController, { blocksLifecycle: boolean }>
   lifecycleBlocks: number
   listeners: Set<() => void>
 }
@@ -51,7 +51,10 @@ export function subscribeTengriGuestOperations(agentId: string, listener: () => 
 }
 
 export function getTengriGuestOperationSnapshot(agentId: string) {
-  return (guestOperationScopes.get(agentId)?.active.size ?? 0) > 0
+  for (const request of guestOperationScopes.get(agentId)?.active.values() ?? []) {
+    if (request.blocksLifecycle) return true
+  }
+  return false
 }
 
 export function hasActiveTengriGuestOperations(agentId: string) {
@@ -61,7 +64,7 @@ export function hasActiveTengriGuestOperations(agentId: string) {
 export function beginTengriLifecycleTransition(agentId: string) {
   const scope = guestOperationScope(agentId)
   scope.lifecycleBlocks += 1
-  for (const controller of scope.active) {
+  for (const controller of scope.active.keys()) {
     controller.abort(new DOMException('Agent lifecycle transition is in progress', 'AbortError'))
   }
 
@@ -84,12 +87,12 @@ export async function runTengriAction<Result>(
 
   options?.signal?.throwIfAborted()
   const scope = guestOperationScope(guestAgentId)
-  if (scope.lifecycleBlocks > 0) throw new Error('Agent lifecycle transition is in progress')
+  if (scope.lifecycleBlocks > 0) throw new DOMException('Agent lifecycle transition is in progress', 'AbortError')
 
   const controller = new AbortController()
   const abortFromCaller = () => controller.abort(options?.signal?.reason)
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
-  scope.active.add(controller)
+  scope.active.set(controller, { blocksLifecycle: action.action !== 'codex-models' })
   notifyGuestOperationListeners(scope)
   try {
     return await postTengriAction<Result>(action, { ...options, signal: controller.signal })
@@ -241,7 +244,7 @@ function guestActionAgentId(action: TengriAction) {
 function guestOperationScope(agentId: string) {
   const existing = guestOperationScopes.get(agentId)
   if (existing) return existing
-  const scope: GuestOperationScope = { active: new Set(), lifecycleBlocks: 0, listeners: new Set() }
+  const scope: GuestOperationScope = { active: new Map(), lifecycleBlocks: 0, listeners: new Set() }
   guestOperationScopes.set(agentId, scope)
   return scope
 }

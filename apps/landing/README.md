@@ -100,6 +100,8 @@ transient connection errors; closing the view cancels pending retries and ignore
 The model catalog also retries temporary HTTP and network failures, with a delay capped at thirty seconds.
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
 an explicit retry; model recovery never submits or retries a turn.
+Catalog reads keep lifecycle controls available and are cancelled when a transition starts. Browser cancellation
+propagates to the gRPC request. A rejected transition lets the catalog recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;
