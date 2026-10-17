@@ -8,6 +8,7 @@ import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
+import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 
 export enum JevEntryEconomicsAssessment {
@@ -56,33 +57,20 @@ export const jevEntryEconomics = (input: {
     const entryFees = yield* calculateSessionFees([buy], protocol.executionModel, 1_000_000n)
     const received = quantity - receivedCryptoFee(buy, 1_000_000n).quantityAtoms
     const acquisitionCost = buy.notionalMicros + entryFees.cashMicros
-    const liquidation = (bid: bigint) => {
-      const sell = {
-        symbol,
-        side: 'sell' as const,
-        quantityAtoms: received,
-        notionalMicros: (bid * received) / quantityScale,
-      }
-      return calculateSessionFees([sell], protocol.executionModel, 1_000_000n).pipe(
-        Result.map((fees) => ({ net: sell.notionalMicros - fees.cashMicros, fees: fees.totalMicros })),
-      )
-    }
-    let low = 0n
-    let high = maximumEntryPrice * 2n
-    if ((yield* liquidation(high)).net < acquisitionCost)
-      return yield* Result.fail(new JevContractError({ message: 'Entry fee estimate has no bounded break-even price' }))
-    while (low < high) {
-      const middle = (low + high) / 2n
-      if ((yield* liquidation(middle)).net >= acquisitionCost) high = middle
-      else low = middle + 1n
-    }
+    const liquidation = { protocol, symbol, quantityAtoms: received }
+    const breakEvenBid = yield* jevBreakEvenExitBid({
+      ...liquidation,
+      acquisitionCostMicros: acquisitionCost,
+      upperBidMicros: maximumEntryPrice * 2n,
+    })
+    const exit = yield* jevLiquidationValue({ ...liquidation, bidMicros: breakEvenBid })
     return {
       maximumEntryPriceUsd: Number(maximumEntryPrice) / 1_000_000,
       assumedEntryQuantity: Number(quantity) / Number(quantityScale),
       estimatedEntryFeesUsd: Number(entryFees.totalMicros) / 1_000_000,
-      estimatedExitFeesAtBreakEvenUsd: Number((yield* liquidation(high)).fees) / 1_000_000,
-      breakEvenExitBidUsd: Number(high) / 1_000_000,
-      requiredBidRiseBps: Number(((high - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
+      estimatedExitFeesAtBreakEvenUsd: Number(exit.feesMicros) / 1_000_000,
+      breakEvenExitBidUsd: Number(breakEvenBid) / 1_000_000,
+      requiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       maximumEntryQuoteDriftBps: protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps: protocol.maximumEntryLimitSlippageBps,
       operatingCostCoverage: 'UNKNOWN',
