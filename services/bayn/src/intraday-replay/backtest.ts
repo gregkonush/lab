@@ -1,5 +1,6 @@
 import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile } from '../jev/markets'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
@@ -104,7 +105,7 @@ export const BacktestInputSchema = Schema.Struct({
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
-    inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v3'),
+    inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
     costs: ReplayJevCostModelSchema,
   }),
   allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,

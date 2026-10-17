@@ -36,8 +36,8 @@ const position = {
 describe('original-receipt gap recovery', () => {
   test('broker calendar handles daylight-saving transitions and rejects skipped endpoint roles', () => {
     const calendar = [
-      { date: '2026-10-30', open: '09:30', close: '16:00' },
-      { date: '2026-11-02', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-10-30', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-11-02', open: '09:30', close: '16:00' },
     ]
     const input = { ...gapSessionInput(), sessionDate: '2026-11-02', calendar, calendarHash: canonicalHashV1(calendar) }
     const session = Result.getOrThrow(prepareGapRecoverySession(input))

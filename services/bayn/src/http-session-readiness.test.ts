@@ -43,7 +43,7 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
         accountId,
         signalSessionDate: '2026-10-01',
         executionSessionDate: '2026-10-01',
-        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         phase: CycleState.Active,
         snapshotId: null,
         publicationDeadlineAt: null,
@@ -120,8 +120,8 @@ const expectSession = (state: RuntimeState, condition: string, ready: boolean) =
         ready,
         executionSessionDate: '2026-10-01',
         controllerPlanHash: 'f'.repeat(64),
-        firstObservationAt: '2026-10-01T14:00:02.000Z',
-        decisionDeadlineAt: '2026-10-01T14:01:02.000Z',
+        firstObservationAt: '2026-10-01T13:31:02.000Z',
+        decisionDeadlineAt: '2026-10-01T13:32:02.000Z',
       },
     },
   })
@@ -134,16 +134,16 @@ test('pre-open execution prerequisites are ready before a snapshot or decision e
   expect(metrics).toContain('bayn_execution_session_preflight_ready 1\n')
   expect(metrics).toContain('bayn_cycle_decision_bound 0\n')
   expect(metrics).toContain(
-    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T14:01:02Z') / 1000}\n`,
+    `bayn_cycle_decision_deadline_timestamp_seconds ${Date.parse('2026-10-01T13:32:02Z') / 1000}\n`,
   )
 })
 
 test.each([
   ['2026-10-01T13:30:00.000Z', 'WARMUP', true],
-  ['2026-10-01T14:00:01.999Z', 'WARMUP', true],
-  ['2026-10-01T14:00:02.000Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:01.999Z', 'AWAITING_DECISION', true],
-  ['2026-10-01T14:01:02.000Z', 'DECISION_LAGGING', false],
+  ['2026-10-01T13:31:01.999Z', 'WARMUP', true],
+  ['2026-10-01T13:31:02.000Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:01.999Z', 'AWAITING_DECISION', true],
+  ['2026-10-01T13:32:02.000Z', 'DECISION_LAGGING', false],
   ['2026-10-01T19:55:00.000Z', 'CLOSED', false],
 ] as const)('classifies the unbound session at %s as %s', (checkedAt, condition, ready) => {
   expectSession(sessionState(checkedAt), condition, ready)
@@ -519,13 +519,24 @@ test.each([
   },
 )
 
-test('an equity warmup starts at exchange opening rather than adding a second submission warmup', () => {
-  const state = sessionState('2026-10-01T14:00:02.000Z')
+test('equity admission uses the later of the first completed minute and submission opening', () => {
+  const state = sessionState('2026-10-01T13:45:00.000Z')
   const current = state.cycle.current
   if (current === null) throw new Error('fixture cycle missing')
-  expectSession(
+  const result = statusResponseDecision(
     { ...state, cycle: { ...state.cycle, current: { ...current, submissionOpenAt: '2026-10-01T13:45:00.000Z' } } },
-    'AWAITING_DECISION',
-    true,
+    config.execution,
+    provenance,
+    config.build.verification,
   )
+  expect(result).toMatchObject({
+    body: {
+      executionSession: {
+        condition: 'AWAITING_DECISION',
+        ready: true,
+        firstObservationAt: '2026-10-01T13:45:00.000Z',
+        decisionDeadlineAt: '2026-10-01T13:46:00.000Z',
+      },
+    },
+  })
 })

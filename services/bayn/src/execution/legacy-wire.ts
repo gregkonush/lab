@@ -10,7 +10,6 @@ export const legacyCandidateDiscoveryOperationToken = 'PAPER_CANDIDATE_DISCOVERY
 export type LegacyAuthorityToken = typeof legacyObserveAuthorityToken | typeof legacyExecutionAuthorityToken
 
 export const legacyAccountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v1' as const
-export const legacyPositionSchemaVersion = 'bayn.paper-position.v1' as const
 export const legacyOrderV1SchemaVersion = 'bayn.order.v3' as const
 export const legacyOrderV2SchemaVersion = 'bayn.order.v3' as const
 export const legacyFillSchemaVersion = 'bayn.fill.v2' as const

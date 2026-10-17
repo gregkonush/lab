@@ -81,8 +81,10 @@ async fn runtime_shared_state_independent_nonces_do_not_share_a_transaction_lock
     let (database, _, _) = fixture().await;
     let mut held = database.connection().await.unwrap();
     let tx = held.transaction().await.unwrap();
-    let first = vec![0_u8; 32];
-    let second = vec![1_u8; 32];
+    let mut first = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let mut second = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    first[0] = 0;
+    second[0] = 64;
     assert!(
         tx.query_one(
             "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
@@ -255,6 +257,54 @@ async fn runtime_shared_state_one_use_redemption_is_atomic_across_replicas() {
         a.consume(&pending.token).await.unwrap_err().code(),
         Code::Unauthenticated
     );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_redeemed_capabilities_survive_a_slow_initial_audit() {
+    let (_database, a, b) = fixture().await;
+    let mut terminal_owner = principal(Action::TerminalControl);
+    terminal_owner.context.deadline_unix_ms = crate::ofz::now_ms().unwrap() + 100;
+    let mut editor_owner = terminal_owner.clone();
+    editor_owner.action = Action::EditorOpen;
+    let terminal = a
+        .issue_terminal(&terminal_owner, "agent", "terminal-1")
+        .await
+        .unwrap();
+    let preview = a
+        .issue_editor(&editor_owner, "agent", "window-1")
+        .await
+        .unwrap();
+    tokio::time::sleep(Duration::from_millis(150)).await;
+    assert!(terminal_owner.context.deadline_unix_ms < crate::ofz::now_ms().unwrap());
+    let terminal = b.consume(&terminal.token).await.unwrap();
+    let preview = b.consume_preview(&preview.token).await.unwrap();
+    let restored = a
+        .preview_session(&preview.id, &preview.token)
+        .await
+        .unwrap();
+    assert_eq!(restored.expires_at, preview.expires_at);
+    for (actual, original) in [
+        (&terminal.principal, &terminal_owner),
+        (&preview.principal, &editor_owner),
+        (&restored.principal, &editor_owner),
+    ] {
+        let mut context = actual.context.clone();
+        context.deadline_unix_ms = original.context.deadline_unix_ms;
+        assert_eq!(context, original.context);
+        assert_eq!(actual.action, original.action);
+    }
+    tokio::time::sleep(Duration::from_millis(3100)).await;
+    for context in [
+        &terminal.principal.context,
+        &preview.principal.context,
+        &restored.principal.context,
+    ] {
+        assert!(
+            context.deadline_unix_ms > crate::ofz::now_ms().unwrap(),
+            "a redeemed capability must allow its initial durable audit to finish"
+        );
+    }
 }
 
 #[tokio::test]
@@ -546,6 +596,110 @@ async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
         a.authorize(&duplicated, path).await.unwrap_err().code(),
         Code::Unauthenticated
     );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_replay_writes_cannot_starve_runtime_authority() {
+    let database = Database::shared_fixture().await;
+    let fence = database.acquire(Uuid::new_v4()).await.unwrap().unwrap();
+    let mut outcomes = Vec::new();
+    for role in ["tengri_controller", "tengri_supervisor"] {
+        let dsn = std::env::var("TENGRI_DATABASE_DSN")
+            .unwrap()
+            .replace("user=tengri_controller", &format!("user={role}"));
+        let peer = Arc::new(
+            Database::connect(
+                &dsn,
+                Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE").unwrap()),
+                Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE").unwrap()),
+                role,
+            )
+            .await
+            .unwrap(),
+        );
+        let capacity = peer.pool.status().max_size;
+        let warm = join_all((0..capacity).map(|_| peer.connection())).await;
+        let connections: Vec<_> = warm.into_iter().map(Result::unwrap).collect();
+        drop(connections);
+        let mut held = database.connection().await.unwrap();
+        let tx = held.transaction().await.unwrap();
+        let mut nonces = Vec::new();
+        for bucket in 0..capacity {
+            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+            nonce[0] = bucket as u8;
+            tx.query_one(
+                "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
+                &[&nonce],
+            )
+            .await
+            .unwrap();
+            nonces.push(nonce);
+        }
+        let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;
+        let writers: Vec<_> = nonces
+            .iter()
+            .map(|nonce| {
+                let peer = peer.clone();
+                let nonce = nonce.clone();
+                tokio::spawn(async move { peer.consume_nonce(&nonce, deadline).await })
+            })
+            .collect();
+        tokio::time::timeout(Duration::from_millis(500), async {
+            while peer.pool.status().available != 0 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .unwrap();
+        let check = tokio::time::timeout(Duration::from_millis(750), async {
+            peer.verify_schema().await?;
+            peer.require_fence(fence).await
+        });
+        let renewal = async {
+            if role == "tengri_controller" {
+                Some(tokio::time::timeout(Duration::from_millis(750), peer.renew(fence)).await)
+            } else {
+                None
+            }
+        };
+        let (check, renewal) = tokio::join!(check, renewal);
+        let blocked = writers.iter().all(|writer| !writer.is_finished());
+        tx.rollback().await.unwrap();
+        for writer in writers {
+            writer.await.unwrap().unwrap();
+        }
+        assert_eq!(
+            peer.consume_nonce(&nonces[0], deadline)
+                .await
+                .unwrap_err()
+                .code(),
+            Code::Unauthenticated
+        );
+        let stale = crate::control::Fence {
+            generation: fence.generation + 1,
+            ..fence
+        };
+        assert_eq!(
+            peer.require_fence(stale).await.unwrap_err().code(),
+            Code::PermissionDenied
+        );
+        outcomes.push((role, blocked, check, renewal));
+    }
+    database.release(fence).await.unwrap();
+    for (role, blocked, check, renewal) in outcomes {
+        assert!(blocked, "{role} nonce writes did not remain blocked");
+        assert!(
+            matches!(check, Ok(Ok(()))),
+            "{role} lost valid runtime authority behind nonce writes: {check:?}"
+        );
+        if let Some(renewal) = renewal {
+            assert!(
+                matches!(renewal, Ok(Ok(true))),
+                "controller leadership renewal waited behind nonce writes: {renewal:?}"
+            );
+        }
+    }
 }
 
 #[tokio::test]

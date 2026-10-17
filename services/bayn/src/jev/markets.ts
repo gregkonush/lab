@@ -13,6 +13,8 @@ import type { AutonomousCycle } from '../cycle/model'
 
 export const equityMarketProfile = Object.freeze({
   market: MarketKind.Equity,
+  maximumEntrySpreadBps: 5,
+  estimatedTakerFeeBps: 0,
   universeId: intradayUniverse.id,
   universeSymbolHash: intradayUniverse.symbolHash,
   universe: intradayUniverse.symbols,
@@ -24,6 +26,8 @@ export const equityMarketProfile = Object.freeze({
 })
 export const cryptoMarketProfile = Object.freeze({
   market: MarketKind.Crypto,
+  maximumEntrySpreadBps: 25,
+  estimatedTakerFeeBps: 25,
   universeId: cryptoUniverse.id,
   universeSymbolHash: sha256(cryptoUniverse.symbols.join(',')),
   universe: cryptoUniverse.symbols,
@@ -33,7 +37,7 @@ export const cryptoMarketProfile = Object.freeze({
   sourceTopics: Object.freeze({ bars: cryptoRawTopic, quotes: cryptoRawTopic, trades: cryptoRawTopic }),
   streamingInput: Object.freeze({
     featureTopic: cryptoFeatureTopic,
-    requiredDefinitionId: 'dorvud.crypto-continuous-1m.v1',
+    requiredDefinitionId: 'dorvud.crypto-continuous-1m.v2',
     requiredDefinitionHash: canonicalHashV1(cryptoFeatureDefinitionMaterial),
   }),
 })

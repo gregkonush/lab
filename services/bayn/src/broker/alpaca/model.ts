@@ -6,7 +6,9 @@ import {
   IsoDateSchema as IsoDate,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
+  UtcInstantSchema,
 } from '../../schemas'
+import type { EquityProviderSession } from '../../equity-hours'
 import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
@@ -20,7 +22,7 @@ export const accountConfigurationObservationSchemaVersion = 'bayn.alpaca-account
 export const accountConfigurationObservationSource = 'alpaca-v2-account-configurations' as const
 export const assetObservationSchemaVersion = 'bayn.alpaca-asset-observation.v1' as const
 export const assetObservationSource = 'alpaca-v2-asset' as const
-export const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
+export const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v2' as const
 export const marketCalendarSource = 'alpaca-v2-calendar' as const
 export const marketCalendarTimeZone = 'America/New_York' as const
 export const readPreflightTimeoutMs = 45_000
@@ -276,8 +278,7 @@ export interface Position {
   readonly side: PositionSide
   readonly quantityAtoms: string
   readonly averageEntryPriceMicros: string
-  /** Present on current broker responses; omitted only by legacy observations. */
-  readonly costBasisMicros?: string
+  readonly costBasisMicros: string
   readonly marketPriceMicros: string
   readonly marketValueMicros: string
   readonly unrealizedPnlMicros: string
@@ -393,8 +394,17 @@ export interface MarketCalendarObservation {
   }
   readonly timeZone: 'UTC'
   readonly sessions: readonly MarketCalendarSession[]
+  readonly providerSessions: readonly EquityProviderSession[]
   readonly normalizedResponseHash: string
 }
+
+export const MarketCalendarProviderSessionSchema = Schema.Struct({
+  date: IsoDate,
+  regularOpenAt: UtcInstantSchema,
+  regularCloseAt: UtcInstantSchema,
+  sessionOpenAt: UtcInstantSchema,
+  sessionCloseAt: UtcInstantSchema,
+})
 
 export interface OrdersQuery {
   readonly status?: OrderCollection
@@ -641,11 +651,14 @@ export const FillActivityResponseSchema = Schema.Struct({
 })
 
 const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/))
+const FullSessionTimeSchema = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3])[0-5]\d$/))
 export const MarketCalendarResponseSchema = Schema.Array(
   Schema.Struct({
     date: IsoDate,
     open: MarketTimeSchema,
     close: MarketTimeSchema,
+    session_open: FullSessionTimeSchema,
+    session_close: FullSessionTimeSchema,
   }),
 )
 

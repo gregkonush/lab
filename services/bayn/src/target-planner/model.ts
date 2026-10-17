@@ -176,7 +176,7 @@ export const quoteBoundTargetPlannerInputSchemaVersion = 'bayn.target-planner-in
 const QuoteBoundLimitExecutionIdentityFields = {
   executionPurpose: Schema.optionalKey(Schema.Literal('forced-close')),
   orderType: Schema.Literal(OrderType.Limit),
-  timeInForce: Schema.Literal(TimeInForce.ImmediateOrCancel),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
   priceReference: Schema.Literal('verified-adverse-quote-boundary'),
 } as const
 
@@ -189,7 +189,7 @@ const FractionalCloseExecutionIdentityFields = {
 
 const ReconciledPositionCloseExecutionIdentityFields = {
   executionPurpose: Schema.Literal('forced-close'),
-  orderType: Schema.Literal(OrderType.Market),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.Market]),
   timeInForce: Schema.Union([Schema.Literal(TimeInForce.Day), Schema.Literal(TimeInForce.GoodUntilCanceled)]),
   priceReference: Schema.Literal('reconciled-broker-position-mark'),
 } as const

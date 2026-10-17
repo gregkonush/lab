@@ -14,7 +14,6 @@ import {
 } from '../execution/contracts'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { IsoDate } from '../schemas'
-import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { Pipeable } from '../pipeable'
 
 export interface IntentExpectation {
@@ -171,13 +170,6 @@ export type ReconciliationDecisionError =
       readonly cause: CanonicalHashFailure
     }
   | {
-      readonly _tag: 'FixedPointRoundingFailed'
-      readonly symbol: string
-      readonly quantityAtoms: string
-      readonly averageEntryPriceMicros: string
-      readonly cause: unknown
-    }
-  | {
       readonly _tag: 'InvalidInstant'
       readonly field: ReconciliationInstantField
       readonly identity: string
@@ -254,34 +246,6 @@ const integerDataFirst = (
     : fail({ _tag: 'InvalidInteger', source, identity, value })
 
 export const integer = Pipeable.dual(3, integerDataFirst)
-
-const roundMicrosProductDataFirst = (
-  symbol: string,
-  quantityAtoms: string,
-  averageEntryPriceMicros: string,
-): ReconciliationDecision<bigint> =>
-  pipe(
-    Result.all({
-      quantity: integer('position-quantity', symbol, quantityAtoms),
-      averageEntryPrice: integer('position-average-price', symbol, averageEntryPriceMicros),
-    }),
-    Result.flatMap(({ averageEntryPrice, quantity }) =>
-      pipe(
-        roundUnsignedHalfUp(absolute(quantity) * averageEntryPrice, 1_000_000_000n),
-        Result.mapError(
-          (cause): ReconciliationDecisionError => ({
-            _tag: 'FixedPointRoundingFailed',
-            symbol,
-            quantityAtoms,
-            averageEntryPriceMicros,
-            cause,
-          }),
-        ),
-      ),
-    ),
-  )
-
-export const roundMicrosProduct = Pipeable.dual(3, roundMicrosProductDataFirst)
 
 export const reconciledStateHash = (state: ReconciledStateMaterial): ReconciliationDecision<string> =>
   pipe(
@@ -395,8 +359,6 @@ export const renderReconciliationDecisionError = (error: ReconciliationDecisionE
   switch (error._tag) {
     case 'CanonicalizationFailed':
       return `reconciliation ${error.operation} canonicalization failed${error.identity === undefined ? '' : ` for ${error.identity}`}`
-    case 'FixedPointRoundingFailed':
-      return `position ${error.symbol} cost could not be rounded from quantity ${error.quantityAtoms} and price ${error.averageEntryPriceMicros}`
     case 'InvalidInstant':
       return `reconciliation ${error.field} for ${error.identity} is invalid: ${error.value}`
     case 'InvalidInteger':

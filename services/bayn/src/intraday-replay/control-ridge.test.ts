@@ -48,10 +48,10 @@ const assumptions = {
   feeMultiplierPpm: 1_000_000,
 }
 const fullCalendar = [
-  { date: '2026-09-01', open: '09:30', close: '10:10' },
-  { date: '2026-09-04', open: '09:30', close: '10:10' },
-  { date: '2026-09-08', open: '09:30', close: '10:10' },
-  { date: '2026-09-09', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-01', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-04', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-08', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-09', open: '09:30', close: '10:10' },
 ] as const
 const calendar = Result.getOrThrow(
   normalizeMarketCalendarResult(fullCalendar, { start: '2026-09-01', end: '2026-09-09' }),
@@ -103,6 +103,30 @@ const fixture = (
             input.eventAtMs === sixBarOpenMs + 24 * 60_000
           ),
       )
+    for (const symbol of equityMarketProfile.universe) {
+      for (let minute = 0; minute < 24; minute++)
+        baseInputs.push({
+          channel: 'bars',
+          symbol,
+          eventAtMs: sixBarOpenMs + minute * 60_000,
+          availableAtMs: sixBarOpenMs + (minute + 1) * 60_000 + 1000,
+          close: 100,
+        })
+      const firstEligiblePollMs = sixBarOpenMs + Math.ceil(62_000 / pollIntervalMs) * pollIntervalMs
+      for (let atMs = firstEligiblePollMs; atMs < firstDecisionMs; atMs += 60_000) {
+        baseInputs.push({
+          channel: 'quotes',
+          symbol,
+          eventAtMs: atMs - 1000,
+          availableAtMs: atMs - 1000,
+          bid: 99.99,
+          ask: 100.01,
+          bidSize: 100,
+          askSize: symbol === 'SPY' ? 100 : 0,
+        })
+        baseInputs.push({ channel: 'trades', symbol, eventAtMs: atMs - 1000, availableAtMs: atMs - 1000, close: 100 })
+      }
+    }
     const inputs = options.transformInputs?.(baseInputs) ?? baseInputs
     if (options.exitQuotes === true)
       for (let atMs = firstDecisionMs + 30_000; atMs <= Date.parse(session.closeAt); atMs += 30_000)
@@ -172,12 +196,12 @@ const fixture = (
       manifestHash: sha256('SYNTHETIC frozen training manifest'),
       trainingDataHash: sha256('SYNTHETIC training rows'),
       fitCutoffAt: '2026-09-02T00:00:00.000Z',
-      firstEvaluationDecisionAt: iso(firstDecisionMs),
+      firstEvaluationDecisionAt: iso(sixBarOpenMs + Math.ceil(62_000 / pollIntervalMs) * pollIntervalMs),
       evaluationSessions: calendar.sessions
         .filter((entry) => entry.date === '2026-09-04' || entry.date === '2026-09-08')
         .map((entry) => ({
           ...entry,
-          firstDecisionAt: iso(Date.parse(entry.openAt) + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs),
+          firstDecisionAt: iso(Date.parse(entry.openAt) + Math.ceil(62_000 / pollIntervalMs) * pollIntervalMs),
           partition: entry.date === '2026-09-04' ? SixBarRidgePartition.Validation : SixBarRidgePartition.Holdout,
         })),
       trainingSessions: [{ date: '2026-09-01', rowCount: 1 }],
@@ -213,6 +237,35 @@ const fixture = (
     })
     return { input, bound, context, body, source, captured: actualCapture, query, firstDecisionMs }
   })
+
+test('both six-bar controls record first-minute cash while their mathematical history is warming', async () => {
+  const data = await Effect.runPromise(fixture())
+  const observedAtMs = sixBarOpenMs + 90_000
+  const query = makeJevEntryQuery({
+    protocol,
+    calendar: executionCalendar,
+    sessionDate: '2026-09-04',
+    observedAtMs,
+    candidates: equityMarketProfile.candidateSymbols,
+  })
+  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    const result = Result.getOrThrow(
+      selectBoundRidge(replaySixBarFixture(data.captured, observedAtMs), query, data.bound, policy),
+    )
+    expect(result.status).toBe('AVAILABLE')
+    if (result.status !== 'AVAILABLE') throw new Error('Expected evidenced warming cash decision')
+    expect(result.evidence.selectedSymbol).toBeNull()
+    expect(result.evidence.scores).toEqual([])
+    expect(result.evidence.exclusions).toEqual([])
+    expect(
+      result.evidence.observations.every(
+        (observation) =>
+          observation.status === SixBarResearchStatus.Unavailable &&
+          observation.reason === 'six-completed-session-minutes-required',
+      ),
+    ).toBe(true)
+  }
+})
 
 test('the pair extracts the same causal features and uses the actual training mean', async () => {
   const data = await Effect.runPromise(fixture({ mean: 0, intercept: 5 }))
@@ -504,7 +557,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v3',
+              inputDefinition: 'bayn.jev-trading-signal-state.v7',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
@@ -646,7 +699,7 @@ const simulate = (
         select: (query) => {
           selectedAt.push(Date.parse(query.observedAt))
           const cutAt =
-            options.missingFirst === true && selectedAt.length === 1
+            options.missingFirst === true && Date.parse(query.observedAt) === data.firstDecisionMs
               ? data.firstDecisionMs - 2000
               : Date.parse(query.observedAt)
           return Effect.fromResult(
@@ -686,30 +739,33 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   },
 )
 
-test('canceled entries and cash retain opportunities and their allocated data charge', async () => {
-  for (const options of [{ canceled: true }, { mean: 0 }]) {
-    const { result } = await Effect.runPromise(simulate(options))
-    expect(result.ledger.fills).toHaveLength(0)
-    expect(result.completedEpisodes).toBe(0)
-    expect(result.netPnlAfterKnownCostsMicros).toBe('-1000000')
-    expect(result.modelCostMicros).toBe('0')
-    expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(80)
-    expect(result.issues).toContain('MISSING_DECISION_DATA')
-    if ('canceled' in options) expect(result.orders).toHaveLength(1)
-  }
+test.each([
+  ['canceled', { canceled: true }],
+  ['cash', { mean: 0 }],
+] as const)('%s outcomes retain opportunities and their allocated data charge', async (scenario, options) => {
+  const { result } = await Effect.runPromise(simulate(options))
+  expect(result.ledger.fills).toHaveLength(0)
+  expect(result.completedEpisodes).toBe(0)
+  expect(result.netPnlAfterKnownCostsMicros).toBe('-1000000')
+  expect(result.modelCostMicros).toBe('0')
+  expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(80)
+  expect(result.issues).toContain('MISSING_DECISION_DATA')
+  if (scenario === 'canceled') expect(result.orders).toHaveLength(1)
 })
 
 test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   '%s keeps a candidate-local gap out of allocations and records it without invalidating the session',
   async (policy) => {
-    const { result } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
+    const { result, data } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
     expect(result.completion).toBe('COMPLETE')
     expect(result.completedEpisodes).toBe(1)
     expect(result.ledger.fills.every((fill) => fill.symbol !== 'AAPL')).toBeTrue()
-    expect(result.decisions[0]?.exclusions).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
+    expect(
+      result.decisions.find((decision) => decision.observedAt === iso(data.firstDecisionMs))?.exclusions,
+    ).toMatchObject([{ symbol: 'AAPL', inputSymbol: 'AAPL' }])
     expect(result.simulatedOpportunityAccounting).toMatchObject({
-      entrySnapshotsWithCandidateExclusions: 1,
-      excludedCandidateObservationCount: 1,
+      entrySnapshotsWithCandidateExclusions: 25,
+      excludedCandidateObservationCount: 24 * equityMarketProfile.candidateSymbols.length + 1,
     })
     expect(result.missingDecisions).toBe(0)
     expect(result.dataCostMicros).toBe('1000000')
@@ -718,8 +774,16 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
 
 test('missing input leaves the same minute window available for a later causal poll', async () => {
   const { result, selectedAt, data } = await Effect.runPromise(simulate({ missingFirst: true }))
-  expect(selectedAt.slice(0, 2)).toEqual([data.firstDecisionMs, data.firstDecisionMs + 1000])
-  expect(result.decisions.slice(0, 2).map((decision) => decision.status)).toEqual(['UNAVAILABLE', 'SELECTED'])
+  expect(selectedAt.filter((atMs) => atMs >= data.firstDecisionMs).slice(0, 2)).toEqual([
+    data.firstDecisionMs,
+    data.firstDecisionMs + 1000,
+  ])
+  expect(
+    result.decisions
+      .filter((decision) => Date.parse(decision.observedAt) >= data.firstDecisionMs)
+      .slice(0, 2)
+      .map((decision) => decision.status),
+  ).toEqual(['UNAVAILABLE', 'SELECTED'])
   expect(result.missingDecisions).toBe(1)
   expect(result.completion).toBe('INCOMPLETE')
   expect(result.completedEpisodes).toBe(1)
@@ -729,19 +793,18 @@ test('missing input leaves the same minute window available for a later causal p
 test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   '%s reports evidenced exclusions in decisions and opportunity counters',
   async (policy) => {
-    const { result } = await Effect.runPromise(simulate({ policy, exclude: true }))
-    expect(result.decisions[0]?.status).toBe('NO_SIGNAL')
-    expect(result.decisions[0]?.exclusions?.map((entry) => entry.symbol)).toEqual([
-      ...equityMarketProfile.candidateSymbols,
-    ])
+    const { result, data } = await Effect.runPromise(simulate({ policy, exclude: true }))
+    const decision = result.decisions.find((entry) => entry.observedAt === iso(data.firstDecisionMs))
+    expect(decision?.status).toBe('NO_SIGNAL')
+    expect(decision?.exclusions?.map((entry) => entry.symbol)).toEqual([...equityMarketProfile.candidateSymbols])
     expect(
-      result.decisions[0]?.exclusions?.every(
+      decision?.exclusions?.every(
         (entry) => 'inputSymbol' in entry && entry.inputSymbol === entry.symbol && entry.evidenceHash.length === 64,
       ),
     ).toBeTrue()
     expect(result.simulatedOpportunityAccounting).toMatchObject({
-      entrySnapshotsWithCandidateExclusions: 1,
-      excludedCandidateObservationCount: equityMarketProfile.candidateSymbols.length,
+      entrySnapshotsWithCandidateExclusions: 25,
+      excludedCandidateObservationCount: 25 * equityMarketProfile.candidateSymbols.length,
     })
     expect(result.ledger.fills).toHaveLength(0)
     expect(result.dataCostMicros).toBe('1000000')

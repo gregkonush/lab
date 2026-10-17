@@ -7,6 +7,7 @@ import { Data, DateTime, Effect, Option, Redacted, Result, Scope } from 'effect'
 
 import type { ForwardPerformanceConfig } from './config'
 import { verifyAccountingReceipts, type ReconciliationAlgebraFailure } from '../reconciliation/algebra'
+import { verifyCashSettlement } from '../accounting/cash-settlement'
 import type { CanonicalJsonFailure } from '../hash'
 import { canonicalHashV1Result } from '../hash'
 import type { MarketDataSnapshot, SnapshotRequest } from '../market-data'
@@ -64,6 +65,7 @@ export type ForwardPerformanceProgramCause =
   | ForwardPerformancePostgresError
   | ReconciliationAlgebraFailure
   | BrokerFeeEvidenceError
+  | import('../accounting/cash-settlement').CashSettlementEvidenceError
   | import('../accounting/fee-accrual').FeeAccrualError
   | import('../ledger-plan').LedgerPlanHashFailure
   | import('../db/reconciliation').ReconciliationStoreError
@@ -639,6 +641,27 @@ const readForwardPerformanceInput = (
       ),
     )
     const generationTransactionIds = new Set(postgres.transactions.map((transaction) => transaction.transactionId))
+    const accountTransactionsById = new Map(
+      postgres.ledgerTransactions.map((transaction) => [transaction.transactionId, transaction]),
+    )
+    const cashSettlements = yield* Effect.forEach(postgres.cashSettlementRecords, (record) =>
+      Effect.gen(function* () {
+        const verified = yield* Effect.fromResult(
+          verifyCashSettlement(record, identity.accountId, config.tigerBeetle),
+        ).pipe(Effect.mapError((cause) => programError('ledger-read', 'Cash settlement evidence is invalid', cause)))
+        const source = accountTransactionsById.get(verified.data.transactionId)
+        if (
+          source === undefined ||
+          source.accountId !== verified.data.accountId ||
+          source.contentHash !== verified.data.transactionContentHash ||
+          source.brokerEventId !== verified.data.brokerEventId ||
+          source.cashDeltaMicros !== verified.data.cashDeltaMicros ||
+          source.occurredAt !== verified.data.occurredAt
+        )
+          return yield* programError('ledger-read', 'Cash settlement does not match its retained source transaction')
+        return verified
+      }),
+    )
     const generationAccruals = accruals.filter((accrual) =>
       accrual.data.sourceTrades.every((trade) => generationTransactionIds.has(trade.transactionId)),
     )
@@ -647,21 +670,27 @@ const readForwardPerformanceInput = (
       ...(Result.isSuccess(accountingVerification) ? accountingVerification.success.plans : []),
       ...feePlans.filter((_, index) => generationFeeIds.has(feeRecords[index]?.data.activityId ?? '')).flat(),
       ...generationAccruals.map((accrual) => accrual.plan),
+      ...cashSettlements
+        .filter((settlement) => generationTransactionIds.has(settlement.data.transactionId))
+        .map((settlement) => settlement.plan),
     ]
     const ledgerVerification = verifyAccountingReceipts(postgres.ledgerTransactions, postgres.ledgerReceipts, config)
     const accountPlans = [
       ...(Result.isSuccess(ledgerVerification) ? ledgerVerification.success.plans : []),
       ...feePlans.flat(),
       ...accruals.map((accrual) => accrual.plan),
+      ...cashSettlements.map((settlement) => settlement.plan),
     ]
     const accountingReceiptsExact =
       Result.isSuccess(accountingVerification) &&
       postgres.unaccountedFillCount === 0 &&
+      postgres.unaccountedCashSettlementCount === 0 &&
       (postgres.ambiguousBrokerFeeCount ?? 0) === 0 &&
       feeRecords.every(
         (record) => record.posted && record.cash_match_corrections.every((correction) => correction.posted),
       ) &&
       accruals.every((accrual) => accrual.posted) &&
+      cashSettlements.every((settlement) => settlement.posted) &&
       accountingVerification.success.exactReceipts.size === postgres.transactions.length &&
       [...accountingVerification.success.exactReceipts.values()].every(Boolean)
 

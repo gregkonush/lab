@@ -1,5 +1,7 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import { LoaderCircle, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { TengriPreviewSession } from '@/lib/tengri/types'
@@ -38,6 +40,9 @@ export function CodeWorkbench({
   const [session, setSession] = useState<TengriPreviewSession | null>(null)
   const [ready, setReady] = useState(false)
   const [error, setError] = useState('')
+  useEffect(() => {
+    if (error) reportBrowserFailure('code.connection')
+  }, [error])
   const [fileError, setFileError] = useState('')
   const [attempt, setAttempt] = useState(0)
   const [queue, setQueue] = useState<CodeOpenRequest[]>([])

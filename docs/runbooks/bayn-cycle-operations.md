@@ -69,6 +69,21 @@ risk reduction, immutable evidence reproduction and document hashing for entry a
 profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
 database or model requests and no healthy completion log.
 
+Pricing reuses a same-pass exact reconciliation while its refresh cadence remains open and its broker-risk
+freshness bound covers the execution quote's lifetime. The cadence determines when to refresh on the next read;
+it does not shorten the risk policy's validity deadline. Requiring the entire quote lifetime inside the cadence
+can trigger a slow database refresh after timely inference and expire an otherwise usable model decision.
+Current authority generation/version, accounting and unresolved-mutation checks still govern reuse.
+
+A position basis discrepancy first requires the exact broker response and accounted fills. Rounded-average
+reporting must reproduce both provider fields from native quantity and cost; do not clear a kill state with a broad
+cash or position tolerance. Current positions require cost basis and reject the retired cost-less encoding.
+
+An equity outage may outlast IEX data hours. Close recovery uses a maximum three-minute lease bounded by the
+verified provider session, fresh exact reconciliation and the existing forced-close LIMIT/DAY flow. It cannot
+open positions or renew unresolved broker orders. A closed broker session leaves recovery pending until a verified
+session permits the close.
+
 A rejected decision emits `Bayn decision evidence rejected` with schema
 `bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
 `RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
@@ -91,8 +106,12 @@ no-trade records remain readable for investigation; reading one grants no permis
 {namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
 ```
 
-1. Separate `bayn.execution.bounded-pass` and `bayn.execution.cycle-pass` from the root advance. They retain the
-   deadline and cycle scopes without repeating the root span name.
+1. `bayn.execution.generation-pass` measures the outer authority/settlement deadline, while
+   `bayn.execution.bounded-pass` measures the inner serialized cycle deadline. `bayn.execution.cycle-pass` excludes
+   the cycle permit wait. Each scope records once when entered; an authority hold records no inner cycle sample.
+   They are nested inclusive durations, not additive work or independent controller ticks. Before this separation,
+   the generation and cycle deadlines both recorded `bounded-pass`, inflating its operation count and mixing their
+   latency distributions. Compare source revisions separately. Deadline logs identify the scope with `stage`.
 2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
    `intentId` and `closeOnly`. Use the durable intent/mutation history to bind its request and order afterward.
    Keep the identifiers in log payloads and persisted evidence, not Prometheus or Loki labels.

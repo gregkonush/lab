@@ -1,3 +1,4 @@
+import { quantityScale } from './quantity'
 import { canonicalHashV1Result } from './hash'
 import { instrumentMarket, MarketKind } from './instruments'
 
@@ -43,7 +44,6 @@ import {
   legacyExecutionAuthorityToken,
   legacyExecutionIntentSchemaVersion,
   legacyIntentPlanSchemaVersion,
-  legacyPositionSchemaVersion,
   legacyReferenceIntentSchemaVersion,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
@@ -214,7 +214,8 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: divideAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityAtoms: target.targetQuantityAtoms,
@@ -420,7 +421,14 @@ const validateBindings = (
     const narrowCloseTerms =
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
-      plannerInput.executionTerms.orderType === OrderType.Market &&
+      plannerInput.executionTerms.orderType ===
+        (positions.every(
+          (position) =>
+            instrumentMarket(position.symbol) === MarketKind.Equity &&
+            BigInt(position.quantityAtoms) % quantityScale === 0n,
+        )
+          ? OrderType.Limit
+          : OrderType.Market) &&
       executionMarketData.symbols.every(
         (symbol) =>
           plannerInput.executionTerms.timeInForce ===

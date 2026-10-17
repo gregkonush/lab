@@ -1,4 +1,5 @@
 import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -104,7 +105,7 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
         const firstPoll =
           Date.parse(session.openAt) +
           Math.ceil(
-            (prepared.protocol.lookbackMinutes * 60_000 + prepared.protocol.decisionDelaySeconds * 1000) /
+            (intradayMinimumCompletedHistoryMs + prepared.protocol.decisionDelaySeconds * 1000) /
               prepared.input.cadence.pollIntervalMs,
           ) *
             prepared.input.cadence.pollIntervalMs

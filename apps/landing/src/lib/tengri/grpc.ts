@@ -853,6 +853,8 @@ async function metadata(identity: TengriIdentity, methodName: string, request: R
     throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri signing failed', 503)
   }
   const value = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, header) => value.set(key, header))
   value.set('x-tengri-context-bin', Buffer.from(signed.context))
   value.set('x-tengri-recovery-generation', signed.recoveryGeneration)
   value.set('x-tengri-nonce', signed.nonce)

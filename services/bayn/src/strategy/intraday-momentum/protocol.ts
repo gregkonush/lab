@@ -1,5 +1,5 @@
 import { Data, Result, Schema } from 'effect'
-import { ExecutionModelV5Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
+import { ExecutionModelV6Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
 import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
@@ -72,13 +72,13 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   minimumRangeLocationPpm: PartsPerMillionSchema,
   maximumSpreadBps: BasisPointsSchema,
   allocation: Schema.Literal('equal-weight'),
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
   if (protocol.lookbackMinutes !== intradayLookbackMinutes)
-    issues.push({ path: ['lookbackMinutes'], issue: 'rolling-price-30m requires exactly 30 completed minutes' })
+    issues.push({ path: ['lookbackMinutes'], issue: 'observed-price-window retains at most 30 minutes of context' })
   const canonicalUniverse = [...new Set(protocol.universe)].sort()
   const canonicalCandidates = [...new Set(protocol.candidateSymbols)].sort()
   if (

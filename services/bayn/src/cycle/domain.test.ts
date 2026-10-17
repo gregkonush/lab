@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Result, Schema } from 'effect'
@@ -74,7 +75,7 @@ const signalSession = (
 
 const executionCalendar = (session: MarketCalendarSession = springDstSession): ExecutionCalendarObservation =>
   makeExecutionCalendarObservationSuccess({
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
     source: 'alpaca-v2-calendar',
     ...session,
   })
@@ -83,14 +84,15 @@ const brokerCalendarObservation = (
   requestedRange: MarketCalendarObservation['requestedRange'],
   sessions: readonly MarketCalendarSession[],
   normalizedResponseHash: string,
-): MarketCalendarObservation => ({
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
-  source: 'alpaca-v2-calendar',
-  requestedRange,
-  timeZone: 'UTC',
-  sessions,
-  normalizedResponseHash,
-})
+): MarketCalendarObservation =>
+  withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
+    source: 'alpaca-v2-calendar',
+    requestedRange,
+    timeZone: 'UTC',
+    sessions,
+    normalizedResponseHash,
+  })
 
 const makeExecutionPolicy = (
   submissionWindowMs = defaultSubmissionWindowMs,
@@ -243,7 +245,7 @@ describe('autonomous cycle identity and calendar', () => {
     )
 
     expect(replay).toEqual(first)
-    expect(first.cycleId).toBe('0abeb0fa91334072af88e44f66e88974c33c3b5261adb327c26719bd9110e0d9')
+    expect(first.cycleId).toBe('cfd9ed1c5726588d40f97990bbe9ed257364a947ade8878748803c536c5f014c')
     expect(otherAccount.cycleId).not.toBe(first.cycleId)
     expect(otherModel.cycleId).not.toBe(first.cycleId)
     expect(otherModel.executionPolicy.executionPolicyHash).not.toBe(first.executionPolicy.executionPolicyHash)

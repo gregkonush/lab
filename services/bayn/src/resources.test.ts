@@ -33,6 +33,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -362,6 +368,12 @@ describe('Bayn resource lifecycle', () => {
     const client = makeTigerBeetleClient({
       queryAccounts: () => query([]),
       queryTransfers: () => query([]),
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
 
@@ -396,6 +408,12 @@ describe('Bayn resource lifecycle', () => {
       const pendingLookup = Deferred.makeUnsafe<never, TestFailure>()
       const interruptedClient = makeTigerBeetleClient({
         lookupAccounts: () => Effect.runPromise(Deferred.await(pendingLookup)),
+        getAccountTransfers: async () => {
+          throw new Error('unexpected account transfer history read')
+        },
+        getAccountBalances: async () => {
+          throw new Error('unexpected account balance history read')
+        },
         destroy: () => {
           closeCounts[0] += 1
           Effect.runSync(Deferred.fail(pendingLookup, new TestFailure({ message: 'client closed' })))

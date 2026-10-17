@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
@@ -28,13 +29,13 @@ const symbols = [
 const barsTopic = 'torghut.bars.1m.v1'
 const quotesTopic = 'torghut.quotes.v1'
 const tradesTopic = 'torghut.trades.v1'
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-08-18', end: '2026-08-18' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
-}
+})
 
 const success = <A, E>(result: Result.Result<A, E>): A => Result.getOrThrow(result)
 const error = <A, E>(result: Result.Result<A, E>): E => Result.getOrThrow(Result.flip(result))
@@ -65,7 +66,7 @@ interface FixtureOptions {
 }
 
 const marketContextAt = (options: FixtureOptions) => {
-  const boundCalendarMaterial = {
+  const boundCalendarMaterial = withProviderSessions({
     ...calendarMaterial,
     sessions: [
       {
@@ -73,7 +74,7 @@ const marketContextAt = (options: FixtureOptions) => {
         closeAt: options.sessionCloseAt ?? calendarMaterial.sessions[0]!.closeAt,
       },
     ],
-  }
+  })
   const boundCalendar = {
     ...boundCalendarMaterial,
     normalizedResponseHash: canonicalHashV1(boundCalendarMaterial),
@@ -665,17 +666,16 @@ describe('intraday momentum strategy', () => {
     expect(signal?.rejectionReasons).toContain(expectedReason as IntradayMomentumRejectionReason)
   })
 
-  test('rejects an incomplete required rolling feature before admitting a strategy snapshot', () => {
-    expect(() =>
-      marketContextAt({
-        rangeEndAt: '2026-08-18T18:00:00.000Z',
-        returnBps: qualifyingReturns,
-        omitFirstBarFor: 'AAPL',
-      }),
-    ).toThrow('Required rolling feature is unavailable for AAPL')
+  test('admits an observed window without inventing its missing first minute', () => {
+    const context = marketContextAt({
+      rangeEndAt: '2026-08-18T18:00:00.000Z',
+      returnBps: qualifyingReturns,
+      omitFirstBarFor: 'AAPL',
+    })
+    expect(context.snapshot.bars.filter((bar) => bar.symbol === 'AAPL')).toHaveLength(29)
   })
 
-  test('locally excludes a candidate missing the first rolling bar while preserving a fresh peer', () => {
+  test('evaluates a candidate with a missing historical minute alongside its peer', () => {
     const protocol = success(decodeDefaultIntradayMomentumProtocol())
     const decision = success(
       decideIntradayMomentum(
@@ -689,15 +689,9 @@ describe('intraday momentum strategy', () => {
       ),
     )
 
-    expect(decision.selectedSymbols).toEqual(['AMZN'])
-    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(false)
-    expect(decision.excludedCandidates).toEqual([
-      {
-        symbol: 'AAPL',
-        reason: 'not-ready',
-        message: 'matching complete rolling feature is unavailable',
-      },
-    ])
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    expect(decision.signals.some(({ symbol }) => symbol === 'AAPL')).toBe(true)
+    expect(decision.excludedCandidates).toEqual([])
   })
 
   test('accepts a complete rolling baseline expressed at equivalent nanosecond precision', () => {
