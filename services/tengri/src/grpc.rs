@@ -48,7 +48,7 @@ use proto::{
     CodexModels, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
     CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest, Empty, FileEntry, FileEvent,
     FileEventKind, GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest,
-    InterruptCodexTurnRequest, IssueEditorSessionRequest, IssuePreviewSessionRequest,
+    InterruptCodexTurnRequest, IssueDesktopSessionRequest, IssuePreviewSessionRequest,
     IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest,
     ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
     MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
@@ -1050,27 +1050,22 @@ impl MicroVmControlPlane for ControlPlane {
 
     async fn issue_editor_session(
         &self,
-        request: Request<IssueEditorSessionRequest>,
+        request: Request<IssueDesktopSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssueEditorSession").await?;
         let request = request.into_inner();
-        if request.window_id.len() < 16
-            || request.window_id.len() > 128
-            || !request
-                .window_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        {
-            return Err(Status::invalid_argument("invalid editor window identity"));
-        }
+        validate_desktop_window_id(&request.window_id)?;
         let (agent, access) = self.agent_access(&principal, &request.agent_id, "").await?;
-        self.guests
-            .for_microvm(&agent, self.guest_authority.user(access))
-            .await
-            .map_err(map_guest_error)?
-            .open_editor()
-            .await
-            .map_err(map_guest_error)?;
+        if !request.renewal {
+            self.guests
+                .for_microvm(&agent, self.guest_authority.user(access))
+                .await
+                .map_err(map_guest_error)?
+                .open_editor()
+                .await
+                .map_err(map_guest_error)?;
+            self.activity.touch(&request.agent_id);
+        }
         let issued = self
             .tickets
             .issue_editor(&principal, &request.agent_id, &request.window_id)
@@ -1110,18 +1105,23 @@ impl MicroVmControlPlane for ControlPlane {
 
     async fn issue_browser_session(
         &self,
-        request: Request<GetAgentRequest>,
+        request: Request<IssueDesktopSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssueBrowserSession").await?;
         let request = request.into_inner();
-        self.guest(&principal, &request.id, "")
-            .await?
-            .open_browser()
-            .await
-            .map_err(map_guest_error)?;
+        validate_desktop_window_id(&request.window_id)?;
+        if request.renewal {
+            self.authorized_agent(&principal, &request.agent_id).await?;
+        } else {
+            self.guest(&principal, &request.agent_id, "")
+                .await?
+                .open_browser()
+                .await
+                .map_err(map_guest_error)?;
+        }
         let issued = self
             .tickets
-            .issue_preview(&principal, &request.id, BROWSER_PORT, "/", "")
+            .issue_browser(&principal, &request.agent_id, &request.window_id)
             .await?;
         let preview_origin = self.preview_origin.origin(&issued.id);
         Ok(Response::new(PreviewSession {
@@ -1159,6 +1159,17 @@ impl MicroVmControlPlane for ControlPlane {
             .await?;
         Ok(Response::new(Empty {}))
     }
+}
+
+fn validate_desktop_window_id(value: &str) -> Result<(), Status> {
+    if !(16..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(Status::invalid_argument("invalid desktop window identity"));
+    }
+    Ok(())
 }
 
 fn agent_from_microvm(microvm: &MicroVM) -> Agent {
@@ -2562,6 +2573,64 @@ mod tests {
             ActivityTracker::new(client, namespace),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn preview_renewal_obeys_current_ofz_denial_before_tickets_or_guest_calls() {
+        for editor in [true, false] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            fixture.mode.store(1, Ordering::SeqCst);
+            // The database is deliberately disconnected: denial must precede any capability write.
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = fixture.authorization;
+            let agent = provisional_terminal_test_agent(Utc::now());
+            let (method, action) = if editor {
+                ("IssueEditorSession", crate::ofz::proto::Action::EditorOpen)
+            } else {
+                (
+                    "IssueBrowserSession",
+                    crate::ofz::proto::Action::BrowserControl,
+                )
+            };
+            let principal =
+                Principal::fixture(&owner_hash("github:43"), &agent.uid().unwrap(), action);
+            let request = crate::auth::signed_fixture_request(
+                IssueDesktopSessionRequest {
+                    agent_id: agent.name_any(),
+                    window_id: "desktop-window-01".into(),
+                    renewal: true,
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/{method}"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move {
+                if editor {
+                    control.issue_editor_session(request).await
+                } else {
+                    control.issue_browser_session(request).await
+                }
+            });
+            let (request, response) =
+                tokio::time::timeout(Duration::from_secs(2), handle.next_request())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            let result = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.unwrap_err().code(), tonic::Code::PermissionDenied);
+        }
     }
 
     #[tokio::test]
