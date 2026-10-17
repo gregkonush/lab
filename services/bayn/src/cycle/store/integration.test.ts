@@ -992,7 +992,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               cycle_id text, decision_hash text, account_id text, updated_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
-              cycle_id text, decision_hash text, document jsonb
+              cycle_id text, decision_hash text, document jsonb,
+              created_at timestamptz DEFAULT '2026-09-08T17:00:00Z'
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE intents (
               intent_id text, account_id text, cycle_id text, strategy_name text, decision_hash text,
@@ -1150,10 +1151,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD submission_cutoff_at timestamptz,
               ADD submission_open_at timestamptz,
               ADD qualification_run_id text,
+              ADD strategy_name text DEFAULT 'intraday-momentum',
               ADD strategy_protocol_hash text,
               ADD schema_version text,
               ADD identity_schema_version text,
-              ADD snapshot_id text`
+              ADD snapshot_id text,
+              ADD created_at timestamptz DEFAULT '2026-09-08T17:00:00Z'`
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,

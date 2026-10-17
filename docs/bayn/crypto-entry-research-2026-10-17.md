@@ -12,6 +12,16 @@ decision batch was at 13:42:47 UTC. Actual broker and native accounting readback
 fills, flat inventory, exact reconciliation and verified TigerBeetle transfers. These were historical fills; no
 new profitable v9 BTC/ETH/SOL round trip was demonstrated.
 
+The 19 retained earlier-release crypto round trips lost $197.251644 on price movement and incurred $1,182.554501
+in final broker fees, for $1,379.806145 net trading loss before operating costs. Two earlier ETH round trips were
+net winners; they do not establish current-release profitability. A separate hindsight check read US quotes for the
+first 15 minutes of every actual entry. Eighteen windows had quotes within ten seconds of both boundaries and no
+interquote gap above ten seconds. In 15 of those windows, including all five BTC entries, even the largest observed
+bid failed to cover the actual acquisition cost, received-coin deduction and cent-rounded 25 bp sell fee. One SOL
+entry had a positive perfect-timing bound but actually lost. This optimistic check assumes a full exit at the best
+observed bid, ignores depth, impact and operating costs, and leaves prices between quotes unobserved. It diagnoses
+entry economics; it supplies no causal trading signal or achievable-profit claim.
+
 Loki retained the actual failure at 13:43:59 UTC. The outer generation deadline interrupted a reconciliation while
 PostgreSQL was committing. The preceding pass spent 15.4 seconds in reconciliation; the failed pass spent 25.7
 seconds there, with its current commit already taking 4.2 seconds. These stage durations overlap and must not be
@@ -32,6 +42,17 @@ The same-account provider and native archive contained identical trade IDs and n
 for that interval. Prints are not broker fills. Current database replication was streaming with approximately
 7 milliseconds flush lag at 18:37 UTC; that later measurement does not explain or erase the earlier commit stall.
 No storage settings or durability guarantees were changed.
+
+The first deadline repair reached the live controller at 19:09 UTC, but the full authority verifier still failed.
+The restricted generation already contained terminal, zero-target `NO_TRADE` decisions from before the timeout.
+Settlement accepted a new terminal cycle after restriction or a generation without any decisions, excluding this
+legitimate intermediate case. The PostgreSQL regression reproduced that deadlock. Recovery now recognizes earlier
+zero-target cycles only when every generation-bound decision matches the terminal account, plan, strategy, protocol,
+cycle, snapshot and submission deadline, with no generation intents or active cycles. Planned targets, mismatched
+bindings and non-dispatchable decisions cannot authorize that recovery. Fresh exact flat reconciliation and native OBSERVE-to-PAPER activation still apply.
+Recovery also applies the normal decision-creation bounds: at or after cycle creation and submission open, and at or
+before the durable cycle update. Regression cases cover every mismatched binding and each temporal bound both before
+and after restriction.
 
 ## What the primary research supports
 
@@ -84,6 +105,29 @@ quote-crossing full PAPER fills do not establish exact controller timing, partia
 costs. Any future survivor needs independent native lifecycle validation, untouched temporal evaluation, reviewed
 single-path deployment and actual broker/accounting evidence. Inference, data, infrastructure and research costs
 remain unknown where attribution is unavailable.
+
+## Extended historical screen
+
+A second adaptive experiment froze completed-bar versions of those three mechanisms and a fixed 15-minute signal
+cooldown before enumerating their outcomes. The cooldown starts on the signal, including when subsequent quote,
+trade or fill evidence is unavailable. It cannot select a replacement event using later outcomes. Training spans
+October 1, 2025 through June 1, 2026; development spans June 1 through August 17, 2026. A 45-minute partition purge
+and the complete 15-minute, 11-second label embargo separate observations from later outcomes.
+
+Complete same-venue source pagination produced 1,103,426 in-range raw bars, 373,606 trades and 3,545,852 quotes.
+The causal source checks retained 624 observations across the three assets and mechanisms. Both exits were tested
+again, making six extended variants. None qualified. Training cases with sufficient independent support had negative
+hypothetical net returns: BTC catch-up averaged minus 163.21 bp over 78 known fills on 42 days, ETH washout minus
+114.07 bp over 59 fills on 32 days, and ETH breakout minus 107.12 bp over 42 fills on 30 days. Their day-block
+bootstrap lower bounds were also negative. Earlier profit capture did not yield a positive supported forecast.
+An abstaining portfolio has zero submissions; that is not a profitable strategy.
+
+All 577 new financial cases matched the actual native pricing, received-coin fee, cash-fee and inventory-basis
+functions. This differential validates those integer calculations, not the complete hypothetical lifecycle.
+Historical event time remains an arrival proxy, archived bars may include revisions, submission timing and
+stop polling remain approximations, and partial fills and recovery are not fully simulated. Unknown deadline
+quotes remain unknown. The original October 6–14 final holdout remains unscored. No failed research variant was
+deployed, and the extended sample does not replace the missing frozen five-session Jev study.
 
 ## Remaining acceptance
 
