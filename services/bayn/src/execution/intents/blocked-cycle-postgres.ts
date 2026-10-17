@@ -312,6 +312,12 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND decision.document ->> 'mode' = 'PAPER'
             AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
             AND decision.document #>> '{bindings,cycleId}' = cycle.cycle_id
+            AND decision.document #>> '{bindings,accountId}' = cycle.account_id
+            AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
+            AND decision.document #>> '{bindings,strategyName}' = cycle.strategy_name
+            AND decision.document #>> '{bindings,strategyProtocolHash}' = cycle.strategy_protocol_hash
+            AND decision.document #>> '{bindings,snapshotId}' = cycle.snapshot_id
+            AND (decision.document ->> 'submissionCutoffAt')::timestamptz = cycle.submission_cutoff_at
             AND decision.document -> 'dispatchable' = 'true'::jsonb
             AND decision.document -> 'riskBlock' IS NULL
             AND decision.document #>> '{targetPlan,status}' = 'NO_TRADE'

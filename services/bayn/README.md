@@ -11,10 +11,10 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
-accepts those completed decisions only when every generation-bound decision matches a terminal, same-account,
-same-plan and same-protocol `NO_TRADE` cycle with empty intent lists, and the generation has no intents or active
-cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE before the approved
-PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
+accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
+account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
+no intents or active cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE
+before the approved PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
 
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as

@@ -47,9 +47,9 @@ The first deadline repair reached the live controller at 19:09 UTC, but the full
 The restricted generation already contained terminal, zero-target `NO_TRADE` decisions from before the timeout.
 Settlement accepted a new terminal cycle after restriction or a generation without any decisions, excluding this
 legitimate intermediate case. The PostgreSQL regression reproduced that deadlock. Recovery now recognizes earlier
-zero-target cycles only when every generation-bound decision matches the terminal account, plan, protocol and cycle,
-with no generation intents or active cycles. Planned targets, mismatched bindings and non-dispatchable decisions
-cannot authorize that recovery. Fresh exact flat reconciliation and native OBSERVE-to-PAPER activation still apply.
+zero-target cycles only when every generation-bound decision matches the terminal account, plan, strategy, protocol,
+cycle, snapshot and submission deadline, with no generation intents or active cycles. Planned targets, mismatched
+bindings and non-dispatchable decisions cannot authorize that recovery. Fresh exact flat reconciliation and native OBSERVE-to-PAPER activation still apply.
 
 ## What the primary research supports
 

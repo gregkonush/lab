@@ -693,6 +693,12 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     { decisionEvidence: 'planned-target', terminalAfterRestriction: false },
     { decisionEvidence: 'zero-target', terminalAfterRestriction: true },
     { decisionEvidence: 'planned-target', terminalAfterRestriction: true },
+    ...(['account', 'qualification', 'strategy', 'protocol', 'snapshot', 'cutoff', 'missing'] as const).flatMap(
+      (decisionEvidence) => [
+        { decisionEvidence, terminalAfterRestriction: false },
+        { decisionEvidence, terminalAfterRestriction: true },
+      ],
+    ),
   ] as const)(
     'settles only zero-target NO_TRADE generations: decisionEvidence=$decisionEvidence terminalAfterRestriction=$terminalAfterRestriction',
     async ({ decisionEvidence, terminalAfterRestriction }) => {
@@ -746,7 +752,30 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               schemaVersion: 'bayn.paper-cycle-decision.v1',
               mode: 'PAPER',
               dispatchable: true,
-              bindings: { cycleId, authorityGenerationHash: generationHash },
+              bindings: {
+                cycleId,
+                authorityGenerationHash: generationHash,
+                ...(ordinal === 2 && decisionEvidence === 'missing'
+                  ? {}
+                  : {
+                      accountId: ordinal === 2 && decisionEvidence === 'account' ? 'another-account' : accountId,
+                      qualificationRunId:
+                        ordinal === 2 && decisionEvidence === 'qualification'
+                          ? 'a'.repeat(64)
+                          : identity.qualificationRunId,
+                      strategyName:
+                        ordinal === 2 && decisionEvidence === 'strategy' ? 'another-strategy' : identity.strategyName,
+                      strategyProtocolHash:
+                        ordinal === 2 && decisionEvidence === 'protocol'
+                          ? 'b'.repeat(64)
+                          : identity.strategyProtocolHash,
+                      snapshotId: ordinal === 2 && decisionEvidence === 'snapshot' ? 'c'.repeat(64) : snapshotId,
+                    }),
+              },
+              submissionCutoffAt:
+                ordinal === 2 && decisionEvidence === 'cutoff'
+                  ? instant(Date.parse(draft.window.submissionCutoffAt) - 1000)
+                  : draft.window.submissionCutoffAt,
               contentHash: decisionHash,
               createdAt: decisionAt,
               orderedIntentIds: [],
