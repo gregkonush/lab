@@ -1799,6 +1799,7 @@ function retryableReadFailure(cause: unknown) {
     (cause instanceof DOMException && cause.name === 'AbortError') ||
     (cause instanceof TengriRequestError &&
       cause.code !== 'model_catalog_invalid' &&
+      cause.code !== 'conversation_history_invalid' &&
       (cause.status === 408 || cause.status === 429 || cause.status >= 500))
   )
 }

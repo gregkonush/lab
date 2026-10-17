@@ -1915,16 +1915,22 @@ test('cancels a pending conversation recovery retry when the chat window closes'
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(1)
 })
 
-for (const status of [403, 404]) {
-  test(`does not automatically retry a conversation recovery denied with status ${status}`, async ({ page }) => {
+for (const failure of [
+  { status: 403, error: 'Conversation access denied' },
+  { status: 404, error: 'Conversation access denied' },
+  { status: 502, error: 'Invalid conversation history', code: 'conversation_history_invalid' },
+]) {
+  test(`does not automatically retry a permanent conversation recovery failure with status ${failure.status}`, async ({
+    page,
+  }) => {
     await page.clock.install()
     const mock = await mockTengri(page, {
-      resumeThreadErrors: [{ status, error: 'Conversation access denied' }],
+      resumeThreadErrors: [failure],
     })
     await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
     await page.goto('/')
     const tengri = page.getByRole('region', { name: 'Tengri window' })
-    await expect(tengri.getByText('Conversation access denied', { exact: true })).toBeVisible()
+    await expect(tengri.getByText(failure.error, { exact: true })).toBeVisible()
     await page.clock.runFor(31_000)
     expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(1)
   })

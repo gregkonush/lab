@@ -5,6 +5,7 @@ export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
 export type TengriErrorCode =
   | 'conversation_not_found'
+  | 'conversation_history_invalid'
   | 'file_conflict'
   | 'capacity_full'
   | 'lifecycle_superseded'
