@@ -236,7 +236,7 @@ durableTest(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v7',
+            inputDefinition: 'bayn.jev-trading-signal-state.v8',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',

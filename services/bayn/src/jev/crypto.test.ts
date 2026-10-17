@@ -67,16 +67,15 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
     const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
     const features = new Map(fixture.cut.projection.features)
     if (missing !== null) features.delete(missing)
-    const snapshot = Result.getOrThrow(
-      constructStreamingSnapshot(
-        { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
-        {
-          ...fixture.query,
-          symbols,
-          candidateSymbols: symbols,
-        },
-      ),
+    const snapshotResult = constructStreamingSnapshot(
+      { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
+      { ...fixture.query, symbols, candidateSymbols: symbols, benchmarkSymbols: ['BTC/USD', 'ETH/USD'] },
     )
+    if (missing === 'BTC/USD') {
+      expect(snapshotResult).toMatchObject({ _tag: 'Failure', failure: { reason: 'not-ready' } })
+      return
+    }
+    const snapshot = Result.getOrThrow(snapshotResult)
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol } = observation
     const plan = Result.getOrThrow(
@@ -99,13 +98,6 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         reason: 'not-ready',
       })
       expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({ status: 'REQUESTED' })
-    }
-    if (missing === 'BTC/USD') {
-      expect(plan.candidates.every((candidate) => candidate.status === 'EXCLUDED')).toBe(true)
-      expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
-        reason: 'not-ready',
-        message: expect.stringContaining('Required benchmark BTC/USD'),
-      })
     }
   })
 }
