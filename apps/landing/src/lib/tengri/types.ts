@@ -3,7 +3,13 @@ import type { TengriPowerSettings } from './schemas'
 
 export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping' | 'terminating' | 'unknown'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
-export type TengriErrorCode = 'conversation_not_found' | 'file_conflict' | 'capacity_full' | 'lifecycle_superseded'
+export type TengriErrorCode =
+  | 'conversation_not_found'
+  | 'conversation_history_invalid'
+  | 'file_conflict'
+  | 'capacity_full'
+  | 'lifecycle_superseded'
+  | 'model_catalog_invalid'
 
 export type TengriCondition = {
   type: string
