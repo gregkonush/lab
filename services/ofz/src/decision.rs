@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tonic::Status;
 use uuid::Uuid;
 
@@ -675,44 +674,21 @@ pub async fn check(
             return Err(error);
         }
     };
-    let (audit_receipt_id, audited_revision) = if request.stream_receipt_id.is_empty() {
-        let mut receipt = store::receipt(
-            context,
-            peer,
-            resource.clone(),
-            action,
-            allowed,
-            "",
-            "protected access",
-        );
-        receipt.revision = revision.clone();
-        (database.audit(&receipt, &request.target).await?, revision)
-    } else {
-        let id = parse_uuid(&request.stream_receipt_id)?;
-        let client = database
-            .pool
-            .get()
-            .await
-            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-        let actor = store::encode(&context.actor)?;
-        let resource = store::encode(resource)?;
-        let target_hash = Sha256::digest(request.target.as_bytes()).to_vec();
-        let bound = client.query_opt("SELECT receipt FROM ofz.audit WHERE id=$1 AND receipt->'actor'=$2 AND receipt->'resource'=$3 AND (receipt->>'action')::integer=$4 AND receipt->>'workload_id'=$5 AND receipt->>'allowed'='true' AND target_hash=$6 AND created_at_ms>ofz.now_ms()-28800000", &[&id,&actor,&resource,&(action as i32),&peer,&target_hash]).await.map_err(sql_error)?;
-        let bound =
-            bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
-        let receipt: crate::proto::AuditReceipt = store::decode(bound.get(0))?;
-        if receipt.revision.is_empty()
-            || receipt.session_id != context.session_id
-            || receipt.grant_id != context.grant_id
-            || receipt.workspace_uid != context.workspace_uid
-            || receipt.runtime_epoch != context.runtime_epoch
-            || receipt.origin != context.origin
-            || receipt.recovery_generation != state.recovery_generation
-        {
-            return Err(Status::permission_denied("stream receipt binding mismatch"));
-        }
-        (request.stream_receipt_id, receipt.revision)
-    };
+    let mut receipt = store::receipt(
+        context,
+        peer,
+        resource.clone(),
+        action,
+        allowed,
+        "",
+        "protected access",
+    );
+    receipt.revision = revision.clone();
+    receipt.recovery_generation = state.recovery_generation;
+    let receipt = database
+        .observation_audit(&receipt, &request.target, &request.stream_receipt_id)
+        .await?;
+    let (audit_receipt_id, audited_revision) = (receipt.id, receipt.revision);
     let finalized = evaluate(
         database,
         native,

@@ -1,6 +1,13 @@
 [
   {
     "surface": "controller",
+    "operation": "GetRequestAudience",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Pinned BFF mTLS only; returns a process incarnation, with no user or workspace authority"
+  },
+  {
+    "surface": "controller",
     "operation": "CreateAgent",
     "action": "ACTION_WORKSPACE_CREATE"
   },

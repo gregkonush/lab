@@ -18,6 +18,7 @@ let runtimeEpoch = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 let runtimePhase = 'AGENT_PHASE_READY'
 let runtimePolicyVersion = 10
 let runtimeDisplayName = 'Tengri'
+let runtimeConditions: Record<string, unknown>[] = []
 const staleAgents: Record<string, unknown>[] = []
 let delayedRuntimeReads = 0
 let agentReads = 0
@@ -50,6 +51,7 @@ function runtimeAgent(id: unknown) {
     memoryMib: 4096,
     workspaceGib: 32,
     idleTimeoutMinutes: 60,
+    conditions: runtimeConditions,
   }
 }
 let ofzServer: grpc.Server
@@ -85,6 +87,7 @@ let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
+let receiverAudience = '77777777-7777-4777-8777-777777777777'
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let editorRequestStarted: (() => void) | null = null
@@ -210,6 +213,12 @@ beforeAll(async () => {
   process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
+    getRequestAudience(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { audience: receiverAudience })
+    },
     issueEditorSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -292,6 +301,12 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_ARM64',
         idleTimeoutMinutes: call.request.idleTimeoutMinutes,
       })
+    },
+    listAgents(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { agents: [runtimeAgent('agent-test')] })
     },
     getAgent(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -615,6 +630,25 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
+    const { listCodexModels } = await import('./grpc')
+    try {
+      await listCodexModels(identity, 'agent-test')
+      expect(metadataValue('x-tengri-audience')).toBe(receiverAudience)
+      receiverAudience = '88888888-8888-4888-8888-888888888888'
+      await listCodexModels(identity, 'agent-test')
+      expect(metadataValue('x-tengri-audience')).toBe(receiverAudience)
+      receiverAudience = 'not-an-audience'
+      const before = receivedRequest
+      expect(await rejection(listCodexModels(identity, 'agent-test'))).toMatchObject({
+        message: 'Tengri request audience is invalid',
+        status: 503,
+      })
+      expect(receivedRequest).toBe(before)
+    } finally {
+      receiverAudience = '77777777-7777-4777-8777-777777777777'
+    }
+  })
   test('renews the client certificate while an existing signed stream stays open', async () => {
     const { listCodexModels, watchFiles } = await import('./grpc')
     const watch = await watchFiles(identity, 'agent-test', '/renewal')
@@ -1128,6 +1162,24 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
   })
 
+  test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
+    const { listAgents } = await import('./grpc')
+    const previousPhase = runtimePhase
+    runtimePhase = 'AGENT_PHASE_READY'
+    runtimeConditions = [{ type: 'Ready', status: 'Unknown', reason: 'ReconcileUnavailable' }]
+    try {
+      expect(await rejection(listAgents(identity))).toMatchObject({
+        status: 503,
+        message: 'Runtime status cannot be confirmed. Retrying.',
+      })
+      runtimeConditions = []
+      expect((await listAgents(identity))[0]?.phase).toBe('ready')
+    } finally {
+      runtimeConditions = []
+      runtimePhase = previousPhase
+    }
+  })
+
   test('rejects an old runtime response rather than inventing its power settings', async () => {
     const { createAgent } = await import('./grpc')
     expect(await rejection(createAgent(identity, 'Old runtime', randomUUID()))).toMatchObject({
@@ -1515,7 +1567,8 @@ function expectedSignature(
   const value = receivedMetadata?.get('x-tengri-context-bin')[0]
   if (!Buffer.isBuffer(value)) throw new Error('Missing binary signed context')
   const payload = [
-    'tengri.ofz.v1',
+    'tengri.ofz.v2',
+    metadataValue('x-tengri-audience'),
     method.path,
     createHash('sha256').update(method.requestSerialize(body)).digest('hex'),
     metadataValue('x-tengri-nonce'),

@@ -1,4 +1,4 @@
-use std::{env, path::Path, sync::Arc, time::Duration};
+use std::{env, path::Path, time::Duration};
 
 use anyhow::{Context, ensure};
 use deadpool_postgres::{Manager, ManagerConfig, Pool, RecyclingMethod};
@@ -13,19 +13,20 @@ use tokio_postgres_rustls::MakeRustlsConnect;
 use tonic::Status;
 use uuid::Uuid;
 
-mod nonces;
-
 const MIGRATIONS: &[(i32, &[u8])] = &[
     (1, include_bytes!("../migrations/0001_control.sql")),
     (2, include_bytes!("../migrations/0002_replay_buckets.sql")),
     (3, include_bytes!("../migrations/0003_replay_slots.sql")),
+    (
+        4,
+        include_bytes!("../migrations/0004_leadership_window.sql"),
+    ),
 ];
 
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
     coordination: Pool,
-    nonces: Arc<nonces::NonceWriter>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -114,11 +115,7 @@ impl Database {
         };
         let coordination = pool(2)?;
         let pool = pool(if role == "tengri_controller" { 12 } else { 2 })?;
-        Ok(Self {
-            nonces: Arc::new(nonces::NonceWriter::new(pool.clone())),
-            pool,
-            coordination,
-        })
+        Ok(Self { pool, coordination })
     }
 
     #[cfg(test)]
@@ -139,11 +136,7 @@ impl Database {
         };
         let coordination = pool();
         let pool = pool();
-        Self {
-            nonces: Arc::new(nonces::NonceWriter::new(pool.clone())),
-            pool,
-            coordination,
-        }
+        Self { pool, coordination }
     }
 
     #[cfg(test)]
@@ -224,11 +217,6 @@ impl Database {
             ));
         }
         Ok(())
-    }
-
-    #[tracing::instrument(name = "db.consume_nonce", skip_all, fields(db.system.name = "postgresql"))]
-    pub async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), Status> {
-        self.nonces.consume(key, expires_at_ms).await
     }
 
     #[tracing::instrument(name = "db.leadership.acquire", skip_all, fields(db.system.name = "postgresql"))]

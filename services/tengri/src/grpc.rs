@@ -100,6 +100,9 @@ pub struct ControlPlaneConfig {
 }
 
 impl ControlPlane {
+    pub(crate) fn request_audience(&self) -> &str {
+        self.auth.audience()
+    }
     pub fn new(
         client: Client,
         config: ControlPlaneConfig,
@@ -255,6 +258,14 @@ fn apply_new_agent_metadata(microvm: &mut MicroVM, owner_hash: &str, storage_lay
 
 #[tonic::async_trait]
 impl MicroVmControlPlane for ControlPlane {
+    async fn get_request_audience(
+        &self,
+        _: Request<Empty>,
+    ) -> Result<Response<proto::RequestAudience>, Status> {
+        Ok(Response::new(proto::RequestAudience {
+            audience: self.request_audience().into(),
+        }))
+    }
     async fn create_agent(
         &self,
         request: Request<CreateAgentRequest>,
@@ -2540,10 +2551,7 @@ mod tests {
                 default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: MicroVMArchitecture::Amd64,
                 database: Arc::new(crate::control::Database::unconnected_fixture()),
-                auth: Authenticator::fixture(
-                    Arc::new(crate::control::Database::unconnected_fixture()),
-                    "https://proompteng.ai".into(),
-                ),
+                auth: Authenticator::fixture("https://proompteng.ai".into()),
                 public_url: "https://tengri.example.test".to_owned(),
                 preview_origin: PreviewOrigin::parse(
                     "https://tengri-{session}.example.test".to_owned(),
@@ -2665,7 +2673,7 @@ mod tests {
             fixture.mode.store(u8::from(!allowed), Ordering::SeqCst);
             let mut control = test_control_plane(Client::new(service, "tengri"));
             control.authorization = fixture.authorization;
-            control.auth = Authenticator::fixture(database.clone(), "https://proompteng.ai".into());
+            control.auth = Authenticator::fixture("https://proompteng.ai".into());
             let mut sleeping = provisional_terminal_test_agent(Utc::now());
             sleeping.metadata.resource_version = Some("7".into());
             sleeping.spec.desired_state = MicroVMDesiredState::Sleeping;
@@ -2686,6 +2694,7 @@ mod tests {
                 },
                 &principal,
                 &format!("/{CONTROL_PLANE_SERVICE}/UpdatePowerSettings"),
+                control.request_audience(),
             );
             let task = tokio::spawn(async move { control.update_power_settings(request).await });
             let (request, response) = handle.next_request().await.unwrap();

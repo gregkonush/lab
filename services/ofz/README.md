@@ -2,7 +2,7 @@
 
 Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
-The running cluster still uses the old contract until the reviewed, coordinated hard cutover.
+Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
 
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
@@ -45,7 +45,7 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all three migrations through `0003_replay_slots.sql`; they cannot
+checksum. The BFF, controller and supervisor require all four migrations through `0004_leadership_window.sql`; they cannot
 initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
@@ -55,6 +55,12 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+
+Repeated controller runtime-state reads and guest health probes may reference their original durable observation
+receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
+including the eight-hour age limit, while still re-reading current authority and policy on every call. The receipt
+identifies a committed observation; it never replaces an authorization decision. Terminal cleanup cannot reuse an
+observation receipt and retains a new durable audit for each submission.
 
 Initial platform setup uses `ofz bootstrap /var/run/ofz/bootstrap/manifest.json`, followed by
 `ofz activate /var/run/ofz/bootstrap/manifest.json`. Both commands require the `ofz_migrator` schema owner in

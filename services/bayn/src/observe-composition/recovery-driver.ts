@@ -47,6 +47,7 @@ import {
   buildObserveCycleDecision,
   decisionBuildError,
   mutationCyclePassTimeoutError,
+  ReconciliationPassTimeoutError,
   observePass,
   reconciliationRunnerError,
   runMutationPassWithinTimeout,
@@ -477,6 +478,9 @@ const makeRecoveryFirstCycleDriverEffect = (
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    // The generation deadline can interrupt reconciliation before its own timeout is reported.
+    // Clear this marker before entering any cycle work; only the serialized preflight may retry without restriction.
+    const preflightOnly = yield* Ref.make(false)
     const operationPermit = yield* Semaphore.make(1)
     const cyclePassTimeoutMs = Math.min(input.reconciliationPassTimeoutMs, input.reconciliationIntervalMs)
     const nextDelayMs = recoveryFirstCycleNextDelayMs(input)
@@ -527,6 +531,25 @@ const makeRecoveryFirstCycleDriverEffect = (
           ),
         ),
         Effect.andThen(observeReconciliationFailure(error)),
+      )
+    const observeTimeout = (error: CycleRunnerError) =>
+      Ref.get(preflightOnly).pipe(
+        Effect.flatMap((preflight) =>
+          preflight
+            ? Ref.set(cadence, {}).pipe(
+                Effect.andThen(
+                  observeReconciliationFailure(
+                    reconciliationRunnerError(
+                      new ReconciliationPassTimeoutError({
+                        timeoutMs: cyclePassTimeoutMs,
+                        message: `broker reconciliation preflight interrupted: ${error.message}`,
+                      }),
+                    ),
+                  ),
+                ),
+              )
+            : observeCycleFailure(error),
+        ),
       )
     const advanceCycle = (preflight: ReconciliationPassResult | undefined) =>
       Effect.gen(function* () {
@@ -588,11 +611,13 @@ const makeRecoveryFirstCycleDriverEffect = (
         }),
       )
     const reconciliationPreflight = reconcileMutationBeforeExternallyDrivenAdvance(input, cadence, reconcile)
-    const runCycleAdvance = reconciliationPreflight.pipe(
+    const runCycleAdvance = Ref.set(preflightOnly, true).pipe(
+      Effect.andThen(reconciliationPreflight),
       Effect.matchEffect({
         onFailure: observeReconciliationFailure,
         onSuccess: (preflight) =>
-          advanceCycle(preflight).pipe(
+          Ref.set(preflightOnly, false).pipe(
+            Effect.andThen(advanceCycle(preflight)),
             Effect.flatMap((advanced) =>
               capability._tag !== 'Mutation' ||
               input.intradayMarketData === undefined ||
@@ -636,12 +661,12 @@ const makeRecoveryFirstCycleDriverEffect = (
       operationPermit,
       runCycleAdvance.pipe(withObservedStage('bayn.execution.cycle-pass')),
       cyclePassTimeoutMs,
-      observeCycleFailure,
+      observeTimeout,
     )
     return {
       advance,
       timeoutMs: cyclePassTimeoutMs,
-      onTimeout: observeCycleFailure,
+      onTimeout: observeTimeout,
       nextDelayMs,
     }
   })
