@@ -6,7 +6,7 @@ use std::{
 
 use prost::Message;
 use sha2::{Digest, Sha256};
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, OwnedMutexGuard};
 use tonic::Status;
 
 use super::proto::CheckRequest;
@@ -28,12 +28,51 @@ impl Receipt {
 
 type Slot = Arc<Mutex<Option<Receipt>>>;
 
+pub(super) enum Binding {
+    Reused(String),
+    New(OwnedMutexGuard<Option<Receipt>>),
+}
+
+impl Binding {
+    pub fn id(&self) -> &str {
+        match self {
+            Self::Reused(id) => id,
+            Self::New(_) => "",
+        }
+    }
+
+    pub fn record(self, id: String) {
+        if let Self::New(mut receipt) = self {
+            *receipt = Some(Receipt {
+                id,
+                created: Instant::now(),
+            });
+        }
+    }
+}
+
 #[derive(Default)]
 pub(super) struct Cache {
     entries: Mutex<HashMap<[u8; 32], (Instant, Slot)>>,
 }
 
 impl Cache {
+    pub async fn bind(&self, request: &CheckRequest, recovery: u64) -> Result<Binding, Status> {
+        let slot = self.slot(request, recovery).await?;
+        let remaining = super::remaining_deadline(request)?.min(super::DURABLE_TIMEOUT);
+        let mut receipt = tokio::time::timeout(remaining, slot.lock_owned())
+            .await
+            .map_err(|_| Status::deadline_exceeded("authorization receipt deadline expired"))?;
+        if receipt.as_ref().is_some_and(|receipt| !receipt.fresh()) {
+            *receipt = None;
+        }
+        if let Some(receipt) = receipt.as_ref() {
+            Ok(Binding::Reused(receipt.id.clone()))
+        } else {
+            Ok(Binding::New(receipt))
+        }
+    }
+
     pub async fn slot(&self, request: &CheckRequest, recovery: u64) -> Result<Slot, Status> {
         let key = key(request, recovery);
         let mut entries = self.entries.lock().await;

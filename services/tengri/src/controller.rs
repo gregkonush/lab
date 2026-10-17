@@ -151,6 +151,38 @@ async fn reconcile(
 
 fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
     let mut status = microvm.status.clone().unwrap_or_default();
+    if error.chain().any(|cause| {
+        cause.downcast_ref::<tonic::Status>().is_some_and(|error| {
+            matches!(
+                error.code(),
+                tonic::Code::Cancelled
+                    | tonic::Code::DeadlineExceeded
+                    | tonic::Code::Unavailable
+                    | tonic::Code::ResourceExhausted
+            )
+        }) || cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(|error| error.is_timeout() || error.is_connect())
+            || matches!(cause.downcast_ref::<kube::Error>(), Some(kube::Error::Api(error)) if error.code == 409 || error.code == 429 || error.code >= 500)
+    }) {
+        status.guest_ready = false;
+        status.failure_reason = None;
+        status.message = Some("Runtime status cannot be confirmed. Retrying.".into());
+        let last_transition_at = status
+            .conditions
+            .first()
+            .filter(|condition| condition.reason == "ReconcileUnavailable")
+            .map(|condition| condition.last_transition_at.clone())
+            .unwrap_or_else(|| Utc::now().to_rfc3339());
+        status.conditions = vec![MicroVMCondition {
+            type_: "Ready".into(),
+            status: "Unknown".into(),
+            reason: "ReconcileUnavailable".into(),
+            message: status.message.clone().expect("retry message"),
+            last_transition_at,
+        }];
+        return status;
+    }
     let capacity = error.downcast_ref::<NoPreparedSlot>().is_some();
     let phase = if capacity {
         MicroVMPhase::Pending
@@ -458,11 +490,13 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
         ),
     };
     let binding = microvm.spec.slot.as_ref().expect("bound MicroVM");
+    let condition_status = if ready { "True" } else { "False" };
     let previous_transition = microvm
         .status
         .as_ref()
         .filter(|s| s.phase == phase)
         .and_then(|s| s.conditions.first())
+        .filter(|c| c.type_ == "Ready" && c.status == condition_status && c.reason == reason)
         .map(|c| c.last_transition_at.clone());
     MicroVMStatus {
         observed_policy_version: microvm.spec.policy_version,
@@ -487,7 +521,7 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
         observed_generation: microvm.metadata.generation.unwrap_or_default(),
         conditions: vec![MicroVMCondition {
             type_: "Ready".into(),
-            status: if ready { "True" } else { "False" }.into(),
+            status: condition_status.into(),
             reason: reason.into(),
             message: message.into(),
             last_transition_at: previous_transition.unwrap_or_else(|| now.to_rfc3339()),
@@ -2517,6 +2551,30 @@ mod tests {
         assert!(pending.lock().unwrap().is_empty());
     }
 
+    #[test]
+    fn transport_failure_does_not_claim_the_running_guest_failed() {
+        let mut microvm = agent();
+        microvm.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            runtime_epoch: microvm.spec.runtime_epoch.clone(),
+            ..Default::default()
+        });
+        let status = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::cancelled("transport timeout")),
+        );
+        assert_eq!(status.phase, MicroVMPhase::Ready);
+        assert!(!status.guest_ready);
+        assert_eq!(status.conditions[0].status, "Unknown");
+        assert_eq!(status.conditions[0].reason, "ReconcileUnavailable");
+        assert!(status.failure_reason.is_none());
+        let failed = failure_status(&microvm, &anyhow::anyhow!("retained-home binding changed"));
+        assert_eq!(failed.phase, MicroVMPhase::Failed);
+        assert!(!failed.guest_ready);
+        assert_eq!(failed.conditions[0].status, "False");
+    }
+
     #[tokio::test]
     async fn persisted_failure_transitions_increment_the_counter_once() {
         let metrics = metrics::Metrics::default();
@@ -2620,6 +2678,35 @@ mod tests {
             Some("10".into())
         );
         assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn runtime_recovery_records_the_condition_transition_once() {
+        let mut microvm = agent();
+        let state = SlotState::Awake {
+            claim: claim_for(&microvm).unwrap(),
+        };
+        microvm.status = Some(status_for(&microvm, &Pod::default(), &state));
+        let mut unknown = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+        );
+        unknown.conditions[0].last_transition_at = "2026-10-08T19:00:00Z".into();
+        microvm.status = Some(unknown.clone());
+        let repeated = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+        );
+        assert_eq!(repeated, unknown);
+        let recovered = status_for(&microvm, &Pod::default(), &state);
+        assert_eq!(recovered.conditions[0].status, "True");
+        assert_eq!(recovered.conditions[0].reason, "SnapshotRestored");
+        assert_ne!(
+            recovered.conditions[0].last_transition_at,
+            unknown.conditions[0].last_transition_at
+        );
+        microvm.status = Some(recovered.clone());
+        assert_eq!(status_for(&microvm, &Pod::default(), &state), recovered);
     }
 
     #[tokio::test]

@@ -337,6 +337,48 @@ impl Database {
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
         self.audit_writer.record(receipt, target).await
     }
+
+    #[tracing::instrument(name = "db.audit.binding", skip_all, fields(db.system.name = "postgresql"))]
+    pub async fn observation_audit(
+        &self,
+        expected: &AuditReceipt,
+        target: &str,
+        receipt_id: &str,
+    ) -> Result<AuditReceipt, Status> {
+        if receipt_id.is_empty() {
+            self.audit(expected, target).await?;
+            return Ok(expected.clone());
+        }
+        if !policy::canonical_uuid(receipt_id) {
+            return Err(Status::invalid_argument("invalid audit receipt ID"));
+        }
+        let id = Uuid::parse_str(receipt_id)
+            .map_err(|_| Status::invalid_argument("invalid audit receipt ID"))?;
+        let client = self
+            .pool
+            .get()
+            .await
+            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
+        let actor = encode(&expected.actor)?;
+        let resource = encode(&expected.resource)?;
+        let target_hash = Sha256::digest(target.as_bytes()).to_vec();
+        let bound = client.query_opt("SELECT receipt FROM ofz.audit WHERE id=$1 AND receipt->'actor'=$2 AND receipt->'resource'=$3 AND (receipt->>'action')::integer=$4 AND receipt->>'workload_id'=$5 AND receipt->>'allowed'='true' AND target_hash=$6 AND created_at_ms>ofz.now_ms()-28800000", &[&id,&actor,&resource,&expected.action,&expected.workload_id,&target_hash]).await.map_err(sql_error)?;
+        let bound =
+            bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
+        let receipt: AuditReceipt = decode(bound.get(0))?;
+        if receipt.id != receipt_id
+            || receipt.revision.is_empty()
+            || receipt.session_id != expected.session_id
+            || receipt.grant_id != expected.grant_id
+            || receipt.workspace_uid != expected.workspace_uid
+            || receipt.runtime_epoch != expected.runtime_epoch
+            || receipt.origin != expected.origin
+            || receipt.recovery_generation != expected.recovery_generation
+        {
+            return Err(Status::permission_denied("stream receipt binding mismatch"));
+        }
+        Ok(receipt)
+    }
 }
 
 #[tracing::instrument(name = "db.record_activity", skip_all, fields(db.system.name = "postgresql"))]
