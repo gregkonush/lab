@@ -995,6 +995,9 @@ function decodeUtf8File(content: Uint8Array) {
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {
+  if (agent.conditions?.some((condition) => condition.type === 'Ready' && condition.status === 'Unknown')) {
+    throw new TengriUnavailableError('Runtime status cannot be confirmed. Retrying.', 503)
+  }
   const power = tengriPowerSettingsSchema.safeParse({
     idleTimeoutMinutes: agent.idleTimeoutMinutes,
   })
