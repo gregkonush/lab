@@ -1244,8 +1244,8 @@ Migration 0095 builds these indexes transactionally through normal startup migra
 while the account is flat outside the regular session because ordinary index creation blocks table writes.
 PostgreSQL initialization warms each client with a read-only `SELECT 1` before exposing it. An initial
 `ECONNREFUSED` permits at most three attempts, one second apart. Failed acquisition scopes close before retry;
-a successful client remains owned by its application scope. Authentication failures and other errors propagate
-immediately. Caller statements and trading mutations retain their existing execution behavior. Persistent
+a successful client remains owned by its application scope. Composition layers do not rebuild a failed client.
+Authentication failures and other errors propagate immediately. Caller statements and trading mutations retain their existing execution behavior. Persistent
 connection refusal preserves the original failure and prevents startup.
 
 Startup migrations use a private single-connection pool with a fifteen-minute overall deadline, an 895-second SQL
