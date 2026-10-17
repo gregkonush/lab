@@ -135,6 +135,7 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
         }),
         driver.timeoutMs,
         (error) => (cycleInProgress ? driver.onTimeout(error) : Effect.fail(error)),
+        'bayn.execution.generation-pass',
       )
     }).pipe(Effect.catch((cause) => (cause instanceof OperationalError ? Effect.die(cause) : Effect.fail(cause))))
     return {

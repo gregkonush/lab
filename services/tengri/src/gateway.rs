@@ -22,6 +22,7 @@ use tokio_tungstenite::{
         Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
     },
 };
+use tracing::Instrument;
 
 use crate::{
     activity::ActivityTracker,
@@ -196,6 +197,7 @@ impl GatewayState {
         Ok(access)
     }
 
+    #[tracing::instrument(name = "preview.authority.watch", skip_all, fields(otel.status_code = tracing::field::Empty))]
     pub(crate) async fn wait_for_preview_revocation(
         &self,
         session: &PreviewSessionRecord,
@@ -210,11 +212,17 @@ impl GatewayState {
                     access.require(),
                 )
             };
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(2), valid).await,
-                Ok(Ok(_))
-            ) {
-                return;
+            match tokio::time::timeout(Duration::from_secs(2), valid).await {
+                Ok(Ok(_)) => {}
+                result => {
+                    let code = match result {
+                        Ok(Err(error)) => error.code(),
+                        _ => tonic::Code::DeadlineExceeded,
+                    };
+                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    tracing::warn!(?code, "preview authority recheck closed the connection");
+                    return;
+                }
             }
         }
     }
@@ -767,13 +775,17 @@ async fn preview_host_proxy(
         } else {
             websocket
         };
+        let connection_span = tracing::Span::current();
         return websocket
-            .on_upgrade(move |socket| async move {
-                let revoked = state.wait_for_preview_revocation(&session, &access);
-                tokio::select! {
-                    _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
-                    _ = revoked => {},
+            .on_upgrade(move |socket| {
+                async move {
+                    let revoked = state.wait_for_preview_revocation(&session, &access);
+                    tokio::select! {
+                        _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
+                        _ = revoked => {},
+                    }
                 }
+                .instrument(connection_span)
             })
             .into_response();
     }

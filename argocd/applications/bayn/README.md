@@ -173,13 +173,13 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v6`, `bayn.jev.model-action-cash-spot.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v8`, `bayn.jev.cost-supported-cash-spot.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
 account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
-action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
-Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
-rotates the previous PAPER generation through native OBSERVE recovery before a new v6 mandate can activate.
-The current strategy protocol hash is `62aec765eba1f367571290a7d4ce4a5e33db2ec3d94149801496c832b224eb1b`.
+action with supported net economics selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
+Migration 116 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
+rotates the previous PAPER generation through native OBSERVE recovery before a new v8 mandate can activate.
+The current strategy protocol hash is `04bf5314a5ab7886f1802f6aa5da64f4a080cb695b37c9adf042dbedf5fb3fba`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -406,6 +406,31 @@ closed, exact quantity and order-duration readback, ledger receipts and reconcil
 Automated Sunday and midnight tests establish boundary behavior; a short PAPER run does not establish a completed
 24-hour or weekend soak, profitability, or live liquidity capacity. Broker FEE/CFEE activities retain their native
 cash/coin distinction; pending fee publication remains a cost-evidence gap.
+
+### Trace export buffering
+
+The two-replica `bayn-telemetry` Alloy relay accepts Bayn traces before forwarding them to the existing Tempo
+distributor. Each replica has a 16 MiB byte-bounded queue, two export consumers, a 384 MiB process memory limiter
+and a 120-second retry budget. It holds no broker credentials, performs no trading work and does not change
+PostgreSQL, ledger or Kafka durability. Native exporter queue, refusal and delivery metrics are sent to Mimir
+under `job="bayn-telemetry"`. The pod has a 512 MiB memory limit; the native local retry fixture reached about
+213 MiB peak process RSS before production traffic, so the lower initial 256 MiB limit was not retained.
+
+This absorbs brief Tempo/Kafka outages rather than allowing each application exporter to discard its buffer and
+enter its native 60-second disabled interval. It is not durable or lossless: collector restarts, queue overflow
+and exhausted retries can still lose traces. Readiness alone is not proof of delivery. Verify an identifiable
+trace at Tempo and inspect accepted, failed and sent span counters. Do not restart collectors to conceal a backlog.
+
+The standalone regression uses the same configuration with only local endpoints and a deliberately rejecting sink:
+
+```sh
+python3 services/bayn/tools/verify-telemetry-relay.py --binary /path/to/pinned/alloy \
+  --config argocd/applications/bayn/telemetry.alloy
+```
+
+It requires no cluster, broker or model access. It proves acceptance while the sink returns 503, actual retries,
+and delivery of the original fixture after recovery. ConfigMap hashing rolls collector configuration changes;
+sync waves install the relay before changing application endpoints.
 
 ### Research mandate rotation
 
