@@ -16,6 +16,7 @@ use uuid::Uuid;
 const MIGRATIONS: &[(i32, &[u8])] = &[
     (1, include_bytes!("../migrations/0001_control.sql")),
     (2, include_bytes!("../migrations/0002_replay_buckets.sql")),
+    (3, include_bytes!("../migrations/0003_replay_slots.sql")),
 ];
 
 #[derive(Clone)]

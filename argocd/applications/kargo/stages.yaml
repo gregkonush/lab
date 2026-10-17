@@ -21,11 +21,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: proompteng
+        name: ofz
       sources:
-        direct: true
+        stages: [tengri]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -36,7 +36,7 @@ spec:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.gitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
@@ -1629,10 +1629,7 @@ metadata:
     delivery.proompteng.ai/managed-by: kargo
 spec:
   vars:
-    # Freight identity follows the Warehouse's HTTPS source; promotion writes still use the sealed SSH key.
-    - name: freightGitRepo
-      value: https://github.com/proompteng/lab.git
-    - name: pushGitRepo
+    - name: gitRepo
       value: git@github.com:proompteng/lab.git
     - name: targetBranch
       value: kargo/tengri
@@ -1649,11 +1646,11 @@ spec:
   requestedFreight:
     - origin:
         kind: Warehouse
-        name: tengri
+        name: ofz
       sources:
-        direct: true
+        stages: [ofz]
         autoPromotionOptions:
-          selectionPolicy: NewestFreight
+          selectionPolicy: MatchUpstream
   promotionTemplate:
     spec:
       steps:
@@ -1664,12 +1661,12 @@ spec:
             message: tengri images must be built from the same commit
         - uses: git-clone
           config:
-            repoURL: ${{ vars.pushGitRepo }}
+            repoURL: ${{ vars.gitRepo }}
             author:
               name: Kargo
               email: kargo@proompteng.ai
             checkout:
-              - commit: ${{ commitFrom(vars.freightGitRepo).ID }}
+              - commit: ${{ imageFrom(vars.imageRepo).Annotations['org.opencontainers.image.revision'] }}
                 path: ${{ vars.srcPath }}
               - branch: ${{ vars.targetBranch }}
                 create: true
