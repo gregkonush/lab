@@ -118,6 +118,14 @@ Bun's isolated installer can omit these links in otherwise identical locked inst
 package contents, rejects unexpected links or missing targets, and is idempotent. The dependency-input CI check
 exercises all four link-presence combinations; both native image builds still verify their exact dependency hashes.
 
+## Risk-query performance
+
+Migration 117 indexes the native New York session-opening and historical peak-equity queries. Both retain their
+original account, observation cutoff and deterministic ordering. They do not replace financial evidence with a cache,
+rewrite valuations, reset a session loss or change any capital limit. Executed-plan regression checks include foreign
+accounts, future marks, equal-time marks and both daylight-saving transitions. Reconciliation phase spans separate
+fee posting, accounting verification, comparison, recording and risk-context reads from transaction commit time.
+
 ## Required Valkey broker materializations
 
 Bayn uses Effect's native `@effect/platform-node/NodeRedis` binding for authenticated
