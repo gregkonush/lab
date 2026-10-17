@@ -34,6 +34,7 @@ use crate::{
 };
 
 const SLOT_COUNT: usize = 6;
+const SPARE_POD_STARTUP_TIMEOUT: Duration = Duration::from_secs(120);
 const STOPPED_POD_ANNOTATION: &str = "runtime.proompteng.ai/stopped-slot-pod-uid";
 const RETIRING_ANNOTATION: &str = "runtime.proompteng.ai/retiring-slot";
 
@@ -1334,6 +1335,15 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
 }
 
 fn spare_slot_is_starting(pod: &Pod) -> bool {
+    let now = k8s_openapi::jiff::Timestamp::now().as_millisecond();
+    let Some(created) = &pod.metadata.creation_timestamp else {
+        return false;
+    };
+    if !(0..SPARE_POD_STARTUP_TIMEOUT.as_millis() as i64)
+        .contains(&now.saturating_sub(created.0.as_millisecond()))
+    {
+        return false;
+    }
     let Some(status) = &pod.status else {
         return true;
     };
@@ -1380,10 +1390,7 @@ fn spare_slot_is_starting(pod: &Pod) -> bool {
     };
     let grace =
         Duration::from_millis(REPLAY_STARTUP_FENCE_MS) + crate::slot::supervisor::READINESS_TIMEOUT;
-    k8s_openapi::jiff::Timestamp::now()
-        .as_millisecond()
-        .saturating_sub(started.0.as_millisecond())
-        < grace.as_millis() as i64
+    (0..grace.as_millis() as i64).contains(&now.saturating_sub(started.0.as_millisecond()))
 }
 
 async fn retire_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
@@ -1766,7 +1773,7 @@ mod tests {
             .unwrap();
             let (client, pending) = mock(vec![get(
                 "/api/v1/namespaces/tengri/pods/slot-test",
-                json!({"metadata":{"name":"slot-test","uid":"original-pod"},"status":status}),
+                json!({"metadata":{"name":"slot-test","uid":"original-pod","creationTimestamp":Utc::now().to_rfc3339()},"status":status}),
             )]);
             maintain_slot(&context(client), &lease).await.unwrap();
             assert!(pending.lock().unwrap().is_empty());
@@ -1804,7 +1811,34 @@ mod tests {
             .unwrap();
             let (client, pending) = mock(vec![get(
                 "/api/v1/namespaces/tengri/pods/slot-test",
-                json!({"metadata":{"name":"slot-test","uid":uid},"status":status}),
+                json!({"metadata":{"name":"slot-test","uid":uid,"creationTimestamp":Utc::now().to_rfc3339()},"status":status}),
+            )]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_budget_expires_before_network_or_status_arrives() {
+        for status in [
+            json!({"phase":"Pending"}),
+            json!({"phase":"Running","podIP":"127.0.0.1"}),
+            json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                "ready":false,"restartCount":10,"state":{"running":{"startedAt":Utc::now().to_rfc3339()}}
+            }]}),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":"original-pod",
+                    "creationTimestamp":(Utc::now()-chrono::Duration::minutes(5)).to_rfc3339()},"status":status}),
             )]);
             assert!(maintain_slot(&context(client), &lease).await.is_err());
             assert!(pending.lock().unwrap().is_empty());
