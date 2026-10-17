@@ -48,9 +48,35 @@ impl Client {
         purpose: proto::GuestMaintenancePurpose,
         terminal_id: &str,
     ) -> Result<CheckResponse, Status> {
+        let recovery = if purpose == proto::GuestMaintenancePurpose::Probe {
+            Some(self.state().await?.recovery_generation)
+        } else {
+            None
+        };
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
         context.runtime_epoch = epoch.into();
+        let binding = if let Some(recovery) = recovery {
+            Some(
+                self.receipts
+                    .bind(
+                        &CheckRequest {
+                            context: Some(context.clone()),
+                            action: Action::WorkspaceMetadataRead as i32,
+                            resource: Some(Resource {
+                                kind: proto::ResourceKind::Workspace as i32,
+                                id: uid.into(),
+                            }),
+                            target: terminal_id.into(),
+                            stream_receipt_id: String::new(),
+                        },
+                        recovery,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut rpc = self.rpc.clone();
         let decision = bounded(
             DURABLE_TIMEOUT,
@@ -60,6 +86,7 @@ impl Client {
                     workspace_uid: uid.into(),
                     purpose: purpose as i32,
                     terminal_id: terminal_id.into(),
+                    stream_receipt_id: binding.as_ref().map_or("", receipts::Binding::id).into(),
                 },
                 DURABLE_TIMEOUT,
             )),
@@ -79,6 +106,9 @@ impl Client {
             return Err(Status::unavailable(
                 "invalid or expired Ofz maintenance decision",
             ));
+        }
+        if let Some(binding) = binding {
+            binding.record(decision.audit_receipt_id.clone());
         }
         Ok(decision)
     }
@@ -151,8 +181,25 @@ impl Client {
         if !canonical_uuid(uid) {
             return Err(Status::invalid_argument("workspace UID required"));
         }
+        let recovery = self.state().await?.recovery_generation;
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
+        let binding = self
+            .receipts
+            .bind(
+                &CheckRequest {
+                    context: Some(context.clone()),
+                    action: Action::WorkspaceEnroll as i32,
+                    resource: Some(Resource {
+                        kind: proto::ResourceKind::Platform as i32,
+                        id: "lab".into(),
+                    }),
+                    target: String::new(),
+                    stream_receipt_id: String::new(),
+                },
+                recovery,
+            )
+            .await?;
         let mut rpc = self.rpc.clone();
         let state = bounded(
             DURABLE_TIMEOUT,
@@ -160,6 +207,7 @@ impl Client {
                 GetWorkspaceStateRequest {
                     context: Some(context),
                     workspace_uid: uid.into(),
+                    stream_receipt_id: binding.id().into(),
                 },
                 DURABLE_TIMEOUT,
             )),
@@ -183,6 +231,7 @@ impl Client {
         {
             return Err(Status::unavailable("invalid Ofz runtime state"));
         }
+        binding.record(state.audit_receipt_id.clone());
         Ok(state)
     }
 
@@ -262,29 +311,11 @@ impl Client {
         {
             return self.check_request(check, recovery_generation).await;
         }
-        let slot = self.receipts.slot(&check, recovery_generation).await?;
-        let remaining = remaining_deadline(&check)?.min(DURABLE_TIMEOUT);
-        let mut receipt = timeout(remaining, slot.lock())
-            .await
-            .map_err(|_| Status::deadline_exceeded("authorization receipt deadline expired"))?;
-        if receipt.as_ref().is_some_and(|receipt| !receipt.fresh()) {
-            *receipt = None;
-        }
-        if let Some(receipt) = receipt.as_ref() {
-            check.stream_receipt_id = receipt.id.clone();
-        }
-        if !check.stream_receipt_id.is_empty() {
-            drop(receipt);
-            return self.check_request(check, recovery_generation).await;
-        }
-        let decision = self.check_request(check, recovery_generation).await;
-        if let Ok(decision) = &decision {
-            *receipt = Some(receipts::Receipt {
-                id: decision.audit_receipt_id.clone(),
-                created: std::time::Instant::now(),
-            });
-        }
-        decision
+        let binding = self.receipts.bind(&check, recovery_generation).await?;
+        check.stream_receipt_id = binding.id().into();
+        let decision = self.check_request(check, recovery_generation).await?;
+        binding.record(decision.audit_receipt_id.clone());
+        Ok(decision)
     }
 
     async fn check_request(
@@ -495,3 +526,7 @@ mod wire_test;
 #[cfg(test)]
 #[path = "ofz_receipt_transport_test.rs"]
 mod receipt_transport_test;
+
+#[cfg(test)]
+#[path = "ofz_runtime_receipt_test.rs"]
+mod runtime_receipt_test;

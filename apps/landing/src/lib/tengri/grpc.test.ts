@@ -18,6 +18,7 @@ let runtimeEpoch = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 let runtimePhase = 'AGENT_PHASE_READY'
 let runtimePolicyVersion = 10
 let runtimeDisplayName = 'Tengri'
+let runtimeConditions: Record<string, unknown>[] = []
 const staleAgents: Record<string, unknown>[] = []
 let delayedRuntimeReads = 0
 let agentReads = 0
@@ -50,6 +51,7 @@ function runtimeAgent(id: unknown) {
     memoryMib: 4096,
     workspaceGib: 32,
     idleTimeoutMinutes: 60,
+    conditions: runtimeConditions,
   }
 }
 let ofzServer: grpc.Server
@@ -299,6 +301,12 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_ARM64',
         idleTimeoutMinutes: call.request.idleTimeoutMinutes,
       })
+    },
+    listAgents(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { agents: [runtimeAgent('agent-test')] })
     },
     getAgent(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -1152,6 +1160,24 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataContext().sessionId).toBe(identity.session.id)
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.UpdatePowerSettings
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+  })
+
+  test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
+    const { listAgents } = await import('./grpc')
+    const previousPhase = runtimePhase
+    runtimePhase = 'AGENT_PHASE_READY'
+    runtimeConditions = [{ type: 'Ready', status: 'Unknown', reason: 'ReconcileUnavailable' }]
+    try {
+      expect(await rejection(listAgents(identity))).toMatchObject({
+        status: 503,
+        message: 'Runtime status cannot be confirmed. Retrying.',
+      })
+      runtimeConditions = []
+      expect((await listAgents(identity))[0]?.phase).toBe('ready')
+    } finally {
+      runtimeConditions = []
+      runtimePhase = previousPhase
+    }
   })
 
   test('rejects an old runtime response rather than inventing its power settings', async () => {
