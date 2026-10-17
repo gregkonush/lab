@@ -688,9 +688,14 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
   })
 
-  test.each([false, true])(
-    'settles a timed-out pass that completed NO_TRADE only with zero planned intents: %s',
-    async (plannedIntent) => {
+  test.each([
+    { decisionEvidence: 'zero-target', terminalAfterRestriction: false },
+    { decisionEvidence: 'planned-target', terminalAfterRestriction: false },
+    { decisionEvidence: 'zero-target', terminalAfterRestriction: true },
+    { decisionEvidence: 'planned-target', terminalAfterRestriction: true },
+  ] as const)(
+    'settles only zero-target NO_TRADE generations: decisionEvidence=$decisionEvidence terminalAfterRestriction=$terminalAfterRestriction',
+    async ({ decisionEvidence, terminalAfterRestriction }) => {
       const now = Date.now()
       const fixture = {
         ...makeFixture(true),
@@ -729,7 +734,9 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             const snapshotId = canonicalHashV1({ snapshot: ordinal })
             const decisionHash = canonicalHashV1({ decision: ordinal })
             const decisionAt = instant(Date.parse(fixture.cycleActivatedAt) + ordinal * 1000)
-            const terminalAt = instant(Date.parse(fixture.restrictedAt) + (ordinal === 1 ? -1000 : 1000))
+            const terminalAt = instant(
+              Date.parse(fixture.restrictedAt) + (ordinal === 2 && terminalAfterRestriction ? 1000 : -1000),
+            )
             yield* cycles.acquire(draft, fixture.acquiredAt)
             yield* cycles.activate(cycleId, fixture.cycleActivatedAt)
             yield* sql.withTransaction(
@@ -745,7 +752,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               orderedIntentIds: [],
               targetPlan: {
                 status: 'NO_TRADE',
-                intentTargets: ordinal === 2 && plannedIntent ? [{ symbol: 'AAPL' }] : [],
+                intentTargets: ordinal === 2 && decisionEvidence === 'planned-target' ? [{ symbol: 'AAPL' }] : [],
               },
             })},${decisionAt})`
                 yield* sql`UPDATE autonomous_cycles SET snapshot_id=${snapshotId},decision_hash=${decisionHash},state_version=state_version+1,
@@ -759,8 +766,10 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         reason='execution cycle loop restricted effective authority: run-cycle-pass: pass timeout',
         version=version+1,updated_at=${fixture.restrictedAt} WHERE singleton`
           const result = yield* blocked.settleCurrentTerminalGeneration({ accountId, observedAt: fixture.reconciledAt })
-          expect(result._tag).toBe(plannedIntent ? 'NoTerminalGeneration' : 'TerminalGenerationSettled')
-          if (!plannedIntent) {
+          expect(result._tag).toBe(
+            decisionEvidence === 'zero-target' ? 'TerminalGenerationSettled' : 'NoTerminalGeneration',
+          )
+          if (decisionEvidence === 'zero-target') {
             const rollover = yield* recoverTerminalGenerationToObserve({
               accountId,
               blockedIntents: blocked,
