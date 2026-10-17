@@ -36,7 +36,7 @@ never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- The only active protocol is `bayn.jev.protocol.v8`, with `cost-supported-model-action` entry selection and
+- The only active protocol is `bayn.jev.protocol.v9`, with `cost-supported-model-action` entry selection and
   `capital-weighted-session-limit` sizing. Both an enter action and supported net economics are required. Retired protocols and their numeric entry floor are rejected by the runtime
 - The current behavior is `bayn.jev.cost-supported-cash-spot.behavior.v1`. Protocol, behavior, observation, batch v4,
   cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles

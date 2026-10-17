@@ -103,6 +103,7 @@ const DiagnosticQuerySchema = Schema.Struct({
   symbols: Schema.optionalKey(SnapshotManifestFields.symbols),
   candidateSymbols: SnapshotManifestFields.candidateSymbols,
   candidateEvidencePolicy: SnapshotManifestFields.candidateEvidencePolicy,
+  benchmarkEvidencePolicy: SnapshotManifestFields.benchmarkEvidencePolicy,
   purpose: SnapshotManifestFields.purpose,
   feed: SnapshotManifestFields.feed,
   delayClass: SnapshotManifestFields.delayClass,

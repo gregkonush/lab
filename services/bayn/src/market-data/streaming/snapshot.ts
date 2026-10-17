@@ -227,6 +227,9 @@ const constructSnapshotMaterial = <P extends SnapshotProvenance>(
       ...(request.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: request.candidateEvidencePolicy }),
+      ...(request.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: request.benchmarkEvidencePolicy }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,

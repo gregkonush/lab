@@ -75,7 +75,9 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         manifest.feed !== market.feed ||
         manifest.delayClass !== market.delayClass ||
         manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
-        manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy
+        manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy ||
+        manifest.benchmarkEvidencePolicy !==
+          ('benchmarkEvidencePolicy' in market ? market.benchmarkEvidencePolicy : undefined)
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Feed))
       if (

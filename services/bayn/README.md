@@ -4,7 +4,15 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v8` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
+Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
+the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
+or latest-trade field. Missing benchmark bars or features still block dependent candidates. Every tradable candidate
+still requires its own real window trade, fresh two-sided quote, positive own and relative momentum, and supported
+fee-inclusive economics. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
+bars remain valid. Equity benchmarks retain the existing SPY quote, trade and feature contract.
+Migration 118 retires protocol v8 for new authority generations and requires flat positions, settled orders, complete
+accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v8`.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
 calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading. Fractional equity holdings use the same
 MARKET/DAY terms and impact model as the close planner. Estimated net liquidation includes that sell

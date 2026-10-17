@@ -80,6 +80,9 @@ export const intradayPerformanceDecisionRequest = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
       feed: manifest.feed,
       delayClass: manifest.delayClass,
       sourceTopics: manifest.sourceTopics,

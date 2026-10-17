@@ -139,6 +139,9 @@ export const reproduceStreamingSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
     }
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
@@ -327,6 +330,9 @@ export const reproduceSimulatedSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
     }
 
     const reproduced = yield* constructSimulatedSnapshot(

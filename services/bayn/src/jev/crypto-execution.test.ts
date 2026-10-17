@@ -113,7 +113,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       }),
     )
     const source = Result.getOrThrow(executionMarketDataBinding(snapshot))
-    const { candidateSymbols: _candidates, candidateEvidencePolicy: _evidencePolicy, ...pricingQuery } = query
+    const {
+      candidateSymbols: _candidates,
+      candidateEvidencePolicy: _evidencePolicy,
+      benchmarkEvidencePolicy: _benchmarkPolicy,
+      ...pricingQuery
+    } = query
     const pricingSnapshot = Result.getOrThrow(
       constructStreamingSnapshot(cut, {
         ...pricingQuery,
