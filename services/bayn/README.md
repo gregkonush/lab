@@ -5,6 +5,12 @@ decides what should happen, Effect interprets one bounded pass, PostgreSQL store
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v8` and native Dorvud feature contracts.
+Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
+calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading. Fractional equity holdings use the same
+MARKET/DAY terms and impact model as the close planner. Estimated net liquidation includes that sell
+allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
+per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
+predictive edge or profit.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -109,6 +115,11 @@ plans and results for these diagnostics through a bounded read-only command. It 
 pending results and no-batch cycles; its receipt explicitly remains unqualified.
 The [net-edge research notes](../../docs/bayn/net-edge-research.md) connect the current feed, model and execution
 assumptions to primary research and define which hypotheses still require an untouched economic experiment.
+
+The offline [equity edge screen](../../docs/bayn/equity-edge-screen.md) compares thirteen fixed bar-based hypotheses
+under chronological partitions, native fee scenarios and serial capital accounting. It retains rejected trials and
+missing coverage, never promotes a strategy, and does not substitute historical bars for original arrival/quote evidence.
+Run it only in a separate research process; it is not part of the live service or its strategy selection.
 
 ## Reproducible image dependencies
 
