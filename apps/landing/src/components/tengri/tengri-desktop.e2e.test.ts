@@ -1842,18 +1842,23 @@ test('recovers a temporary model outage without discarding the draft or retrying
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
-test('does not automatically retry a denied model catalog', async ({ page }) => {
-  await page.clock.install()
-  const mock = await mockTengri(page, {
-    codexModelsError: { status: 403, error: 'Model catalog access denied' },
+for (const failure of [
+  { status: 403, error: 'Model catalog access denied' },
+  { status: 502, error: 'The guest returned an invalid Codex model catalog', code: 'model_catalog_invalid' },
+]) {
+  test(`does not automatically retry a model catalog failure with status ${failure.status}`, async ({ page }) => {
+    await page.clock.install()
+    const mock = await mockTengri(page, {
+      codexModelsError: failure,
+    })
+    await page.goto('/')
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    await expect(tengri.getByRole('alert')).toContainText(failure.error)
+    await page.clock.runFor(31_000)
+    expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
   })
-  await page.goto('/')
-  const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByRole('alert')).toContainText('Model catalog access denied')
-  await page.clock.runFor(31_000)
-  expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
-  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
-})
+}
 
 test('cancels a pending model catalog retry when the chat window closes', async ({ page }) => {
   await page.clock.install()

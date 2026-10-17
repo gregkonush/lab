@@ -274,6 +274,7 @@ function requestFailure(payload: unknown, status: number, traceId?: string | nul
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
+      (status === 502 && record.code === 'model_catalog_invalid') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined

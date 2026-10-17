@@ -103,6 +103,8 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     [404, { error: { internal: 'details' }, code: 'unknown' }, 'Tengri request failed with 404', undefined],
     [409, { error: 'File changed', code: 'file_conflict' }, 'File changed', 'file_conflict'],
     [429, { error: 'All slots occupied', code: 'capacity_full' }, 'All slots occupied', 'capacity_full'],
+    [502, { error: 'Invalid catalog', code: 'model_catalog_invalid' }, 'Invalid catalog', 'model_catalog_invalid'],
+    [503, { error: 'Unavailable', code: 'model_catalog_invalid' }, 'Unavailable', undefined],
     [
       412,
       { error: 'Model selection unavailable', code: 'model_selection_unavailable' },

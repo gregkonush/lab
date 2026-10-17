@@ -758,8 +758,8 @@ describe('Tengri gRPC BFF transport', () => {
       code: undefined,
     })
     expect(await rejection(listCodexModels(identity, 'broken-catalog'))).toMatchObject({
-      status: 503,
-      code: undefined,
+      status: 502,
+      code: 'model_catalog_invalid',
     })
   })
 

@@ -348,6 +348,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           if (
             cause instanceof TypeError ||
             (cause instanceof TengriRequestError &&
+              cause.code !== 'model_catalog_invalid' &&
               (cause.status === 408 || cause.status === 429 || cause.status >= 500))
           ) {
             timer = window.setTimeout(() => void load(), retryDelay)
