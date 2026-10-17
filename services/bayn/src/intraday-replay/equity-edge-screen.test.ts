@@ -3,6 +3,7 @@ import { Result } from 'effect'
 
 import {
   EquityScreenSignal,
+  EquityScreenExclusionReason,
   equityScreenCandidates,
   indexEquityScreenBars,
   runEquityEdgeScreen,
@@ -173,10 +174,30 @@ test('a selected entry with no arrival price invalidates the path instead of sil
   expect(result.trades).toHaveLength(0)
 })
 
+test('records a missing-window exclusion even when another symbol is selected', () => {
+  const original = fixture()
+  const bars = [
+    ...original.filter((bar) => bar.symbol !== 'AAPL' || bar.at !== openAt + 20 * 60_000),
+    ...original.filter((bar) => bar.symbol === 'AAPL').map((bar) => ({ ...bar, symbol: 'AMD' })),
+  ]
+  const result = unwrap(
+    runEquityEdgeScreen(unwrap(indexEquityScreenBars(bars)), ['AAPL', 'AMD', 'SPY'], [day], day.date, day.date, policy),
+  )
+  expect(result.trades[0]?.symbol).toBe('AMD')
+  expect(result.candidateExclusions).toContainEqual({
+    symbol: 'AAPL',
+    signalAt: openAt + 30 * 60_000,
+    missingAt: openAt + 20 * 60_000,
+    reason: EquityScreenExclusionReason.Signal,
+    targetWeight: 0,
+  })
+})
+
 test('opening-volume selection cannot use fewer than fourteen prior sessions', () => {
   const index = unwrap(indexEquityScreenBars(fixture()))
   expect(
-    equityScreenCandidates(index, ['AAPL', 'SPY'], [day], 0, openAt + 30 * 60_000, EquityScreenSignal.OpeningRange),
+    equityScreenCandidates(index, ['AAPL', 'SPY'], [day], 0, openAt + 30 * 60_000, EquityScreenSignal.OpeningRange)
+      .candidates,
   ).toEqual([])
 })
 
@@ -203,7 +224,8 @@ test('early opening-range screening uses only prior opening volume and admits at
   expect(result.trades[0]?.signalAt).toBeLessThan(lastDay.openAt + 30 * 60_000)
   const at = lastDay.openAt + 10 * 60_000
   expect(
-    equityScreenCandidates(index, ['AAPL', 'SPY'], days, 14, at, EquityScreenSignal.EarlyOpeningRange)[0]?.score,
+    equityScreenCandidates(index, ['AAPL', 'SPY'], days, 14, at, EquityScreenSignal.EarlyOpeningRange).candidates[0]
+      ?.score,
   ).toBe(2)
 })
 

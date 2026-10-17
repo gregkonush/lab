@@ -60,6 +60,32 @@ test('changed source bytes fail even when JSON meaning is unchanged', () => {
   expect(Result.isFailure(decode(text + '\n', input))).toBe(true)
 })
 
+test.each(['within one page', 'across pages'] as const)('rejects per-symbol time regression %s', (location) => {
+  const { text, input } = fixture()
+  const lines = text.trimEnd().split('\n')
+  const header = lines[0],
+    page = lines[1],
+    end = lines[2]
+  if (header === undefined || page === undefined || end === undefined) throw new Error('fixture incomplete')
+  let changed: string
+  if (location === 'within one page') {
+    const row = '{"t":"2026-08-03T13:30:00Z","o":100,"h":101,"l":99,"c":100,"v":10,"vw":100}'
+    changed =
+      [header, page.replace(row, `${row.replace('13:30', '13:31')},${row}`), end.replace('"bars":1', '"bars":2')].join(
+        '\n',
+      ) + '\n'
+  } else {
+    changed =
+      [
+        header,
+        page.replace('13:30', '13:31').replace('"next_page_token":null', '"next_page_token":"next"'),
+        page.replace('"page":0', '"page":1'),
+        end.replace('"pages":1', '"pages":2').replace('"bars":1', '"bars":2'),
+      ].join('\n') + '\n'
+  }
+  expect(Result.isFailure(decode(changed, { ...input, sourceSha256: sha256(changed) }))).toBe(true)
+})
+
 test('historical consolidated data requires an explicitly bound feed; it cannot replace IEX silently', () => {
   const { text, input } = fixture()
   const sip = text.replace('"feed":"iex"', '"feed":"sip"')

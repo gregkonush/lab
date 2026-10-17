@@ -126,6 +126,7 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         new EquityScreenError({ message: 'Fourteen prior calendar sessions are required for opening-volume context' }),
       )
     const bars: EquityScreenBar[] = []
+    const lastSymbolAt = new Map<string, number>()
     const tokens = new Set<string>()
     let lastAcquiredAt = Date.parse(header.observedAt)
     for (let i = 1; i < lines.length - 1; i++) {
@@ -146,13 +147,20 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         if (!input.symbols.includes(symbol))
           return yield* Result.fail(new EquityScreenError({ message: 'Source contains a foreign symbol' }))
         for (const bar of rows) {
-          if (Date.parse(bar.t) + 60_000 > acquiredAt)
+          const at = Date.parse(bar.t)
+          const previous = lastSymbolAt.get(symbol)
+          if (!Number.isFinite(at) || (previous !== undefined && at <= previous))
+            return yield* Result.fail(
+              new EquityScreenError({ message: 'Historical symbol rows must be strictly ascending across pages' }),
+            )
+          lastSymbolAt.set(symbol, at)
+          if (at + 60_000 > acquiredAt)
             return yield* Result.fail(
               new EquityScreenError({ message: 'Historical bar was not complete at acquisition' }),
             )
           bars.push({
             symbol,
-            at: Date.parse(bar.t),
+            at,
             open: bar.o,
             high: bar.h,
             low: bar.l,

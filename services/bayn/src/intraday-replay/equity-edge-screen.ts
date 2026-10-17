@@ -37,7 +37,7 @@ export interface EquityScreenPolicy {
 }
 
 export const equityScreenDefinition = Object.freeze({
-  schemaVersion: 'bayn.equity-edge-screen-definition.v3',
+  schemaVersion: 'bayn.equity-edge-screen-definition.v4',
   signalMinutes: 30,
   decisionIntervalMinutes: 5,
   lastEntryMinute: 210,
@@ -172,6 +172,28 @@ const window = (index: IndexedBars, symbol: string, start: number, count: number
   return rows
 }
 
+export enum EquityScreenExclusionReason {
+  Signal = 'MISSING_SIGNAL_WINDOW',
+  Opening = 'MISSING_OPENING_WINDOW',
+  History = 'MISSING_PRIOR_OPENING_HISTORY',
+}
+
+export interface EquityScreenExclusion {
+  readonly symbol: string
+  readonly signalAt: number
+  readonly missingAt: number | null
+  readonly reason: EquityScreenExclusionReason
+  readonly targetWeight: 0
+}
+
+const firstMissingMinute = (index: IndexedBars, symbol: string, start: number, count: number) => {
+  for (let i = 0; i < count; i++) {
+    const at = start + i * minuteMs
+    if (index.get(symbol)?.has(at) !== true) return at
+  }
+  return null
+}
+
 /** Causal feature screen only: no model answers or future bar enters candidate ranking. */
 export const equityScreenCandidates = (
   index: IndexedBars,
@@ -180,16 +202,20 @@ export const equityScreenCandidates = (
   dayIndex: number,
   at: number,
   signal: EquityScreenSignal,
-) => {
+): {
+  readonly candidates: readonly { symbol: string; score: number }[]
+  readonly exclusions: readonly EquityScreenExclusion[]
+} => {
+  const exclusions: EquityScreenExclusion[] = []
   const day = days[dayIndex]
-  if (day === undefined) return []
+  if (day === undefined) return { candidates: [], exclusions }
   const early = signal === EquityScreenSignal.EarlyOpeningRange
   const count = early ? Math.min(30, Math.floor((at - day.openAt) / minuteMs)) : 30
-  if (count < 5) return []
+  if (count < 5) return { candidates: [], exclusions }
   const benchmark = window(index, 'SPY', at - count * minuteMs, count)
   const benchmarkStart = benchmark?.[0]
   const benchmarkEnd = benchmark?.at(-1)
-  if (benchmarkStart === undefined || benchmarkEnd === undefined) return []
+  if (benchmarkStart === undefined || benchmarkEnd === undefined) return { candidates: [], exclusions }
   const benchmarkReturn = benchmarkEnd.close / benchmarkStart.open - 1
   const result: { symbol: string; score: number }[] = []
   for (const symbol of symbols) {
@@ -197,7 +223,16 @@ export const equityScreenCandidates = (
     const bars = window(index, symbol, at - count * minuteMs, count)
     const first = bars?.[0]
     const last = bars?.at(-1)
-    if (bars === null || first === undefined || last === undefined) continue
+    if (bars === null || first === undefined || last === undefined) {
+      exclusions.push({
+        symbol,
+        signalAt: at,
+        missingAt: firstMissingMinute(index, symbol, at - count * minuteMs, count),
+        reason: EquityScreenExclusionReason.Signal,
+        targetWeight: 0,
+      })
+      continue
+    }
     const ownReturn = last.close / first.open - 1
     const excess = ownReturn - benchmarkReturn
     if (!early && signal !== EquityScreenSignal.Reversal && (ownReturn <= 0 || excess <= 0)) continue
@@ -215,10 +250,41 @@ export const equityScreenCandidates = (
     }
     if (signal === EquityScreenSignal.OpeningRange || early) {
       const opening = window(index, symbol, day.openAt, 5)
-      if (opening === null || dayIndex < 14) continue
+      if (opening === null) {
+        exclusions.push({
+          symbol,
+          signalAt: at,
+          missingAt: firstMissingMinute(index, symbol, day.openAt, 5),
+          reason: EquityScreenExclusionReason.Opening,
+          targetWeight: 0,
+        })
+        continue
+      }
+      if (dayIndex < 14) {
+        exclusions.push({
+          symbol,
+          signalAt: at,
+          missingAt: null,
+          reason: EquityScreenExclusionReason.History,
+          targetWeight: 0,
+        })
+        continue
+      }
       if (early && (benchmarkReturn < 0 || (opening.at(-1)?.close ?? 0) <= (opening[0]?.open ?? 0))) continue
-      const priorVolumes = days.slice(dayIndex - 14, dayIndex).map((prior) => window(index, symbol, prior.openAt, 5))
-      if (priorVolumes.some((rows) => rows === null)) continue
+      const priorDays = days.slice(dayIndex - 14, dayIndex)
+      const priorVolumes = priorDays.map((prior) => window(index, symbol, prior.openAt, 5))
+      const missingPrior = priorVolumes.findIndex((rows) => rows === null)
+      if (missingPrior >= 0) {
+        const prior = priorDays[missingPrior]
+        exclusions.push({
+          symbol,
+          signalAt: at,
+          missingAt: prior === undefined ? null : firstMissingMinute(index, symbol, prior.openAt, 5),
+          reason: EquityScreenExclusionReason.History,
+          targetWeight: 0,
+        })
+        continue
+      }
       const average =
         priorVolumes.reduce((total, rows) => total + (rows?.reduce((sum, bar) => sum + bar.volume, 0) ?? 0), 0) / 14
       const volume = opening.reduce((sum, bar) => sum + bar.volume, 0)
@@ -238,7 +304,7 @@ export const equityScreenCandidates = (
     }
     result.push({ symbol, score })
   }
-  return result.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol, 'en'))
+  return { candidates: result.sort((a, b) => b.score - a.score || a.symbol.localeCompare(b.symbol, 'en')), exclusions }
 }
 
 /** Serial one-position retrospective bar simulation. Its fills are scenarios, never observed executions. */
@@ -285,6 +351,7 @@ export const runEquityEdgeScreen = (
       entryBudgetRejections: number
     }[] = []
     const trades: EquityScreenTrade[] = []
+    const candidateExclusions: EquityScreenExclusion[] = []
     const early = policy.signal === EquityScreenSignal.EarlyOpeningRange
     let incomplete: { date: string; symbol: string; reason: string } | null = null
     const fee = (symbol: string, buy: boolean, shares: bigint, price: bigint) =>
@@ -391,7 +458,8 @@ export const runEquityEdgeScreen = (
           incomplete = { date: day.date, symbol: 'SPY', reason: 'MISSING_BENCHMARK_BAR' }
           break
         }
-        const candidates = equityScreenCandidates(index, symbols, days, dayIndex, at, policy.signal)
+        const { candidates, exclusions } = equityScreenCandidates(index, symbols, days, dayIndex, at, policy.signal)
+        candidateExclusions.push(...exclusions)
         const candidate = candidates[0]
         if (candidate === undefined) {
           noCandidate++
@@ -470,6 +538,7 @@ export const runEquityEdgeScreen = (
       expectedSessions: expected,
       sessions,
       trades,
+      candidateExclusions,
       executionNetPnlMicros: incomplete === null && expected > 0 ? (cash - initialCapital).toString() : null,
       maximumMarkedDrawdownMicros: drawdown.toString(),
       markedDrawdownCoverage: 'OBSERVED_BAR_CLOSES_ONLY',

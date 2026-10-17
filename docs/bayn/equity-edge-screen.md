@@ -28,6 +28,8 @@ Required benchmark windows, the selected candidate's arrival price and every hel
 A gap in any of these stops the path as `INCOMPLETE`, with null full-period P&L. Partial earlier sessions are retained
 for diagnosis but cannot participate in selection. Candidate-specific signal gaps alone permit exclusion. An empty
 benchmark stream is not a completed cash-only strategy, and an unknown stop interval is not a successful hold.
+Every candidate-specific missing signal/opening/history window records its symbol, decision time, first missing
+minute when known, reason and zero target weight, even if another candidate is selected at that decision.
 
 ## Input and execution
 
@@ -37,6 +39,8 @@ calendar; consecutively numbered `bars` envelopes containing V2 bars and their c
 UTF-8 source hash, progressive pagination, unique symbol/minute keys, finite OHLC values, symbol scope, and ordered
 regular-session hours. It reports minute coverage for every symbol/session. Calendar `open`/`close` are interpreted
 in New York; Bayn's separate extended data-session normalization is not used for this regular-session screen.
+Each symbol's source timestamps must be strictly ascending within and across pages. The decoder rejects ordering
+regressions rather than normalizing malformed source evidence into a sorted map.
 
 The strict input is `bayn.equity-edge-screen-input.v1` with `sourceSha256`, `symbols` including benchmark-only SPY,
 and `development`, `validation`, and `holdout` objects, each containing ISO `start` and `end` dates. Partition
