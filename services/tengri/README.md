@@ -56,6 +56,8 @@ Nanoagent verifies the proof again against its root-owned runtime claim and reco
 nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
 openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
 the application. Scoped content remains denied until bounded observer handlers exist.
+Preview WebSockets send protocol keepalives on both proxy hops every twenty seconds so idle connections remain open.
+Control frames do not record user activity or postpone automatic sleep; runtime and policy revocation still close the stream.
 
 The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
 supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
@@ -482,6 +484,14 @@ collector service addresses and ports; other private networks remain denied. New
 configuration through the private guest boot file, without database credentials or a Kubernetes identity.
 Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
 a supervisor image restart alone does not update the guest root or runner environment.
+
+RPC failures retain their numeric `rpc.grpc.status_code` in Tempo. GlitchTip events also carry a bounded
+`grpc_code` tag and a status-specific title. Expected cancellation, validation, missing-resource, precondition and
+authorization rejections remain visible in traces and logs without creating server-error issues. Transport failures,
+server deadlines, capacity failures and internal errors still create error events. Spare-slot maintenance allows at
+most two minutes from Pod creation for networking and initial container status. Within that bound it waits for the
+supervisor's replay startup fence plus readiness timeout before probing. Failed containers, changed Pod identities
+and failures after either startup window still surface.
 
 After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
 Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.

@@ -485,11 +485,16 @@ export async function resumeCodexThread(
     130_000,
   )
   return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
-    if (error instanceof TengriUnavailableError) return error
+    if (error instanceof TengriUnavailableError)
+      return new TengriUnavailableError(error.message, 502, 'conversation_history_invalid')
     if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
       return mapGrpcError(error as grpc.ServiceError, 'resumeCodexThread')
     }
-    return new TengriUnavailableError('Codex conversation recovery returned invalid history')
+    return new TengriUnavailableError(
+      'Codex conversation recovery returned invalid history',
+      502,
+      'conversation_history_invalid',
+    )
   })
 }
 
@@ -630,8 +635,9 @@ export async function issueEditorSession(
   identity: TengriIdentity,
   agentId: string,
   windowId: string,
+  signal: AbortSignal,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000)
+  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000, signal)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
