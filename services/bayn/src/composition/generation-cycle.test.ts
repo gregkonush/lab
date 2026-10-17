@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Deferred, Effect, Exit, Fiber, Ref } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Ref, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { Authority, KillState, type AuthorityState } from '../execution/contracts'
@@ -7,7 +7,9 @@ import type { RecoveryFirstCycleDriver } from '../observe-composition'
 import type { TerminalGenerationRolloverReceipt } from '../blocked-generation-recovery'
 import { CycleRunnerError } from '../cycle/runner'
 import type { AutonomousRuntime } from '../app'
-import { ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
+import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'
+import { ExecutionStageTimings, type ExecutionStageTiming } from '../telemetry'
+import { makeGenerationCycleDriver, ownGenerationCycleDriver, withGenerationRebinding } from './generation-cycle'
 
 const generationHash = 'a'.repeat(64)
 const deadline = { timeoutMs: 30_000, onTimeout: (error: CycleRunnerError) => Effect.fail(error) }
@@ -37,6 +39,52 @@ const advanced = {
     message: 'mutation autonomous cycle pass did not complete or reconcile within 30000ms',
   },
 }
+
+test.each(['success', 'failure', 'held'] as const)(
+  'generation and cycle deadlines record distinct operation samples for %s',
+  async (outcome) => {
+    const timings = new Map<string, ExecutionStageTiming>()
+    const failure = new CycleRunnerError({
+      operation: 'run-cycle-pass',
+      failure: 'operational',
+      message: 'fixture cycle failure',
+    })
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const permit = yield* Semaphore.make(1)
+        const owned = yield* makeGenerationCycleDriver(
+          {
+            generationHash,
+            mode: 'Mutation',
+            readAuthority: Effect.succeed(
+              outcome === 'held' ? { ...restriction, reason: 'operator emergency stop' } : authority,
+            ),
+            reconcileWhenHeld: Effect.void,
+            settle: Effect.die('must not settle a mutation driver'),
+          },
+          {
+            advance: runRestateAdvanceWithinTimeout(
+              permit,
+              outcome === 'failure' ? Effect.fail(failure) : Effect.succeed(advanced),
+              deadline.timeoutMs,
+              Effect.fail,
+            ),
+            ...deadline,
+            nextDelayMs: 30_000,
+          },
+        )
+        const result = yield* Effect.exit(owned.driver.advance)
+        expect(Exit.isSuccess(result)).toBe(outcome !== 'failure')
+      }).pipe(Effect.provideService(ExecutionStageTimings, timings)),
+    )
+    const samples = [...timings.values()]
+    const generation = samples.find(({ stage }) => stage === 'bayn.execution.generation-pass')
+    const cycle = samples.find(({ stage }) => stage === 'bayn.execution.bounded-pass')
+    expect(generation).toMatchObject({ count: 1, failures: outcome === 'failure' ? 1 : 0 })
+    if (outcome === 'held') expect(cycle).toBeUndefined()
+    else expect(cycle).toMatchObject({ count: 1, failures: outcome === 'failure' ? 1 : 0 })
+  },
+)
 
 test.each(['authority', 'cycle', 'settlement'] as const)(
   'the pass deadline includes a stalled %s stage',
