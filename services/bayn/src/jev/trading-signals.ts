@@ -356,7 +356,10 @@ const requestFromSnapshot = (
       const breakEvenBid = yield* jevBreakEvenExitBid({
         ...liquidation,
         acquisitionCostMicros: acquisitionCost,
-        upperBidMicros: ((acquisitionCost * 1_000_000_000n + quantity - 1n) / quantity) * 2n,
+        upperBidMicros:
+          (((acquisitionCost + exit.proceedsMicros - exit.conservativeNetMicros) * 1_000_000_000n + quantity - 1n) /
+            quantity) *
+          2n,
       })
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {

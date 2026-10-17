@@ -7,7 +7,7 @@ import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { checkProperty } from '../testing/property-test-support'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
-import { cashSpotLimitTimeInForce } from './order-terms'
+import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from './order-terms'
 
 test('property: one limit encoder binds asset duration, exact price and extended-hours eligibility', () => {
   checkProperty(
@@ -44,6 +44,38 @@ test('property: one limit encoder binds asset duration, exact price and extended
             timeInForce: market === MarketKind.Equity ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
           })._tag,
         ).toBe('Failure')
+      },
+    ),
+  )
+})
+
+test('property: fractional equity closes retain native MARKET/DAY encoding and crypto retains LIMIT/IOC', () => {
+  checkProperty(
+    'cash-spot-fractional-close-terms',
+    fc.property(
+      fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.bigInt({ min: 1n, max: 999_999_999n }),
+      (symbol, fraction) => {
+        const market = instrumentMarket(symbol)
+        const quantity = 1_000_000_000n + fraction
+        const orderType = cashSpotClosingOrderType(market, quantity)
+        const request = Result.getOrThrow(
+          orderRequestBody({
+            symbol,
+            side: OrderSide.Sell,
+            orderType,
+            timeInForce: orderType === OrderType.Market ? TimeInForce.Day : cashSpotLimitTimeInForce(market),
+            quantityAtoms: quantity.toString(),
+            notionalLimitMicros: '1000000000',
+            clientOrderId: 'b1_' + 'A'.repeat(43),
+          }),
+        )
+        expect(request.type).toBe(market === MarketKind.Equity ? BrokerOrderType.Market : BrokerOrderType.Limit)
+        expect(request.time_in_force).toBe(
+          market === MarketKind.Equity ? BrokerTimeInForce.Day : BrokerTimeInForce.ImmediateOrCancel,
+        )
+        expect(request.extended_hours).not.toBe(true)
+        expect(Math.round(Number(request.qty) * 1_000_000_000)).toBe(Number(quantity))
       },
     ),
   )

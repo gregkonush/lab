@@ -4,7 +4,7 @@ import { Result } from 'effect'
 import { OrderSide, OrderStatus, OrderType, TimeInForce } from '../execution/contracts'
 import { reconciledStateHash } from '../reconciliation'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
-import { jevObservationForSnapshot } from './native.test-support'
+import { jevObservationForSnapshot, nativeJevFixture } from './native.test-support'
 import { makeJevObservation } from './observation'
 import { JevPurpose } from './portfolio'
 import { makeJevTradingSignalRequest } from './trading-signals'
@@ -114,3 +114,46 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     },
   )
 }
+
+test.each([
+  { quantity: '500000000', cost: '50000000', value: '51000000', pnl: '1000000', units: 0.5 },
+  { quantity: '10000', cost: '1000', value: '1020', pnl: '20', units: 0.00001 },
+])('a reconciled partial equity fill retains management: $quantity atoms', ({ quantity, cost, value, pnl, units }) => {
+  const fixture = nativeJevFixture(JevPurpose.Manage)
+  const portfolio = fixture.portfolio
+  if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Management fixture required')
+  const fill = portfolio.entryFills[0]
+  if (fill === undefined) throw new Error('Entry fill required')
+  const material = {
+    ...portfolio.brokerState,
+    positions: portfolio.brokerState.positions.map((position) => ({
+      ...position,
+      quantityAtoms: quantity,
+      costBasisMicros: cost,
+      marketValueMicros: value,
+      unrealizedPnlMicros: pnl,
+    })),
+    orders: portfolio.brokerState.orders.map((order) => ({ ...order, filledQuantityAtoms: quantity })),
+  }
+  const hash = Result.getOrThrow(reconciledStateHash(material))
+  const observation = Result.getOrThrow(
+    makeJevObservation({
+      ...fixture.input,
+      portfolio: {
+        ...portfolio,
+        brokerState: {
+          ...material,
+          reconciliation: { ...material.reconciliation, expectedHash: hash, observedHash: hash },
+        },
+        entryFills: [{ ...fill, quantityAtoms: quantity }],
+      },
+    }),
+  ).payload
+  const request = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'AAPL'))
+  const state = JSON.parse(request.body).state
+  expect(state.position.quantityUnits).toBe(units)
+  expect(state.position.estimatedExitFeesUsd).toBeGreaterThan(0)
+  expect(state.position.breakEvenExitBidUsd).toBeGreaterThan(100)
+  expect(Number.isFinite(state.position.netLiquidationPnlUsd)).toBe(true)
+  expect(request.request.questions['action']?.type).toBe('choice')
+})

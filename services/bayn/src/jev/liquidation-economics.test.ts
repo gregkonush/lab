@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { OrderSide, OrderType } from '../execution/contracts'
+import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { instrumentMarket } from '../instruments'
@@ -73,7 +73,7 @@ test('invalid native sell terms retain the pricing failure', () => {
   const result = jevLiquidationValue({
     protocol: defaultJevProtocolDocument,
     symbol: 'NVDA',
-    quantityAtoms: 1n,
+    quantityAtoms: 0n,
     bidMicros: 100_000_000n,
   })
   expect(Result.isFailure(result)).toBe(true)
@@ -106,4 +106,28 @@ test('the conservative cash floor remains monotone across an actual cent fee jum
   expect(after.conservativeNetMicros).toBeGreaterThanOrEqual(before.conservativeNetMicros)
   expect(before.conservativeNetMicros).toBeLessThanOrEqual(before.netMicros)
   expect(after.conservativeNetMicros).toBeLessThanOrEqual(after.netMicros)
+})
+
+test('fractional equity liquidation uses the existing native MARKET/DAY pricing', () => {
+  const protocol = defaultJevProtocolDocument
+  const input = { protocol, symbol: 'NVDA', quantityAtoms: 250_000_000n, bidMicros: 100_000_000n }
+  const pricing = Result.getOrThrow(
+    deriveExecutionIntentPricing({
+      symbol: input.symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.Market,
+      timeInForce: TimeInForce.Day,
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.bidMicros,
+      executionModel: protocol.executionModel,
+      limitSlippageBps: 0n,
+    }),
+  )
+  expect(Result.getOrThrow(jevLiquidationValue(input)).proceedsMicros).toBe(pricing.notionalLimitMicros)
+  const bid = Result.getOrThrow(
+    jevBreakEvenExitBid({ ...input, acquisitionCostMicros: 25_000_000n, upperBidMicros: 200_000_000n }),
+  )
+  expect(Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: bid })).netMicros).toBeGreaterThanOrEqual(
+    25_000_000n,
+  )
 })
