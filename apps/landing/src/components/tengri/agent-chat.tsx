@@ -331,18 +331,38 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!account?.authenticated) return
     const controller = new AbortController()
+    let timer = 0
+    let retryDelay = 1_000
     setModels(null)
     setModelError('')
-    void loadCodexModels(agentId, controller.signal)
-      .then((models) => {
-        if (!controller.signal.aborted) setModels(models)
-      })
-      .catch((cause: unknown) => {
+    const load = async () => {
+      try {
+        const models = await loadCodexModels(agentId, controller.signal)
+        if (!controller.signal.aborted) {
+          setModels(models)
+          setModelError('')
+        }
+      } catch (cause: unknown) {
         if (!controller.signal.aborted) {
           setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
+          if (
+            cause instanceof TypeError ||
+            (cause instanceof DOMException && cause.name === 'AbortError') ||
+            (cause instanceof TengriRequestError &&
+              cause.code !== 'model_catalog_invalid' &&
+              (cause.status === 408 || cause.status === 429 || cause.status >= 500))
+          ) {
+            timer = window.setTimeout(() => void load(), retryDelay)
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+          }
         }
-      })
-    return () => controller.abort()
+      }
+    }
+    void load()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
   }, [account?.authenticated, agentId, modelReload])
 
   useEffect(() => {

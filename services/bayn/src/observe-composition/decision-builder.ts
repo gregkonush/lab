@@ -1,5 +1,4 @@
-import { quantityScale } from '../quantity'
-import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
@@ -1529,7 +1528,7 @@ export const selectClosingSymbolPass = (
   const fractionalSymbols = activePositions
     .filter(
       ({ symbol, quantityAtoms }) =>
-        instrumentMarket(symbol) === MarketKind.Equity && BigInt(quantityAtoms) % 1_000_000_000n !== 0n,
+        cashSpotClosingOrderType(instrumentMarket(symbol), BigInt(quantityAtoms)) === OrderType.Market,
     )
     .map(({ symbol }) => symbol)
   return fractionalSymbols.length > 0
@@ -1833,7 +1832,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       symbols.every(
         (symbol) =>
           instrumentMarket(symbol) === MarketKind.Equity &&
-          (positionQuantities.get(symbol) ?? 0n) % quantityScale === 0n,
+          cashSpotClosingOrderType(instrumentMarket(symbol), positionQuantities.get(symbol) ?? 0n) === OrderType.Limit,
       )
     const plannerInput: TargetPlannerInput = {
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,

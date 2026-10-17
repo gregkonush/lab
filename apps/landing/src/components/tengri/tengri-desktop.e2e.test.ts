@@ -148,6 +148,7 @@ type MockOptions = {
   failCodexAccountUntilReleased?: boolean
   failSnapshotAfterAction?: 'delete-agent' | 'sleep-agent'
   holdCodexAccount?: boolean
+  holdCodexModels?: boolean
   holdCodexAccountAfterLogin?: boolean
   holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
@@ -179,6 +180,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let createdThreads = 0
   let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
+  const heldCodexModels = Promise.withResolvers<void>()
+  const heldCodexModelsStarted = Promise.withResolvers<void>()
   let sendTurnFailuresRemaining = options.failSendTurnOnce ? 1 : 0
   let searchRequestsInFlight = 0
   let maxConcurrentSearchRequests = 0
@@ -677,6 +680,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         }
         break
       case 'codex-models':
+        if (options.holdCodexModels) {
+          heldCodexModelsStarted.resolve()
+          await heldCodexModels.promise
+        }
         if (options.codexModelsError) {
           const { status, ...body } = options.codexModelsError
           await route.fulfill({ status, json: body })
@@ -810,6 +817,8 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
 
   return {
     actions,
+    heldCodexModelsStarted: heldCodexModelsStarted.promise,
+    releaseHeldCodexModels: () => heldCodexModels.resolve(),
     terminalSockets,
     terminalInput,
     completeSleepReconciliation: () => {
@@ -1822,6 +1831,60 @@ for (const savedThread of [false, true]) {
   }
 }
 
+test('recovers a temporary model outage without discarding the draft or retrying a turn', async ({ page }) => {
+  const options: MockOptions = {
+    codexModelsError: { status: 503, error: 'Tengri control plane is unavailable' },
+  }
+  const mock = await mockTengri(page, options)
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('alert')).toContainText('Tengri control plane is unavailable')
+  const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+  await composer.fill('Keep this unsent draft')
+  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  options.codexModelsError = undefined
+  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry models' })).toHaveCount(0)
+  await expect(composer).toHaveValue('Keep this unsent draft')
+  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+for (const failure of [
+  { status: 403, error: 'Model catalog access denied' },
+  { status: 502, error: 'The guest returned an invalid Codex model catalog', code: 'model_catalog_invalid' },
+]) {
+  test(`does not automatically retry a model catalog failure with status ${failure.status}`, async ({ page }) => {
+    await page.clock.install()
+    const mock = await mockTengri(page, {
+      codexModelsError: failure,
+    })
+    await page.goto('/')
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    await expect(tengri.getByRole('alert')).toContainText(failure.error)
+    await page.clock.runFor(31_000)
+    expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+  })
+}
+
+test('cancels a pending model catalog retry when the chat window closes', async ({ page }) => {
+  await page.clock.install()
+  const options: MockOptions = {
+    codexModelsError: { status: 503, error: 'Tengri control plane is unavailable' },
+  }
+  const mock = await mockTengri(page, options)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('alert')).toContainText('Tengri control plane is unavailable')
+  await tengri.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+  await expect(tengri).toHaveCount(0)
+  options.codexModelsError = undefined
+  await page.clock.runFor(31_000)
+  expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+})
+
 for (const unavailable of ['model', 'effort']) {
   test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
     const mock = await mockTengri(page, {
@@ -2445,6 +2508,63 @@ test('retries cross-tab deletion refreshes after a transient failure', async ({ 
     .toBeGreaterThanOrEqual(snapshotRequestsBeforeDeletion + 2)
   await expect(duplicate.getByRole('dialog', { name: 'Create your agent' })).toBeVisible({ timeout: 6_000 })
   await duplicate.close()
+})
+
+test('can sleep and cancel a hanging model catalog without closing chat', async ({ page }) => {
+  const mock = await mockTengri(page, { holdCodexModels: true })
+  await page.goto('/')
+  await mock.heldCodexModelsStarted
+  const cancelled = page.waitForEvent('requestfailed', {
+    predicate: (request) => request.method() === 'POST' && request.postDataJSON()?.action === 'codex-models',
+  })
+  try {
+    await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Settings' }).click()
+    const settings = page.getByRole('region', { name: 'Settings window' })
+    for (const name of ['Sleep Agent', 'Sign Out', 'Delete Agent']) {
+      await expect(settings.getByRole('button', { name, exact: true })).toBeEnabled()
+    }
+    await settings.getByRole('button', { name: 'Sleep Agent', exact: true }).click()
+    await cancelled
+    await expect(page.getByRole('dialog', { name: 'Tengri is sleeping' })).toBeVisible()
+  } finally {
+    mock.releaseHeldCodexModels()
+  }
+})
+
+test('recovers the model catalog after a rejected lifecycle transition cancels its request', async ({ page }) => {
+  await page.clock.install()
+  const options: MockOptions = { holdCodexModels: true }
+  const mock = await mockTengri(page, options)
+  const sleepStarted = Promise.withResolvers<void>()
+  const releaseSleep = Promise.withResolvers<void>()
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() === 'POST' && route.request().postDataJSON()?.action === 'sleep-agent') {
+      sleepStarted.resolve()
+      await releaseSleep.promise
+      await route.fulfill({ status: 503, json: { error: 'Sleep is temporarily unavailable' } })
+    } else await route.fallback()
+  })
+  try {
+    await page.goto('/')
+    await mock.heldCodexModelsStarted
+    await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Settings' }).click()
+    const settings = page.getByRole('region', { name: 'Settings window' })
+    await settings.getByRole('button', { name: 'Sleep Agent', exact: true }).click()
+    await sleepStarted.promise
+    options.holdCodexModels = false
+    mock.releaseHeldCodexModels()
+    await page.clock.runFor(1_100)
+    expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+    releaseSleep.resolve()
+    await expect(settings.getByRole('button', { name: 'Sleep Agent', exact: true })).toBeEnabled()
+    await page.clock.runFor(2_100)
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+    expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(2)
+  } finally {
+    releaseSleep.resolve()
+    mock.releaseHeldCodexModels()
+  }
 })
 
 test('blocks lifecycle changes while Settings has a guest request in flight', async ({ page }) => {
