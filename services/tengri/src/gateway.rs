@@ -22,6 +22,7 @@ use tokio_tungstenite::{
         Message as TungsteniteMessage, client::IntoClientRequest, protocol::WebSocketConfig,
     },
 };
+use tracing::Instrument;
 
 use crate::{
     activity::ActivityTracker,
@@ -36,6 +37,7 @@ const MAX_BOOTSTRAP_BODY: usize = 4 << 10;
 const MAX_WEBSOCKET_FRAME: usize = 2 << 20;
 const MAX_WEBSOCKET_MESSAGE: usize = 8 << 20;
 const MAX_WEBSOCKET_WRITE_BUFFER: usize = 16 << 20;
+const PREVIEW_KEEPALIVE_INTERVAL: Duration = Duration::from_secs(20);
 const READINESS_TIMEOUT: Duration = Duration::from_secs(2);
 const PREVIEW_COOKIE: &str = "__Host-tengri_preview";
 const NANOAGENT_AUTH_FAILURE_HEADER: &str = "x-tengri-nanoagent-auth-failure";
@@ -196,6 +198,7 @@ impl GatewayState {
         Ok(access)
     }
 
+    #[tracing::instrument(name = "preview.authority.watch", skip_all, fields(otel.status_code = tracing::field::Empty))]
     pub(crate) async fn wait_for_preview_revocation(
         &self,
         session: &PreviewSessionRecord,
@@ -210,11 +213,17 @@ impl GatewayState {
                     access.require(),
                 )
             };
-            if !matches!(
-                tokio::time::timeout(Duration::from_secs(2), valid).await,
-                Ok(Ok(_))
-            ) {
-                return;
+            match tokio::time::timeout(Duration::from_secs(2), valid).await {
+                Ok(Ok(_)) => {}
+                result => {
+                    let code = match result {
+                        Ok(Err(error)) => error.code(),
+                        _ => tonic::Code::DeadlineExceeded,
+                    };
+                    tracing::Span::current().record("otel.status_code", "ERROR");
+                    tracing::warn!(?code, "preview authority recheck closed the connection");
+                    return;
+                }
             }
         }
     }
@@ -767,13 +776,17 @@ async fn preview_host_proxy(
         } else {
             websocket
         };
+        let connection_span = tracing::Span::current();
         return websocket
-            .on_upgrade(move |socket| async move {
-                let revoked = state.wait_for_preview_revocation(&session, &access);
-                tokio::select! {
-                    _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
-                    _ = revoked => {},
+            .on_upgrade(move |socket| {
+                async move {
+                    let revoked = state.wait_for_preview_revocation(&session, &access);
+                    tokio::select! {
+                        _ = bridge_open_websocket(socket, upstream, activity, agent_id) => {},
+                        _ = revoked => {},
+                    }
                 }
+                .instrument(connection_span)
             })
             .into_response();
     }
@@ -1030,8 +1043,19 @@ async fn bridge_open_websocket(
     agent_id: String,
 ) {
     let (mut upstream_write, mut upstream_read) = upstream.split();
+    let mut keepalive = tokio::time::interval_at(
+        tokio::time::Instant::now() + PREVIEW_KEEPALIVE_INTERVAL,
+        PREVIEW_KEEPALIVE_INTERVAL,
+    );
+    keepalive.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
     loop {
         tokio::select! {
+            _ = keepalive.tick() => {
+                if browser.send(AxumMessage::Ping(Default::default())).await.is_err()
+                    || upstream_write.send(TungsteniteMessage::Ping(Default::default())).await.is_err() {
+                    break;
+                }
+            }
             browser_message = browser.recv() => {
                 let Some(Ok(message)) = browser_message else { break };
                 let message = match message {
@@ -1041,7 +1065,9 @@ async fn bridge_open_websocket(
                     AxumMessage::Pong(value) => TungsteniteMessage::Pong(value),
                     AxumMessage::Close(_) => TungsteniteMessage::Close(None),
                 };
-                activity.touch(&agent_id);
+                if matches!(&message, TungsteniteMessage::Text(_) | TungsteniteMessage::Binary(_)) {
+                    activity.touch(&agent_id);
+                }
                 if upstream_write.send(message).await.is_err() { break; }
             }
             upstream_message = upstream_read.next() => {
@@ -1054,7 +1080,9 @@ async fn bridge_open_websocket(
                     TungsteniteMessage::Close(_) => AxumMessage::Close(None),
                     TungsteniteMessage::Frame(_) => continue,
                 };
-                activity.touch(&agent_id);
+                if matches!(&message, AxumMessage::Text(_) | AxumMessage::Binary(_)) {
+                    activity.touch(&agent_id);
+                }
                 if browser.send(message).await.is_err() { break; }
             }
         }
@@ -1395,6 +1423,8 @@ fn forward_response_header(name: &HeaderName) -> bool {
 
 #[cfg(test)]
 mod editor_browser_fixture;
+#[cfg(test)]
+mod preview_transport_test;
 
 #[cfg(test)]
 mod tests {

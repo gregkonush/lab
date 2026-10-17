@@ -3,6 +3,7 @@
 import { watchTengriEvents } from './event-stream'
 
 import { reportBrowserFailure } from '@/lib/observability/client'
+import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
 
 import {
   Select,
@@ -144,6 +145,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
   const threadResumeGeneration = useRef(0)
+  const threadStartupController = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const canStartTurn = Boolean(selectedOptions)
@@ -331,18 +333,32 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!account?.authenticated) return
     const controller = new AbortController()
+    let timer = 0
+    let retryDelay = 1_000
     setModels(null)
     setModelError('')
-    void loadCodexModels(agentId, controller.signal)
-      .then((models) => {
-        if (!controller.signal.aborted) setModels(models)
-      })
-      .catch((cause: unknown) => {
+    const load = async () => {
+      try {
+        const models = await loadCodexModels(agentId, controller.signal)
+        if (!controller.signal.aborted) {
+          setModels(models)
+          setModelError('')
+        }
+      } catch (cause: unknown) {
         if (!controller.signal.aborted) {
           setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
+          if (retryableReadFailure(cause)) {
+            timer = window.setTimeout(() => void load(), retryDelay)
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+          }
         }
-      })
-    return () => controller.abort()
+      }
+    }
+    void load()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
   }, [account?.authenticated, agentId, modelReload])
 
   useEffect(() => {
@@ -414,37 +430,47 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (!account?.authenticated || !threadId || threadReady || replayRecoveryRef.current || (!models && !modelError))
       return
     const controller = new AbortController()
-    const resumeSequence = lastEventSequence.current
+    threadStartupController.current = controller
+    let timer = 0
+    let retryDelay = 1_000
+    controller.signal.addEventListener('abort', () => window.clearTimeout(timer), { once: true })
     const generation = ++threadResumeGeneration.current
-    void runTengriAction<TengriCodexThread>(
-      { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
-      controller.signal,
-    )
-      .then((thread) => {
-        if (
-          controller.signal.aborted ||
-          !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
-        ) {
-          return
-        }
+    const current = () =>
+      !controller.signal.aborted &&
+      codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+    const resume = async () => {
+      if (!current()) return
+      const resumeSequence = lastEventSequence.current
+      try {
+        const thread = await runTengriAction<TengriCodexThread>(
+          { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
+          controller.signal,
+        )
+        if (!current()) return
         commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
         setThreadReady(true)
         setError('')
-      })
-      .catch((cause: unknown) => {
-        if (
-          !controller.signal.aborted &&
-          codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
-        ) {
+      } catch (cause: unknown) {
+        if (current()) {
           setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
+          if (retryableReadFailure(cause)) {
+            timer = window.setTimeout(() => void resume(), retryDelay)
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+          }
         }
-      })
-    return () => controller.abort()
+      }
+    }
+    void resume()
+    return () => {
+      controller.abort()
+      if (threadStartupController.current === controller) threadStartupController.current = null
+    }
   }, [account?.authenticated, agentId, commitThreadState, modelError, models, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
+    threadStartupController.current?.abort()
     const recoverySequence = lastEventSequence.current
     replayRecoveryRef.current = true
     const generation = ++threadResumeGeneration.current
@@ -1766,6 +1792,18 @@ function codexEventWrapperKey(event: TengriCodexEvent) {
 function titleFromTranscript(items: readonly CodexTranscriptItem[]) {
   const firstUser = items.find((item) => item.kind === 'user-message' && item.text.trim())
   return firstUser ? truncateConversationTitle(firstUser.text) : ''
+}
+
+function retryableReadFailure(cause: unknown) {
+  return (
+    cause instanceof CodexHistoryInterruptedError ||
+    cause instanceof TypeError ||
+    (cause instanceof DOMException && cause.name === 'AbortError') ||
+    (cause instanceof TengriRequestError &&
+      cause.code !== 'model_catalog_invalid' &&
+      cause.code !== 'conversation_history_invalid' &&
+      (cause.status === 408 || cause.status === 429 || cause.status >= 500))
+  )
 }
 
 function safeVerificationUrl(value: string) {

@@ -32,9 +32,19 @@ Every proof that could have executed before a crash therefore expires before the
 The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
 unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
 Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
-Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Ofz policy
-checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
-PostgreSQL commit inside the short-lived Ofz decision window. This changes no signed fields or database schema;
+Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Schema
+verification requires migration `0003_replay_slots.sql` in the same release as the BFF, controller and supervisor.
+It preserves every unexpired nonce while replacing bucket transaction locks with 128 fixed rows per bucket.
+Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces in the same bucket can commit
+independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
+durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
+Each controller batches up to 32 nonce claims over five milliseconds through one connection and a bounded queue.
+Every claim still uses the shared SQL replay check. Admission waits for the outer transaction to commit and rechecks
+each claim's expiry against the database clock. A malformed claim rolls back its own savepoint, and a failed commit
+admits none of the batch. This leaves the request pool available
+while durable writes wait on storage. The queue never falls back to local replay state.
+Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
+PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
 rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
 capacity follows the opening message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
 header; previews reserve their bounded body size. Capacity checks never queue large reservations ahead of smaller
@@ -46,6 +56,8 @@ Nanoagent verifies the proof again against its root-owned runtime claim and reco
 nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
 openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
 the application. Scoped content remains denied until bounded observer handlers exist.
+Preview WebSockets send protocol keepalives on both proxy hops every twenty seconds so idle connections remain open.
+Control frames do not record user activity or postpone automatic sleep; runtime and policy revocation still close the stream.
 
 The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
 supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
@@ -273,11 +285,11 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
-Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
-An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
-controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
-Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
-both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+Replay admission hashes each nonce into one of 64 buckets with 128 fixed slots. An expired slot is claimed with
+`FOR UPDATE SKIP LOCKED`; unrelated nonces can proceed even in the same bucket. Duplicate rejection remains atomic
+across replicas, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Ofz must apply
+all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
@@ -472,6 +484,14 @@ collector service addresses and ports; other private networks remain denied. New
 configuration through the private guest boot file, without database credentials or a Kubernetes identity.
 Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
 a supervisor image restart alone does not update the guest root or runner environment.
+
+RPC failures retain their numeric `rpc.grpc.status_code` in Tempo. GlitchTip events also carry a bounded
+`grpc_code` tag and a status-specific title. Expected cancellation, validation, missing-resource, precondition and
+authorization rejections remain visible in traces and logs without creating server-error issues. Transport failures,
+server deadlines, capacity failures and internal errors still create error events. Spare-slot maintenance allows at
+most two minutes from Pod creation for networking and initial container status. Within that bound it waits for the
+supervisor's replay startup fence plus readiness timeout before probing. Failed containers, changed Pod identities
+and failures after either startup window still surface.
 
 After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
 Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.

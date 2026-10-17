@@ -671,6 +671,11 @@ struct WorkspaceFixture {
 #[tokio::test]
 #[ignore = "requires the disposable TLS PostgreSQL and SpiceDB from test-control.sh"]
 async fn control_integration_durability_authority_and_quota() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init()
+        .ok();
     let (admin, database, native, identities) = setup().await;
     let service = Service::new(
         database.clone(),
@@ -691,6 +696,13 @@ async fn control_integration_durability_authority_and_quota() {
     Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
+    verify_audit_write_pressure(
+        &fixture.admin,
+        &fixture.database,
+        &fixture.identities[0],
+        &workspace.uid,
+    )
+    .await;
     Box::pin(verify_authorization_after_audit(&fixture, &workspace)).await;
     Box::pin(verify_runtime_reads(
         &fixture.service,
@@ -3534,7 +3546,7 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     let trace_id = context.trace_id.clone();
     let database = fixture.database.clone();
     let native = fixture.native.clone();
-    let in_flight = tokio::spawn(async move {
+    let mut in_flight = tokio::spawn(async move {
         decision::check(
             &database,
             &native,
@@ -3551,6 +3563,9 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     });
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
+            if in_flight.is_finished() {
+                panic!("content decision ended before its audit write: {:?}", (&mut in_flight).await);
+            }
             let blocked: bool = audit_lock.query_one(
                 "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='ofz.audit'::regclass AND mode='RowExclusiveLock' AND NOT granted)", &[],
             ).await.unwrap().get(0);
@@ -4072,6 +4087,130 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
         "transfer quarantines retained content until clean recovery"
     );
     runtime_epoch
+}
+
+async fn verify_audit_write_pressure(
+    admin: &Database,
+    database: &Database,
+    owner: &(String, String),
+    uid: &str,
+) {
+    let context = request(
+        database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    let receipts: Vec<_> = (0..12)
+        .map(|_| {
+            store::receipt(
+                &context,
+                CONTROLLER_ID,
+                policy::workspace(uid),
+                Action::WorkspaceMetadataRead,
+                true,
+                "",
+                "audit write pressure",
+            )
+        })
+        .collect();
+    let warm = futures::future::join_all((0..12).map(|_| database.pool.get())).await;
+    assert!(warm.iter().all(Result::is_ok));
+    drop(warm);
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.batch_execute(
+        "CREATE FUNCTION ofz.fixture_block_audit_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'reason'='audit write pressure' THEN PERFORM pg_advisory_xact_lock(726635522922); END IF; RETURN NEW; END $$;
+         CREATE CONSTRAINT TRIGGER fixture_block_audit_commit AFTER INSERT ON ofz.audit DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ofz.fixture_block_audit_commit();",
+    )
+    .await
+    .unwrap();
+    lock.commit().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.batch_execute("SELECT pg_advisory_xact_lock(726635522922)")
+        .await
+        .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(13));
+    let writers: Vec<_> = receipts
+        .iter()
+        .map(|receipt| {
+            let database = database.clone();
+            let receipt = receipt.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                database.audit(&receipt, "").await
+            })
+        })
+        .collect();
+    barrier.wait().await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let read = tokio::time::timeout(std::time::Duration::from_millis(300), database.state()).await;
+    let pending = writers.iter().all(|writer| !writer.is_finished());
+    lock.rollback().await.unwrap();
+    for writer in writers {
+        writer.await.unwrap().unwrap();
+    }
+    assert!(
+        pending,
+        "durable audit writes must wait for the database commit"
+    );
+    assert!(
+        matches!(read, Ok(Ok(_))),
+        "audit writes starved fresh authorization reads: {read:?}"
+    );
+    let ids: Vec<_> = receipts
+        .iter()
+        .map(|receipt| Uuid::parse_str(&receipt.id).unwrap())
+        .collect();
+    let client = admin.pool.get().await.unwrap();
+    client.batch_execute("DROP TRIGGER fixture_block_audit_commit ON ofz.audit; DROP FUNCTION ofz.fixture_block_audit_commit();").await.unwrap();
+    let committed = client.query_one("SELECT count(*)::integer,count(DISTINCT pg_xact_commit_timestamp(xmin))::integer FROM ofz.audit WHERE id=ANY($1)", &[&ids]).await.unwrap();
+    assert_eq!(committed.get::<_, i32>(0), 12);
+    assert!(
+        (1..=2).contains(&committed.get::<_, i32>(1)),
+        "concurrent audit receipts must share durable commits"
+    );
+    let good = store::receipt(
+        &context,
+        CONTROLLER_ID,
+        policy::workspace(uid),
+        Action::WorkspaceMetadataRead,
+        true,
+        "",
+        "audit failure isolation",
+    );
+    let mut expired = store::receipt(
+        &context,
+        CONTROLLER_ID,
+        policy::workspace(uid),
+        Action::FilesWrite,
+        true,
+        "",
+        "audit failure isolation",
+    );
+    expired.session_id = Uuid::new_v4().to_string();
+    let (accepted, rejected) =
+        tokio::join!(database.audit(&good, ""), database.audit(&expired, ""));
+    assert_eq!(accepted.unwrap(), good.id);
+    assert_eq!(rejected.unwrap_err().code(), Code::Unauthenticated);
+    let count: i64 = client
+        .query_one(
+            "SELECT count(*) FROM ofz.audit WHERE id=ANY($1)",
+            &[&vec![
+                Uuid::parse_str(&good.id).unwrap(),
+                Uuid::parse_str(&expired.id).unwrap(),
+            ]],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        count, 1,
+        "one invalid audit must roll back only its own receipt"
+    );
 }
 
 async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
