@@ -121,6 +121,8 @@ describe('native Jev entry and position observations', () => {
       'bayn.jev.protocol.v3',
       'bayn.jev.protocol.v4',
       'bayn.jev.protocol.v5',
+      'bayn.jev.protocol.v6',
+      'bayn.jev.protocol.v7',
     ])
       expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
     expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, minimumEntryProbability: 0.65 }))).toBe(
@@ -217,7 +219,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v6',
+        schemaVersion: 'bayn.jev-trading-signal-state.v7',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })

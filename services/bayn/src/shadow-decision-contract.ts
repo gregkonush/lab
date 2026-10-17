@@ -10,6 +10,8 @@ import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { jevMaximumEntryAskMicros } from './jev/entry-economics'
+import { JevCandidatePlanStatus } from './jev/batch'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
@@ -1200,7 +1202,32 @@ const jevEntryEvidenceIssues = (
         issue:
           'Jev entry quantity limits must reproduce the recorded capital, selected weights and instrument precision',
       })
+    for (const symbol of target.selectedSymbols) {
+      const candidate = batchPlan.candidates.find((entry) => entry.symbol === symbol)
+      // The target schema has reproduced this exact request from its immutable source rows.
+      const quoted = Schema.decodeUnknownResult(
+        Schema.Struct({ candidate: Schema.Struct({ quote: Schema.Struct({ ask: Schema.Finite }) }) }),
+      )(candidate?.status === JevCandidatePlanStatus.Requested ? candidate.request.request.state : undefined)
+      const originalAsk = quoted.pipe(
+        Result.flatMap((state) => priceNumberToMicros(state.candidate.quote.ask, 'ask', 'UP')),
+      )
+      const pricedAsk = document.plannerInput.referencePrices.askPriceMicros[symbol]
+      if (
+        Result.isFailure(originalAsk) ||
+        pricedAsk === undefined ||
+        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, originalAsk.success)
+      )
+        issues.push({
+          path: ['plannerInput', 'referencePrices'],
+          issue: 'entry pricing exceeds the inference-bound cost ceiling',
+        })
+    }
   }
+  if ((document.entryLimitSlippageBps ?? 0) > observation.protocol.maximumEntryLimitSlippageBps)
+    issues.push({
+      path: ['entryLimitSlippageBps'],
+      issue: 'entry limit allowance exceeds the inference-bound cost ceiling',
+    })
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
   // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that

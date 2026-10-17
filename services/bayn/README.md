@@ -4,7 +4,7 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v7` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v8` and native Dorvud feature contracts.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
@@ -23,6 +23,19 @@ Current positions require explicit broker cost basis. Migration 115 rejects new 
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
 its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
 unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
+
+Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
+including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
+coin-denominated buy fees and the existing rounded transaction-fee schedule. Selection requires both an `enter`
+action and a `supported` net-economics assessment; adverse or uncertain economics abstain. The model assessment
+remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
+above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
+
+Protocol v8 and trading-signal input v7 replace their executable predecessors. Migration 116 requires flat,
+settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
+new Jev authority generations to v8. Historical generation rows remain immutable audit evidence. Rebind the
+existing PAPER mandate to a verified v8 image through its sealed GitOps path after cutover; source success alone
+does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
 net liquidation P&L and the break-even bid. Estimated exit costs remain estimates; delayed final broker fee matching
@@ -104,6 +117,14 @@ The Bayn Nix dependency build normalizes the two CLI symlinks in the
 Bun's isolated installer can omit these links in otherwise identical locked installs. Normalization preserves
 package contents, rejects unexpected links or missing targets, and is idempotent. The dependency-input CI check
 exercises all four link-presence combinations; both native image builds still verify their exact dependency hashes.
+
+## Risk-query performance
+
+Migration 117 indexes the native New York session-opening and historical peak-equity queries. Both retain their
+original account, observation cutoff and deterministic ordering. They do not replace financial evidence with a cache,
+rewrite valuations, reset a session loss or change any capital limit. Executed-plan regression checks include foreign
+accounts, future marks, equal-time marks and both daylight-saving transitions. Reconciliation phase spans separate
+fee posting, accounting verification, comparison, recording and risk-context reads from transaction commit time.
 
 ## Required Valkey broker materializations
 
@@ -1229,11 +1250,17 @@ and latest broker-event timestamp across every event kind. Identity, terminal-or
 and exact-reconciliation predicates are unchanged; the indexes do not grant authority or cache mutable evidence.
 Migration 0095 builds these indexes transactionally through normal startup migration. Schedule its first rollout
 while the account is flat outside the regular session because ordinary index creation blocks table writes.
-Startup migrations use a private single-connection pool with a five-minute overall deadline, a 295-second SQL
-deadline and a 297.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
+PostgreSQL initialization warms each client with a read-only `SELECT 1` before exposing it. An initial
+`ECONNREFUSED` permits at most three attempts, one second apart. Failed acquisition scopes close before retry;
+a successful client remains owned by its application scope. Composition layers do not rebuild a failed client.
+Authentication failures and other errors propagate immediately. Caller statements and trading mutations retain their existing execution behavior. Persistent
+connection refusal preserves the original failure and prevents startup.
+
+Startup migrations use a private single-connection pool with a fifteen-minute overall deadline, an 895-second SQL
+deadline and an 897.5-second socket inactivity deadline. That pool closes when migration completes or fails; runtime
 query, socket and trading deadlines remain unchanged. The additive indexes and compatible completion predicate can remain when
 rolling back the application image through Kargo; do not remove retained evidence or weaken commit durability.
-The execution endpoint's startup probe allows six minutes for this bounded migration and initialization. Its
+The execution endpoint's startup probe allows twenty minutes for this bounded migration and initialization. Its
 readiness and liveness probes retain their normal cadence after startup.
 
 The PostgreSQL cluster reserves 512 MiB of shared buffers and 16 MiB of WAL buffers within its 2 GiB memory limit.

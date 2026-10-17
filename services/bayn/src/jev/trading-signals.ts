@@ -25,6 +25,7 @@ import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import { jevEntryEconomics, JevEntryEconomicsAssessment } from './entry-economics'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -272,10 +273,23 @@ export const jevTradingQuestions = {
       'Strongly aligned evidence across the available signal groups',
     ],
   },
+  net_economics: {
+    type: 'choice',
+    instructions:
+      'Does the current evidence support the exit bid exceeding entryEconomics.breakEvenExitBidUsd within the stated horizon? This threshold includes the observed spread, bounded adverse entry pricing and estimated transaction fees. Assess magnitude as well as direction. Upward momentum alone is insufficient. Use uncertain when evidence cannot support this magnitude or entryEconomics is null. Operating costs are unknown. Model assessments are uncalibrated and cannot establish realized profit.',
+    criteria: {
+      [JevEntryEconomicsAssessment.Supported]:
+        'The available evidence supports upward continuation beyond the explicit transaction-cost break-even bid within the holding horizon.',
+      [JevEntryEconomicsAssessment.NotSupported]:
+        'The likely move is adverse or too small to exceed the explicit transaction-cost break-even bid.',
+      [JevEntryEconomicsAssessment.Uncertain]:
+        'The evidence does not support judging whether the move can cover the explicit transaction costs.',
+    },
+  },
   action: {
     type: 'choice',
     instructions:
-      'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
+      'Given the candidate, benchmark and explicit entry economics, which long-only entry decision is best supported for the stated horizon? Enter requires both a supported setup and evidence for exceeding the transaction-cost break-even exit bid. Use wait or avoid when costs outweigh the supported move or net economics are uncertain. Deterministic code separately checks permission, sizing and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
@@ -370,6 +384,16 @@ const requestFromSnapshot = (
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
         position,
+        entryEconomics:
+          native.portfolio.purpose === JevPurpose.Entry
+            ? yield* jevEntryEconomics({
+                protocol: native.protocol,
+                symbol,
+                bidMicros: candidate.prices.bid,
+                askMicros: candidate.prices.ask,
+                capitalMicros: native.portfolio.brokerState.account.equityMicros,
+              })
+            : null,
         execution: {
           orderType: 'LIMIT',
           timeInForce: continuous ? 'IOC' : 'DAY',
