@@ -15,8 +15,8 @@ otelcol.receiver.otlp "bayn" {
 
 otelcol.processor.memory_limiter "bayn" {
   check_interval = "1s"
-  limit          = "192MiB"
-  spike_limit    = "32MiB"
+  limit          = "384MiB"
+  spike_limit    = "64MiB"
   output {
     traces = [otelcol.exporter.otlphttp.tempo.input]
   }

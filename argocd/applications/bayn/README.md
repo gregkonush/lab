@@ -410,10 +410,11 @@ cash/coin distinction; pending fee publication remains a cost-evidence gap.
 ### Trace export buffering
 
 The two-replica `bayn-telemetry` Alloy relay accepts Bayn traces before forwarding them to the existing Tempo
-distributor. Each replica has a 16 MiB byte-bounded queue, two export consumers, a 192 MiB process memory limiter
+distributor. Each replica has a 16 MiB byte-bounded queue, two export consumers, a 384 MiB process memory limiter
 and a 120-second retry budget. It holds no broker credentials, performs no trading work and does not change
 PostgreSQL, ledger or Kafka durability. Native exporter queue, refusal and delivery metrics are sent to Mimir
-under `job="bayn-telemetry"`.
+under `job="bayn-telemetry"`. The pod has a 512 MiB memory limit; the native local retry fixture reached about
+213 MiB peak process RSS before production traffic, so the lower initial 256 MiB limit was not retained.
 
 This absorbs brief Tempo/Kafka outages rather than allowing each application exporter to discard its buffer and
 enter its native 60-second disabled interval. It is not durable or lossless: collector restarts, queue overflow
