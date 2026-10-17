@@ -48,6 +48,11 @@ spec:
             - --server.http.listen-addr=0.0.0.0:12345
             - --storage.path=/var/lib/alloy
             - --disable-reporting
+          env:
+            - name: HOSTNAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: otlp-http
               containerPort: 4318

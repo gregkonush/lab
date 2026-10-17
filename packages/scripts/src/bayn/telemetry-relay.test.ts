@@ -15,6 +15,9 @@ test('the bounded trace relay precedes its clients and holds no broker identity 
   expect(pod.volumes.every((volume: Record<string, unknown>) => volume.secret === undefined)).toBe(true)
   expect(pod.containers[0].image).toContain('@sha256:')
   expect(pod.containers[0].resources.limits.memory).toBe('256Mi')
+  expect(
+    pod.containers[0].env.find((entry: { name: string }) => entry.name === 'HOSTNAME').valueFrom.fieldRef.fieldPath,
+  ).toBe('metadata.name')
   const receiver = objects.find(
     (object) => object.kind === 'NetworkPolicy' && object.metadata.name === 'bayn-telemetry',
   )
