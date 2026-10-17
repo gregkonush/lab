@@ -407,6 +407,31 @@ Automated Sunday and midnight tests establish boundary behavior; a short PAPER r
 24-hour or weekend soak, profitability, or live liquidity capacity. Broker FEE/CFEE activities retain their native
 cash/coin distinction; pending fee publication remains a cost-evidence gap.
 
+### Trace export buffering
+
+The two-replica `bayn-telemetry` Alloy relay accepts Bayn traces before forwarding them to the existing Tempo
+distributor. Each replica has a 16 MiB byte-bounded queue, two export consumers, a 384 MiB process memory limiter
+and a 120-second retry budget. It holds no broker credentials, performs no trading work and does not change
+PostgreSQL, ledger or Kafka durability. Native exporter queue, refusal and delivery metrics are sent to Mimir
+under `job="bayn-telemetry"`. The pod has a 512 MiB memory limit; the native local retry fixture reached about
+213 MiB peak process RSS before production traffic, so the lower initial 256 MiB limit was not retained.
+
+This absorbs brief Tempo/Kafka outages rather than allowing each application exporter to discard its buffer and
+enter its native 60-second disabled interval. It is not durable or lossless: collector restarts, queue overflow
+and exhausted retries can still lose traces. Readiness alone is not proof of delivery. Verify an identifiable
+trace at Tempo and inspect accepted, failed and sent span counters. Do not restart collectors to conceal a backlog.
+
+The standalone regression uses the same configuration with only local endpoints and a deliberately rejecting sink:
+
+```sh
+python3 services/bayn/tools/verify-telemetry-relay.py --binary /path/to/pinned/alloy \
+  --config argocd/applications/bayn/telemetry.alloy
+```
+
+It requires no cluster, broker or model access. It proves acceptance while the sink returns 503, actual retries,
+and delivery of the original fixture after recovery. ConfigMap hashing rolls collector configuration changes;
+sync waves install the relay before changing application endpoints.
+
 ### Research mandate rotation
 
 The sealed research mandate is standing authority for its exact strategy, sandbox account, risk policy, and reviewed
