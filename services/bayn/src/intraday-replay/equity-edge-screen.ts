@@ -1,6 +1,6 @@
 import { Data, Result } from 'effect'
 
-import { calculateSessionFees } from '../strategy/execution-model/fees'
+import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { intradayExecutionModel } from '../strategy/intraday-market'
 import { canonicalHashV1 } from '../hash'
 
@@ -37,7 +37,7 @@ export interface EquityScreenPolicy {
 }
 
 export const equityScreenDefinition = Object.freeze({
-  schemaVersion: 'bayn.equity-edge-screen-definition.v4',
+  schemaVersion: 'bayn.equity-edge-screen-definition.v5',
   signalMinutes: 30,
   decisionIntervalMinutes: 5,
   lastEntryMinute: 210,
@@ -54,6 +54,8 @@ export const equityScreenDefinition = Object.freeze({
   maximumExitWaitMinutes: 3,
   feePolicy: 'native-intraday-execution-model',
   executionModelHash: canonicalHashV1(intradayExecutionModel),
+  feeAggregation:
+    'Cumulative native session-by-fee-type deltas; one fill per simulated order preserves per-order TAF caps',
   sizing:
     'Completed signal close with adverse-price reserve; fixed quantity before arrival; reject an arrival exceeding its allocation, never resize from future price',
   entry: 'first eligible next-minute open, adverse price rounded to cents',
@@ -150,7 +152,9 @@ export const indexEquityScreenBars = (bars: readonly EquityScreenBar[]) =>
         !Number.isFinite(bar.volume) ||
         bar.volume < 0 ||
         bar.high < Math.max(bar.open, bar.close, bar.low) ||
-        bar.low > Math.min(bar.open, bar.close)
+        bar.low > Math.min(bar.open, bar.close) ||
+        bar.vwap < bar.low ||
+        bar.vwap > bar.high
       )
         return yield* Result.fail(new EquityScreenError({ message: 'Invalid equity bar' }))
       const symbolBars = index.get(bar.symbol) ?? new Map<number, EquityScreenBar>()
@@ -235,7 +239,6 @@ export const equityScreenCandidates = (
     }
     const ownReturn = last.close / first.open - 1
     const excess = ownReturn - benchmarkReturn
-    if (!early && signal !== EquityScreenSignal.Reversal && (ownReturn <= 0 || excess <= 0)) continue
     let score = excess
     if (signal === EquityScreenSignal.Reversal) {
       const volume = bars.reduce((sum, bar) => sum + bar.volume, 0)
@@ -270,7 +273,6 @@ export const equityScreenCandidates = (
         })
         continue
       }
-      if (early && (benchmarkReturn < 0 || (opening.at(-1)?.close ?? 0) <= (opening[0]?.open ?? 0))) continue
       const priorDays = days.slice(dayIndex - 14, dayIndex)
       const priorVolumes = priorDays.map((prior) => window(index, symbol, prior.openAt, 5))
       const missingPrior = priorVolumes.findIndex((rows) => rows === null)
@@ -285,12 +287,14 @@ export const equityScreenCandidates = (
         })
         continue
       }
+      if (early && (benchmarkReturn < 0 || (opening.at(-1)?.close ?? 0) <= (opening[0]?.open ?? 0))) continue
       const average =
         priorVolumes.reduce((total, rows) => total + (rows?.reduce((sum, bar) => sum + bar.volume, 0) ?? 0), 0) / 14
       const volume = opening.reduce((sum, bar) => sum + bar.volume, 0)
       if (average <= 0 || volume <= average || last.close <= Math.max(...opening.map((bar) => bar.high))) continue
       score = volume / average
     }
+    if (!early && signal !== EquityScreenSignal.Reversal && (ownReturn <= 0 || excess <= 0)) continue
     if (signal === EquityScreenSignal.Pullback) {
       const prior = bars.slice(0, 25)
       const recent = bars.slice(25)
@@ -349,17 +353,18 @@ export const runEquityEdgeScreen = (
       noCandidateDecisions: number
       missingArrivalBars: number
       entryBudgetRejections: number
+      feesMicros: string
     }[] = []
     const trades: EquityScreenTrade[] = []
     const candidateExclusions: EquityScreenExclusion[] = []
     const early = policy.signal === EquityScreenSignal.EarlyOpeningRange
     let incomplete: { date: string; symbol: string; reason: string } | null = null
-    const fee = (symbol: string, buy: boolean, shares: bigint, price: bigint) =>
-      calculateSessionFees(
-        [{ symbol, side: buy ? 'buy' : 'sell', quantityAtoms: shares * quantityScale, notionalMicros: shares * price }],
-        intradayExecutionModel,
-        micros,
-      ).pipe(Result.map((value) => value.cashMicros))
+    const feeInput = (symbol: string, buy: boolean, shares: bigint, price: bigint): FeeInput => ({
+      symbol,
+      side: buy ? 'buy' : 'sell',
+      quantityAtoms: shares * quantityScale,
+      notionalMicros: shares * price,
+    })
     for (let dayIndex = 0; dayIndex < days.length; dayIndex++) {
       const day = days[dayIndex]
       if (day === undefined || day.date < from || day.date > through) continue
@@ -369,6 +374,15 @@ export const runEquityEdgeScreen = (
       let noCandidate = 0
       let missingArrivalBars = 0
       let entryBudgetRejections = 0
+      const sessionFills: FeeInput[] = []
+      let sessionFees = 0n
+      // Quoting a hypothetical fill does not mutate the session. Accepted fills post only its cumulative fee delta.
+      const fee = (symbol: string, buy: boolean, shares: bigint, price: bigint) =>
+        calculateSessionFees(
+          [...sessionFills, feeInput(symbol, buy, shares, price)],
+          intradayExecutionModel,
+          micros,
+        ).pipe(Result.map((value) => value.cashMicros - sessionFees))
       let position: {
         symbol: string
         shares: bigint
@@ -420,6 +434,8 @@ export const runEquityEdgeScreen = (
           }
           const price = priceMicros(exit.open, false, policy.adverseBpsPerSide)
           const exitFees = yield* fee(position.symbol, false, position.shares, price)
+          sessionFills.push(feeInput(position.symbol, false, position.shares, price))
+          sessionFees += exitFees
           const gross = position.shares * (price - position.price)
           const fees = position.entryFees + exitFees
           trades.push({
@@ -502,6 +518,8 @@ export const runEquityEdgeScreen = (
           continue
         }
         if (shares <= 0n || turnover + shares * price * 2n > 1_000_000n * micros) continue
+        sessionFills.push(feeInput(candidate.symbol, true, shares, price))
+        sessionFees += entryFees
         position = {
           symbol: candidate.symbol,
           shares,
@@ -525,6 +543,7 @@ export const runEquityEdgeScreen = (
         noCandidateDecisions: noCandidate,
         missingArrivalBars,
         entryBudgetRejections,
+        feesMicros: sessionFees.toString(),
       })
     }
     const expected = days.filter((day) => day.date >= from && day.date <= through).length

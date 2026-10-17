@@ -73,6 +73,10 @@ next-minute arrival. A cheaper arrival cannot increase order size. An arrival ex
 rejected rather than resized with future prices. Base/stress prices apply 10/20 bp adverse execution on each side
 plus the native current fee model. Price rounding and fees use integer micro-USD accounting after scenario pricing.
 The report includes the fee-model hash. This is a cost scenario, not a reconstruction of historical broker tariffs.
+Fee charges are the delta of the native cumulative session-by-fee-type total. Rejected hypothetical entries do not
+consume the fee state; every accepted simulated order contributes one fill, retaining per-order TAF caps. Independent
+per-fill cent rounding is not substituted for the native session aggregation. VWAP must also lie inside each bar's
+reported low/high before evaluation, and missing opening/history evidence is recorded before return-based filters.
 
 Protective stops react to a completed bar, then use the next available opening price within three minutes. Losses
 through a stop are not clipped to the stop. A missing exit leaves an incomplete path, never a fabricated flat mark.

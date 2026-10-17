@@ -1,5 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
+import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
+import { intradayExecutionModel } from '../strategy/intraday-market'
 
 import {
   EquityScreenSignal,
@@ -127,6 +129,86 @@ test('native fees are retained separately from gross P&L', () => {
     expect(BigInt(trade.entryPriceMicros) * BigInt(trade.shares)).toBeLessThanOrEqual(20_000_000_000n)
   }
 })
+
+test('fees aggregate once per session, with incremental fill charges summing to the native total', () => {
+  const secondDay = { date: '2026-09-02', openAt: day.openAt + 86_400_000, closeAt: day.closeAt + 86_400_000 }
+  const bars = [...fixture(), ...fixture().map((bar) => ({ ...bar, at: bar.at + 86_400_000 }))]
+  const result = unwrap(
+    runEquityEdgeScreen(
+      unwrap(indexEquityScreenBars(bars)),
+      ['AAPL', 'SPY'],
+      [day, secondDay],
+      day.date,
+      secondDay.date,
+      policy,
+    ),
+  )
+  for (const session of [day, secondDay]) {
+    const trades = result.trades.filter((trade) => trade.entryAt >= session.openAt && trade.entryAt < session.closeAt)
+    expect(trades.length).toBeGreaterThan(1)
+    const fills: FeeInput[] = trades.flatMap((trade) => [
+      {
+        symbol: trade.symbol,
+        side: 'buy',
+        quantityAtoms: BigInt(trade.shares) * 1_000_000_000n,
+        notionalMicros: BigInt(trade.shares) * BigInt(trade.entryPriceMicros),
+      },
+      {
+        symbol: trade.symbol,
+        side: 'sell',
+        quantityAtoms: BigInt(trade.shares) * 1_000_000_000n,
+        notionalMicros: BigInt(trade.shares) * BigInt(trade.exitPriceMicros),
+      },
+    ])
+    const native = unwrap(calculateSessionFees(fills, intradayExecutionModel, 1_000_000n))
+    expect(trades.reduce((sum, trade) => sum + BigInt(trade.feesMicros), 0n)).toBe(native.cashMicros)
+  }
+})
+
+test.each(['low', 'high'] as const)('rejects a VWAP outside the %s boundary', (boundary) => {
+  const bar = fixture()[0]
+  if (bar === undefined) throw new Error('fixture empty')
+  const invalid = { ...bar, vwap: boundary === 'low' ? bar.low - 0.01 : bar.high + 0.01 }
+  expect(Result.isFailure(indexEquityScreenBars([invalid]))).toBe(true)
+})
+
+test.each(['opening', 'history'] as const)(
+  'records missing %s evidence before filtering a negative late-opening-range signal',
+  (missing) => {
+    const previous = { date: '2026-08-31', openAt: day.openAt - 86_400_000, closeAt: day.closeAt - 86_400_000 }
+    const declining = fixture().map((bar) =>
+      bar.symbol === 'AAPL'
+        ? {
+            ...bar,
+            open: 200 - bar.open,
+            high: 200 - bar.low,
+            low: 200 - bar.high,
+            close: 200 - bar.close,
+            vwap: 200 - bar.vwap,
+          }
+        : bar,
+    )
+    const bars =
+      missing === 'opening' ? declining.filter((bar) => bar.symbol !== 'AAPL' || bar.at !== openAt + 60_000) : declining
+    const dayIndex = missing === 'opening' ? 0 : 1
+    const result = equityScreenCandidates(
+      unwrap(indexEquityScreenBars(bars)),
+      ['AAPL', 'SPY'],
+      missing === 'opening' ? [day] : [previous, day],
+      dayIndex,
+      day.openAt + 60 * 60_000,
+      EquityScreenSignal.OpeningRange,
+    )
+    expect(result.candidates).toHaveLength(0)
+    expect(result.exclusions).toContainEqual({
+      symbol: 'AAPL',
+      signalAt: day.openAt + 60 * 60_000,
+      missingAt: missing === 'opening' ? openAt + 60_000 : null,
+      reason: missing === 'opening' ? EquityScreenExclusionReason.Opening : EquityScreenExclusionReason.History,
+      targetWeight: 0,
+    })
+  },
+)
 
 test('position size is fixed from completed signal evidence, not a favorable future opening price', () => {
   const original = fixture()
