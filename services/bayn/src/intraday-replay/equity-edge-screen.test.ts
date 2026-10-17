@@ -151,7 +151,26 @@ test('empty periods have no numeric result and missing position marks remain exp
   expect(empty.executionNetPnlMicros).toBeNull()
   const missingMark = run(fixture().filter((bar) => bar.symbol !== 'AAPL' || bar.at !== openAt + 35 * 60_000))
   expect(missingMark.unknownMarkedMinutes).toBeGreaterThan(0)
+  expect(missingMark.status).toBe('INCOMPLETE')
+  expect(missingMark.executionNetPnlMicros).toBeNull()
+  expect(missingMark.incomplete?.reason).toBe('MISSING_HELD_POSITION_BAR')
   expect(missingMark.markedDrawdownCoverage).toBe('OBSERVED_BAR_CLOSES_ONLY')
+})
+
+test('a missing benchmark minute invalidates the path instead of selecting from a cash-only result', () => {
+  const result = run(fixture().filter((bar) => bar.symbol !== 'SPY' || bar.at !== openAt + 20 * 60_000))
+  expect(result.status).toBe('INCOMPLETE')
+  expect(result.executionNetPnlMicros).toBeNull()
+  expect(result.incomplete).toEqual({ date: day.date, symbol: 'SPY', reason: 'MISSING_BENCHMARK_BAR' })
+  expect(result.sessions).toHaveLength(0)
+})
+
+test('a selected entry with no arrival price invalidates the path instead of silently skipping the order', () => {
+  const result = run(fixture().filter((bar) => bar.symbol !== 'AAPL' || bar.at !== openAt + 31 * 60_000))
+  expect(result.status).toBe('INCOMPLETE')
+  expect(result.executionNetPnlMicros).toBeNull()
+  expect(result.incomplete?.reason).toBe('MISSING_ENTRY_BAR')
+  expect(result.trades).toHaveLength(0)
 })
 
 test('opening-volume selection cannot use fewer than fourteen prior sessions', () => {

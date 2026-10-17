@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { sha256 } from '../hash'
-import { decodeEquityEdgeInput, decodeEquityEdgeSource } from './equity-edge-source'
+import { decodeEquityEdgeInput, decodeEquityEdgeSource, EquityHistoricalFeed } from './equity-edge-source'
 
 const fixture = () => {
   const calendar = Array.from({ length: 17 }, (_, i) => ({
@@ -58,6 +58,16 @@ test('source preserves regular exchange hours, byte identity, explicit holes and
 test('changed source bytes fail even when JSON meaning is unchanged', () => {
   const { text, input } = fixture()
   expect(Result.isFailure(decode(text + '\n', input))).toBe(true)
+})
+
+test('historical consolidated data requires an explicitly bound feed; it cannot replace IEX silently', () => {
+  const { text, input } = fixture()
+  const sip = text.replace('"feed":"iex"', '"feed":"sip"')
+  expect(Result.isFailure(decode(sip, { ...input, sourceSha256: sha256(sip) }))).toBe(true)
+  const result = decode(sip, { ...input, feed: 'sip', sourceSha256: sha256(sip) })
+  if (Result.isFailure(result)) throw result.failure
+  expect(result.success.source.feed).toBe(EquityHistoricalFeed.Sip)
+  expect(result.success.source.originalArrivalTiming).toBe('UNKNOWN')
 })
 
 test.each(['missing terminator', 'wrong page count', 'foreign feed', 'repeated cursor', 'duplicate bar'] as const)(

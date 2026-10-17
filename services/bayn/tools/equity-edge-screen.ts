@@ -140,7 +140,7 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
         limits: [
           'Retrospective bar-based scenarios, not actual fills or a native portfolio replay',
           'Contemporary fixed universe; historical survivor and selection bias remain',
-          'Missing candidate windows exclude decisions; missing arrival bars remain counted, not observed no-fills',
+          'Missing candidate windows exclude decisions; missing benchmark, entry-pricing or held-position bars invalidate the entire path',
           'Minute-completion stops can cross stops before the next observation; gap losses are not clipped',
           'Quotes, order book depth, live price limits, partial fills, market impact, and original arrival timing are not reproduced',
           'Native current execution fees are scenario assumptions; historical fee tariffs are not reconstructed',

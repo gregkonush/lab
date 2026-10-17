@@ -37,7 +37,7 @@ export interface EquityScreenPolicy {
 }
 
 export const equityScreenDefinition = Object.freeze({
-  schemaVersion: 'bayn.equity-edge-screen-definition.v2',
+  schemaVersion: 'bayn.equity-edge-screen-definition.v3',
   signalMinutes: 30,
   decisionIntervalMinutes: 5,
   lastEntryMinute: 210,
@@ -60,6 +60,8 @@ export const equityScreenDefinition = Object.freeze({
   exit: 'bar-completion stop or horizon, next available open within three minutes; no forced mark-to-flat',
   capacity: 'UNVERIFIED; no quote, queue, IOC, or limit-fill simulation',
   costs: 'execution-only; external costs remain UNKNOWN',
+  missingRequiredEvidence:
+    'Benchmark windows, selected entry prices and held-position marks invalidate the path; only candidate-specific signal gaps permit exclusion',
   qualification: 'UNQUALIFIED_RETROSPECTIVE_BAR_SCREEN',
 })
 
@@ -316,7 +318,11 @@ export const runEquityEdgeScreen = (
         if (position !== null) {
           if (at <= position.enteredAt) continue
           const last = index.get(position.symbol)?.get(at - minuteMs)
-          if (last === undefined) unknownMarkedMinutes++
+          if (last === undefined) {
+            unknownMarkedMinutes++
+            incomplete = { date: day.date, symbol: position.symbol, reason: 'MISSING_HELD_POSITION_BAR' }
+            break
+          }
           const marked = last === undefined ? null : cash + position.shares * priceMicros(last.close, false, 0)
           if (marked !== null) {
             peak = marked > peak ? marked : peak
@@ -380,6 +386,11 @@ export const runEquityEdgeScreen = (
           dayStart - cash >= 1_000n * micros
         )
           continue
+        const benchmarkMinutes = early ? Math.min(30, elapsed) : 30
+        if (window(index, 'SPY', at - benchmarkMinutes * minuteMs, benchmarkMinutes) === null) {
+          incomplete = { date: day.date, symbol: 'SPY', reason: 'MISSING_BENCHMARK_BAR' }
+          break
+        }
         const candidates = equityScreenCandidates(index, symbols, days, dayIndex, at, policy.signal)
         const candidate = candidates[0]
         if (candidate === undefined) {
@@ -410,10 +421,12 @@ export const runEquityEdgeScreen = (
         }
         if (shares <= 0n || shares * sizingPrice + reservedFees > allocation) continue
         const entry = index.get(candidate.symbol)?.get(at + minuteMs)
-        if (entry === undefined || entry.at >= closeAt) {
+        if (entry === undefined) {
           missingArrivalBars++
-          continue
+          incomplete = { date: day.date, symbol: candidate.symbol, reason: 'MISSING_ENTRY_BAR' }
+          break
         }
+        if (entry.at >= closeAt) continue
         const price = priceMicros(entry.open, true, policy.adverseBpsPerSide)
         const entryFees = yield* fee(candidate.symbol, true, shares, price)
         if (shares * price + entryFees > allocation) {

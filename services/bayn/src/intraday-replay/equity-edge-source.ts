@@ -11,9 +11,14 @@ import {
 } from './equity-edge-screen'
 
 const Period = Schema.Struct({ start: IsoDateSchema, end: IsoDateSchema })
+export enum EquityHistoricalFeed {
+  Iex = 'iex',
+  Sip = 'sip',
+}
 export const EquityEdgeInputSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.equity-edge-screen-input.v1'),
   sourceSha256: Sha256Schema,
+  feed: Schema.optionalKey(Schema.Enum(EquityHistoricalFeed)),
   symbols: Schema.Array(SymbolSchema),
   development: Period,
   validation: Period,
@@ -49,7 +54,7 @@ const End = Schema.Struct({
   kind: Schema.Literal('complete'),
   pages: Schema.Int,
   bars: Schema.Int,
-  feed: Schema.Literal('iex'),
+  feed: Schema.Enum(EquityHistoricalFeed),
   adjustment: Schema.Literal('raw'),
   observedAt: UtcInstantSchema,
 })
@@ -93,10 +98,14 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
     const lines = text.trimEnd().split('\n')
     const first = lines[0]
     const last = lines.at(-1)
-    if (first === undefined || last === undefined || lines.length < 3 || lines.length > 82)
+    if (first === undefined || last === undefined || lines.length < 3 || lines.length > 130)
       return yield* Result.fail(new EquityScreenError({ message: 'Source paging envelope is incomplete or excessive' }))
     const header = yield* Schema.decodeUnknownResult(Schema.fromJsonString(Header))(first)
     const end = yield* Schema.decodeUnknownResult(Schema.fromJsonString(End))(last)
+    if (end.feed !== (input.feed ?? EquityHistoricalFeed.Iex))
+      return yield* Result.fail(
+        new EquityScreenError({ message: 'Historical feed differs from the pinned research input' }),
+      )
     if (end.pages !== lines.length - 2)
       return yield* Result.fail(new EquityScreenError({ message: 'Source page count differs' }))
     const days: EquityScreenDay[] = []

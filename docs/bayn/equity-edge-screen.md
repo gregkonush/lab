@@ -24,9 +24,14 @@ not only the selected one, is retained under base and stressed costs. Zero-activ
 These mechanisms do not prove that a caller preserved an untouched holdout or registered a candidate prospectively.
 Record trial history and any prior inspection of the dates independently.
 
+Required benchmark windows, the selected candidate's arrival price and every held-position minute must be present.
+A gap in any of these stops the path as `INCOMPLETE`, with null full-period P&L. Partial earlier sessions are retained
+for diagnosis but cannot participate in selection. Candidate-specific signal gaps alone permit exclusion. An empty
+benchmark stream is not a completed cash-only strategy, and an unknown stop interval is not a successful hold.
+
 ## Input and execution
 
-The command accepts a pinned historical IEX/raw page stream: one `calendar` header with the broker's native exchange
+The command accepts a pinned historical raw page stream: one `calendar` header with the broker's native exchange
 calendar; consecutively numbered `bars` envelopes containing V2 bars and their continuation tokens; and one
 `complete` envelope with the feed, adjustment, page count, row count, and acquisition time. It verifies the exact
 UTF-8 source hash, progressive pagination, unique symbol/minute keys, finite OHLC values, symbol scope, and ordered
@@ -38,6 +43,11 @@ and `development`, `validation`, and `holdout` objects, each containing ISO `sta
 endpoints must be retained exchange sessions, periods must be chronological and disjoint, and at least fourteen
 earlier calendar sessions must be available. Keep input, raw data, reports, and registrations on private research
 storage outside Git and CI artifacts.
+
+The optional `feed` is `iex` by default or explicitly `sip` for historical consolidated-data research. The completion
+receipt must match that pinned feed. Historical SIP access does not establish real-time entitlement, the native live
+feed, or prospective executability. No missing IEX minute is filled from SIP; a separately acquired and pinned SIP
+corpus is a distinct retrospective sensitivity study, not a repair to an original IEX observation.
 
 ```sh
 bun services/bayn/tools/equity-edge-screen.ts \
@@ -74,6 +84,7 @@ and infrastructure/data/inference cost allocations prevent profitability qualifi
 also carries historical selection and survivor bias. Do not sum independently reset partitions into a single account.
 
 The first internal prototype incorrectly sized at the later opening price. Definition v2 fixes this with a regression
-where a favorable future price must not increase shares. Earlier internal reports are superseded and retained; dates
+where a favorable future price must not increase shares. Definition v3 also invalidates paths with missing benchmark,
+entry-pricing or held-position bars; merely counting such gaps was insufficient. Earlier internal reports are superseded and retained; dates
 already inspected through that prototype cannot be relabeled as a newly untouched holdout after the correction.
 No tested screen result authorizes a live strategy, holding-period change, risk change, or capital promotion.
