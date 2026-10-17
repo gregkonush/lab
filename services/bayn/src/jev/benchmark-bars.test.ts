@@ -122,3 +122,23 @@ test('current Jev refuses an old crypto benchmark evidence contract', () => {
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(fixture.cut, query))
   expect(Result.isFailure(jevObservationForSnapshot(snapshot))).toBe(true)
 })
+
+test.each(['BTC/USD', 'ETH/USD'])(
+  'a required %s benchmark failure rejects the complete combined observation',
+  (benchmark) => {
+    const fixture = cryptoMarketFixture('BTC/USD')
+    const features = new Map(fixture.cut.projection.features)
+    features.delete(benchmark)
+    const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
+    const snapshot = Result.getOrThrow(
+      constructStreamingSnapshot(
+        {
+          ...fixture.cut,
+          projection: { ...fixture.cut.projection, features },
+        },
+        { ...fixture.query, symbols, candidateSymbols: symbols },
+      ),
+    )
+    expect(Result.isFailure(jevObservationForSnapshot(snapshot))).toBe(true)
+  },
+)

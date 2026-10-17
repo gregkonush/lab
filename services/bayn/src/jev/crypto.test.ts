@@ -77,7 +77,12 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         },
       ),
     )
-    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+    const observationResult = jevObservationForSnapshot(snapshot)
+    if (missing === 'BTC/USD') {
+      expect(Result.isFailure(observationResult)).toBe(true)
+      return
+    }
+    const observation = Result.getOrThrow(observationResult).payload
     const { protocol } = observation
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
@@ -99,13 +104,6 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         reason: 'not-ready',
       })
       expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({ status: 'REQUESTED' })
-    }
-    if (missing === 'BTC/USD') {
-      expect(plan.candidates.every((candidate) => candidate.status === 'EXCLUDED')).toBe(true)
-      expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
-        reason: 'not-ready',
-        message: expect.stringContaining('Required benchmark BTC/USD'),
-      })
     }
   })
 }

@@ -7,7 +7,7 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
-or latest-trade field. Missing benchmark bars or features still block dependent candidates. Every tradable candidate
+or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
 still requires its own real window trade, fresh two-sided quote, positive own and relative momentum, and supported
 fee-inclusive economics. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
 bars remain valid. Equity benchmarks retain the existing SPY quote, trade and feature contract.

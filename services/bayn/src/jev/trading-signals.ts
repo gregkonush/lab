@@ -252,13 +252,7 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
         continue
       const candidate = yield* jevSignalFor(snapshot, symbol)
       const benchmarkResult = jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(symbol))
-      if (Result.isFailure(benchmarkResult)) {
-        if (
-          snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === jevBenchmarkSymbol(symbol)) === true
-        )
-          continue
-        return yield* Result.fail(benchmarkResult.failure)
-      }
+      if (Result.isFailure(benchmarkResult)) return yield* Result.fail(benchmarkResult.failure)
       const benchmark = benchmarkResult.success
       const common = yield* commonMomentumPrices(snapshot, symbol, jevBenchmarkSymbol(symbol), candidate, benchmark)
       const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)

@@ -9,6 +9,7 @@ import { strictParseOptions } from '../schemas'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
@@ -122,6 +123,15 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         )
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Features))
+      if (manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars) {
+        for (const symbol of new Set(requestedCandidates.map(jevBenchmarkSymbol))) {
+          if (
+            !manifest.streaming.features.some((feature) => feature.value.material.symbol === symbol) ||
+            !snapshot.bars.some((bar) => bar.symbol === symbol && Date.parse(bar.eventAt) === end - 60_000)
+          )
+            return yield* Result.fail(invalidObservation(JevObservationCheck.Features, { requiredBenchmark: symbol }))
+        }
+      }
     }
     return { ...observation, snapshot, contentHash: yield* canonicalHashV1Result(observation) }
   }).pipe(
