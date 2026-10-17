@@ -1609,6 +1609,91 @@ test('reports the desktop window limit for shortcuts, Dock launches, and Spotlig
   await expect(capacityAlert).toBeVisible()
 })
 
+test('recovers VS Code startup after a temporary control-plane failure using the same window', async ({ page }) => {
+  await mockTengri(page)
+  const windowIds: string[] = []
+  const sessionId = 'e'.repeat(24)
+  const previewOrigin = `https://tengri-${sessionId}.proompteng.ai`
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'editor-session') return route.fallback()
+    windowIds.push(action.windowId)
+    if (windowIds.length === 1) {
+      return route.fulfill({ status: 503, json: { error: 'Tengri control plane is unavailable' } })
+    }
+    await route.fulfill({
+      json: {
+        result: {
+          id: sessionId,
+          launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${previewTicket(1)}`,
+          previewOrigin,
+          expiresAt: '2026-10-17T12:00:00Z',
+        },
+      },
+    })
+  })
+  await page.route('https://tengri.proompteng.ai/v1/preview/open*', (route) =>
+    route.fulfill({ contentType: 'text/html', body: `<script>location.replace('${previewOrigin}')</script>` }),
+  )
+  await page.route(`${previewOrigin}/**`, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<!doctype html><p>Editor connected</p><script>parent.postMessage({channel:'tengri-vscode-v1',sessionId:'${sessionId}',type:'state',dirty:false},'${desktopOrigin}')</script>`,
+    }),
+  )
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window' })
+  await expect.poll(() => windowIds.length, { timeout: 5_000 }).toBe(2)
+  expect(new Set(windowIds).size).toBe(1)
+  await expect(code.frameLocator('iframe').getByText('Editor connected')).toBeVisible()
+  await expect(code.getByRole('status')).toHaveCount(0)
+  await expect(code.getByRole('alert')).toHaveCount(0)
+})
+
+test('stops VS Code startup recovery on denial and when the window closes', async ({ page }) => {
+  await mockTengri(page)
+  let starts = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    if (route.request().postDataJSON().action !== 'editor-session') return route.fallback()
+    starts++
+    await route.fulfill({
+      status: starts === 2 ? 403 : 503,
+      json: { error: starts === 2 ? 'Editor access denied' : 'Temporary control-plane failure' },
+    })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window' })
+  await expect(code.getByRole('alert')).toHaveText(/Editor access denied/)
+  expect(starts).toBe(2)
+  await page.clock.install()
+  await page.clock.runFor(5_000)
+  expect(starts).toBe(2)
+  await code.getByRole('button', { name: 'Retry VS Code', exact: true }).click()
+  await expect.poll(() => starts).toBe(3)
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  await expect(code).toHaveCount(0)
+  await page.clock.runFor(10_000)
+  expect(starts).toBe(3)
+})
+
+test('bounds VS Code startup recovery before offering manual retry', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window' })
+  await expect(code.getByRole('alert')).toContainText('VS Code is unavailable')
+  const starts = () => mock.actions.filter((action) => action.action === 'editor-session').length
+  expect(starts()).toBe(3)
+  await page.clock.install()
+  await page.clock.runFor(60_000)
+  expect(starts()).toBe(3)
+  await expect(code.getByRole('button', { name: 'Retry VS Code', exact: true })).toBeVisible()
+})
+
 test('offers old-editor drafts for download without overwriting guest files or exposing another owner', async ({
   page,
 }) => {

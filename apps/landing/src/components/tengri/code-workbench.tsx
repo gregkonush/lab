@@ -6,7 +6,7 @@ import { LoaderCircle, X } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 import type { TengriPreviewSession } from '@/lib/tengri/types'
 import { safePreviewLaunchUrl, safePreviewSessionOrigin } from './preview-session'
-import { runTengriAction } from './client'
+import { runTengriAction, TengriRequestError } from './client'
 import { listRecoverableCodeDrafts, type CodeDraft } from './code-editor-draft-storage'
 import { enqueueCodeOpenRequest, type CodeOpenRequest } from './code-editor-model'
 
@@ -62,8 +62,11 @@ export function CodeWorkbench({
   }, [request])
 
   useEffect(() => {
+    const controller = new AbortController()
     let disposed = false
     let issued: TengriPreviewSession | null = null
+    let retries = 0
+    let retryTimer: number | null = null
     setReady(false)
     setSession(null)
     setError('')
@@ -77,29 +80,50 @@ export function CodeWorkbench({
         },
         { keepalive: true },
       ).catch(() => undefined)
-    void runTengriAction<TengriPreviewSession>({
-      action: 'editor-session',
-      agentId,
-      windowId: `${desktopId}-${windowId}`,
-    })
-      .then((value) => {
-        issued = value
-        if (disposed) {
-          void revoke(value)
-          return
-        }
-        const launchUrl = safePreviewLaunchUrl(value.launchUrl, previewGatewayOrigin)
-        const previewOrigin = safePreviewSessionOrigin(value.previewOrigin, value.id)
-        if (!launchUrl || !previewOrigin) throw new Error('Tengri returned an invalid VS Code session')
-        dirty.current = true
-        callbacks.current.onDirtyChange(true)
-        setSession({ ...value, launchUrl, previewOrigin })
-      })
-      .catch((cause: unknown) => {
-        if (!disposed) setError(cause instanceof Error ? cause.message : 'VS Code could not be started')
-      })
+    const start = () => {
+      void runTengriAction<TengriPreviewSession>(
+        { action: 'editor-session', agentId, windowId: `${desktopId}-${windowId}` },
+        AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+      )
+        .then((value) => {
+          issued = value
+          if (disposed) {
+            void revoke(value)
+            return
+          }
+          const launchUrl = safePreviewLaunchUrl(value.launchUrl, previewGatewayOrigin)
+          const previewOrigin = safePreviewSessionOrigin(value.previewOrigin, value.id)
+          if (!launchUrl || !previewOrigin) throw new Error('Tengri returned an invalid VS Code session')
+          dirty.current = true
+          callbacks.current.onDirtyChange(true)
+          setSession({ ...value, launchUrl, previewOrigin })
+        })
+        .catch((cause: unknown) => {
+          if (disposed || controller.signal.aborted) return
+          const transient =
+            cause instanceof TypeError ||
+            (cause instanceof DOMException && cause.name === 'TimeoutError') ||
+            (cause instanceof TengriRequestError &&
+              (cause.status === 408 || cause.status === 429 || cause.status >= 500))
+          if (transient && retries < 2) {
+            retries += 1
+            retryTimer = window.setTimeout(
+              () => {
+                retryTimer = null
+                start()
+              },
+              1_000 * 2 ** (retries - 1),
+            )
+            return
+          }
+          setError(cause instanceof Error ? cause.message : 'VS Code could not be started')
+        })
+    }
+    start()
     return () => {
       disposed = true
+      controller.abort()
+      if (retryTimer !== null) window.clearTimeout(retryTimer)
       if (issued) void revoke(issued)
     }
   }, [agentId, attempt, desktopId, previewGatewayOrigin, windowId])
