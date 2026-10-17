@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 struct CheckService {
     calls: Arc<Mutex<Vec<CheckRequest>>>,
     allowed: Arc<AtomicBool>,
+    concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -28,6 +29,10 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
                 request.stream_receipt_id.clone()
             };
             service.calls.lock().await.push(request);
+            let concurrent = service.concurrent.lock().await.clone();
+            if let Some(concurrent) = concurrent {
+                concurrent.wait().await;
+            }
             Ok(tonic::Response::new(CheckResponse {
                 allowed: service.allowed.load(Ordering::SeqCst),
                 revision: "fresh-policy".into(),
@@ -48,6 +53,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     let service = CheckService {
         calls: Arc::new(Mutex::new(Vec::new())),
         allowed: Arc::new(AtomicBool::new(true)),
+        concurrent: Arc::new(Mutex::new(None)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -118,6 +124,26 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
             "concurrent reads must establish only one durable receipt"
         );
     }
+    *service.concurrent.lock().await = Some(Arc::new(tokio::sync::Barrier::new(8)));
+    let parallel = futures::future::join_all((0..8).map(|_| {
+        client.check(
+            context.clone(),
+            Action::FilesObserve,
+            resource.clone(),
+            "/workspace/file".into(),
+            String::new(),
+            1,
+        )
+    }));
+    let parallel = tokio::time::timeout(Duration::from_secs(3), parallel)
+        .await
+        .expect("warm receipt checks serialized behind an Ofz request");
+    assert!(
+        parallel
+            .iter()
+            .all(|r| r.as_ref().is_ok_and(|r| r.audit_receipt_id == first))
+    );
+    *service.concurrent.lock().await = None;
     service.allowed.store(false, Ordering::SeqCst);
     assert_eq!(
         client
@@ -136,7 +162,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
     );
     assert_eq!(
         service.calls.lock().await.len(),
-        9,
+        17,
         "revocation must reach Ofz even with a cached receipt"
     );
     service.allowed.store(true, Ordering::SeqCst);
@@ -177,5 +203,37 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
             .filter(|r| r.action == Action::FilesWrite as i32)
             .all(|r| r.stream_receipt_id.is_empty())
     );
+    let mut short = context.clone();
+    short.deadline_unix_ms = now_ms().unwrap() + 50;
+    let waiting = CheckRequest {
+        context: Some(short.clone()),
+        action: Action::FilesObserve as i32,
+        resource: Some(resource.clone()),
+        target: "/workspace/cold".into(),
+        stream_receipt_id: String::new(),
+    };
+    let slot = client.receipts.slot(&waiting, 1).await.unwrap();
+    let guard = slot.lock().await;
+    let calls = service.calls.lock().await.len();
+    let expired = tokio::time::timeout(
+        Duration::from_millis(500),
+        client.check(
+            short,
+            Action::FilesObserve,
+            resource,
+            "/workspace/cold".into(),
+            String::new(),
+            1,
+        ),
+    )
+    .await
+    .expect("cold receipt wait exceeded the signed deadline");
+    assert_eq!(expired.unwrap_err().code(), tonic::Code::DeadlineExceeded);
+    assert_eq!(
+        service.calls.lock().await.len(),
+        calls,
+        "an expired queued request must never reach Ofz"
+    );
+    drop(guard);
     server.abort();
 }

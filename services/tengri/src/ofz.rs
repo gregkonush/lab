@@ -263,30 +263,26 @@ impl Client {
             return self.check_request(check, recovery_generation).await;
         }
         let slot = self.receipts.slot(&check, recovery_generation).await?;
-        let mut receipt = slot.lock().await;
+        let remaining = remaining_deadline(&check)?.min(DURABLE_TIMEOUT);
+        let mut receipt = timeout(remaining, slot.lock())
+            .await
+            .map_err(|_| Status::deadline_exceeded("authorization receipt deadline expired"))?;
         if receipt.as_ref().is_some_and(|receipt| !receipt.fresh()) {
             *receipt = None;
         }
         if let Some(receipt) = receipt.as_ref() {
             check.stream_receipt_id = receipt.id.clone();
         }
+        if !check.stream_receipt_id.is_empty() {
+            drop(receipt);
+            return self.check_request(check, recovery_generation).await;
+        }
         let decision = self.check_request(check, recovery_generation).await;
-        match &decision {
-            Ok(decision) if receipt.is_none() => {
-                *receipt = Some(receipts::Receipt {
-                    id: decision.audit_receipt_id.clone(),
-                    created: std::time::Instant::now(),
-                })
-            }
-            Err(error)
-                if matches!(
-                    error.code(),
-                    tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
-                ) =>
-            {
-                *receipt = None
-            }
-            _ => {}
+        if let Ok(decision) = &decision {
+            *receipt = Some(receipts::Receipt {
+                id: decision.audit_receipt_id.clone(),
+                created: std::time::Instant::now(),
+            });
         }
         decision
     }
@@ -301,7 +297,8 @@ impl Client {
             DURABLE_TIMEOUT
         } else {
             DECISION_TIMEOUT
-        };
+        }
+        .min(remaining_deadline(&check)?);
         let decision = bounded(duration, rpc.check(request(check, duration))).await?;
         if decision.recovery_generation != recovery_generation {
             return Err(Status::unauthenticated(
@@ -389,6 +386,21 @@ impl Client {
         }
         Err(Status::aborted("workspace policy changed repeatedly"))
     }
+}
+
+fn remaining_deadline(check: &CheckRequest) -> Result<Duration, Status> {
+    let deadline = check
+        .context
+        .as_ref()
+        .expect("client checks always supply context")
+        .deadline_unix_ms;
+    let remaining = deadline.saturating_sub(now_ms()?);
+    if remaining == 0 {
+        return Err(Status::deadline_exceeded(
+            "authorization request deadline expired",
+        ));
+    }
+    Ok(Duration::from_millis(remaining))
 }
 
 fn workload_context() -> Result<RequestContext, Status> {
