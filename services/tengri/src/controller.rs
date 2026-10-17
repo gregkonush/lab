@@ -490,11 +490,13 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
         ),
     };
     let binding = microvm.spec.slot.as_ref().expect("bound MicroVM");
+    let condition_status = if ready { "True" } else { "False" };
     let previous_transition = microvm
         .status
         .as_ref()
         .filter(|s| s.phase == phase)
         .and_then(|s| s.conditions.first())
+        .filter(|c| c.type_ == "Ready" && c.status == condition_status && c.reason == reason)
         .map(|c| c.last_transition_at.clone());
     MicroVMStatus {
         observed_policy_version: microvm.spec.policy_version,
@@ -519,7 +521,7 @@ fn status_for(microvm: &MicroVM, pod: &Pod, state: &SlotState) -> MicroVMStatus 
         observed_generation: microvm.metadata.generation.unwrap_or_default(),
         conditions: vec![MicroVMCondition {
             type_: "Ready".into(),
-            status: if ready { "True" } else { "False" }.into(),
+            status: condition_status.into(),
             reason: reason.into(),
             message: message.into(),
             last_transition_at: previous_transition.unwrap_or_else(|| now.to_rfc3339()),
@@ -2676,6 +2678,35 @@ mod tests {
             Some("10".into())
         );
         assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn runtime_recovery_records_the_condition_transition_once() {
+        let mut microvm = agent();
+        let state = SlotState::Awake {
+            claim: claim_for(&microvm).unwrap(),
+        };
+        microvm.status = Some(status_for(&microvm, &Pod::default(), &state));
+        let mut unknown = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+        );
+        unknown.conditions[0].last_transition_at = "2026-10-08T19:00:00Z".into();
+        microvm.status = Some(unknown.clone());
+        let repeated = failure_status(
+            &microvm,
+            &anyhow::Error::from(tonic::Status::unavailable("dependency unavailable")),
+        );
+        assert_eq!(repeated, unknown);
+        let recovered = status_for(&microvm, &Pod::default(), &state);
+        assert_eq!(recovered.conditions[0].status, "True");
+        assert_eq!(recovered.conditions[0].reason, "SnapshotRestored");
+        assert_ne!(
+            recovered.conditions[0].last_transition_at,
+            unknown.conditions[0].last_transition_at
+        );
+        microvm.status = Some(recovered.clone());
+        assert_eq!(status_for(&microvm, &Pod::default(), &state), recovered);
     }
 
     #[tokio::test]
