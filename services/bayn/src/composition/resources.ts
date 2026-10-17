@@ -36,7 +36,6 @@ import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
 import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
-import { sqlResource } from '../operations'
 import { operationalError } from '../errors'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
@@ -133,7 +132,7 @@ const WorkerMarketDataLive = (
 }
 
 const PostgresLive = (config: PostgresResourceConfig) => {
-  const client = sqlResource(PostgresClientResourceLive(config))
+  const client = PostgresClientResourceLive(config)
   const migrations = PostgresMigrationsLive(config)
   return Layer.merge(client, migrations)
 }
@@ -151,7 +150,7 @@ export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'Aut
 
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
 export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  const postgres = PostgresClientResourceLive(plan.config)
   const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
   const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
   return Layer.mergeAll(
@@ -181,7 +180,7 @@ export const AutonomousWorkerApplicationResourcesLive = (
 }
 
 export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = sqlResource(PostgresClientResourceLive(plan.config))
+  const postgres = PostgresClientResourceLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
   const executionPersistence = Layer.mergeAll(

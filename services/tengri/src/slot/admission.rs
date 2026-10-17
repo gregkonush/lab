@@ -1155,12 +1155,6 @@ mod tests {
         let database = Database::shared_fixture().await;
         let mut blocker = database.connection().await.unwrap();
         let transaction = blocker.transaction().await.unwrap();
-        transaction
-            .batch_execute(
-                "SELECT pg_advisory_xact_lock(726635523000+n) FROM generate_series(0,63) n",
-            )
-            .await
-            .unwrap();
         let admission = GuestAdmission::fixture();
         let body = proto::Path {
             path: "/workspace/a".into(),
@@ -1168,6 +1162,22 @@ mod tests {
         .encode_to_vec();
         let (opening, _) = admission
             .opening(signed(READ, "/workspace/a", &body))
+            .await
+            .unwrap();
+        let nonce_hash = Sha256::digest(
+            [
+                b"tengri-supervisor-guest-v4\0".as_slice(),
+                admission.pod_uid.as_bytes(),
+                opening.context.nonce.as_bytes(),
+            ]
+            .concat(),
+        )
+        .to_vec();
+        transaction
+            .query_one(
+                "SELECT tengri.consume_nonce($1,$2)",
+                &[&nonce_hash, &(opening.context.deadline_unix_ms as i64)],
+            )
             .await
             .unwrap();
         let result = tokio::time::timeout(
