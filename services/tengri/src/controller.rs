@@ -27,7 +27,7 @@ use crate::{
         POD_UID_ANNOTATION, SLOT_SELECTOR,
     },
     slot::{
-        Allocation, SlotState,
+        Allocation, REPLAY_STARTUP_FENCE_MS, SlotState,
         client::{SlotClient, allocation_for, claim_for},
     },
     tickets::TicketStore,
@@ -68,7 +68,7 @@ pub async fn run(context: ControllerContext) {
         loop {
             interval.tick().await;
             if let Err(error) = maintain_pool(&maintenance).await {
-                tracing::error!(error = %error, "slot pool preparation failed");
+                tracing::warn!(error = %error, "slot pool maintenance will retry");
             }
         }
     };
@@ -85,8 +85,10 @@ pub async fn run(context: ControllerContext) {
             Arc::new(context),
         )
         .for_each(|result| async move {
-            if let Err(error) = result {
-                tracing::error!(error = %error, "MicroVM reconciliation failed");
+            if let Err(error) = result
+                && !matches!(error, kube::runtime::controller::Error::ReconcilerFailed(..))
+            {
+                tracing::error!(operation = "controller.queue", error = %error, "MicroVM controller queue failed");
             }
         });
     tokio::pin!(pool, reconciliation);
@@ -97,6 +99,12 @@ pub async fn run(context: ControllerContext) {
 #[error("MicroVM lifecycle failed: {0}")]
 struct ReconcileError(#[from] anyhow::Error);
 
+#[tracing::instrument(
+    name = "controller.microvm.reconcile",
+    skip_all,
+    err,
+    fields(operation = "controller.microvm.reconcile")
+)]
 async fn reconcile(
     microvm: Arc<MicroVM>,
     context: Arc<ControllerContext>,
@@ -1179,6 +1187,12 @@ async fn delete_slot_assets(
     Ok(())
 }
 
+#[tracing::instrument(
+    name = "controller.pool.maintain",
+    skip_all,
+    err,
+    fields(operation = "controller.pool.maintain")
+)]
 async fn maintain_pool(context: &ControllerContext) -> anyhow::Result<()> {
     context.leader()?;
     let leases = Api::<Lease>::namespaced(context.client.clone(), &context.namespace);
@@ -1188,7 +1202,7 @@ async fn maintain_pool(context: &ControllerContext) -> anyhow::Result<()> {
     for lease in &list.items {
         context.leader()?;
         if let Err(error) = maintain_slot(context, lease).await {
-            tracing::error!(slot = lease.name_any(), error = %error, "slot preparation or retirement failed");
+            tracing::error!(operation = "controller.slot.maintain", slot = lease.name_any(), error = %error, "slot preparation or retirement failed");
         }
     }
     for _ in list.items.len()..SLOT_COUNT {
@@ -1255,6 +1269,9 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
             pod.uid().as_ref() == Some(uid),
             "prepared slot Pod was replaced"
         );
+        if spare_slot_is_starting(&pod) {
+            return Ok(());
+        }
         let image = lease
             .annotations()
             .get(IMAGE_ANNOTATION)
@@ -1314,6 +1331,59 @@ async fn maintain_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Re
         }
     }
     prepare_slot(context, lease).await
+}
+
+fn spare_slot_is_starting(pod: &Pod) -> bool {
+    let Some(status) = &pod.status else {
+        return true;
+    };
+    if matches!(
+        status.phase.as_deref(),
+        Some("Failed" | "Succeeded" | "Unknown")
+    ) {
+        return false;
+    }
+    let supervisor = status.container_statuses.as_ref().and_then(|containers| {
+        containers
+            .iter()
+            .find(|container| container.name == "supervisor")
+    });
+    if let Some(state) = supervisor.and_then(|container| container.state.as_ref()) {
+        if state.terminated.is_some() {
+            return false;
+        }
+        if let Some(waiting) = &state.waiting
+            && !matches!(
+                waiting.reason.as_deref(),
+                None | Some("ContainerCreating" | "PodInitializing")
+            )
+        {
+            return false;
+        }
+    }
+    if status.pod_ip.is_none() {
+        return true;
+    }
+    let Some(supervisor) = supervisor else {
+        return true;
+    };
+    if supervisor.ready {
+        return false;
+    }
+    let started = supervisor
+        .state
+        .as_ref()
+        .and_then(|state| state.running.as_ref())
+        .and_then(|running| running.started_at.as_ref());
+    let Some(started) = started else {
+        return true;
+    };
+    let grace =
+        Duration::from_millis(REPLAY_STARTUP_FENCE_MS) + crate::slot::supervisor::READINESS_TIMEOUT;
+    k8s_openapi::jiff::Timestamp::now()
+        .as_millisecond()
+        .saturating_sub(started.0.as_millisecond())
+        < grace.as_millis() as i64
 }
 
 async fn retire_slot(context: &ControllerContext, lease: &Lease) -> anyhow::Result<()> {
@@ -1676,6 +1746,69 @@ mod tests {
             "spec":{"containers":[{"name":"supervisor","image":"old-runtime"},{"name":"runner","image":"old-runtime"}]}
         });
         (lease, pod)
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_waits_without_contacting_an_unstarted_supervisor() {
+        for status in [
+            json!({"phase":"Pending"}),
+            json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                "ready":false,"restartCount":0,"state":{"running":{"startedAt":Utc::now().to_rfc3339()}}
+            }]}),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":"original-pod"},"status":status}),
+            )]);
+            maintain_slot(&context(client), &lease).await.unwrap();
+            assert!(pending.lock().unwrap().is_empty());
+        }
+    }
+
+    #[tokio::test]
+    async fn spare_slot_startup_does_not_hide_failed_pods_or_expired_startup() {
+        for (uid, status) in [
+            ("replaced-pod", json!({"phase":"Pending"})),
+            ("original-pod", json!({"phase":"Failed"})),
+            (
+                "original-pod",
+                json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                    "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                    "ready":false,"restartCount":1,"state":{"waiting":{"reason":"CrashLoopBackOff"}}
+                }]}),
+            ),
+            (
+                "original-pod",
+                json!({"phase":"Running","podIP":"127.0.0.1","containerStatuses":[{
+                    "name":"supervisor","image":"runtime-image","imageID":"runtime-image",
+                    "ready":false,"restartCount":0,"state":{"running":{
+                        "startedAt":(Utc::now()-chrono::Duration::seconds(20)).to_rfc3339()
+                    }}
+                }]}),
+            ),
+        ] {
+            let lease: Lease = serde_json::from_value(json!({
+                "metadata":{"name":"slot-test","annotations":{
+                    POD_UID_ANNOTATION:"original-pod", HOME_UID_ANNOTATION:"original-home",
+                    IMAGE_ANNOTATION:"guest-image"
+                }},"spec":{}
+            }))
+            .unwrap();
+            let (client, pending) = mock(vec![get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"metadata":{"name":"slot-test","uid":uid},"status":status}),
+            )]);
+            assert!(maintain_slot(&context(client), &lease).await.is_err());
+            assert!(pending.lock().unwrap().is_empty());
+        }
     }
 
     #[tokio::test]

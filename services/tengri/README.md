@@ -485,6 +485,13 @@ configuration through the private guest boot file, without database credentials 
 Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
 a supervisor image restart alone does not update the guest root or runner environment.
 
+RPC failures retain their numeric `rpc.grpc.status_code` in Tempo. GlitchTip events also carry a bounded
+`grpc_code` tag and a status-specific title. Expected cancellation, validation, missing-resource, precondition and
+authorization rejections remain visible in traces and logs without creating server-error issues. Transport failures,
+server deadlines, capacity failures and internal errors still create error events. Spare-slot maintenance waits for
+Pod networking and the supervisor's replay startup fence plus readiness timeout before probing; failed containers,
+changed Pod identities and failures after that startup window still surface.
+
 After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
 Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.
 Verify those exact IDs in GlitchTip and Tempo. Exporter flush alone is not proof of ingestion. Then exercise real
