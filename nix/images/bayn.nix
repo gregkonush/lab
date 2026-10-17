@@ -39,6 +39,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/jev-study-export-command.js" "$@"
   '';
+  equityEdgeScreenCommand = pkgs.writeShellScriptBin "bayn-equity-edge-screen" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/equity-edge-screen.js" "$@"
+  '';
   inferenceCostCommand = pkgs.writeShellScriptBin "bayn-inference-cost" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -68,7 +73,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/glitchtip-smoke-command.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts --target=node "
+      "bun --cwd=services/bayn build src/index.ts src/glitchtip-smoke-command.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts tools/equity-edge-screen.ts --target=node "
       + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
@@ -89,6 +94,7 @@ let
     "node services/bayn/dist/ridge-training-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/jev-study-export-command.js --help"
+    "node services/bayn/dist/equity-edge-screen.js --help"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
@@ -112,6 +118,7 @@ let
     cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/control-study-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/jev-study-export-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/equity-edge-screen.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/gap-recovery-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/ridge-training-command.js" "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
@@ -172,6 +179,7 @@ import ./bun-workspace-service.nix {
     backtestCommand
     controlStudyCommand
     jevStudyExportCommand
+    equityEdgeScreenCommand
     gapRecoveryCommand
     ridgeTrainingCommand
   ];

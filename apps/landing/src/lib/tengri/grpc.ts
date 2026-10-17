@@ -447,12 +447,17 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function listCodexModels(identity: TengriIdentity, agentId: string, cursor?: string) {
-  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000)
+export async function listCodexModels(
+  identity: TengriIdentity,
+  agentId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000, signal)
   try {
     return parseCodexModelPage(stringValue(response.rawJson))
   } catch {
-    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog')
+    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog', 502, 'model_catalog_invalid')
   }
 }
 
@@ -480,11 +485,16 @@ export async function resumeCodexThread(
     130_000,
   )
   return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
-    if (error instanceof TengriUnavailableError) return error
+    if (error instanceof TengriUnavailableError)
+      return new TengriUnavailableError(error.message, 502, 'conversation_history_invalid')
     if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
       return mapGrpcError(error as grpc.ServiceError, 'resumeCodexThread')
     }
-    return new TengriUnavailableError('Codex conversation recovery returned invalid history')
+    return new TengriUnavailableError(
+      'Codex conversation recovery returned invalid history',
+      502,
+      'conversation_history_invalid',
+    )
   })
 }
 
