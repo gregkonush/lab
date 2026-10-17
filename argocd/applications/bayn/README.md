@@ -219,7 +219,8 @@ replica does not make an upstream bar published outside its permitted finalizati
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
 historical cycle contracts. It changes constraints without rewriting cycle or execution evidence. Apply it through
 normal worker startup before activating the new strategy identity. The submission window can start at market open;
-the strategy still waits for its complete rolling lookback and decision delay.
+the active strategy admits the first completed observed minute after its decision delay, with up to thirty minutes
+of actual observed history as context.
 
 The active day-trading policy admits entries until five minutes before the actual calendar close and starts forced
 flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and

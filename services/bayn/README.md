@@ -48,10 +48,10 @@ action and a `supported` net-economics assessment; adverse or uncertain economic
 remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
 above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
 
-Protocol v8 and trading-signal input v7 replace their executable predecessors. Migration 116 requires flat,
+Protocol v9 and trading-signal input v8 replace their executable predecessors. Migration 118 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
-new Jev authority generations to v8. Historical generation rows remain immutable audit evidence. Rebind the
-existing PAPER mandate to a verified v8 image through its sealed GitOps path after cutover; source success alone
+new Jev authority generations to v9. Historical generation rows remain immutable audit evidence. Create a new
+same-account PAPER mandate against a verified published v9 image through its sealed GitOps path after cutover; source success alone
 does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
