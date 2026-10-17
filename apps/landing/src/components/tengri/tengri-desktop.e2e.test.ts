@@ -1822,6 +1822,55 @@ for (const savedThread of [false, true]) {
   }
 }
 
+test('recovers a temporary model outage without discarding the draft or retrying a turn', async ({ page }) => {
+  const options: MockOptions = {
+    codexModelsError: { status: 503, error: 'Tengri control plane is unavailable' },
+  }
+  const mock = await mockTengri(page, options)
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('alert')).toContainText('Tengri control plane is unavailable')
+  const composer = tengri.getByRole('textbox', { name: 'Message your agent' })
+  await composer.fill('Keep this unsent draft')
+  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeDisabled()
+  options.codexModelsError = undefined
+  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry models' })).toHaveCount(0)
+  await expect(composer).toHaveValue('Keep this unsent draft')
+  await expect(tengri.getByRole('button', { name: 'Send message' })).toBeEnabled()
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+test('does not automatically retry a denied model catalog', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, {
+    codexModelsError: { status: 403, error: 'Model catalog access denied' },
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('alert')).toContainText('Model catalog access denied')
+  await page.clock.runFor(31_000)
+  expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+  await expect(tengri.getByRole('combobox', { name: 'Model', exact: true })).toBeDisabled()
+})
+
+test('cancels a pending model catalog retry when the chat window closes', async ({ page }) => {
+  await page.clock.install()
+  const options: MockOptions = {
+    codexModelsError: { status: 503, error: 'Tengri control plane is unavailable' },
+  }
+  const mock = await mockTengri(page, options)
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('alert')).toContainText('Tengri control plane is unavailable')
+  await tengri.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+  await expect(tengri).toHaveCount(0)
+  options.codexModelsError = undefined
+  await page.clock.runFor(31_000)
+  expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+})
+
 for (const unavailable of ['model', 'effort']) {
   test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
     const mock = await mockTengri(page, {
