@@ -96,12 +96,13 @@ accrual evidence and ledger identities remain unchanged.
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
-Entry selection follows the model's chosen `enter` action. There is no additional action-probability floor;
+Entry selection requires the model's chosen `enter` action and supported net economics. There is no additional action-probability floor;
 the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
-`wait` and `avoid` keep zero targets. Protocol v7 rejects v6 and the retired `minimumEntryProbability` field.
-Migration 111 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions and
-clamps the prior PAPER authority before native OBSERVE recovery. Activate a newly sealed v6 PAPER mandate
-against its published image. Existing position, turnover, loss, management and submission risk limits remain.
+`wait` and `avoid` keep zero targets. Protocol v9 rejects retired executable protocols and the retired
+`minimumEntryProbability` field. Migration 118 requires flat, settled inventory and fresh exact reconciliation,
+retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
+same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
+management and submission risk limits remain.
 
 ## Profitability goal
 
@@ -1782,11 +1783,10 @@ observation without waiting thirty minutes. Extended transport health requires q
 per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
 quote, trade and feature checks still govern every order.
 
-Migration 113 retires the prior executable model and requires flat settled inventory, terminal orders and fresh
-exact reconciliation before the v7 cutover. It preserves operator restrictions and clamps prior PAPER authority to
-OBSERVE. Publish and promote the new source, verify OBSERVE recovery, then bind a new same-account PAPER mandate.
-Migration 114 replaces the IOC-only completion predicate with the shared strict DAY/IOC proof and renames the
-partial-fill helper without retaining its old name. Verify both migrations before PAPER activation, including
-databases that have already recorded migration 113.
+Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 118 owns the
+current protocol-v9 cutover. Verify all three migrations, flat settled inventory, terminal orders and fresh exact
+reconciliation before activating a new same-account v9 PAPER mandate against its verified published image.
+Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.

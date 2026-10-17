@@ -557,21 +557,20 @@ The current protocol removes the 30-minute admission requirement for equities an
 at the first completed minute plus two seconds. Crypto uses its current completed history continuously. Both retain
 up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
 
-Migration 108 requires terminal mutation cycles, fee-net flat inventory, no pending broker orders, fresh exact
-reconciliation and complete fill accounting. It restricts the old mandate to OBSERVE. Deploy the reviewed Bayn and
-Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
-published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
-strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
+Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
+settled orders, fresh exact reconciliation and complete fill accounting. The current hard cutover uses migration
+118 and the v9 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
+The broker account and order-risk limits remain the same.
 
-The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
-profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
-complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
-must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
-Entry quantities follow the approved
-capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
-published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
-Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
-limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
+Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
+LIMIT/IOC through the shared planner, coordinator and generic completion proof. Market profiles retain equity
+entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
+reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
+than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v9 strategy after
+the migration-118 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
+target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
+reconciliation remain required runtime evidence.
 
 Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
 The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
