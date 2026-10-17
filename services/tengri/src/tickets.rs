@@ -20,9 +20,87 @@ use crate::{
 
 const TICKET_LIFETIME_MS: i64 = 30_000;
 const PREVIEW_LIFETIME_MS: i64 = 30 * 60 * 1000;
-const TICKET_LIMIT: i64 = 128;
-const PREVIEW_LIMIT: i64 = 96;
-const PER_WORKSPACE_LIMIT: i64 = 16;
+const TICKET_LIMIT: i32 = 128;
+const PREVIEW_LIMIT: i32 = 96;
+const PER_WORKSPACE_LIMIT: i32 = 16;
+
+#[derive(Clone, Copy)]
+enum CapabilityTable {
+    Tickets,
+    Previews,
+}
+
+impl CapabilityTable {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Tickets => "tengri.tickets",
+            Self::Previews => "tengri.previews",
+        }
+    }
+
+    async fn allocate(
+        self,
+        tx: &tokio_postgres::Transaction<'_>,
+        workspace: Uuid,
+    ) -> Result<(i16, i16), Status> {
+        let table = self.name();
+        tx.batch_execute(&format!(
+            "DELETE FROM {table} WHERE ctid IN (SELECT ctid FROM {table} WHERE expires_at_ms<=tengri.now_ms() FOR UPDATE SKIP LOCKED)"
+        )).await.map_err(sql_error)?;
+        let workspace_slot = self
+            .reserve_slot(tx, Some(workspace), PER_WORKSPACE_LIMIT)
+            .await?;
+        let limit = match self {
+            Self::Tickets => TICKET_LIMIT,
+            Self::Previews => PREVIEW_LIMIT,
+        };
+        let capacity_slot = self.reserve_slot(tx, None, limit).await?;
+        Ok((capacity_slot, workspace_slot))
+    }
+
+    async fn reserve_slot(
+        self,
+        tx: &tokio_postgres::Transaction<'_>,
+        workspace: Option<Uuid>,
+        limit: i32,
+    ) -> Result<i16, Status> {
+        let table = self.name();
+        let column = if workspace.is_some() {
+            "workspace_slot"
+        } else {
+            "capacity_slot"
+        };
+        let candidates = tx.query(&format!(
+            "SELECT slot::smallint FROM generate_series(1,$1::integer) slot WHERE NOT EXISTS (SELECT 1 FROM {table} WHERE {column}=slot AND ($2::uuid IS NULL OR workspace_uid=$2)) ORDER BY slot"
+        ), &[&limit, &workspace]).await.map_err(sql_error)?;
+        for candidate in candidates {
+            let slot: i16 = candidate.get(0);
+            let mut hash = Sha256::new();
+            hash.update(b"tengri-capability-slot\0");
+            hash.update(table.as_bytes());
+            hash.update([u8::from(workspace.is_some())]);
+            hash.update(workspace.unwrap_or_else(Uuid::nil).as_bytes());
+            hash.update(slot.to_be_bytes());
+            let key = i64::from_be_bytes(hash.finalize()[..8].try_into().unwrap());
+            let locked: bool = tx
+                .query_one("SELECT pg_try_advisory_xact_lock($1)", &[&key])
+                .await
+                .map_err(sql_error)?
+                .get(0);
+            if !locked {
+                continue;
+            }
+            // A previous holder may have committed after the candidate scan. Read a new snapshot.
+            let free: bool = tx.query_one(&format!(
+                "SELECT NOT EXISTS (SELECT 1 FROM {table} WHERE {column}=$1 AND ($2::uuid IS NULL OR workspace_uid=$2))"
+            ), &[&slot, &workspace]).await.map_err(sql_error)?.get(0);
+            if free {
+                return Ok(slot);
+            }
+        }
+        Err(Status::resource_exhausted("capability capacity exhausted"))
+    }
+}
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "camelCase", deny_unknown_fields)]
@@ -188,6 +266,7 @@ impl TicketStore {
         Ok(issued)
     }
 
+    #[tracing::instrument(name = "db.tickets.issue", skip_all)]
     async fn issue(
         &self,
         principal: &Principal,
@@ -226,16 +305,9 @@ impl TicketStore {
         .map_err(|_| Status::internal("capability encoding failed"))?;
         let mut client = self.database.connection().await?;
         let tx = client.transaction().await.map_err(sql_error)?;
-        lock_and_expire(&tx).await?;
-        let counts = tx.query_one("SELECT (SELECT count(*) FROM tengri.tickets),(SELECT count(*) FROM tengri.tickets WHERE workspace_uid=$1)", &[&uid]).await.map_err(sql_error)?;
-        if counts.get::<_, i64>(0) >= TICKET_LIMIT || counts.get::<_, i64>(1) >= PER_WORKSPACE_LIMIT
-        {
-            return Err(Status::resource_exhausted(
-                "too many pending one-use capabilities",
-            ));
-        }
-        let expiry: i64 = tx.query_one("INSERT INTO tengri.tickets(token_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms) VALUES($1,$2,$3,$4,$5,tengri.now_ms()+$6) RETURNING expires_at_ms",
-            &[&token_hash(&token)?, &agent_id, &uid, &session, &payload, &TICKET_LIFETIME_MS]).await.map_err(sql_error)?.get(0);
+        let (capacity_slot, workspace_slot) = CapabilityTable::Tickets.allocate(&tx, uid).await?;
+        let expiry: i64 = tx.query_one("INSERT INTO tengri.tickets(token_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms,capacity_slot,workspace_slot) VALUES($1,$2,$3,$4,$5,tengri.now_ms()+$6,$7,$8) RETURNING expires_at_ms",
+            &[&token_hash(&token)?, &agent_id, &uid, &session, &payload, &TICKET_LIFETIME_MS, &capacity_slot, &workspace_slot]).await.map_err(sql_error)?.get(0);
         tx.commit().await.map_err(sql_error)?;
         Ok(IssuedTicket {
             id: token.clone(),
@@ -266,11 +338,11 @@ impl TicketStore {
         Ok(record)
     }
 
+    #[tracing::instrument(name = "db.previews.redeem", skip_all)]
     pub async fn consume_preview(&self, token: &str) -> Result<PreviewSessionRecord, Status> {
         let hash = token_hash(token)?;
         let mut client = self.database.connection().await?;
         let tx = client.transaction().await.map_err(sql_error)?;
-        lock_and_expire(&tx).await?;
         let row = tx.query_opt("DELETE FROM tengri.tickets WHERE token_hash=$1 AND expires_at_ms>tengri.now_ms() RETURNING payload", &[&hash])
             .await.map_err(sql_error)?.ok_or_else(invalid_capability)?;
         let ticket: TicketRecord = decode(row.get(0))?;
@@ -285,15 +357,11 @@ impl TicketStore {
         else {
             return Err(Status::permission_denied("preview capability required"));
         };
-        let counts = tx.query_one("SELECT (SELECT count(*) FROM tengri.previews),(SELECT count(*) FROM tengri.previews WHERE workspace_uid=$1),EXISTS(SELECT 1 FROM tengri.previews WHERE id=$2)", &[&uid,&id]).await.map_err(sql_error)?;
-        if !counts.get::<_, bool>(2)
-            && (counts.get::<_, i64>(0) >= PREVIEW_LIMIT
-                || counts.get::<_, i64>(1) >= PER_WORKSPACE_LIMIT)
-        {
-            return Err(Status::resource_exhausted(
-                "too many active preview capabilities",
-            ));
-        }
+        let existing = tx.query_opt("SELECT capacity_slot,workspace_slot FROM tengri.previews WHERE id=$1 AND workspace_uid=$2 FOR UPDATE", &[&id, &uid]).await.map_err(sql_error)?;
+        let (capacity_slot, workspace_slot) = match existing {
+            Some(row) => (row.get::<_, i16>(0), row.get::<_, i16>(1)),
+            None => CapabilityTable::Previews.allocate(&tx, uid).await?,
+        };
         let expiry: i64 = tx
             .query_one("SELECT tengri.now_ms()+$1", &[&PREVIEW_LIFETIME_MS])
             .await
@@ -312,8 +380,13 @@ impl TicketStore {
         };
         let payload = serde_json::to_value(&session)
             .map_err(|_| Status::internal("capability encoding failed"))?;
-        tx.execute("INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms) VALUES($1,$2,$3,$4,$5,$6,$7,$8) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,revocation_hash=excluded.revocation_hash,agent_id=excluded.agent_id,workspace_uid=excluded.workspace_uid,session_id=excluded.session_id,payload=excluded.payload,expires_at_ms=excluded.expires_at_ms",
-            &[&session.id,&token_hash(&session.token)?,&hash,&session.agent_id,&uid,&session_id,&payload,&expiry]).await.map_err(sql_error)?;
+        let changed = tx.execute("INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,session_id,payload,expires_at_ms,capacity_slot,workspace_slot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) ON CONFLICT(id) DO UPDATE SET token_hash=excluded.token_hash,revocation_hash=excluded.revocation_hash,agent_id=excluded.agent_id,session_id=excluded.session_id,payload=excluded.payload,expires_at_ms=excluded.expires_at_ms WHERE tengri.previews.workspace_uid=excluded.workspace_uid",
+            &[&session.id,&token_hash(&session.token)?,&hash,&session.agent_id,&uid,&session_id,&payload,&expiry,&capacity_slot,&workspace_slot]).await.map_err(sql_error)?;
+        if changed != 1 {
+            return Err(Status::permission_denied(
+                "preview workspace binding rejected",
+            ));
+        }
         tx.commit().await.map_err(sql_error)?;
         session.principal.context.deadline_unix_ms =
             ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
@@ -347,7 +420,6 @@ impl TicketStore {
         let hash = token_hash(token)?;
         let mut client = self.database.connection().await?;
         let tx = client.transaction().await.map_err(sql_error)?;
-        lock_and_expire(&tx).await?;
         tx.execute("DELETE FROM tengri.tickets WHERE token_hash=$1 AND workspace_uid=$2 AND session_id=$3 AND agent_id=$4 AND payload->'scope'->>'session_id'=$5 AND payload->'principal'->>'owner_hash'=$6",
             &[&hash,&uid,&session,&agent_id,&id,&principal.owner_hash]).await.map_err(sql_error)?;
         tx.execute("DELETE FROM tengri.previews WHERE id=$1 AND revocation_hash=$2 AND workspace_uid=$3 AND session_id=$4 AND agent_id=$5 AND payload->'principal'->>'owner_hash'=$6",
@@ -361,7 +433,6 @@ impl TicketStore {
             .map_err(|_| Status::unauthenticated("session required"))?;
         let mut client = self.database.connection().await?;
         let tx = client.transaction().await.map_err(sql_error)?;
-        lock_and_expire(&tx).await?;
         tx.execute("DELETE FROM tengri.tickets WHERE session_id=$1 AND payload->'principal'->>'owner_hash'=$2 AND (payload->'scope'->>'port')::integer IN ($3,$4)",
             &[&session,&principal.owner_hash,&(EDITOR_PORT as i32),&(BROWSER_PORT as i32)]).await.map_err(sql_error)?;
         tx.execute("DELETE FROM tengri.previews WHERE session_id=$1 AND payload->'principal'->>'owner_hash'=$2 AND (payload->>'port')::integer IN ($3,$4)",
@@ -375,7 +446,6 @@ impl TicketStore {
             .map_err(|_| Status::invalid_argument("workspace UID required"))?;
         let mut client = self.database.connection().await?;
         let tx = client.transaction().await.map_err(sql_error)?;
-        lock_and_expire(&tx).await?;
         tx.execute("DELETE FROM tengri.tickets WHERE workspace_uid=$1", &[&uid])
             .await
             .map_err(sql_error)?;
@@ -417,10 +487,6 @@ fn bindings(principal: &Principal) -> Result<(Uuid, Uuid), Status> {
         Uuid::parse_str(&context.workspace_uid).unwrap(),
         Uuid::parse_str(&context.session_id).unwrap(),
     ))
-}
-
-async fn lock_and_expire(tx: &tokio_postgres::Transaction<'_>) -> Result<(), Status> {
-    tx.batch_execute("SELECT pg_advisory_xact_lock(726635522922); DELETE FROM tengri.tickets WHERE expires_at_ms<=tengri.now_ms(); DELETE FROM tengri.previews WHERE expires_at_ms<=tengri.now_ms();").await.map_err(sql_error)
 }
 
 fn decode<T: serde::de::DeserializeOwned>(value: serde_json::Value) -> Result<T, Status> {
@@ -483,4 +549,80 @@ fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
         "TENGRI_PUBLIC_URL must use HTTPS outside localhost"
     );
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_pending_reservations_do_not_block_other_slots() {
+        let database = Arc::new(Database::shared_fixture().await);
+        let store =
+            TicketStore::new("https://tengri.proompteng.ai".into(), database.clone()).unwrap();
+        let mut client = database.connection().await.unwrap();
+        client
+            .batch_execute("DELETE FROM tengri.tickets; DELETE FROM tengri.previews")
+            .await
+            .unwrap();
+        let owner = Principal::fixture(
+            &"a".repeat(64),
+            &Uuid::new_v4().to_string(),
+            Action::EditorOpen,
+        );
+        let uid = Uuid::parse_str(&owner.context.workspace_uid).unwrap();
+        let tx = client.transaction().await.unwrap();
+        let reserved_ticket = CapabilityTable::Tickets.allocate(&tx, uid).await.unwrap();
+        let reserved_preview = CapabilityTable::Previews.allocate(&tx, uid).await.unwrap();
+        let started = tokio::time::Instant::now();
+        let outcome = async {
+            let ticket = tokio::time::timeout(
+                Duration::from_secs(2),
+                store.issue_editor(&owner, "agent", "code"),
+            )
+            .await
+            .map_err(|_| {
+                Status::deadline_exceeded("ticket allocation waited for another reservation")
+            })??;
+            let reader = database.connection().await?;
+            let row = reader
+                .query_one(
+                    "SELECT capacity_slot,workspace_slot FROM tengri.tickets",
+                    &[],
+                )
+                .await
+                .map_err(sql_error)?;
+            assert_ne!(reserved_ticket.0, row.get::<_, i16>(0));
+            assert_ne!(reserved_ticket.1, row.get::<_, i16>(1));
+            let preview =
+                tokio::time::timeout(Duration::from_secs(2), store.consume_preview(&ticket.token))
+                    .await
+                    .map_err(|_| {
+                        Status::deadline_exceeded(
+                            "preview allocation waited for another reservation",
+                        )
+                    })??;
+            let row = reader
+                .query_one(
+                    "SELECT capacity_slot,workspace_slot FROM tengri.previews WHERE id=$1",
+                    &[&preview.id],
+                )
+                .await
+                .map_err(sql_error)?;
+            assert_ne!(reserved_preview.0, row.get::<_, i16>(0));
+            assert_ne!(reserved_preview.1, row.get::<_, i16>(1));
+            Ok::<_, Status>(())
+        }
+        .await;
+        eprintln!(
+            "independent ticket and preview round trip completed in {:?}",
+            started.elapsed()
+        );
+        tx.rollback().await.unwrap();
+        assert!(
+            matches!(outcome, Ok(())),
+            "independent reservations must proceed before another commit: {outcome:?}"
+        );
+    }
 }

@@ -126,6 +126,7 @@ identityTest(
     const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
     const replaySlotsMigration = readFileSync(path.join(root, 'services/tengri/migrations/0003_replay_slots.sql'))
     const leadershipMigration = readFileSync(path.join(root, 'services/tengri/migrations/0004_leadership_window.sql'))
+    const capabilityMigration = readFileSync(path.join(root, 'services/tengri/migrations/0005_capability_slots.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -150,11 +151,22 @@ identityTest(
     const replayChecksum = createHash('sha256').update(replayMigration).digest()
     const replaySlotsChecksum = createHash('sha256').update(replaySlotsMigration).digest()
     const leadershipChecksum = createHash('sha256').update(leadershipMigration).digest()
+    const capabilityChecksum = createHash('sha256').update(capabilityMigration).digest()
     await bffAdmin.query('SET ROLE tengri_migrator')
     await bffAdmin.query(migration.toString())
     await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
     await bffAdmin.query(replayMigration.toString())
     await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(2,$1)', [replayChecksum])
+    const retainedWorkspace = randomUUID()
+    const retainedTicket = Buffer.alloc(32, 31)
+    await bffAdmin.query(
+      "INSERT INTO tengri.tickets(token_hash,agent_id,workspace_uid,payload,expires_at_ms) VALUES($1,'retained',$2,'{}',tengri.now_ms()+30000)",
+      [retainedTicket, retainedWorkspace],
+    )
+    await bffAdmin.query(
+      "INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,payload,expires_at_ms) VALUES('abcdefghijklmnopqrstuvwx',$1,$1,'retained',$2,'{}',tengri.now_ms()+30000)",
+      [retainedTicket, retainedWorkspace],
+    )
     const retainedNonce = Buffer.alloc(32, 47)
     expect(
       (await bffAdmin.query('SELECT tengri.consume_nonce($1,tengri.now_ms()+6000) AS consumed', [retainedNonce]))
@@ -167,7 +179,7 @@ identityTest(
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
       'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(4)
+    expect(versions.rowCount).toBe(5)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
     expect(versions.rows[1]?.version).toBe(2)
@@ -176,6 +188,16 @@ identityTest(
     expect(versions.rows[2]?.checksum.equals(replaySlotsChecksum)).toBe(true)
     expect(versions.rows[3]?.version).toBe(4)
     expect(versions.rows[3]?.checksum.equals(leadershipChecksum)).toBe(true)
+    expect(versions.rows[4]?.version).toBe(5)
+    expect(versions.rows[4]?.checksum.equals(capabilityChecksum)).toBe(true)
+    for (const table of ['tickets', 'previews']) {
+      const retained = await bffAdmin.query<{ capacity_slot: number; workspace_slot: number }>(
+        `SELECT capacity_slot,workspace_slot FROM tengri.${table} WHERE workspace_uid=$1`,
+        [retainedWorkspace],
+      )
+      expect(retained.rows).toEqual([{ capacity_slot: 1, workspace_slot: 1 }])
+      await bffAdmin.query(`DELETE FROM tengri.${table} WHERE workspace_uid=$1`, [retainedWorkspace])
+    }
     expect(
       (await bffAdmin.query('SELECT tengri.consume_nonce($1,tengri.now_ms()+5000) AS consumed', [retainedNonce]))
         .rows[0]?.consumed,
@@ -199,6 +221,9 @@ identityTest(
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [leadershipChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [capabilityChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
