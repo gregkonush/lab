@@ -1,0 +1,79 @@
+# Retrospective equity edge screen
+
+`services/bayn/tools/equity-edge-screen.ts` is an offline development command. It compares thirteen fixed long-only
+bar-based policies without constructing a broker client, using a model, changing a mandate, or touching the live
+controller. It does not replace the original-arrival and execution witnesses required by the
+[matched-entry experiment](matched-entry-study.md) or [portfolio controls](control-portfolios.md).
+
+## Frozen hypotheses
+
+The source definition retains six late-session candidates: positive benchmark-relative momentum, opening-range
+breakout with above-average opening volume, and a VWAP recovery, each with 15- and 60-minute holds. These start
+after thirty completed minutes. They are not replications of a five-minute opening strategy.
+
+Three additional candidates test volatility-sized residual reversals with 15-/60-minute holds and a volatility-sized
+60-minute late opening-range strategy. Four early opening-range candidates combine 15-/60-minute holds with fixed
+or volatility risk. The early family admits at most one position per session, during minutes 5–30, following an
+opening-high breakout with above-average opening volume, a bullish opening candle, and a nonnegative benchmark.
+Opening volume is compared only with the fourteen prior calendar sessions. Missing required minutes exclude that
+candidate; they are not imputed from later bars or another feed.
+
+The complete definitions and thirteen policy identities are included in the report. Development selects a policy
+only when its modeled execution P&L is positive. Validation and holdout never change that choice. Every candidate,
+not only the selected one, is retained under base and stressed costs. Zero-activity sessions remain in the denominator.
+These mechanisms do not prove that a caller preserved an untouched holdout or registered a candidate prospectively.
+Record trial history and any prior inspection of the dates independently.
+
+## Input and execution
+
+The command accepts a pinned historical IEX/raw page stream: one `calendar` header with the broker's native exchange
+calendar; consecutively numbered `bars` envelopes containing V2 bars and their continuation tokens; and one
+`complete` envelope with the feed, adjustment, page count, row count, and acquisition time. It verifies the exact
+UTF-8 source hash, progressive pagination, unique symbol/minute keys, finite OHLC values, symbol scope, and ordered
+regular-session hours. It reports minute coverage for every symbol/session. Calendar `open`/`close` are interpreted
+in New York; Bayn's separate extended data-session normalization is not used for this regular-session screen.
+
+The strict input is `bayn.equity-edge-screen-input.v1` with `sourceSha256`, `symbols` including benchmark-only SPY,
+and `development`, `validation`, and `holdout` objects, each containing ISO `start` and `end` dates. Partition
+endpoints must be retained exchange sessions, periods must be chronological and disjoint, and at least fourteen
+earlier calendar sessions must be available. Keep input, raw data, reports, and registrations on private research
+storage outside Git and CI artifacts.
+
+```sh
+bun services/bayn/tools/equity-edge-screen.ts \
+  --input /private/input.json --input-sha256 <independently-pinned-input-sha256> \
+  --source /private/iex-bars-pages.ndjson --output /private/new-report.json
+```
+
+The source limit is 128 MiB and the input limit is 1 MiB. The command uses a separate research process, not an API
+or execution-worker pod. It refuses an existing output path and writes reports with mode 0600. Preserve source
+receipts and every rejected or superseded trial. Hashes bind bytes, not source authenticity or observed arrival time.
+
+Each partition starts with $100,000 and carries capital between its sessions. Positions are serial, long-only,
+whole-share, and limited to 20% of current equity. Fixed risk uses a 50 bp stop. Volatility risk uses twice the
+completed-window minute-return volatility scaled to the holding horizon, bounded to 50–200 bp, and limits modeled
+stop exposure to 0.1% of equity by reducing size. It does not guarantee that gap or execution losses fit that budget.
+
+Signals use completed bars only; quantity is fixed from the signal close with an adverse-price reserve, before the
+next-minute arrival. A cheaper arrival cannot increase order size. An arrival exceeding its reserved allocation is
+rejected rather than resized with future prices. Base/stress prices apply 10/20 bp adverse execution on each side
+plus the native current fee model. Price rounding and fees use integer micro-USD accounting after scenario pricing.
+The report includes the fee-model hash. This is a cost scenario, not a reconstruction of historical broker tariffs.
+
+Protective stops react to a completed bar, then use the next available opening price within three minutes. Losses
+through a stop are not clipped to the stop. A missing exit leaves an incomplete path, never a fabricated flat mark.
+All positions are scheduled to close five minutes before regular close. The screen uses its stated daily loss and
+turnover boundaries, but is not the live strategy or a reproduction of every native mandate rule.
+
+## Interpretation
+
+`executionNetPnlMicros` is scenario P&L, not actual fills or all-in profit. The command always returns `qualified=false`
+and `allInProfit=null`. An apparently positive candidate earns only native execution and prospective validation.
+Missing original arrivals, quotes, spread histories, depth, IOC/limit-fill behavior, partial fills, market impact,
+and infrastructure/data/inference cost allocations prevent profitability qualification. A contemporary fixed universe
+also carries historical selection and survivor bias. Do not sum independently reset partitions into a single account.
+
+The first internal prototype incorrectly sized at the later opening price. Definition v2 fixes this with a regression
+where a favorable future price must not increase shares. Earlier internal reports are superseded and retained; dates
+already inspected through that prototype cannot be relabeled as a newly untouched holdout after the correction.
+No tested screen result authorizes a live strategy, holding-period change, risk change, or capital promotion.
