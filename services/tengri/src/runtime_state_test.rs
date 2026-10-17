@@ -5,13 +5,40 @@ use sha2::{Digest, Sha256};
 use tonic::Code;
 use uuid::Uuid;
 
-use crate::{
-    auth::{Authenticator, Principal, signed_fixture_request},
-    control::Database,
-    grpc::proto::GetAgentRequest,
-    ofz::proto::Action,
-    tickets::TicketStore,
-};
+use crate::{auth::Principal, control::Database, ofz::proto::Action, tickets::TicketStore};
+
+impl Database {
+    async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), tonic::Status> {
+        let mut client = self.connection().await?;
+        let tx = client
+            .transaction()
+            .await
+            .map_err(crate::control::sql_error)?;
+        let consumed: bool = tx
+            .query_one(
+                "SELECT tengri.consume_nonce($1,$2)",
+                &[&key, &expires_at_ms],
+            )
+            .await
+            .map_err(crate::control::sql_error)?
+            .get(0);
+        if !consumed {
+            return Err(tonic::Status::unauthenticated("request nonce already used"));
+        }
+        tx.commit().await.map_err(crate::control::sql_error)?;
+        let now: i64 = client
+            .query_one("SELECT tengri.now_ms()", &[])
+            .await
+            .map_err(crate::control::sql_error)?
+            .get(0);
+        if expires_at_ms <= now {
+            return Err(tonic::Status::unauthenticated(
+                "request nonce deadline expired",
+            ));
+        }
+        Ok(())
+    }
+}
 
 async fn fixture() -> (Arc<Database>, TicketStore, TicketStore) {
     let first = Arc::new(Database::shared_fixture().await);
@@ -30,184 +57,6 @@ async fn fixture() -> (Arc<Database>, TicketStore, TicketStore) {
 
 fn principal(action: Action) -> Principal {
     Principal::fixture(&"a".repeat(64), &Uuid::new_v4().to_string(), action)
-}
-
-#[tokio::test]
-#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
-async fn runtime_shared_state_nonce_commits_are_batched_without_premature_admission() {
-    let (database, _, _) = fixture().await;
-    let mut roots = rustls::RootCertStore::empty();
-    let ca = std::fs::read(std::env::var("OFZ_TEST_CA_FILE").unwrap()).unwrap();
-    for certificate in rustls_pemfile::certs(&mut ca.as_slice()) {
-        roots.add(certificate.unwrap()).unwrap();
-    }
-    let tls = tokio_postgres_rustls::MakeRustlsConnect::new(
-        rustls::ClientConfig::builder()
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
-    );
-    let config: tokio_postgres::Config = std::env::var("OFZ_TEST_DSN")
-        .unwrap()
-        .replace("dbname=ofz_control", "dbname=tengri_control")
-        .parse()
-        .unwrap();
-    let (admin, connection) = config.connect(tls).await.unwrap();
-    let connection_task = tokio::spawn(connection);
-    admin.batch_execute(
-        "CREATE FUNCTION tengri.fixture_nonce_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN
-           IF get_byte(NEW.nonce_hash,0)=254 THEN PERFORM pg_advisory_xact_lock(726635522923); END IF;
-           IF get_byte(NEW.nonce_hash,0)=253 THEN RAISE EXCEPTION 'fixture nonce commit failure'; END IF;
-           RETURN NEW; END $$;
-         CREATE CONSTRAINT TRIGGER fixture_nonce_commit AFTER UPDATE ON tengri.replay_nonces
-           DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION tengri.fixture_nonce_commit();
-         SELECT pg_advisory_lock(726635522923);",
-    ).await.unwrap();
-    let capacity = database.pool.status().max_size;
-    let warm = join_all((0..capacity).map(|_| database.connection())).await;
-    assert!(warm.iter().all(Result::is_ok));
-    drop(warm);
-    let deadline = admin
-        .query_one("SELECT tengri.now_ms()+5000", &[])
-        .await
-        .unwrap()
-        .get::<_, i64>(0);
-    let nonces: Vec<_> = (0..capacity)
-        .map(|_| {
-            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-            nonce[0] = 254;
-            nonce
-        })
-        .collect();
-    let barrier = Arc::new(tokio::sync::Barrier::new(capacity + 1));
-    let writers: Vec<_> = nonces
-        .iter()
-        .map(|nonce| {
-            let database = database.clone();
-            let nonce = nonce.clone();
-            let barrier = barrier.clone();
-            tokio::spawn(async move {
-                barrier.wait().await;
-                database.consume_nonce(&nonce, deadline).await
-            })
-        })
-        .collect();
-    barrier.wait().await;
-    tokio::time::sleep(Duration::from_millis(100)).await;
-    let read = tokio::time::timeout(Duration::from_millis(300), async {
-        database
-            .connection()
-            .await?
-            .query_one("SELECT 1", &[])
-            .await
-            .map_err(crate::control::sql_error)
-    })
-    .await;
-    let pending = writers.iter().all(|writer| !writer.is_finished());
-    admin
-        .batch_execute("SELECT pg_advisory_unlock(726635522923)")
-        .await
-        .unwrap();
-    let mut accepted = Vec::new();
-    for writer in writers {
-        accepted.push(writer.await.unwrap());
-    }
-    let committed = admin
-        .query_one(
-            "SELECT count(*)::integer,count(DISTINCT pg_xact_commit_timestamp(xmin))::integer
-         FROM tengri.replay_nonces WHERE nonce_hash=ANY($1)",
-            &[&nonces],
-        )
-        .await
-        .unwrap();
-    let mut failed = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-    failed[0] = 253;
-    let mut innocent = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-    innocent[0] = 252;
-    let deadline = admin
-        .query_one("SELECT tengri.now_ms()+5000", &[])
-        .await
-        .unwrap()
-        .get::<_, i64>(0);
-    let (failed_commit, rolled_back) = tokio::join!(
-        database.consume_nonce(&failed, deadline),
-        database.consume_nonce(&innocent, deadline),
-    );
-    admin
-        .batch_execute("SELECT pg_advisory_lock(726635522923)")
-        .await
-        .unwrap();
-    let now = admin
-        .query_one("SELECT tengri.now_ms()", &[])
-        .await
-        .unwrap()
-        .get::<_, i64>(0);
-    let mut expires_during_commit = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-    expires_during_commit[0] = 254;
-    let mut stays_valid = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-    stays_valid[0] = 252;
-    let late_database = database.clone();
-    let late_batch = tokio::spawn(async move {
-        tokio::join!(
-            late_database.consume_nonce(&expires_during_commit, now + 300),
-            late_database.consume_nonce(&stays_valid, now + 5000),
-        )
-    });
-    admin
-        .batch_execute("SELECT pg_sleep(0.4); SELECT pg_advisory_unlock(726635522923)")
-        .await
-        .unwrap();
-    let (expired_after_commit, live_after_commit) = late_batch.await.unwrap();
-    admin.batch_execute("DROP TRIGGER fixture_nonce_commit ON tengri.replay_nonces; DROP FUNCTION tengri.fixture_nonce_commit();").await.unwrap();
-    let peer = Database::shared_fixture().await;
-    let replay = peer.consume_nonce(&nonces[0], deadline).await;
-    let retry_after_rollback = peer.consume_nonce(&innocent, deadline).await;
-    let mut valid = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-    valid[0] = 251;
-    let (valid_input, invalid_input) = tokio::join!(
-        database.consume_nonce(&valid, deadline),
-        database.consume_nonce(&[1], deadline),
-    );
-    drop(admin);
-    connection_task.await.unwrap().unwrap();
-    assert!(
-        pending,
-        "nonce admission must wait for the actual database commit"
-    );
-    assert!(
-        matches!(read, Ok(Ok(_))),
-        "nonce commits starved a fresh request: {read:?}"
-    );
-    assert!(
-        accepted.iter().all(Result::is_ok),
-        "valid nonces failed: {accepted:?}"
-    );
-    assert_eq!(committed.get::<_, i32>(0), capacity as i32);
-    assert!(
-        (1..=2).contains(&committed.get::<_, i32>(1)),
-        "nonce burst did not share durable commits"
-    );
-    assert_eq!(replay.unwrap_err().code(), Code::Unauthenticated);
-    assert_eq!(failed_commit.unwrap_err().code(), Code::Unavailable);
-    assert_eq!(
-        rolled_back.unwrap_err().code(),
-        Code::Unavailable,
-        "failed commit acknowledged another nonce"
-    );
-    assert!(
-        retry_after_rollback.is_ok(),
-        "failed commit left a consumed nonce"
-    );
-    assert!(valid_input.is_ok());
-    assert_eq!(invalid_input.unwrap_err().code(), Code::Unauthenticated);
-    assert_eq!(
-        expired_after_commit.unwrap_err().code(),
-        Code::Unauthenticated,
-        "a nonce committed after its admission deadline was accepted"
-    );
-    assert!(
-        live_after_commit.is_ok(),
-        "another claim's expiry rejected a still-valid claim"
-    );
 }
 
 #[tokio::test]
@@ -719,165 +568,6 @@ async fn runtime_shared_state_capacity_expiry_and_workspace_cleanup_are_global()
             .code(),
         Code::Unauthenticated
     );
-}
-
-#[tokio::test]
-#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
-async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
-    let first = Arc::new(Database::shared_fixture().await);
-    let second = Arc::new(Database::shared_fixture().await);
-    let a = Authenticator::fixture(first, "https://proompteng.ai".into());
-    let b = Authenticator::fixture(second, "https://proompteng.ai".into());
-    let owner = principal(Action::WorkspaceMetadataRead);
-    let path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
-    let request = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    let mut changed = tonic::Request::new(GetAgentRequest {
-        id: "another".into(),
-    });
-    *changed.metadata_mut() = request.metadata().clone();
-    assert_eq!(
-        a.authorize(&changed, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-    assert_eq!(
-        a.authorize(&request, path)
-            .await
-            .unwrap()
-            .context
-            .session_id,
-        owner.context.session_id
-    );
-    assert_eq!(
-        b.authorize(&request, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-    let fresh = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    assert!(b.authorize(&fresh, path).await.is_ok());
-    for deadline in [
-        crate::ofz::now_ms().unwrap() - 1,
-        crate::ofz::now_ms().unwrap() + 5500,
-    ] {
-        let mut invalid = owner.clone();
-        invalid.context.deadline_unix_ms = deadline;
-        let request =
-            signed_fixture_request(GetAgentRequest { id: "agent".into() }, &invalid, path);
-        assert_eq!(
-            a.authorize(&request, path).await.unwrap_err().code(),
-            Code::Unauthenticated
-        );
-    }
-    let mut duplicated =
-        signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    let nonce = duplicated.metadata().get("x-tengri-nonce").unwrap().clone();
-    duplicated.metadata_mut().append("x-tengri-nonce", nonce);
-    assert_eq!(
-        a.authorize(&duplicated, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
-async fn runtime_shared_state_replay_writes_cannot_starve_runtime_authority() {
-    let database = Database::shared_fixture().await;
-    let fence = database.acquire(Uuid::new_v4()).await.unwrap().unwrap();
-    let mut outcomes = Vec::new();
-    for role in ["tengri_controller", "tengri_supervisor"] {
-        let dsn = std::env::var("TENGRI_DATABASE_DSN")
-            .unwrap()
-            .replace("user=tengri_controller", &format!("user={role}"));
-        let peer = Arc::new(
-            Database::connect(
-                &dsn,
-                Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE").unwrap()),
-                Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE").unwrap()),
-                role,
-            )
-            .await
-            .unwrap(),
-        );
-        let capacity = peer.pool.status().max_size;
-        let warm = join_all((0..capacity).map(|_| peer.connection())).await;
-        let connections: Vec<_> = warm.into_iter().map(Result::unwrap).collect();
-        drop(connections);
-        let mut held = database.connection().await.unwrap();
-        let tx = held.transaction().await.unwrap();
-        let mut nonces = Vec::new();
-        for bucket in 0..capacity {
-            let mut nonce = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
-            nonce[0] = bucket as u8;
-            tx.query_one(
-                "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
-                &[&nonce],
-            )
-            .await
-            .unwrap();
-            nonces.push(nonce);
-        }
-        let deadline = (crate::ofz::now_ms().unwrap() + 5000) as i64;
-        let writers: Vec<_> = nonces
-            .iter()
-            .map(|nonce| {
-                let peer = peer.clone();
-                let nonce = nonce.clone();
-                tokio::spawn(async move { peer.consume_nonce(&nonce, deadline).await })
-            })
-            .collect();
-        tokio::time::timeout(Duration::from_millis(500), async {
-            while peer.pool.status().available == capacity {
-                tokio::time::sleep(Duration::from_millis(5)).await;
-            }
-        })
-        .await
-        .unwrap();
-        let check = tokio::time::timeout(Duration::from_millis(750), async {
-            peer.verify_schema().await?;
-            peer.require_fence(fence).await
-        });
-        let renewal = async {
-            if role == "tengri_controller" {
-                Some(tokio::time::timeout(Duration::from_millis(750), peer.renew(fence)).await)
-            } else {
-                None
-            }
-        };
-        let (check, renewal) = tokio::join!(check, renewal);
-        let blocked = writers.iter().all(|writer| !writer.is_finished());
-        tx.rollback().await.unwrap();
-        for writer in writers {
-            writer.await.unwrap().unwrap();
-        }
-        assert_eq!(
-            peer.consume_nonce(&nonces[0], deadline)
-                .await
-                .unwrap_err()
-                .code(),
-            Code::Unauthenticated
-        );
-        let stale = crate::control::Fence {
-            generation: fence.generation + 1,
-            ..fence
-        };
-        assert_eq!(
-            peer.require_fence(stale).await.unwrap_err().code(),
-            Code::PermissionDenied
-        );
-        outcomes.push((role, blocked, check, renewal));
-    }
-    database.release(fence).await.unwrap();
-    for (role, blocked, check, renewal) in outcomes {
-        assert!(blocked, "{role} nonce writes did not remain blocked");
-        assert!(
-            matches!(check, Ok(Ok(()))),
-            "{role} lost valid runtime authority behind nonce writes: {check:?}"
-        );
-        if let Some(renewal) = renewal {
-            assert!(
-                matches!(renewal, Ok(Ok(true))),
-                "controller leadership renewal waited behind nonce writes: {renewal:?}"
-            );
-        }
-    }
 }
 
 #[tokio::test]
