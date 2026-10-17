@@ -1609,6 +1609,26 @@ test('reports the desktop window limit for shortcuts, Dock launches, and Spotlig
   await expect(capacityAlert).toBeVisible()
 })
 
+test('keeps a slow VS Code cold start in flight without starting another launch', async ({ page }) => {
+  test.setTimeout(60_000)
+  await mockTengri(page)
+  let starts = 0
+  let readyAt = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    if (route.request().postDataJSON().action !== 'editor-session') return route.fallback()
+    starts++
+    if (starts === 1) readyAt = Date.now() + 35_000
+    await new Promise((resolve) => setTimeout(resolve, Math.max(0, readyAt - Date.now())))
+    await route.fulfill({ status: 403, json: { error: 'Cold start completed' } })
+  })
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+  const code = page.getByRole('region', { name: 'Code window' })
+  await expect(code.getByRole('alert')).toContainText('Cold start completed', { timeout: 40_000 })
+  expect(starts).toBe(1)
+})
+
 test('recovers VS Code startup after a temporary control-plane failure using the same window', async ({ page }) => {
   await mockTengri(page)
   const windowIds: string[] = []

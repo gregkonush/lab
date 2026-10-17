@@ -83,7 +83,7 @@ export function CodeWorkbench({
     const start = () => {
       void runTengriAction<TengriPreviewSession>(
         { action: 'editor-session', agentId, windowId: `${desktopId}-${windowId}` },
-        AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)]),
+        controller.signal,
       )
         .then((value) => {
           issued = value
@@ -102,7 +102,6 @@ export function CodeWorkbench({
           if (disposed || controller.signal.aborted) return
           const transient =
             cause instanceof TypeError ||
-            (cause instanceof DOMException && cause.name === 'TimeoutError') ||
             (cause instanceof TengriRequestError &&
               (cause.status === 408 || cause.status === 429 || cause.status >= 500))
           if (transient && retries < 2) {
