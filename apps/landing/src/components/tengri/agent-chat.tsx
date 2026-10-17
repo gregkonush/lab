@@ -3,6 +3,7 @@
 import { watchTengriEvents } from './event-stream'
 
 import { reportBrowserFailure } from '@/lib/observability/client'
+import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
 
 import {
   Select,
@@ -1795,6 +1796,7 @@ function titleFromTranscript(items: readonly CodexTranscriptItem[]) {
 
 function retryableReadFailure(cause: unknown) {
   return (
+    cause instanceof CodexHistoryInterruptedError ||
     cause instanceof TypeError ||
     (cause instanceof DOMException && cause.name === 'AbortError') ||
     (cause instanceof TengriRequestError &&

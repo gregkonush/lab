@@ -157,6 +157,7 @@ type MockOptions = {
   resumeThreadEventSequence?: number
   resumeThreadItemEventSequences?: Record<string, number>
   resumeThreadErrors?: Array<{ status: number; error: string; code?: string }>
+  resumeThreadTruncatedOnce?: boolean
   resumeThreadRawJson?: string
   resumeThreadRawJsonById?: Record<string, string>
   searchDelays?: Record<string, number>
@@ -762,7 +763,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         resumeThreadResponses += 1
         await route.fulfill({
           contentType: 'application/x-ndjson; charset=utf-8',
-          body: recoveryRecords(String(action.threadId), options),
+          body:
+            options.resumeThreadTruncatedOnce && resumeThreadRequests === 1
+              ? recoveryRecords(String(action.threadId), options).replace('{"type":"complete"}\n', '')
+              : recoveryRecords(String(action.threadId), options),
         })
         return
       case 'send-turn':
@@ -1894,6 +1898,20 @@ test('automatically recovers a saved conversation after a temporary control-plan
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toBeVisible()
+  await page.clock.runFor(1_000)
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+test('automatically recovers a saved conversation after a cleanly truncated history stream', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, { resumeThreadTruncatedOnce: true })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toBeVisible()
   await page.clock.runFor(1_000)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
