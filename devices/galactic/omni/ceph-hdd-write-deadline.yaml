@@ -1,0 +1,6 @@
+apiVersion: v1alpha1
+kind: SysfsConfig
+params:
+  block.sda.queue.iosched.write_expire: '500'
+  block.sdb.queue.iosched.write_expire: '500'
+  block.sdc.queue.iosched.write_expire: '500'
