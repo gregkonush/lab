@@ -125,6 +125,7 @@ identityTest(
     const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
     const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
     const replaySlotsMigration = readFileSync(path.join(root, 'services/tengri/migrations/0003_replay_slots.sql'))
+    const leadershipMigration = readFileSync(path.join(root, 'services/tengri/migrations/0004_leadership_window.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -148,6 +149,7 @@ identityTest(
     const expectedChecksum = createHash('sha256').update(migration).digest()
     const replayChecksum = createHash('sha256').update(replayMigration).digest()
     const replaySlotsChecksum = createHash('sha256').update(replaySlotsMigration).digest()
+    const leadershipChecksum = createHash('sha256').update(leadershipMigration).digest()
     await bffAdmin.query('SET ROLE tengri_migrator')
     await bffAdmin.query(migration.toString())
     await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
@@ -165,13 +167,15 @@ identityTest(
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
       'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(3)
+    expect(versions.rowCount).toBe(4)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
     expect(versions.rows[1]?.version).toBe(2)
     expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
     expect(versions.rows[2]?.version).toBe(3)
     expect(versions.rows[2]?.checksum.equals(replaySlotsChecksum)).toBe(true)
+    expect(versions.rows[3]?.version).toBe(4)
+    expect(versions.rows[3]?.checksum.equals(leadershipChecksum)).toBe(true)
     expect(
       (await bffAdmin.query('SELECT tengri.consume_nonce($1,tengri.now_ms()+5000) AS consumed', [retainedNonce]))
         .rows[0]?.consumed,
@@ -192,6 +196,9 @@ identityTest(
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [replaySlotsChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [leadershipChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {

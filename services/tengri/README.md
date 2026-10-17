@@ -14,6 +14,13 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Controller ownership uses a 60-second SQL and Kubernetes lease, renewed every five seconds. Acquisition and renewal
+measure their local deadline from the start of the attempt, so a delayed commit never grants an extra lease window.
+Acquisition waits within that window for the durable result; an unconfirmed acquisition grants no authority. Renewal
+keeps its in-flight commit until the previously confirmed deadline, then fences all controller work. This covers the
+observed 20.9-second commit tail without changing request lifetimes or synchronous database durability. After a crash,
+ownership expires after 60 seconds; election polling and durable acquisition can add failover time. A known ownership
+loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
 Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
@@ -302,8 +309,9 @@ plaintext credentials are returned only to their caller. Limits and atomic redem
 Replay admission hashes each nonce into one of 64 buckets with 128 fixed slots. An expired slot is claimed with
 `FOR UPDATE SKIP LOCKED`; unrelated nonces can proceed even in the same bucket. Duplicate rejection remains atomic
 across replicas, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
-Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Ofz must apply
-all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Migration
+`0004_leadership_window.sql` installs the 60-second ownership window. Ofz must apply all four checksum-bound migrations
+before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
@@ -425,7 +433,9 @@ The fixture checks that its binary contains the exact native lifecycle test befo
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
 The native terminal probe answers foreground/background color queries and the device-status barrier used by the
-pinned Neovim startup. Query parsing retains split sequences; readiness markers and performance limits remain unchanged.
+pinned Neovim startup. Query parsing retains split sequences. Editor readiness requires a marker rendered in the
+managed editor's buffer, rather than a separate stderr message. The command constructs the marker from character
+codes so shell echo cannot satisfy the probe. The one-second screen limit and all other performance limits remain unchanged.
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime

@@ -586,6 +586,18 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     );
     let first = left.or(right).unwrap();
     assert!(a.require_fence(first).await.is_ok());
+    let remaining: i64 = a
+        .connection()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT expires_at_ms-tengri.now_ms() FROM tengri.runtime_leader WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!((55_000..=60_000).contains(&remaining));
     let wrong = crate::control::Fence {
         owner: Uuid::new_v4(),
         ..first
@@ -603,6 +615,19 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     assert!(!a.renew(first).await.unwrap());
     a.release(first).await.unwrap();
     assert!(b.require_fence(second).await.is_ok());
+    assert!(b.renew(second).await.unwrap());
+    let remaining: i64 = b
+        .connection()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT expires_at_ms-tengri.now_ms() FROM tengri.runtime_leader WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!((55_000..=60_000).contains(&remaining));
     let dsn = std::env::var("TENGRI_DATABASE_DSN")
         .unwrap()
         .replace("user=tengri_controller", "user=tengri_supervisor");
@@ -646,7 +671,7 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
             "42501"
         );
     }
-    tokio::time::sleep(Duration::from_millis(15_100)).await;
+    tokio::time::sleep(crate::leadership::LEASE_DURATION + Duration::from_millis(100)).await;
     assert_eq!(
         supervisor.require_fence(second).await.unwrap_err().code(),
         Code::PermissionDenied
