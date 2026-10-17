@@ -395,7 +395,7 @@ mod tests {
                 default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: crate::crd::MicroVMArchitecture::Amd64,
                 database: database.clone(),
-                auth: Authenticator::fixture(database, "https://proompteng.ai".into()),
+                auth: Authenticator::fixture("https://proompteng.ai".into()),
                 public_url: "https://tengri.example.test".into(),
                 preview_origin: PreviewOrigin::parse(
                     "https://tengri-{session}.example.test".into(),
@@ -420,6 +420,7 @@ mod tests {
                 },
                 &principal,
                 "/proompteng.runtime.v1.MicroVMControlPlane/TerminateTerminal",
+                control.request_audience(),
             )
         };
         let ticket = || {
@@ -430,6 +431,7 @@ mod tests {
                 },
                 &principal,
                 "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket",
+                control.request_audience(),
             )
         };
         let terminated = control.terminate_terminal(terminate()).await;
@@ -493,7 +495,8 @@ mod tests {
                             terminal_id: "terminal-current".into(),
                         },
                         &principal,
-                        "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket"
+                        "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket",
+                        control.request_audience(),
                     ))
                     .await
                     .unwrap_err()

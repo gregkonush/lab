@@ -3,6 +3,8 @@ syntax = "proto3";
 package proompteng.runtime.v1;
 
 service MicroVMControlPlane {
+  // Only the pinned BFF mTLS identity can call this. It conveys no user authority.
+  rpc GetRequestAudience(Empty) returns (RequestAudience);
   rpc CreateAgent(CreateAgentRequest) returns (Agent);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (Agent);
@@ -43,6 +45,7 @@ service MicroVMControlPlane {
 }
 
 message Empty {}
+message RequestAudience { string audience = 1; }
 enum CodexHistoryPart {
   CODEX_HISTORY_PART_UNSPECIFIED = 0;
   CODEX_HISTORY_PART_THREAD = 1;

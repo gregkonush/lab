@@ -15,7 +15,7 @@ rejected; all three consumers migrate in the same paired release.
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
-Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
 verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
 Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
@@ -32,17 +32,22 @@ Every proof that could have executed before a crash therefore expires before the
 The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
 unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
 Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
-Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Schema
-verification requires migration `0003_replay_slots.sql` in the same release as the BFF, controller and supervisor.
-It preserves every unexpired nonce while replacing bucket transaction locks with 128 fixed rows per bucket.
-Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces in the same bucket can commit
-independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
-durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
-Each controller batches up to 32 nonce claims over five milliseconds through one connection and a bounded queue.
-Every claim still uses the shared SQL replay check. Admission waits for the outer transaction to commit and rechecks
-each claim's expiry against the database clock. A malformed claim rolls back its own savepoint, and a failed commit
-admits none of the batch. This leaves the request pool available
-while durable writes wait on storage. The queue never falls back to local replay state.
+The BFF obtains a random process audience through `GetRequestAudience` over the pinned SPIFFE mTLS channel before
+signing each controller request. Signing domain `tengri.ofz.v2` binds that audience as well as the method, body, nonce,
+context and recovery generation. Each controller consumes nonces in one shared process window with 64 buckets of
+128 live entries, expiring at the signed five-second deadline. A restart chooses a different audience; requests
+captured for the previous process or another replica fail before effects, even when their signatures are otherwise
+valid. Replacing only the audience invalidates the HMAC. Live entries are never evicted to admit more work, and no
+request is automatically replayed if its receiver changes between audience lookup and submission. There is no v1
+signature path. Regenerate the independent Rust/TypeScript vector with
+`node services/tengri/fixtures/generate-ofz-request-v2.mjs`.
+The SQL replay schema remains required for the BFF's shared OAuth and one-use capability state. Controller request
+authentication no longer adds a WAL commit before Ofz can evaluate the request.
+Repeated metadata and observation requests reuse an already committed Ofz audit receipt for the exact actor,
+session, grant, origin, workspace/runtime, action, resource, target and recovery generation. Every request still calls
+Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
+cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
+Control submissions retain their separate durable audits and session activity updates.
 Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
 PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
 rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
