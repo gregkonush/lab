@@ -241,6 +241,19 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
 
+Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
+suppress duplicates; only a matching item in saved history retires the local accepted copy.
+
+Local `/workspace/...` links in agent messages open file tabs above the conversation. The sidebar remains visible,
+and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
+shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
+File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
+PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
+Local image links can open image file tabs. Retained image reads use the authenticated,
+owner-authorized file contract, validate raster signatures and size, and disable caching. Missing images show an
+unavailable placeholder. Arbitrary remote Markdown images remain disabled.
+
 Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
 Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed

@@ -6420,6 +6420,27 @@ test('pastes a real clipboard image, previews it, and sends an image-only messag
     .poll(() => mock.actions.find((action) => action.action === 'send-turn'))
     .toMatchObject({ text: '', images: [{ mediaType: 'image/png', data: expected }] })
   await expect(attachments).toHaveCount(0)
+  const message = page.getByRole('article', { name: 'Your message' })
+  await expect(message.getByRole('img', { name: 'Attached image 1' })).toBeVisible()
+  await expect(message.getByRole('img')).toHaveAttribute('src', `data:image/png;base64,${expected}`)
+  const attachmentPath = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png'
+  await page.route('**/api/tengri/attachments?*', (route) =>
+    route.fulfill({ contentType: 'image/png', body: Buffer.from(expected, 'base64') }),
+  )
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'user-message',
+    method: 'item/completed',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: 'image-user-message',
+    approvalId: '',
+    rawJson: '{}',
+    text: `[Local image: ${attachmentPath}]`,
+  })
+  await expect(message).toHaveCount(1)
+  await expect(message.getByRole('img')).toHaveAttribute('src', /api\/tengri\/attachments\?/)
+  await expect(message.getByRole('img')).toBeVisible()
 })
 
 test('retains pasted images and text after a failed send and supports retry', async ({ page }) => {
@@ -6658,4 +6679,155 @@ test('reopens terminally closed chat and Finder streams without reloading the de
   })
   expect(activeUrls).toHaveLength(2)
   expect(activeUrls.some((url) => url.includes('/api/tengri/events?') && url.endsWith('&after=73'))).toBe(true)
+})
+
+test('opens local file references as rendered agent tabs and preserves the chat draft', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'read-file' || action.path !== '/workspace/README.md') return route.fallback()
+    return route.fulfill({
+      json: {
+        result: { path: action.path, content: '# Tengri\n\nA persistent workspace.\n', contentType: 'text/markdown' },
+      },
+    })
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  const composer = tengri.getByRole('textbox', { name: /message/i })
+  await composer.fill('Keep this draft')
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'file-reference',
+    approvalId: '',
+    rawJson: '{}',
+    text: '[Project file](/workspace/README.md:2) and [Missing file](/workspace/missing.md)',
+  })
+  await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
+  await expect(tengri.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  const preview = tengri.getByRole('region', { name: 'File preview' })
+  await expect(preview.getByRole('heading', { name: 'Tengri', exact: true })).toBeVisible()
+  await page.screenshot({ path: 'test-results/agent-file-tab.png' })
+  await expect(preview).toContainText('A persistent workspace.')
+  expect(mock.actions.some((action) => action.action === 'editor-session')).toBe(false)
+  await preview.getByRole('button', { name: 'Source', exact: true }).click()
+  await expect(preview.locator('[data-selected="true"]')).toContainText('2')
+  await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await expect(composer).toHaveValue('Keep this draft')
+  expect((await new AxeBuilder({ page }).include('[role="tablist"]').analyze()).violations).toEqual([])
+  await tengri.getByRole('button', { name: 'Missing file', exact: true }).click()
+  await expect(tengri.getByRole('alert')).toContainText('File not found')
+  await expect(tengri.getByRole('button', { name: 'Retry file preview' })).toBeVisible()
+  await tengri.getByRole('button', { name: 'Close /workspace/missing.md', exact: true }).click()
+  await expect(composer).toHaveValue('Keep this draft')
+  expect(new URL(page.url()).pathname).toBe('/')
+  expect(page.context().pages()).toHaveLength(1)
+})
+
+test('renders workspace images sent by the agent inline and in file tabs', async ({ page }) => {
+  const mock = await mockTengri(page)
+  const png = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
+    'base64',
+  )
+  await page.route('**/api/tengri/attachments?*', (route) => route.fulfill({ contentType: 'image/png', body: png }))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'assistant-text',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'generated-chart',
+    approvalId: '',
+    rawJson: '{}',
+    text: 'Here is your chart.\n\n![Generated chart](/workspace/chart.png)\n\n[Open chart](/workspace/chart.png)',
+  })
+  const image = tengri.getByRole('img', { name: 'Generated chart', exact: true })
+  await expect(image).toBeVisible()
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1)
+  await tengri.getByRole('button', { name: 'Open chart', exact: true }).click()
+  await expect(tengri.getByRole('tab', { name: 'chart.png', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await expect(
+    tengri.getByRole('region', { name: 'File preview' }).getByRole('img', { name: 'chart.png', exact: true }),
+  ).toBeVisible()
+  await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await emitCodexEvent(page, {
+    sequence: 2,
+    kind: 'tool-output',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'generated-output',
+    approvalId: '',
+    rawJson: '{}',
+    text: '/workspace/generated.png',
+  })
+  await expect(tengri.getByRole('img', { name: 'generated.png', exact: true })).toBeVisible()
+  expect(mock.actions.some((action) => action.action === 'editor-session')).toBe(false)
+})
+
+test('shows a branded missing-page screen with a route back to Tengri', async ({ page }) => {
+  await mockTengri(page)
+  const response = await page.goto('/this-tengri-page-does-not-exist')
+  expect(response?.status()).toBe(404)
+  await expect(page.getByRole('heading', { name: 'Nothing at this address.', exact: true })).toBeVisible()
+  expect((await new AxeBuilder({ page }).analyze()).violations).toEqual([])
+  await page.screenshot({ path: 'test-results/tengri-not-found.png' })
+  await page.getByRole('link', { name: 'Back to Tengri', exact: true }).click()
+  await expect(page.getByRole('region', { name: 'Tengri window' })).toBeVisible()
+})
+
+test('retains accepted steering messages when replay recovery has not persisted their echo', async ({ page }) => {
+  const options: MockOptions = {
+    resumeThreadEventSequence: 0,
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  }
+  const mock = await mockTengri(page, options)
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+  await page.goto('/')
+  const prompt = page.getByRole('textbox', { name: 'Steer the current turn', exact: true })
+  await expect(prompt).toBeEnabled()
+  await prompt.fill('Also include the deployment notes.')
+  await page.getByRole('button', { name: 'Steer turn', exact: true }).click()
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'steer-turn').length).toBe(1)
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'user-message',
+    method: 'item/completed',
+    threadId: 'thread-active',
+    turnId: 'turn-active',
+    itemId: 'steering-user',
+    text: 'Also include the deployment notes.',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  const message = page.getByRole('article', { name: 'Your message' })
+  await expect(message).toHaveText('Also include the deployment notes.')
+  options.resumeThreadEventSequence = 100
+  await emitCodexEvent(page, {
+    sequence: 101,
+    kind: 'warning',
+    method: 'tengri/replayWarning',
+    threadId: 'thread-active',
+    turnId: '',
+    itemId: '',
+    text: 'Replay window exceeded',
+    approvalId: '',
+    rawJson: '{}',
+  })
+  await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(2)
+  await expect(prompt).toBeEnabled()
+  await expect(message).toHaveText('Also include the deployment notes.')
+  await expect(message).toHaveCount(1)
 })

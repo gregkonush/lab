@@ -447,6 +447,21 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (
+        String(call.request.path).startsWith('/workspace/.tengri-attachments/') ||
+        call.request.path === '/workspace/chart.png'
+      ) {
+        const content = String(call.request.path).endsWith('.png')
+          ? Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+          : Buffer.from('not an image')
+        callback(null, {
+          path: call.request.path,
+          content,
+          contentType: 'image/png',
+          revision: createHash('sha256').update(content).digest('hex'),
+        })
+        return
+      }
       if (call.request.path === '/workspace/revision.txt' || call.request.path === '/workspace/wrong-revision.txt') {
         const content = Buffer.from('versioned content\n')
         callback(null, {
@@ -1134,6 +1149,25 @@ describe('Tengri gRPC BFF transport', () => {
       cleanupUnavailable = false
       removedAgent = false
     }
+  })
+
+  test('serves only verified retained image attachments through the signed file contract', async () => {
+    const { readCodexAttachment, readWorkspaceImage } = await import('./grpc')
+    const prefix = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111'
+    const image = await readCodexAttachment(identity, 'agent-test', `${prefix}.png`)
+    expect(image.mediaType).toBe('image/png')
+    expect((await readWorkspaceImage(identity, 'agent-test', '/workspace/chart.png')).mediaType).toBe('image/png')
+    expect(await rejection(readWorkspaceImage(identity, 'agent-test', '/etc/private.png'))).toMatchObject({
+      status: 400,
+    })
+    expect(Array.from(image.content)).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    expect(await rejection(readCodexAttachment(identity, 'agent-test', `${prefix}.jpg`))).toMatchObject({ status: 415 })
+    expect(await rejection(readCodexAttachment(identity, 'agent-test', '/workspace/private.png'))).toMatchObject({
+      status: 400,
+    })
+    expect(
+      await rejection(readCodexAttachment(identity, 'agent-test', '/workspace/.tengri-attachments/../private.png')),
+    ).toMatchObject({ status: 400 })
   })
 
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {

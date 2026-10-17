@@ -1,6 +1,12 @@
 import 'server-only'
 
-import type { TengriCodexImage } from './codex-images'
+import {
+  codexImageMatchesMediaType,
+  isCodexAttachmentPath,
+  isWorkspaceImagePath,
+  MAX_CODEX_IMAGE_BYTES,
+  type TengriCodexImage,
+} from './codex-images'
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -282,6 +288,27 @@ export async function listFiles(identity: TengriIdentity, agentId: string, fileP
 }
 
 export async function readFile(identity: TengriIdentity, agentId: string, filePath: string) {
+  const { content, ...response } = await readFileBytes(identity, agentId, filePath)
+  return { ...response, content: decodeUtf8File(content) }
+}
+
+export async function readCodexAttachment(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isCodexAttachmentPath(filePath)) throw new TengriUnavailableError('Invalid attachment path', 400)
+  return readWorkspaceImage(identity, agentId, filePath)
+}
+
+export async function readWorkspaceImage(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isWorkspaceImagePath(filePath)) throw new TengriUnavailableError('Invalid image path', 400)
+  const result = await readFileBytes(identity, agentId, filePath)
+  const lowerPath = filePath.toLowerCase()
+  const mediaType = lowerPath.endsWith('.png') ? 'image/png' : lowerPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
+  if (result.content.length > MAX_CODEX_IMAGE_BYTES || !codexImageMatchesMediaType(mediaType, result.content)) {
+    throw new TengriUnavailableError('Invalid image attachment', 415)
+  }
+  return { content: result.content, mediaType }
+}
+
+async function readFileBytes(identity: TengriIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
@@ -295,7 +322,7 @@ export async function readFile(identity: TengriIdentity, agentId: string, filePa
   }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(content),
+    content,
     contentType: stringValue(response.contentType, 'application/octet-stream'),
     revision,
   }

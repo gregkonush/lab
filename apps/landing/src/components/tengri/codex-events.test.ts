@@ -20,6 +20,7 @@ import {
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
+  retainSubmittedPromptImages,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -62,6 +63,25 @@ describe('Accepted prompt retention', () => {
     const result = reconcileSubmittedPrompts([{ ...previous, id: 'new-user' }], [prompt, second])
     expect([...result.acknowledged]).toEqual(['sent-1'])
     expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
+  })
+
+  test('releases image bytes only for the one-to-one matched canonical input', () => {
+    const imagePrompt = {
+      ...prompt,
+      text: '[Image]',
+      images: [{ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }],
+    }
+    const second = { ...imagePrompt, id: 'sent-2' }
+    const canonical = {
+      id: 'canonical-image',
+      kind: 'user-message' as const,
+      text: '[Local image: /workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png]',
+    }
+    const { matches } = reconcileSubmittedPrompts([canonical], [imagePrompt, second])
+    const retained = retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))
+    expect(retained.images).toBeUndefined()
+    expect(retained.text).toBe(canonical.text)
+    expect(retainSubmittedPromptImages(second, matches.get(second.id))).toBe(second)
   })
 
   test('matches restored image inputs to the accepted image-only prompt', () => {

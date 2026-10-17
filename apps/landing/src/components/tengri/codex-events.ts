@@ -1,3 +1,4 @@
+import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
 
 const MAX_CODEX_EVENTS = 500
@@ -49,7 +50,13 @@ type CodexTextSegment = {
 }
 export type CodexBufferedEvent = TengriCodexEvent & { textSegments?: CodexTextSegment }
 
-export type SubmittedPrompt = { id: string; threadId: string; text: string; previousItemIds: ReadonlySet<string> }
+export type SubmittedPrompt = {
+  images?: readonly TengriCodexImage[]
+  id: string
+  threadId: string
+  text: string
+  previousItemIds: ReadonlySet<string>
+}
 
 export function reconcileSubmittedPrompts(
   items: readonly { id: string; kind: TengriCodexEventKind; text: string }[],
@@ -57,6 +64,7 @@ export function reconcileSubmittedPrompts(
 ) {
   const acknowledged = new Set<string>()
   const matchedItems = new Set<string>()
+  const matches = new Map<string, (typeof items)[number]>()
   const pending: { prompt: SubmittedPrompt; beforeItemId: string | undefined }[] = []
   const normalize = (text: string) => text.replace(/\[Local image: [^\]]*\]/g, '[Image]').trim()
   for (const prompt of submitted) {
@@ -70,11 +78,22 @@ export function reconcileSubmittedPrompts(
     if (match) {
       acknowledged.add(prompt.id)
       matchedItems.add(match.id)
+      matches.set(prompt.id, match)
     } else {
       pending.push({ prompt, beforeItemId: items.find((item) => !prompt.previousItemIds.has(item.id))?.id })
     }
   }
-  return { acknowledged, matchedItemIds: matchedItems, pending }
+  return { acknowledged, matchedItemIds: matchedItems, pending, matches }
+}
+
+export function retainSubmittedPromptImages(prompt: SubmittedPrompt, canonical?: { text: string }): SubmittedPrompt {
+  if (
+    !prompt.images?.length ||
+    !canonical ||
+    codexMessageAttachments(canonical.text).paths.length !== prompt.images.length
+  )
+    return prompt
+  return { ...prompt, text: canonical.text, images: undefined }
 }
 
 export function appendCodexEvent(
@@ -793,6 +812,7 @@ function fileChangesText(value: unknown) {
 }
 
 function toolResultText(item: Record<string, unknown>) {
+  if (item.type === 'imageGeneration' && typeof item.savedPath === 'string') return item.savedPath
   const error = string(record(item.error).message)
   if (error) return error
 
