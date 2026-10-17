@@ -1,39 +1,12 @@
-import { Duration, Effect, Layer, Schedule } from 'effect'
+import { Effect } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
 import { CycleObservabilityError } from './cycle/store'
 import { DatabaseError } from './db/database-error'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
-import { retryLayerAcquisition } from './resource-boundary'
 import { Pipeable } from './pipeable'
 
 type DatabaseOperationFailure = DatabaseError | CycleObservabilityError
-
-const isRetryableSqlAcquisition = (error: unknown): boolean => {
-  if (isSqlError(error)) return error.isRetryable
-  if (!(error instanceof DatabaseError) || error.failure !== 'unavailable' || !isSqlError(error.cause)) return false
-  if (error.cause.isRetryable) return true
-  const reason = error.cause.reason
-  return (
-    reason._tag === 'UnknownError' &&
-    reason.operation === 'connect' &&
-    typeof reason.cause === 'object' &&
-    reason.cause !== null &&
-    'code' in reason.cause &&
-    reason.cause.code === 'ECONNREFUSED'
-  )
-}
-
-export const sqlResource = <A, E, R>(layer: Layer.Layer<A, E, R>): Layer.Layer<A, E, R> =>
-  retryLayerAcquisition(layer, (acquisition) =>
-    acquisition.pipe(
-      Effect.retry({
-        times: 2,
-        schedule: Schedule.spaced(Duration.seconds(1)),
-        while: isRetryableSqlAcquisition,
-      }),
-    ),
-  )
 
 const withinDeadlineDataFirst = <A, R>(
   effect: Effect.Effect<A, OperationalError, R>,
