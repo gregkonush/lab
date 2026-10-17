@@ -97,11 +97,12 @@ including events queued before a switch, and adopt the server thread ID when a d
 Chat and Finder recreate a permanently closed event stream with an exponential retry delay capped at thirty seconds.
 A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
 transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
-The model catalog also retries temporary HTTP and network failures, with a delay capped at thirty seconds.
+The model catalog and saved-conversation startup retry temporary HTTP and network failures, with a delay capped at thirty seconds.
 Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
-an explicit retry; model recovery never submits or retries a turn.
-Catalog reads keep lifecycle controls available and are cancelled when a transition starts. Browser cancellation
-propagates to the gRPC request. A rejected transition lets the catalog recover without closing chat.
+an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
+the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
+Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;

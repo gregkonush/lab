@@ -1885,6 +1885,51 @@ test('cancels a pending model catalog retry when the chat window closes', async 
   expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
 })
 
+test('automatically recovers a saved conversation after a temporary control-plane failure', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 504, error: 'Tengri control plane is unavailable' }],
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toBeVisible()
+  await page.clock.runFor(1_000)
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
+
+test('cancels a pending conversation recovery retry when the chat window closes', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page, {
+    resumeThreadErrors: [{ status: 504, error: 'Tengri control plane is unavailable' }],
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toBeVisible()
+  await tengri.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+  await page.clock.runFor(31_000)
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(1)
+})
+
+for (const status of [403, 404]) {
+  test(`does not automatically retry a conversation recovery denied with status ${status}`, async ({ page }) => {
+    await page.clock.install()
+    const mock = await mockTengri(page, {
+      resumeThreadErrors: [{ status, error: 'Conversation access denied' }],
+    })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+    await page.goto('/')
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    await expect(tengri.getByText('Conversation access denied', { exact: true })).toBeVisible()
+    await page.clock.runFor(31_000)
+    expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(1)
+  })
+}
+
 for (const unavailable of ['model', 'effort']) {
   test(`can replace a saved unavailable ${unavailable} after conversation recovery fails`, async ({ page }) => {
     const mock = await mockTengri(page, {

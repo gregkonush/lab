@@ -92,7 +92,9 @@ export async function runTengriAction<Result>(
   const controller = new AbortController()
   const abortFromCaller = () => controller.abort(options?.signal?.reason)
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
-  scope.active.set(controller, { blocksLifecycle: action.action !== 'codex-models' })
+  scope.active.set(controller, {
+    blocksLifecycle: action.action !== 'codex-models' && action.action !== 'resume-thread',
+  })
   notifyGuestOperationListeners(scope)
   try {
     return await postTengriAction<Result>(action, { ...options, signal: controller.signal })

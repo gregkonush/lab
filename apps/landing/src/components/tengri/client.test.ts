@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import * as Sentry from '@sentry/browser'
+import type { TengriAction } from '@/lib/tengri/types'
 
 import {
   beginTengriLifecycleTransition,
@@ -166,29 +167,34 @@ test('reports a failed history record from an HTTP 200 stream with its response 
 })
 
 describe('Tengri guest operation coordination', () => {
-  test('keeps lifecycle controls available during a catalog read and cancels it on transition', async () => {
-    const agentId = 'catalog-lifecycle'
-    const started = Promise.withResolvers<void>()
-    globalThis.fetch = Object.assign(
-      async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
-        started.resolve()
-        await waitForAbort(init?.signal)
-        throw init?.signal?.reason
-      },
-      { preconnect: originalFetch.preconnect },
-    )
-    const pending = runTengriAction({ action: 'codex-models', agentId }).catch((error: unknown) => error)
-    await started.promise
-    const blocked = getTengriGuestOperationSnapshot(agentId)
-    const releaseTransition = beginTengriLifecycleTransition(agentId)
-    try {
-      expect(await pending).toMatchObject({ name: 'AbortError' })
-      expect(blocked).toBe(false)
-      expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
-    } finally {
-      releaseTransition()
-    }
-  })
+  for (const action of [
+    { action: 'codex-models', agentId: 'catalog-lifecycle' },
+    { action: 'resume-thread', agentId: 'history-lifecycle', threadId: 'thread-existing' },
+  ] satisfies TengriAction[]) {
+    test(`keeps lifecycle controls available during ${action.action} and cancels it on transition`, async () => {
+      const agentId = action.agentId
+      const started = Promise.withResolvers<void>()
+      globalThis.fetch = Object.assign(
+        async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          started.resolve()
+          await waitForAbort(init?.signal)
+          throw init?.signal?.reason
+        },
+        { preconnect: originalFetch.preconnect },
+      )
+      const pending = runTengriAction(action).catch((error: unknown) => error)
+      await started.promise
+      const blocked = getTengriGuestOperationSnapshot(agentId)
+      const releaseTransition = beginTengriLifecycleTransition(agentId)
+      try {
+        expect(await pending).toMatchObject({ name: 'AbortError' })
+        expect(blocked).toBe(false)
+        expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
+      } finally {
+        releaseTransition()
+      }
+    })
+  }
 
   test('blocks new guest requests and cancels in-flight work before a lifecycle transition', async () => {
     const agentId = 'agent-lifecycle'
