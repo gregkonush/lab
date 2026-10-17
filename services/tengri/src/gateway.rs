@@ -507,11 +507,12 @@ async fn preview_bootstrap(
     if let Err(error) = state.preview_access(&session, "").await {
         return status_response(error.code(), error.message());
     }
-    let lifetime = session
+    let remaining = session
         .expires_at
         .duration_since(std::time::SystemTime::now())
         .unwrap_or_default()
-        .as_secs();
+        .min(Duration::from_secs(30 * 60));
+    let lifetime = remaining.as_secs();
     let cookie = format!(
         "{PREVIEW_COOKIE}={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={lifetime}",
         session.token,
@@ -532,6 +533,7 @@ async fn preview_bootstrap(
             "path": session.initial_path,
             "fragment": session.initial_fragment,
             "expiresAt": chrono::DateTime::<chrono::Utc>::from(session.expires_at).to_rfc3339(),
+            "expiresInMs": remaining.as_millis(),
         })
         .to_string(),
     )
@@ -1646,8 +1648,18 @@ mod tests {
         let body = to_bytes(response.into_body(), 1_024)
             .await
             .expect("preview bootstrap body");
+        let mut payload =
+            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON");
+        let remaining = payload
+            .as_object_mut()
+            .expect("bootstrap object")
+            .remove("expiresInMs")
+            .expect("relative lease lifetime")
+            .as_u64()
+            .expect("integer lifetime");
+        assert!((1..=30 * 60_000).contains(&remaining));
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON"),
+            payload,
             serde_json::json!({
                 "leaseId": session.lease_id,
                 "path": "/app?mode=dev", "fragment": "#editor",

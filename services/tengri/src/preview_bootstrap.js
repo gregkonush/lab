@@ -31,10 +31,10 @@
         typeof payload.leaseId !== 'string' ||
         typeof payload.path !== 'string' ||
         typeof payload.fragment !== 'string' ||
-        typeof payload.expiresAt !== 'string'
+        typeof payload.expiresInMs !== 'number'
       )
         throw new Error('preview lease missing')
-      send({ type: 'renewed', leaseId: payload.leaseId, expiresAt: payload.expiresAt })
+      send({ type: 'renewed', leaseId: payload.leaseId, expiresInMs: payload.expiresInMs })
       // A renewal frame only refreshes the HttpOnly cookie. The visible application stays mounted.
       if (nonce) return
       window.location.replace(`${window.location.origin}${payload.path}${payload.fragment}`)

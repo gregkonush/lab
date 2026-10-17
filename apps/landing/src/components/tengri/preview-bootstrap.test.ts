@@ -6,7 +6,7 @@ const sessionId = 'a'.repeat(24)
 const origin = `https://tengri-${sessionId}.proompteng.ai`
 const desktopOrigin = 'https://proompteng.ai'
 const leaseId = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
-const expiresAt = new Date(Date.now() + 60_000).toISOString()
+const expiresInMs = 60_000
 
 async function bootstrap(name: string, url: string, payload: unknown, ok = true) {
   const navigations: string[] = []
@@ -40,7 +40,7 @@ test('normal preview bootstraps a protected cookie before navigating to the exac
     leaseId,
     path: '/app?mode=dev',
     fragment: '#editor',
-    expiresAt,
+    expiresInMs,
   })
   expect(result.events).toEqual(['scrub', 'redeem'])
   expect(result.presented).toEqual({ token: 'private-token' })
@@ -48,7 +48,7 @@ test('normal preview bootstraps a protected cookie before navigating to the exac
   expect(result.messages).toEqual([
     {
       target: desktopOrigin,
-      data: { channel: 'tengri-preview-lease-v1', sessionId, nonce: '', type: 'renewed', leaseId, expiresAt },
+      data: { channel: 'tengri-preview-lease-v1', sessionId, nonce: '', type: 'renewed', leaseId, expiresInMs },
     },
   ])
 })
@@ -61,14 +61,21 @@ test('renewal acknowledges only its nonce and does not load another application 
       leaseId,
       path: '/',
       fragment: '',
-      expiresAt,
+      expiresInMs,
     },
   )
   expect(result.navigations).toEqual([])
   expect(result.messages).toEqual([
     {
       target: desktopOrigin,
-      data: { channel: 'tengri-preview-lease-v1', sessionId, nonce: 'own-frame', type: 'renewed', leaseId, expiresAt },
+      data: {
+        channel: 'tengri-preview-lease-v1',
+        sessionId,
+        nonce: 'own-frame',
+        type: 'renewed',
+        leaseId,
+        expiresInMs,
+      },
     },
   ])
 })
@@ -110,7 +117,7 @@ test('root-relative preview paths cannot turn the bootstrap into a cross-origin 
     leaseId,
     path: '//other.example/path',
     fragment: '#editor',
-    expiresAt,
+    expiresInMs,
   })
   expect(new URL(result.navigations[0]).origin).toBe(origin)
   expect(new URL(result.navigations[0]).pathname).toBe('//other.example/path')

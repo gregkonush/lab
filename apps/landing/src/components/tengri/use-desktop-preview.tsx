@@ -41,6 +41,7 @@ export function useDesktopPreview({
     let timer: number | undefined
     let acknowledged = false
     let leaseId: string | null = null
+    let issuedAt = 0
     let reconnect = false
     const revoke = (value: TengriPreviewSession) =>
       runTengriAction(
@@ -82,6 +83,7 @@ export function useDesktopPreview({
       setError('')
       inFlight = true
       try {
+        issuedAt = performance.now()
         const value = await runTengriAction<TengriPreviewSession>(
           { action, agentId, windowId, renewal: acknowledged && !ensureRunning },
           controller.signal,
@@ -138,15 +140,18 @@ export function useDesktopPreview({
       }
       if (
         message.type !== 'renewed' ||
-        !('expiresAt' in message) ||
-        typeof message.expiresAt !== 'string' ||
+        !('expiresInMs' in message) ||
+        typeof message.expiresInMs !== 'number' ||
+        !Number.isFinite(message.expiresInMs) ||
+        message.expiresInMs <= 0 ||
+        message.expiresInMs > 30 * 60_000 ||
         !('leaseId' in message) ||
         typeof message.leaseId !== 'string' ||
         !/^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/.test(message.leaseId)
       )
         return
-      const remaining = Date.parse(message.expiresAt) - Date.now()
-      if (!Number.isFinite(remaining) || remaining <= 0 || remaining > 30 * 60_000) return
+      const remaining = message.expiresInMs - (performance.now() - issuedAt)
+      if (remaining <= 0) return
       if (acknowledged && (reconnect || leaseId !== message.leaseId)) setConnectionGeneration((value) => value + 1)
       leaseId = message.leaseId
       reconnect = false
