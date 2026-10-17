@@ -1,6 +1,14 @@
+import { cryptoMarketFixture } from './testing/crypto-market-fixture'
+import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { adverseQuotePrices } from './observe-composition/intraday-market-data'
+import { jevEntryQuoteExclusion } from './jev/trading-signals'
+import { jevMarketForSymbol } from './jev/markets'
+import { JevEntryExclusion } from './jev/batch'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
 import { canonicalHashV1 } from './hash'
 import {
@@ -74,7 +82,8 @@ const position = (
   positionObservedAt = brokerObservedAt,
   positionAccountId = accountId,
 ): Position => ({
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: ((BigInt(quantityAtoms) * BigInt('50000000')) / 1_000_000_000n).toString(),
   accountId: positionAccountId,
   symbol,
   quantityAtoms,
@@ -265,6 +274,89 @@ const planSuccess = (input: TargetPlannerInput): TargetPlanResult => {
   if (Result.isFailure(result)) throw result.failure
   return result.success
 }
+
+test('property: the shared equity and crypto planner obeys quantity precision, liquidity and available capital', () => {
+  checkProperty(
+    'target-planner-capital-and-precision',
+    fc.property(
+      fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+      fc.bigInt({ min: 1_000_000n, max: 100_000_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      fc.bigInt({ min: 1n, max: 100_000_000n }),
+      (symbol, priceUnits, desiredLots, capacityLots) => {
+        const increment = symbol === 'AAPL' ? 1_000_000_000n : 1n
+        const price = priceUnits * 100n
+        const capital = (desiredLots * increment * price + 999_999_999n) / 1_000_000_000n
+        const capacity = capacityLots * increment
+        const baseInput = fixture({
+          quoteBound: true,
+          positions: [],
+          targetWeights: { [symbol]: 1 },
+          equityMicros: capital.toString(),
+          allocationCapitalMicros: capital.toString(),
+          buyingPowerMicros: capital.toString(),
+          priceMicros: { [symbol]: price.toString() },
+          maximumBuyQuantityAtoms: { [symbol]: capacity.toString() },
+          maximumSellQuantityAtoms: { [symbol]: '0' },
+        })
+        const input = {
+          ...baseInput,
+          precision: {
+            ...baseInput.precision,
+            quantityIncrementAtoms: increment.toString(),
+            minimumBuyNotionalMicros: '1',
+          },
+        }
+        const saved = JSON.stringify(input)
+        const planned = planSuccess(input)
+        expect(planned.status).toBe(TargetPlanStatus.Planned)
+        expect(planned.intentTargets).toHaveLength(1)
+        const quantity = BigInt(planned.intentTargets[0]?.quantityAtoms ?? '0')
+        const notional = (quantity * price + 999_999_999n) / 1_000_000_000n
+        expect(quantity).toBeGreaterThan(0n)
+        expect(quantity % increment).toBe(0n)
+        expect(quantity).toBeLessThanOrEqual(capacity)
+        expect(notional).toBeLessThanOrEqual(capital)
+        expect(planned.requiredReferenceBuyNotionalMicros).toBe(notional.toString())
+        expect(BigInt(planned.residualBuyingPowerMicros) + notional).toBe(capital)
+        expect(planSuccess(input)).toEqual(planned)
+        expect(JSON.stringify(input)).toBe(saved)
+        const tampered = { ...planned, requiredReferenceBuyNotionalMicros: (notional + 1n).toString() }
+        expect(Result.isFailure(decodeTargetPlanResult(tampered))).toBe(true)
+      },
+    ),
+  )
+})
+
+test('property: exhausted buying power and the exact cutoff cannot emit a buy intent', () => {
+  checkProperty(
+    'target-planner-submit-boundaries',
+    fc.property(fc.integer({ min: 1, max: 1_000_000 }), fc.integer({ min: 0, max: 60_000 }), (price, lateMs) => {
+      const options = {
+        quoteBound: true,
+        positions: [],
+        targetWeights: { AAPL: 1 },
+        priceMicros: { AAPL: String(BigInt(price) * 1_000_000n) },
+        equityMicros: '10000000000000',
+        allocationCapitalMicros: '10000000000000',
+      }
+      const noCash = planSuccess(fixture({ ...options, buyingPowerMicros: '0' }))
+      expect(noCash.status).toBe(TargetPlanStatus.Blocked)
+      expect(noCash.reason).toBe(TargetPlanReason.InsufficientBuyingPower)
+      expect(noCash.intentTargets).toEqual([])
+      const late = planSuccess(
+        fixture({
+          ...options,
+          maximumInputAgeMs: 600_000,
+          observedAt: new Date(Date.parse(submissionCutoffAt) + lateMs).toISOString(),
+        }),
+      )
+      expect(late.status).toBe(TargetPlanStatus.Blocked)
+      expect(late.reason).toBe(TargetPlanReason.SubmissionCutoffReached)
+      expect(late.intentTargets).toEqual([])
+    }),
+  )
+})
 
 describe('causal target planner', () => {
   test('permits an empty quote-bound no-trade plan only for a flat account without unresolved orders', () => {
@@ -732,8 +824,8 @@ describe('causal target planner', () => {
 
     expect(replay).toEqual(first)
     expect(reordered).toEqual(first)
-    expect(first.inputHash).toBe('9d35680655cc89f9d102a30cfa86c03a5b081be1d13c9d7f644e82e8c62cc2ab')
-    expect(first.outputHash).toBe('b7058e2114508e1774aa0ab5ccfdd14ef206ea4a549b77f22caade391b49e3ab')
+    expect(first.inputHash).toBe('edc1cbc540f7d2b2d7a3e7fac81a94f665a39adfc2ea0506351272c98d9e5c0d')
+    expect(first.outputHash).toBe('8bd29a84d7cafa238e3ac4163eab729402c2bf6d74f58c602d5fd631baa17b81')
     expect(changedDecision.inputHash).not.toBe(first.inputHash)
     expect(changedDecision.outputHash).not.toBe(first.outputHash)
     expect(changedDecision.intentTargets.every((intent) => intent.decisionHash === hash('4'))).toBe(true)
@@ -1187,4 +1279,79 @@ describe('causal target planner', () => {
       expect(String(result.failure.cause)).toContain('well-formed Unicode')
     }
   })
+})
+
+const allocatedEntryQuoteFixture = cryptoMarketFixture().snapshot.latestQuotes['BTC/USD']
+if (allocatedEntryQuoteFixture === undefined) throw new Error('Expected native quote fixture')
+const entrySizingSymbolArbitrary = fc.constantFrom('AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD')
+
+test('property: capital sizing is invariant to displayed quote size and never exceeds its allocation', () => {
+  checkProperty(
+    'capital-entry-sizing',
+    fc.property(
+      entrySizingSymbolArbitrary,
+      fc.integer({ min: 1_000_000, max: 1_000_000_000_000 }),
+      fc.integer({ min: 1, max: 200_000 }),
+      fc.integer({ min: 1, max: 100_000 }),
+      fc.integer({ min: 1, max: 100_000_000 }),
+      (symbol, capital, weightPpm, price, sizeAtoms) => {
+        const quote = {
+          ...allocatedEntryQuoteFixture,
+          symbol,
+          bidPrice: price,
+          askPrice: price + 0.01,
+          askSize: sizeAtoms / 1_000_000_000,
+        }
+        const input = {
+          snapshot: { latestQuotes: { [symbol]: quote } },
+          targetWeights: { [symbol]: weightPpm / 1_000_000 },
+          capitalMicros: String(capital),
+          precision: { quantityIncrementAtoms: '1', priceIncrementMicros: '100', minimumBuyNotionalMicros: '1000000' },
+        }
+        const first = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol])).askPriceMicros,
+          }),
+        )
+        const changedQuote = { ...quote, askSize: quote.askSize * 1000 }
+        const other = Result.getOrThrow(
+          maximumAllocatedBuyQuantities({
+            ...input,
+            askPriceMicros: Result.getOrThrow(
+              adverseQuotePrices({ latestQuotes: { [symbol]: changedQuote } }, [symbol]),
+            ).askPriceMicros,
+          }),
+        )
+        expect(first).toEqual(other)
+        const quantity = BigInt(first[symbol] ?? '0')
+        const prices = Result.getOrThrow(adverseQuotePrices(input.snapshot, [symbol]))
+        expect((quantity * BigInt(prices.askPriceMicros[symbol] ?? '0')) / 1_000_000_000n).toBeLessThanOrEqual(
+          (BigInt(capital) * BigInt(weightPpm)) / 1_000_000n,
+        )
+        expect(quantity % (symbol === 'AAPL' ? 1_000_000_000n : 1n)).toBe(0n)
+      },
+    ),
+  )
+})
+
+test('property: one quote gate enforces the exact market spread boundary and positive liquidity', () => {
+  checkProperty(
+    'market-entry-spread',
+    fc.property(entrySizingSymbolArbitrary, fc.integer({ min: 0, max: 100 }), (symbol, spreadBps) => {
+      const quote = {
+        ...allocatedEntryQuoteFixture,
+        symbol,
+        bidPrice: 10000 - spreadBps / 2,
+        askPrice: 10000 + spreadBps / 2,
+        bidSize: 1,
+        askSize: 1,
+      }
+      const exclusion = Result.getOrThrow(jevEntryQuoteExclusion(quote))
+      expect(exclusion).toBe(
+        spreadBps > jevMarketForSymbol(symbol).maximumEntrySpreadBps ? JevEntryExclusion.Spread : null,
+      )
+      expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askSize: 0 }))).not.toBeNull()
+    }),
+  )
 })

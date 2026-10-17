@@ -1,7 +1,8 @@
 import { exchangeSessions } from '../market-hours'
-import { jevBenchmarkSymbol } from './markets'
+import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
+import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { Result } from 'effect'
 
@@ -24,17 +25,16 @@ import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import { jevEntryEconomics, JevEntryEconomicsAssessment } from './entry-economics'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
-export const jevEntryQuoteExclusion = (
-  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
-  maximumSpreadBps: number,
-) =>
+export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
   Result.gen(function* () {
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    if ((ask - bid) * 20_000n > BigInt(maximumSpreadBps) * (ask + bid)) return JevEntryExclusion.Spread
+    if ((ask - bid) * 20_000n > BigInt(jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps) * (ask + bid))
+      return JevEntryExclusion.Spread
     if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
     return null
   })
@@ -73,7 +73,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
-    if (rolling === undefined || quote === undefined || trade === undefined || bars.length !== 30)
+    if (rolling === undefined || quote === undefined || trade === undefined || bars.length === 0)
       return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
     const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
     const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
@@ -96,24 +96,33 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
               { status: scalar.status, value: scalar.value === null ? null : Number(scalar.value) / 1_000_000 },
             ]),
           )
-    const closes = bars.map((bar) => bar.close)
     const first = bars[0]
     const last = bars.at(-1)
     if (first === undefined || last === undefined) return yield* unavailable('Jev rolling signal window is empty')
     const returnsBps = Object.fromEntries(
       [1, 5, 15, 30].map((minutes) => {
-        const reference = bars.at(-minutes)
+        const referenceAt = Date.parse(manifest.rangeEndAt) - minutes * 60_000
+        const reference = bars.find((bar) => Date.parse(bar.eventAt) === referenceAt)
         return [String(minutes), reference === undefined ? null : (last.close / reference.open - 1) * 10_000]
       }),
     )
-    const earlyVolume = bars.slice(0, 15).reduce((total, bar) => total + bar.volume, 0)
-    const recentVolume = bars.slice(15).reduce((total, bar) => total + bar.volume, 0)
-    const minuteReturns = closes.slice(1).map((close, index) => Math.log(close / (closes[index] ?? close)))
+    const midpoint = Date.parse(manifest.rangeEndAt) - 15 * 60_000
+    const earlyBars = bars.filter((bar) => Date.parse(bar.eventAt) < midpoint)
+    const recentBars = bars.filter((bar) => Date.parse(bar.eventAt) >= midpoint)
+    const earlyVolume = earlyBars.reduce((total, bar) => total + bar.volume, 0)
+    const recentVolume = recentBars.reduce((total, bar) => total + bar.volume, 0)
+    const minuteReturns = bars.flatMap((bar, index) => {
+      const previous = bars[index - 1]
+      return previous !== undefined && Date.parse(bar.eventAt) - Date.parse(previous.eventAt) === 60_000
+        ? [Math.log(bar.close / previous.close)]
+        : []
+    })
     const mean = minuteReturns.reduce((sum, value) => sum + value, 0) / minuteReturns.length
     const volatilityBps =
-      Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
+      minuteReturns.length === 0
+        ? null
+        : Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
     const values = rollingValues(rolling.value)
-    if (values === null) return yield* unavailable('Rolling values are not ready')
     return {
       prices: {
         reference: yield* priceNumberToMicros(values.reference),
@@ -126,7 +135,8 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
       state: {
         symbol,
         bars1m: bars.map(({ open, high, low, close, volume, vwap, tradeCount }, index) => ({
-          minuteBeforeWindowEnd: 30 - index,
+          minuteBeforeWindowEnd:
+            (Date.parse(manifest.rangeEndAt) - Date.parse(bars[index]?.eventAt ?? first.eventAt)) / 60_000,
           open,
           high,
           low,
@@ -143,7 +153,13 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
           ageMs: quoteAgeMs,
         },
         latestTrade: { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
-        rolling30m: {
+        priceWindow: {
+          contextStartAt: manifest.rangeStartAt,
+          contextEndAt: manifest.rangeEndAt,
+          referenceAt: first.eventAt,
+          observedBarCount: bars.length,
+          expectedBarCount: (Date.parse(manifest.rangeEndAt) - Date.parse(manifest.rangeStartAt)) / 60_000,
+          missingMinuteAt: missingMinuteBars(bars, manifest.rangeStartAt, manifest.rangeEndAt),
           referencePrice: values.reference,
           rangeHigh: values.high,
           rangeLow: values.low,
@@ -151,15 +167,39 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
         },
         returnsBps,
         minuteLogReturnVolatilityBps: volatilityBps,
-        recent15mVolumeToPrior15m: earlyVolume === 0 ? null : recentVolume / earlyVolume,
+        recent15mVolumeToPrior15m:
+          earlyBars.length !== 15 || recentBars.length !== 15 || earlyVolume === 0 ? null : recentVolume / earlyVolume,
         technicalIndicators: technicalValues,
         technicalAvailability: recordedTechnicalValues === undefined ? 'UNAVAILABLE' : 'RECORDED',
       },
     }
   })
 
-/** Exact 30-minute absolute/relative momentum, before any model output is available. */
-export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
+const commonMomentumPrices = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  benchmarkSymbol: string,
+  candidate: Result.Result.Success<ReturnType<typeof jevSignalFor>>,
+  benchmark: Result.Result.Success<ReturnType<typeof jevSignalFor>>,
+) =>
+  Result.gen(function* () {
+    const candidateBars = snapshot.bars
+      .filter((bar) => bar.symbol === symbol)
+      .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
+    const benchmarkBars = snapshot.bars.filter((bar) => bar.symbol === benchmarkSymbol)
+    const reference = candidateBars.find((bar) => benchmarkBars.some((entry) => entry.eventAt === bar.eventAt))
+    const benchmarkReference = benchmarkBars.find((bar) => bar.eventAt === reference?.eventAt)
+    if (reference === undefined || benchmarkReference === undefined)
+      return yield* unavailable('Relative momentum requires a common actual observed minute')
+    return {
+      referenceAt: reference.eventAt,
+      candidate: { ...candidate.prices, reference: yield* priceNumberToMicros(reference.open) },
+      benchmark: { ...benchmark.prices, reference: yield* priceNumberToMicros(benchmarkReference.open) },
+    }
+  })
+
+/** Candidate and benchmark returns use the same actual observed reference minute. */
+export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
   Result.gen(function* () {
     const signals = []
     for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
@@ -171,12 +211,13 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, pro
         continue
       const candidate = yield* jevSignalFor(snapshot, symbol)
       const benchmark = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(symbol))
-      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+      const common = yield* commonMomentumPrices(snapshot, symbol, jevBenchmarkSymbol(symbol), candidate, benchmark)
+      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
       const quote = snapshot.latestQuotes[symbol]
       if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
       if (
-        (yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)) === null &&
-        candidate.prices.bid + candidate.prices.ask > 2n * candidate.prices.reference &&
+        (yield* jevEntryQuoteExclusion(quote)) === null &&
+        common.candidate.bid + common.candidate.ask > 2n * common.candidate.reference &&
         excessReturn.numerator > 0n
       )
         signals.push({ symbol, excessReturn })
@@ -232,10 +273,23 @@ export const jevTradingQuestions = {
       'Strongly aligned evidence across the available signal groups',
     ],
   },
+  net_economics: {
+    type: 'choice',
+    instructions:
+      'Does the current evidence support the exit bid exceeding entryEconomics.breakEvenExitBidUsd within the stated horizon? This threshold includes the observed spread, bounded adverse entry pricing and estimated transaction fees. Assess magnitude as well as direction. Upward momentum alone is insufficient. Use uncertain when evidence cannot support this magnitude or entryEconomics is null. Operating costs are unknown. Model assessments are uncalibrated and cannot establish realized profit.',
+    criteria: {
+      [JevEntryEconomicsAssessment.Supported]:
+        'The available evidence supports upward continuation beyond the explicit transaction-cost break-even bid within the holding horizon.',
+      [JevEntryEconomicsAssessment.NotSupported]:
+        'The likely move is adverse or too small to exceed the explicit transaction-cost break-even bid.',
+      [JevEntryEconomicsAssessment.Uncertain]:
+        'The evidence does not support judging whether the move can cover the explicit transaction costs.',
+    },
+  },
   action: {
     type: 'choice',
     instructions:
-      'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
+      'Given the candidate, benchmark and explicit entry economics, which long-only entry decision is best supported for the stated horizon? Enter requires both a supported setup and evidence for exceeding the transaction-cost break-even exit bid. Use wait or avoid when costs outweigh the supported move or net economics are uncertain. Deterministic code separately checks permission, sizing and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
@@ -250,7 +304,7 @@ export const jevManagementQuestions = {
   action: {
     type: 'choice',
     instructions:
-      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Use netLiquidationPnlUsd, actual entryFeesUsd and estimatedExitFeesUsd when assessing the economics. Entry fees are sunk costs, so a loss or an unmet break-even price is not a reason to postpone an otherwise justified exit. Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
     criteria: {
       hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
       exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
@@ -269,7 +323,8 @@ const requestFromSnapshot = (
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
     const candidate = yield* jevSignalFor(snapshot, symbol)
     const benchmark = yield* jevSignalFor(snapshot, benchmarkSymbol)
-    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+    const common = yield* commonMomentumPrices(snapshot, symbol, benchmarkSymbol, candidate, benchmark)
+    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
       ? undefined
@@ -283,15 +338,21 @@ const requestFromSnapshot = (
         (entry) => entry.symbol === symbol && BigInt(entry.quantityAtoms) > 0n,
       )
       const firstFill = native.portfolio.entryFills[0]
-      if (
-        held === undefined ||
-        held.schemaVersion !== 'bayn.position.v2' ||
-        firstFill === undefined ||
-        BigInt(held.costBasisMicros) <= 0n
-      )
+      if (held === undefined || firstFill === undefined || BigInt(held.costBasisMicros) <= 0n)
         return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
       const cost = BigInt(held.costBasisMicros)
-      const pnl = (candidate.prices.bid * BigInt(held.quantityAtoms)) / 1_000_000_000n - cost
+      const quantity = BigInt(held.quantityAtoms)
+      const proceeds = (candidate.prices.bid * quantity) / 1_000_000_000n
+      const pnl = proceeds - cost
+      const entryFees =
+        native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n) +
+        BigInt(native.portfolio.entryInventoryDebit.costBasisMicros)
+      const feeBps = BigInt(jevMarketForSymbol(symbol).estimatedTakerFeeBps)
+      const exitFees = (proceeds * feeBps + 9999n) / 10000n
+      const netPnl = pnl - entryFees - exitFees
+      const acquisitionCost = cost + entryFees
+      const breakEvenProceeds = (acquisitionCost * 10000n + 9999n - feeBps) / (10000n - feeBps)
+      const breakEvenBid = (breakEvenProceeds * 1_000_000_000n + quantity - 1n) / quantity
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {
         symbol,
@@ -304,8 +365,11 @@ const requestFromSnapshot = (
         remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
         unrealizedPnlAtBidUsd: Number(pnl) / 1_000_000,
         unrealizedPnlAtBidBps: Number((pnl * 10_000n) / cost),
-        entryFeesUsd:
-          Number(native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n)) / 1_000_000,
+        entryFeesUsd: Number(entryFees) / 1_000_000,
+        estimatedExitFeesUsd: Number(exitFees) / 1_000_000,
+        netLiquidationPnlUsd: Number(netPnl) / 1_000_000,
+        netLiquidationPnlBps: Number((netPnl * 10_000n) / acquisitionCost),
+        breakEvenExitBidUsd: Number(breakEvenBid) / 1_000_000,
       }
     }
     return yield* prepareJevRequest({
@@ -320,6 +384,25 @@ const requestFromSnapshot = (
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
         position,
+        entryEconomics:
+          native.portfolio.purpose === JevPurpose.Entry
+            ? yield* jevEntryEconomics({
+                protocol: native.protocol,
+                symbol,
+                bidMicros: candidate.prices.bid,
+                askMicros: candidate.prices.ask,
+                capitalMicros: native.portfolio.brokerState.account.equityMicros,
+              })
+            : null,
+        execution: {
+          orderType: 'LIMIT',
+          timeInForce: continuous ? 'IOC' : 'DAY',
+          extendedHours: !continuous,
+          sizingPolicy: native.protocol.entrySizingPolicy,
+          maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
+          estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          estimatedRoundTripFeesBps: 2 * jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+        },
         units: {
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
@@ -346,7 +429,13 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
         benchmark: benchmark.state,
-        relativeSignals: metrics,
+        relativeSignals: {
+          ...metrics,
+          referenceAt: common.referenceAt,
+          horizonMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
+          benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
+        },
       },
       questions: native.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
     })
@@ -404,7 +493,7 @@ const batchFromObservation = (
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
     const momentumCandidates =
       observation.portfolio.purpose === JevPurpose.Entry
-        ? new Set((yield* jevMomentumEntryCandidates(snapshot, observation.protocol)).map(({ symbol }) => symbol))
+        ? new Set((yield* jevMomentumEntryCandidates(snapshot)).map(({ symbol }) => symbol))
         : null
     const candidates = []
     for (const symbol of manifest.candidateSymbols) {
@@ -429,7 +518,7 @@ const batchFromObservation = (
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {
-          const entryExclusion = yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)
+          const entryExclusion = yield* jevEntryQuoteExclusion(quote)
           if (entryExclusion !== null) {
             candidates.push({
               symbol,

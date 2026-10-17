@@ -229,15 +229,16 @@ const makeStore = (control: StoreControl, hasAccountBaseline = true): TestStore 
       return valuation
     }),
   hasAccountBaseline: () => Effect.succeed(hasAccountBaseline),
-  recoverFees: () => Effect.void,
   retainCashReporting: () => Effect.void,
   bindings: () => Effect.succeed([{ intentId: hash('intent'), clientOrderId: order(0).clientOrderId }]),
-  reconcile: (snapshot) =>
-    Effect.sync(() => {
-      control.writes += 1
-      control.reconciliations.push(snapshot)
-      return report(snapshot)
-    }),
+  reconcile: (_, snapshot) =>
+    snapshot.pipe(
+      Effect.map((snapshot) => {
+        control.writes += 1
+        control.reconciliations.push(snapshot)
+        return { snapshot, persisted: report(snapshot) }
+      }),
+    ),
   restrictAuthority: (reason) =>
     Effect.sync(() => {
       control.restrictions.push(reason)
@@ -635,7 +636,7 @@ describe('execution reconciliation loop', () => {
     expect(failure).toMatchObject({
       _tag: 'ReconciliationError',
       operation: 'normalization',
-      message: `execution requires extended hours disabled for ${malformedOrder.brokerOrderId}`,
+      message: `extended hours require a stock LIMIT with DAY or GTC for ${malformedOrder.brokerOrderId}`,
       failure: {
         _tag: 'Normalization',
         stage: 'order',
@@ -1149,12 +1150,10 @@ describe('execution reconciliation loop', () => {
       value: (input) => insideTransaction(baseStore.value(input)),
       hasAccountBaseline: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.hasAccountBaseline(id))),
-      recoverFees: () =>
-        writerFence.transaction(insideTransaction(Effect.void)).pipe(Effect.mapError(() => persistenceFailure)),
       bindings: (id) =>
         Effect.sync(() => expect(transactionDepth).toBe(0)).pipe(Effect.andThen(baseStore.bindings(id))),
-      reconcile: () =>
-        writerFence.transaction(insideTransaction(Effect.void)).pipe(
+      reconcile: (_, snapshot) =>
+        writerFence.transaction(insideTransaction(snapshot)).pipe(
           Effect.andThen(writerFence.transaction(insideTransaction(Effect.fail(persistenceFailure)))),
           Effect.mapError(() => persistenceFailure),
         ),
@@ -1168,7 +1167,7 @@ describe('execution reconciliation loop', () => {
       const failures = exit.cause.reasons.flatMap((reason) => (Cause.isFailReason(reason) ? [reason.error] : []))
       expect(failures).toEqual([persistenceFailure])
     }
-    expect(transactionEvents).toEqual(Array.from({ length: 5 }, () => ['begin', 'end']).flat())
+    expect(transactionEvents).toEqual(Array.from({ length: 3 }, () => ['begin', 'end']).flat())
     expect(transactionDepth).toBe(0)
     expect(control.restrictions).toEqual(['reconciliation pass incomplete'])
   })

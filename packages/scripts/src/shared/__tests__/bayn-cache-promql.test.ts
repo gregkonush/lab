@@ -69,7 +69,18 @@ test('Bayn dashboard evaluates replica health, telemetry freshness, waits and op
   const setLatency = panels
     .flatMap((panel) => panel.targets)
     .find((target) => target.legendFormat === 'SET command')?.expr
-  if (replica === undefined || waits === undefined || failures === undefined || setLatency === undefined)
+  const snapshotBudget = panels.find((panel) => panel.title === 'Age / limit')?.targets[0]?.expr
+  const cycles = panels.find((panel) => panel.title === 'Cycles / min')?.targets[0]?.expr
+  const outcomes = panels.find((panel) => panel.title === 'Critical-path outcomes / min')?.targets
+  if (
+    replica === undefined ||
+    waits === undefined ||
+    failures === undefined ||
+    setLatency === undefined ||
+    snapshotBudget === undefined ||
+    cycles === undefined ||
+    outcomes === undefined
+  )
     throw new Error('Required Bayn dashboard query is missing')
   const cacheSeries = (metric: string, pod: string, value: number) => ({
     series: `${metric}{job="bayn-valkey",namespace="bayn",pod="${pod}"}`,
@@ -225,5 +236,101 @@ test('Bayn dashboard evaluates replica health, telemetry freshness, waits and op
       },
     ],
   })
+  const pullSeries = (metric: string, instance: string, values: string) => ({
+    series: `${metric}{job="bayn",namespace="bayn",service="bayn",instance="${instance}"}`,
+    values,
+  })
+  for (const observation of [
+    { name: 'snapshot within its configured budget', timestamp: 540, threshold: 120, up: 1, expected: 0.5 },
+    { name: 'stale snapshot exceeds its configured budget', timestamp: 360, threshold: 120, up: 1, expected: 2 },
+    { name: 'future snapshot remains unknown', timestamp: 601, threshold: 120, up: 1, expected: null },
+    { name: 'missing freshness limit remains unknown', timestamp: 540, threshold: null, up: 1, expected: null },
+    { name: 'invalid freshness limit remains unknown', timestamp: 540, threshold: 0, up: 1, expected: null },
+    {
+      name: 'failed API scrape cannot satisfy snapshot freshness',
+      timestamp: 540,
+      threshold: 120,
+      up: 0,
+      expected: null,
+    },
+  ]) {
+    tests.push({
+      name: observation.name,
+      interval: '1m',
+      input_series: [
+        pullSeries(
+          'bayn_broker_position_snapshot_observed_timestamp_seconds',
+          'current',
+          `${observation.timestamp}+0x10`,
+        ),
+        ...(observation.threshold === null
+          ? []
+          : [pullSeries('bayn_reconciliation_stale_threshold_seconds', 'current', `${observation.threshold}+0x10`)]),
+        pullSeries('up', 'current', `${observation.up}+0x10`),
+        {
+          series: `bayn_build_info{job="bayn",namespace="bayn",service="bayn",instance="current",source_revision="${source}"}`,
+          values: '1+0x10',
+        },
+        pullSeries('bayn_broker_position_snapshot_observed_timestamp_seconds', 'old', '360+0x10'),
+        pullSeries('bayn_reconciliation_stale_threshold_seconds', 'old', '120+0x10'),
+        pullSeries('up', 'old', '1+0x10'),
+        {
+          series: `bayn_build_info{job="bayn",namespace="bayn",service="bayn",instance="old",source_revision="${'b'.repeat(40)}"}`,
+          values: '1+0x10',
+        },
+      ],
+      promql_expr_test: [
+        {
+          expr: bindSource(snapshotBudget),
+          eval_time: '10m',
+          exp_samples: observation.expected === null ? [] : [{ labels: '{}', value: observation.expected }],
+        },
+      ],
+    })
+  }
+  const operationSeries = (stage: string, outcome: string, increment: number, revision = source) => ({
+    series: `bayn_operation_duration_seconds_count{namespace="bayn",service="bayn-execution-controller",source_revision="${revision}",stage="${stage}",outcome="${outcome}"}`,
+    values: `0+${increment}x10`,
+  })
+  const rootOperations = [
+    operationSeries('bayn.execution.cycle-pass', 'succeeded', 1),
+    operationSeries('bayn.execution.cycle-pass', 'failed', 2),
+    operationSeries('bayn.execution.cycle-pass', 'interrupted', 3),
+    operationSeries('bayn.execution.bounded-pass', 'failed', 100),
+    operationSeries('bayn.broker.observation.poll', 'succeeded', 4),
+    operationSeries('bayn.broker.observation.poll', 'failed', 5),
+    operationSeries('bayn.broker.observation.capture', 'failed', 100),
+    operationSeries('bayn.execution.cycle-pass', 'succeeded', 100, 'b'.repeat(40)),
+  ]
+  tests.push({
+    name: 'cycle activity counts successful root work without children or older sources',
+    interval: '1m',
+    input_series: rootOperations,
+    promql_expr_test: [{ expr: bindSource(cycles), eval_time: '10m', exp_samples: [{ labels: '{}', value: 1 }] }],
+  })
+  for (const target of outcomes) {
+    tests.push({
+      name: `critical-path outcomes exclude nested work: ${target.legendFormat}`,
+      interval: '1m',
+      input_series: rootOperations,
+      promql_expr_test: [
+        {
+          expr: bindSource(target.expr),
+          eval_time: '10m',
+          exp_samples:
+            target.legendFormat === 'Execution cycle · {{outcome}}'
+              ? [
+                  { labels: '{outcome="succeeded"}', value: 1 },
+                  { labels: '{outcome="failed"}', value: 2 },
+                  { labels: '{outcome="interrupted"}', value: 3 },
+                ]
+              : [
+                  { labels: '{outcome="succeeded"}', value: 4 },
+                  { labels: '{outcome="failed"}', value: 5 },
+                ],
+        },
+      ],
+    })
+  }
   runPromtool({ 'tests.yaml': YAML.stringify({ evaluation_interval: '1m', tests }) })
 }, 30_000)

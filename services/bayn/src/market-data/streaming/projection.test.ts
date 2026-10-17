@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { replayHistoricalMarketArrivals } from './historical'
 import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
@@ -31,7 +32,7 @@ import {
 } from './projection'
 
 const fixture: unknown = JSON.parse(
-  readFileSync(new URL('../features/fixtures/rolling-price-v1.json', import.meta.url), 'utf8'),
+  readFileSync(new URL('../features/fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
 )
 const feature = Result.getOrThrow(decodeRollingMarketFeature(fixture))
 const start = feature.material.windowStartMs
@@ -99,6 +100,30 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
 
 describe('streaming raw and rolling feature projection', () => {
+  test('other feature definitions neither reject nor authorize the selected observed-history contract', () => {
+    const unrelated = {
+      ...featureRecord,
+      value: JSON.stringify({ material: { definitionId: 'research.unrelated-feature.v1' } }),
+    }
+    const unselected = incorporate([...raw(), unrelated])
+    expect(unselected.rejections.size).toBe(0)
+    expect(Result.isFailure(select(unselected))).toBe(true)
+    const selected = incorporateMarketRecord(unselected, { ...featureRecord, offset: '1' }, universe, end + 3000)
+    expect(selected.rejections.size).toBe(0)
+    expect(Result.getOrThrow(select(selected)).feature.value.featureId).toBe(feature.featureId)
+  })
+
+  test('a malformed selected feature definition still rejects the whole cut', () => {
+    const malformed = {
+      ...featureRecord,
+      offset: '1',
+      value: JSON.stringify({ material: { definitionId: feature.material.definitionId } }),
+    }
+    const state = incorporate([...raw(), featureRecord, malformed])
+    expect(state.rejections.get(`${universe.topics.features}:0`)).toHaveLength(1)
+    expect(Result.isFailure(constructStreamingSnapshot(cutFor(state), query))).toBe(true)
+  })
+
   test.each([0, 511, 512, 513])(
     'property: quote history preserves bounded immutable cuts after %i updates',
     (priorCount) => {
@@ -532,13 +557,13 @@ describe('streaming raw and rolling feature projection', () => {
   })
 })
 
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-09-11', end: '2026-09-11' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-09-11', openAt: '2026-09-11T13:30:00.000Z', closeAt: '2026-09-11T20:00:00.000Z' }],
-}
+})
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
   calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },

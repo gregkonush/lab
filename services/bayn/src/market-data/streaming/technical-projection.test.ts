@@ -1,8 +1,9 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { summarizeStreamingSymbol } from '../../streaming-diagnostics-command'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
-import rollingFixture from '../features/fixtures/rolling-price-v1.json'
+import rollingFixture from '../features/fixtures/observed-price-window-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { decodeRollingMarketFeature } from '../features/contract'
 import { canonicalHashV1 } from '../../hash'
@@ -84,13 +85,13 @@ const rolling = Result.getOrThrow(
     computedAtMs: end + 1000,
   }),
 )
-const calendar = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendar = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-09-11', end: '2026-09-11' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-09-11', openAt: '2026-09-11T13:30:00.000Z', closeAt: '2026-09-11T20:00:00.000Z' }],
-}
+})
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
   calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },

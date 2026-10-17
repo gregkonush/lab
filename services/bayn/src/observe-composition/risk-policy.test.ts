@@ -18,7 +18,7 @@ test('raises only sandbox daily turnover and preserves the complete live policy'
   )
   expect(live).toEqual(legacy)
   expect(Result.getOrThrow(canonicalHashV1Result(live))).toBe(
-    '39f3578c182fd9fd405b7836ef7666e872bba16cd9b37c8d08bea5a401bdecf4',
+    '9d97ea59475004b664b745683932addeb687ab16ca4f627f93825becad334f12',
   )
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
   expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000' })

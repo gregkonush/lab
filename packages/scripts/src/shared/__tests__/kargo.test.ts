@@ -78,7 +78,6 @@ const applicationSetElements = ['argocd/applicationsets/product.yaml', 'argocd/a
 
 const imageRepo = (name: string): string => `registry.ide-newton.ts.net/lab/${name}`
 const gitRepo = 'git@github.com:proompteng/lab.git'
-const publicGitRepo = 'https://github.com/proompteng/lab.git'
 const imageSourceRepo = 'https://github.com/proompteng/lab'
 const buildRunIdAnnotation = 'ai.proompteng.github-actions-run-id'
 const buildConclusionAnnotation = 'ai.proompteng.github-actions-build-conclusion'
@@ -234,7 +233,7 @@ const expected = {
     includePaths: [],
   },
   proompteng: {
-    creationCriteria: 'single',
+    creationCriteria: 'image-revision',
     images: [imageRepo('proompteng')],
     apps: ['proompteng'],
     includePaths: [
@@ -545,9 +544,7 @@ const expected = {
     ],
   },
   tengri: {
-    creationCriteria: 'all',
-    freightGitRepo: publicGitRepo,
-    pushGitRepo: gitRepo,
+    creationCriteria: 'image-revision',
     images: [imageRepo('tengri'), imageRepo('nanoagent')],
     apps: ['tengri'],
     includePaths: [
@@ -574,6 +571,7 @@ const expected = {
 } as const
 
 const expectedStageNames = Object.keys(expected).sort()
+const cohortStages = new Set(['ofz', 'tengri', 'proompteng'])
 
 const byName = (manifests: Manifest[]): Map<string, Manifest> =>
   new Map(manifests.map((manifest) => [manifest.metadata?.name ?? '', manifest]))
@@ -825,16 +823,18 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('defines one automatic Warehouse for every promoted application group', () => {
+  it('defines automatic Warehouses with a shared Ofz release cohort', () => {
     expect(project.apiVersion).toBe('kargo.akuity.io/v1alpha1')
     expect(project.kind).toBe('Project')
     expect(project.metadata?.name).toBe('lab-delivery')
     expect(project.metadata?.namespace).toBeUndefined()
 
     const warehouseMap = byName(warehouses)
-    expect([...warehouseMap.keys()].sort()).toEqual(expectedStageNames)
+    expect([...warehouseMap.keys()].sort()).toEqual(
+      expectedStageNames.filter((name) => !['tengri', 'proompteng'].includes(name)),
+    )
 
-    for (const stageName of expectedStageNames) {
+    for (const stageName of expectedStageNames.filter((name) => !cohortStages.has(name))) {
       const contract = expected[stageName as keyof typeof expected]
       const freightGitRepo = 'freightGitRepo' in contract ? contract.freightGitRepo : gitRepo
       const warehouse = warehouseMap.get(stageName)
@@ -912,7 +912,7 @@ describe('Kargo direct-push GitOps contract', () => {
     const buildFilters = YAML.parse(filtersSource) as Record<string, string[]>
     const warehouseMap = byName(warehouses)
 
-    for (const product of ['proompteng', 'app', 'synthesis', 'docs']) {
+    for (const product of ['app', 'synthesis', 'docs']) {
       const warehouse = warehouseMap.get(product)
       const subscriptions = warehouse?.spec?.subscriptions as Array<Record<string, any>>
       const warehousePaths = subscriptions.find((subscription) => subscription.git)?.git?.includePaths
@@ -1004,7 +1004,7 @@ describe('Kargo direct-push GitOps contract', () => {
     }
   })
 
-  it('keeps every stage direct, automatic, branch-backed, and free of pull-request promotion', () => {
+  it('keeps stages automatic and branch-backed with consumers gated by verified upstream Freight', () => {
     const stageMap = byName(stages)
     expect([...stageMap.keys()].sort()).toEqual(expectedStageNames)
 
@@ -1037,11 +1037,18 @@ describe('Kargo direct-push GitOps contract', () => {
 
       const requestedFreight = stage?.spec?.requestedFreight as Array<Record<string, any>>
       expect(requestedFreight).toHaveLength(1)
-      expect(requestedFreight[0].origin).toEqual({ kind: 'Warehouse', name: stageName })
-      expect(requestedFreight[0].sources).toEqual({
-        direct: true,
-        autoPromotionOptions: { selectionPolicy: 'NewestFreight' },
+      expect(requestedFreight[0].origin).toEqual({
+        kind: 'Warehouse',
+        name: cohortStages.has(stageName) ? 'ofz' : stageName,
       })
+      expect(requestedFreight[0].sources).toEqual(
+        stageName === 'tengri' || stageName === 'proompteng'
+          ? {
+              stages: [stageName === 'tengri' ? 'ofz' : 'tengri'],
+              autoPromotionOptions: { selectionPolicy: 'MatchUpstream' },
+            }
+          : { direct: true, autoPromotionOptions: { selectionPolicy: 'NewestFreight' } },
+      )
 
       const steps = stage?.spec?.promotionTemplate?.spec?.steps as Array<Record<string, any>>
       expect(steps.map((step) => step.uses)).not.toContain('git-open-pr')

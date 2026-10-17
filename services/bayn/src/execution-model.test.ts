@@ -56,6 +56,11 @@ describe('explicit execution model', () => {
     expect(Result.isSuccess(decodeSupportedExecutionModel(defaultExecutionModel))).toBeTrue()
     expect(Result.isFailure(decodeSupportedExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
     expect(Result.isSuccess(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
+    expect(
+      Result.isFailure(
+        decodeCycleExecutionModel({ ...intradayMomentumExecutionModel, schemaVersion: 'bayn.execution-model.v5' }),
+      ),
+    ).toBeTrue()
     expect(Result.isFailure(decodeExecutionModel({ ...defaultExecutionModel, venue: 'alpaca-paper' }))).toBeTrue()
   })
 
@@ -64,11 +69,11 @@ describe('explicit execution model', () => {
     const decodeCycleExecutionModel = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
 
     expect(intradayMomentumExecutionModel).toMatchObject({
-      schemaVersion: 'bayn.execution-model.v5',
+      schemaVersion: 'bayn.execution-model.v6',
       venue: 'alpaca-cash-spot',
       order: {
         type: 'limit',
-        timeInForce: 'ioc',
+        timeInForce: 'asset-session',
         planAfter: 'verified-intraday-window',
         warmupAfterOpenMs: 0,
         submissionCutoffBeforeCloseMs: 300_000,

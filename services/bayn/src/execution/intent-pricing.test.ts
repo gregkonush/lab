@@ -31,7 +31,7 @@ describe('execution intent pricing', () => {
         deriveExecutionIntentPricing({
           ...input,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: TimeInForce.Day,
           quantityAtoms: 46000000000n,
           referencePriceMicros: reference,
           limitSlippageBps: 10n,
@@ -77,7 +77,7 @@ describe('execution intent pricing', () => {
         ...input,
         side: OrderSide.Sell,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
         referencePriceMicros: 215_410_000n,
         limitSlippageBps: 10n,
       }),
@@ -92,7 +92,7 @@ describe('execution intent pricing', () => {
         ...input,
         side: OrderSide.Sell,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
         referencePriceMicros: reference,
         quantityAtoms: quantity,
         limitSlippageBps: 10n,
@@ -147,7 +147,7 @@ describe('execution intent pricing', () => {
       deriveExecutionIntentPricing({
         ...input,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
         quantityAtoms: 3000000000n,
         referencePriceMicros: 101_230_000n,
       }),
@@ -165,7 +165,7 @@ describe('execution intent pricing', () => {
         deriveExecutionIntentPricing({
           ...input,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: TimeInForce.Day,
           limitSlippageBps,
         }),
       ).toMatchObject(Result.fail({ _tag: 'InvalidQuoteBoundIntent', reason: 'invalid-slippage' }))
@@ -174,7 +174,7 @@ describe('execution intent pricing', () => {
       deriveExecutionIntentPricing({
         ...input,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.ImmediateOrCancel,
+        timeInForce: TimeInForce.Day,
         quantityAtoms: 1500000000n,
       }),
     ).toMatchObject(Result.fail({ _tag: 'InvalidQuoteBoundIntent', reason: 'fractional-quantity' }))
@@ -182,13 +182,13 @@ describe('execution intent pricing', () => {
       deriveExecutionIntentPricing({
         ...input,
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.Day,
+        timeInForce: TimeInForce.ImmediateOrCancel,
       }),
     ).toEqual(
       Result.fail({
         _tag: 'UnsupportedExecutionTerms',
         orderType: OrderType.Limit,
-        timeInForce: TimeInForce.Day,
+        timeInForce: TimeInForce.ImmediateOrCancel,
       }),
     )
   })

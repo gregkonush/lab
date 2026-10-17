@@ -56,7 +56,7 @@ const config: ReplayBrokerConfig = {
   openingCashMicros: '10000000000',
   assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
   fractionalTrading: false,
-  calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+  calendar: [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
   assets: [
     Result.getOrThrow(
       normalizeAssetResult(
@@ -90,7 +90,7 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   symbol: 'AAPL',
   side: OrderSide.Buy,
   orderType: OrderType.Limit,
-  timeInForce: TimeInForce.ImmediateOrCancel,
+  timeInForce: TimeInForce.Day,
   quantityAtoms: '5000000000',
   notionalLimitMicros: '505000000',
   state: IntentState.IoStarted,
@@ -554,7 +554,10 @@ test.each([0, 350])(
     const result = await run(
       Effect.gen(function* () {
         const broker = yield* setup({
-          calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+          calendar: [
+            ...config.calendar,
+            { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+          ],
           quoteAt: (_symbol, time) => {
             const price = time > closingMs ? 102 : time === closingMs ? 101 : 100
             return Effect.succeed(
@@ -642,7 +645,10 @@ test('missing session close prevents a fabricated next-day equity baseline', asy
   const result = await run(
     Effect.gen(function* () {
       const broker = yield* setup({
-        calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+        calendar: [
+          ...config.calendar,
+          { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        ],
       })
       yield* TestClock.setTime(Date.parse('2026-09-08T13:30:00.000Z'))
       return yield* Effect.result(broker.read.account)
@@ -1324,6 +1330,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
           broker,
           intent({
             symbol,
+            timeInForce: TimeInForce.ImmediateOrCancel,
             quantityAtoms: '33050000',
             notionalLimitMicros: '3338050',
             createdAt: new Date(start).toISOString(),

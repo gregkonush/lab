@@ -69,7 +69,13 @@ type SessionDate = MatchedRegistration['sessionDates'][number]
 const calendar = (dates: readonly SessionDate[], start: SessionDate, end: SessionDate, close = '16:00') =>
   Result.getOrThrow(
     normalizeMarketCalendarResult(
-      dates.map((date) => ({ date, open: '09:30', close })),
+      dates.map((date) => ({
+        date,
+        open: '09:30',
+        close,
+        session_open: '0930',
+        session_close: close.replace(':', ''),
+      })),
       { start, end },
     ),
   )

@@ -52,8 +52,14 @@ describe('native Jev entry and position observations', () => {
       expect(Result.isFailure(Schema.decodeUnknownResult(JevEntryTargetSchema)({ ...target, ...change }))).toBe(true)
     expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'wait'))).selectedSymbols).toEqual([])
     expect(
-      Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'enter', 0.64))).selectedSymbols,
-    ).toEqual([])
+      Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, 'enter', 0.42))).selectedSymbols,
+    ).toEqual(['AAPL'])
+  })
+
+  test.each(['wait', 'avoid'])('a chosen %s action remains an abstention', (action) => {
+    const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, action, 0.42)))
+    expect(target.selectedSymbols).toEqual([])
+    expect(Object.values(target.targetWeights).every((weight) => weight === 0)).toBe(true)
   })
 
   test('entry cannot reuse expired, partial, or another portfolio decision evidence', () => {
@@ -109,8 +115,19 @@ describe('native Jev entry and position observations', () => {
   })
 
   test('retired Jev protocols cannot be decoded for execution', () => {
-    for (const schemaVersion of ['bayn.jev.protocol.v1', 'bayn.jev.protocol.v2'])
+    for (const schemaVersion of [
+      'bayn.jev.protocol.v1',
+      'bayn.jev.protocol.v2',
+      'bayn.jev.protocol.v3',
+      'bayn.jev.protocol.v4',
+      'bayn.jev.protocol.v5',
+      'bayn.jev.protocol.v6',
+      'bayn.jev.protocol.v7',
+    ])
       expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
+    expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, minimumEntryProbability: 0.65 }))).toBe(
+      true,
+    )
   })
 
   test('execution authority requires the exact current protocol and batch identity', () => {
@@ -125,9 +142,9 @@ describe('native Jev entry and position observations', () => {
     )
     expect(jevProtocolIdentityMatches(active, identity)).toBe(true)
     expect(jevProtocolIdentityMatches(active, '0'.repeat(64))).toBe(false)
-    expect(jevProtocolIdentityMatches({ ...active, maximumSpreadBps: active.maximumSpreadBps + 1 }, identity)).toBe(
-      false,
-    )
+    expect(
+      jevProtocolIdentityMatches({ ...active, maximumSymbolWeight: active.maximumSymbolWeight / 2 }, identity),
+    ).toBe(false)
   })
 
   test('the held position can request an exit, while weaker or hold evidence retains it', () => {
@@ -202,7 +219,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v3',
+        schemaVersion: 'bayn.jev-trading-signal-state.v7',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })
@@ -275,7 +292,7 @@ describe('native Jev entry and position observations', () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
     expect(protocol.candidateSymbols).toHaveLength(18)
     expect(protocol.maximumPositions).toBe(1)
-    expect(protocol.executionModel.order.timeInForce).toBe('ioc')
+    expect(protocol.executionModel.order.timeInForce).toBe('asset-session')
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, candidateSymbols: ['AAPL', 'AAPL'] }))).toBe(true)
     expect(Result.isFailure(decodeJevProtocol({ ...protocol, maximumSymbolWeight: 1 }))).toBe(true)
   })

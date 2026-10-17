@@ -75,6 +75,7 @@ const simulate = (
       const marketClock = yield* TestClock.make()
       let clock = openMs - 1
       let snapshots = 0
+      let providerCalls = 0
       const observations: { atMs: number; rangeEndMs: number }[] = []
       const market: ControlMarket = {
         advanceTo: (atMs) =>
@@ -87,7 +88,7 @@ const simulate = (
           Effect.sync(() => {
             expect(atMs).toBe(clock)
             const original = fixture.snapshot.latestQuotes[symbol]
-            if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
+            if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 15 * 60_000))
               return undefined
             const at = new Date(atMs).toISOString()
             const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
@@ -193,6 +194,7 @@ const simulate = (
                 provider: {
                   evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
                     Effect.gen(function* () {
+                      providerCalls += 1
                       yield* providerClock.adjust(options.managedLatencyMs ?? 0)
                       return nativeJevInference(
                         input,
@@ -244,7 +246,7 @@ const simulate = (
         management: options.nativeEntry === true ? null : management,
         ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
       }).pipe(Effect.provideService(Clock.Clock, marketClock))
-      return { report, snapshots, observations }
+      return { report, snapshots, observations, providerCalls }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
@@ -279,7 +281,7 @@ test('native entry abstentions retain paid calls without submitting orders', asy
     nativeEntry: true,
     entryAction: 'wait',
     managedLatencyMs: 10,
-    sessionDurationMs: 36 * 60_000,
+    sessionDurationMs: 7 * 60_000,
   })
   expect(wait.report.orders).toEqual([])
   expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL')).toHaveLength(1)
@@ -291,8 +293,9 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
   const expired = await simulate({
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
-    sessionDurationMs: 37 * 60_000,
+    sessionDurationMs: 7 * 60_000,
   })
+  expect(expired.providerCalls).toBeGreaterThan(0)
   expect(expired.report.orders).toEqual([])
   expect(expired.report.completion).toBe('INCOMPLETE')
   expect(expired.report.missingDecisions).toBeGreaterThan(0)
@@ -302,13 +305,13 @@ test('scheduled accounting covers canceled management cleanup beyond close witho
   const { report } = await simulate({
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
     managedCleanupLatencyMs: 8 * 60_000,
-    sessionDurationMs: 37 * 60_000 + 45_000,
+    sessionDurationMs: 8 * 60_000 + 45_000,
   })
   expect(report.simulatedOpportunityAccounting).toMatchObject({
-    scheduledPollCount: 76,
-    accountedPollCount: 76,
-    engineStartedPollCount: 63,
-    dispositionCounts: { WARMUP: 61, SELECTED: 1, EXITING: 1, SKIPPED_WHILE_BUSY: 13 },
+    scheduledPollCount: 18,
+    accountedPollCount: 18,
+    engineStartedPollCount: 5,
+    dispositionCounts: { WARMUP: 3, SELECTED: 1, EXITING: 1, SKIPPED_WHILE_BUSY: 13 },
     capturedControllerStarts: null,
     capturedControllerTerminals: null,
   })
@@ -359,23 +362,23 @@ test.each([
 )
 
 test.each([
-  [{ noSignal: true }, { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 }],
+  [{ noSignal: true }, { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 84 }],
   [
     { missingSnapshot: true },
-    { INPUT_UNAVAILABLE: 109, WINDOW_ALREADY_CONSUMED: 0, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 0 },
+    { INPUT_UNAVAILABLE: 167, WINDOW_ALREADY_CONSUMED: 0, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 0 },
   ],
   [
     { missingSelection: true },
-    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 55, NO_SIGNAL: 0 },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 84, NO_SIGNAL: 0 },
   ],
   [
     { excludedSymbols: equityMarketProfile.candidateSymbols },
-    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 84 },
   ],
 ] as const)('scheduled accounting preserves missing, excluded and consumed outcomes %#', async (options, expected) => {
   const { report } = await simulate(options)
   expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
-    WARMUP: 61,
+    WARMUP: 3,
     HOLDING: 0,
     EXITING: 0,
     ENTRY_CUTOFF: 10,
@@ -387,8 +390,8 @@ test.each([
   expect(report.simulatedOpportunityAccounting?.engineStartedPollCount).toBe(180)
   expect(report.completedEpisodes).toBe(0)
   if ('excludedSymbols' in options) {
-    expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(55)
-    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(55 * 15)
+    expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(84)
+    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(84 * 15)
     expect(report.decisions[0]?.exclusions).toHaveLength(15)
   }
 })
@@ -397,20 +400,20 @@ test.each([
   [
     30_000,
     30_000,
-    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 0, WINDOW_ALREADY_CONSUMED: 54, ENTRY_CUTOFF: 10 },
+    { WARMUP: 3, SELECTED: 84, SKIPPED_WHILE_BUSY: 0, WINDOW_ALREADY_CONSUMED: 83, ENTRY_CUTOFF: 10 },
     180,
   ],
   [
     30_000,
     30_001,
-    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 55, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 9 },
-    125,
+    { WARMUP: 3, SELECTED: 84, SKIPPED_WHILE_BUSY: 84, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 9 },
+    96,
   ],
   [
     17_000,
     60_000,
-    { WARMUP: 106, SELECTED: 49, SKIPPED_WHILE_BUSY: 147, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 16 },
-    171,
+    { WARMUP: 4, SELECTED: 74, SKIPPED_WHILE_BUSY: 222, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 18 },
+    96,
   ],
 ] as const)(
   'scheduled accounting separates work at %d ms cadence and %d ms duration',
@@ -440,7 +443,7 @@ test('scheduled accounting observes the exact warmup boundary and covers work en
     sessionDurationMs: 40 * 60_000,
   })
   expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
-    WARMUP: 106,
+    WARMUP: 4,
     HOLDING: 0,
     EXITING: 0,
     ENTRY_CUTOFF: 0,
@@ -448,8 +451,8 @@ test('scheduled accounting observes the exact warmup boundary and covers work en
     INPUT_UNAVAILABLE: 0,
     SELECTION_UNAVAILABLE: 0,
     NO_SIGNAL: 0,
-    SELECTED: 1,
-    SKIPPED_WHILE_BUSY: 35,
+    SELECTED: 2,
+    SKIPPED_WHILE_BUSY: 136,
   })
   expect(report.simulatedOpportunityAccounting?.accountedPollCount).toBe(142)
   expect(report.orders).toHaveLength(0)
@@ -602,7 +605,7 @@ test('decision latency does not accumulate into skipped signal windows while fla
   const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs: 60_000 })
   expect(report.orders).toHaveLength(0)
   expect(observations.map(({ rangeEndMs }) => rangeEndMs)).toEqual(
-    Array.from({ length: 54 }, (_, index) => openMs + (30 + index) * 60_000),
+    Array.from({ length: 83 }, (_, index) => openMs + (1 + index) * 60_000),
   )
   expect(observations.every(({ atMs }) => (atMs - openMs) % 60_000 === 0)).toBeTrue()
 })
@@ -624,8 +627,8 @@ test('a decision longer than the poll interval resumes at the first available sc
 })
 
 test('an equity peak between minute marks blocks re-entry after the drawdown limit is exceeded', async () => {
-  const peakStartMs = openMs + 40 * 60_000 + 20_000
-  const peakEndMs = openMs + 40 * 60_000 + 45_000
+  const peakStartMs = openMs + 11 * 60_000 + 20_000
+  const peakEndMs = openMs + 11 * 60_000 + 45_000
   const { report } = await simulate({
     maximumDrawdownMicros: '100000000',
     bidPriceAtMs: (atMs, referencePrice) => referencePrice + (atMs >= peakStartMs && atMs < peakEndMs ? 100 : 0),
@@ -775,7 +778,7 @@ const frozenControlFixture = () => {
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v3',
+        inputDefinition: 'bayn.jev-trading-signal-state.v7',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -786,8 +789,8 @@ const frozenControlFixture = () => {
       fractionalTrading: false,
       calendar: [
         ...retained.input.input.calendar,
-        { date: '2026-09-08', open: '09:30', close: '16:00' },
-        { date: '2026-09-09', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
       ],
       assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,

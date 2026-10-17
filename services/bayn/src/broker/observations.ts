@@ -22,6 +22,7 @@ import {
 } from '../schemas'
 import {
   AccountStatus as AlpacaAccountStatus,
+  AssetClass as AlpacaAssetClass,
   OrderSide as AlpacaOrderSide,
   OrderStatus as AlpacaOrderStatus,
   OrderType as AlpacaOrderType,
@@ -327,9 +328,8 @@ const positionObservation = (
   evidence: ReadEvidence,
 ): Result.Result<PositionEventInput, BrokerObservationError> => {
   const position = {
-    ...(value.costBasisMicros === undefined
-      ? { schemaVersion: 'bayn.paper-position.v1' as const }
-      : { schemaVersion: 'bayn.position.v2' as const, costBasisMicros: value.costBasisMicros }),
+    schemaVersion: 'bayn.position.v2' as const,
+    costBasisMicros: value.costBasisMicros,
     accountId: value.accountId,
     symbol: value.symbol,
     quantityAtoms: value.quantityAtoms,
@@ -416,7 +416,14 @@ const validateOrderShape = (
   if ((quantityAtoms === undefined) === (notionalMicros === undefined)) {
     return fail({ _tag: 'OrderQuantityOrNotionalRequired', brokerOrderId: value.brokerOrderId })
   }
-  if (value.extendedHours) {
+  if (
+    value.extendedHours &&
+    !(
+      value.assetClass === AlpacaAssetClass.UsEquity &&
+      value.orderType === AlpacaOrderType.Limit &&
+      (value.timeInForce === AlpacaTimeInForce.Day || value.timeInForce === AlpacaTimeInForce.GoodUntilCanceled)
+    )
+  ) {
     return fail({ _tag: 'ExtendedHoursUnsupported', brokerOrderId: value.brokerOrderId })
   }
   const updatedAt = value.updatedAt
@@ -597,7 +604,7 @@ export const renderBrokerObservationError = (error: BrokerObservationError): str
     case 'OrderQuantityOrNotionalRequired':
       return `broker order ${error.brokerOrderId} must contain exactly one of quantity or notional`
     case 'ExtendedHoursUnsupported':
-      return `execution requires extended hours disabled for ${error.brokerOrderId}`
+      return `extended hours require a stock LIMIT with DAY or GTC for ${error.brokerOrderId}`
     case 'OrderUpdatedAtMissing':
       return `broker order ${error.brokerOrderId} requires Alpaca updated_at`
     case 'FillOrderMismatch':

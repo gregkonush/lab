@@ -428,6 +428,16 @@ pub fn validate_context(context: &RequestContext, peer: &str, state: &State) -> 
     Ok(())
 }
 
+pub fn decision_deadline(deadline: u64, state: &State) -> Result<u64, Status> {
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis())
+        .map_err(|_| Status::unavailable("authorization clock unavailable"))?;
+    let valid_until = deadline.min(state.now_ms + 2000).min(now + 2000);
+    if valid_until <= now || valid_until <= state.now_ms {
+        return Err(Status::deadline_exceeded("authorization decision expired"));
+    }
+    Ok(valid_until)
+}
+
 pub async fn evaluate(
     database: &Database,
     native: &Native,
@@ -457,7 +467,7 @@ pub async fn evaluate(
     if (state.fenced || !state.archive_healthy) && !allow_fenced_revoke {
         return Err(Status::unavailable("protected access fenced"));
     }
-    let mut valid_until = context.deadline_unix_ms.min(state.now_ms + 2000);
+    let mut valid_until = decision_deadline(context.deadline_unix_ms, &state)?;
     let needs_active_workspace = kind == "workspace"
         && !matches!(
             action,
@@ -578,13 +588,23 @@ pub async fn evaluate(
     }
     if allowed && kind == "workspace" && actor_kind == "human" && content_observation(action) {
         let observation = human_observation_scope(database, context, action, target).await?;
+        if observation.state.version != state.version
+            || observation.state.recovery_generation != state.recovery_generation
+            || observation.state.now_ms >= valid_until
+            || observation.state.fenced
+            || !observation.state.archive_healthy
+        {
+            return Err(Status::aborted(
+                "workspace observation changed while authorizing",
+            ));
+        }
         allowed = observation.allowed;
         effective_scope = observation.scope;
     }
     // A dependency response arriving beyond the bound cannot authorize a disclosure.
     let after = database.state().await?;
-    if after.now_ms >= valid_until
-        || after.recovery_generation != state.recovery_generation
+    let valid_until = decision_deadline(valid_until, &after)?;
+    if after.recovery_generation != state.recovery_generation
         || ((after.fenced || !after.archive_healthy) && !allow_fenced_revoke)
     {
         return Err(Status::deadline_exceeded("authorization decision expired"));
@@ -624,7 +644,7 @@ pub async fn check(
         false,
     )
     .await;
-    let (allowed, revision, valid_until, state, effective_scope) = match result {
+    let (allowed, revision, _, state, effective_scope) = match result {
         Ok(result) => result,
         Err(mut error) => {
             if request.stream_receipt_id.is_empty()
@@ -655,8 +675,8 @@ pub async fn check(
             return Err(error);
         }
     };
-    let audit_receipt_id = if request.stream_receipt_id.is_empty() {
-        let receipt = store::receipt(
+    let (audit_receipt_id, audited_revision) = if request.stream_receipt_id.is_empty() {
+        let mut receipt = store::receipt(
             context,
             peer,
             resource.clone(),
@@ -665,7 +685,8 @@ pub async fn check(
             "",
             "protected access",
         );
-        database.audit(&receipt, &request.target).await?
+        receipt.revision = revision.clone();
+        (database.audit(&receipt, &request.target).await?, revision)
     } else {
         let id = parse_uuid(&request.stream_receipt_id)?;
         let client = database
@@ -680,7 +701,8 @@ pub async fn check(
         let bound =
             bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
         let receipt: crate::proto::AuditReceipt = store::decode(bound.get(0))?;
-        if receipt.session_id != context.session_id
+        if receipt.revision.is_empty()
+            || receipt.session_id != context.session_id
             || receipt.grant_id != context.grant_id
             || receipt.workspace_uid != context.workspace_uid
             || receipt.runtime_epoch != context.runtime_epoch
@@ -689,39 +711,35 @@ pub async fn check(
         {
             return Err(Status::permission_denied("stream receipt binding mismatch"));
         }
-        request.stream_receipt_id
+        (request.stream_receipt_id, receipt.revision)
     };
-    if allowed
-        && resource.kind == crate::proto::ResourceKind::Workspace as i32
-        && matches!(
-            context
-                .actor
-                .as_ref()
-                .and_then(|actor| actor.identity.as_ref()),
-            Some(Identity::HumanId(_))
-        )
-        && content_observation(action)
-    {
-        // Audit and receipt lookup may block while restrictive intent commits.
-        let failure =
-            match human_observation_scope(database, context, action, &request.target).await {
-                Ok(current)
-                    if current.allowed
-                        && current.scope == effective_scope
-                        && current.state.version == state.version
-                        && current.state.recovery_generation == state.recovery_generation
-                        && current.state.now_ms < valid_until
-                        && !current.state.fenced
-                        && current.state.archive_healthy =>
-                {
-                    None
-                }
-                Ok(_) => Some(Status::aborted(
-                    "workspace observation changed before disclosure",
-                )),
-                Err(error) => Some(error),
+    let finalized = evaluate(
+        database,
+        native,
+        peer,
+        Evaluation {
+            context,
+            action,
+            resource,
+            target: &request.target,
+        },
+        false,
+    )
+    .await;
+    let (_, _, valid_until, state, effective_scope) = match finalized {
+        Ok(current)
+            if current.0 == allowed
+                && current.3.version == state.version
+                && current.3.recovery_generation == state.recovery_generation
+                && current.4 == effective_scope =>
+        {
+            current
+        }
+        outcome => {
+            let mut error = match outcome {
+                Err(error) => error,
+                Ok(_) => Status::aborted("authorization changed before disclosure"),
             };
-        if let Some(error) = failure {
             let denial = store::receipt(
                 context,
                 peer,
@@ -729,15 +747,21 @@ pub async fn check(
                 action,
                 false,
                 "",
-                "workspace observation changed before disclosure",
+                "authorization changed before disclosure",
             );
-            database.audit(&denial, &request.target).await?;
+            let receipt = database.audit(&denial, &request.target).await?;
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                receipt
+                    .parse()
+                    .map_err(|_| Status::internal("invalid audit ID"))?,
+            );
             return Err(error);
         }
-    }
+    };
     Ok(CheckResponse {
         allowed,
-        revision,
+        revision: audited_revision,
         audit_receipt_id,
         valid_until_unix_ms: valid_until,
         recovery_generation: state.recovery_generation,
@@ -761,6 +785,29 @@ pub fn workload_actor(peer: &str) -> Actor {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn decision_deadline_is_bounded_by_both_clocks_and_the_request() {
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+        let mut state = State {
+            version: 1,
+            recovery_generation: 1,
+            fenced: false,
+            now_ms: now,
+            archive_healthy: true,
+        };
+        for database_now in [now - 500, now + 500] {
+            state.now_ms = database_now;
+            let deadline = decision_deadline(now + 5000, &state).unwrap();
+            let finished = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+            assert!(deadline > finished && deadline > database_now);
+            assert!(deadline <= finished + 2000 && deadline <= database_now + 2000);
+            assert!(decision_deadline(now - 1, &state).is_err());
+            assert!(decision_deadline(now + 1000, &state).unwrap() <= now + 1000);
+        }
+        state.now_ms = now + 3000;
+        assert!(decision_deadline(now + 5000, &state).is_err());
+    }
 
     #[test]
     fn observation_scope_rejects_control_characters() {

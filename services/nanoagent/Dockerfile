@@ -371,7 +371,7 @@ RUN set -eux; \
 FROM runtime AS editor-build
 ARG TARGETARCH
 COPY --chmod=0555 build-editor.sh /usr/local/bin/build-editor
-COPY --chmod=0444 editor-manifest.lua launch-editor.sh /usr/share/nanoagent/
+COPY --chmod=0444 editor-manifest.lua launch-editor.sh blink-manual-library.patch /usr/share/nanoagent/
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends gcc make libc6-dev && \
     build-editor "$TARGETARCH"

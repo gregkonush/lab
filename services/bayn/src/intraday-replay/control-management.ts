@@ -1,13 +1,8 @@
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { receivedCryptoFee } from '../strategy/execution-model/fees'
 import { Result, Schema } from 'effect'
-import {
-  AccountStatus,
-  OrderSide,
-  OrderStatus,
-  OrderType,
-  ReconciliationStatus,
-  TimeInForce,
-} from '../execution/contracts'
+import { AccountStatus, OrderSide, OrderStatus, OrderType, ReconciliationStatus } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { numberToMicros } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
@@ -145,7 +140,7 @@ export const makeControlManagementBatch = (input: {
       symbol: order.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(order.symbol)),
       quantityAtoms: order.quantityAtoms,
       referencePriceMicros: yield* numberToMicros(decisionQuote.value.askPrice),
       executionModel: protocol.executionModel,
@@ -204,7 +199,7 @@ export const makeControlManagementBatch = (input: {
           symbol: fill.symbol,
           side: OrderSide.Buy,
           orderType: OrderType.Limit,
-          timeInForce: TimeInForce.ImmediateOrCancel,
+          timeInForce: cashSpotLimitTimeInForce(instrumentMarket(fill.symbol)),
           quantityAtoms: String(order.quantityAtoms),
           filledQuantityAtoms: fill.quantityAtoms,
           limitPriceMicros: String(terms.expectedExecutionPriceMicros),
@@ -266,7 +261,7 @@ export const makeControlManagementBatch = (input: {
     const batch = yield* makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(atMs + protocol.inferenceValidityMs),
-      planVersion: protocol.schemaVersion === 'bayn.jev.protocol.v3' ? JevBatchPlanVersion.V4 : JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V4,
     })
     return {
       classification: 'SIMULATED_CONTROL_MANAGEMENT_REQUEST_ONLY' as const,

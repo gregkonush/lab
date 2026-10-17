@@ -61,6 +61,16 @@ export const InferenceExpenseQuoteSchema = Schema.Struct({
 })
 export type InferenceExpenseQuote = typeof InferenceExpenseQuoteSchema.Type
 
+export interface InferenceExpenseRecord {
+  readonly quote: InferenceExpenseQuote
+  readonly verifiedAt: string | null
+}
+
+export interface InferenceExpenseSnapshot {
+  readonly evidence: Pick<InferenceCostEvidence, 'accountBindingHash' | 'sessionDate' | 'asOf'>
+  readonly quotes: readonly InferenceExpenseRecord[]
+}
+
 export enum InferenceExpenseCoverageIssue {
   MissingQuote = 'MISSING_FROZEN_QUOTE',
   UnverifiedLedger = 'UNVERIFIED_LEDGER',

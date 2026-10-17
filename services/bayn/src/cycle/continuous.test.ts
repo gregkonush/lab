@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { canonicalHashV1 } from '../hash'
 import { CycleState, CycleTerminalReason } from './model'
 import {
@@ -9,6 +10,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { continuousMarketHours, tradingWindow, continuousExecutionPolicy } from '../market-hours'
+import { JevPurpose } from '../jev/portfolio'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeCycleExecutionPolicyFromModel } from './construction'
 import { makeInitialCycle } from './store/decisions'
@@ -50,10 +52,25 @@ for (const at of ['2026-10-09T23:59:50.000Z', '2026-10-11T00:00:10.000Z']) {
     )
     expect(binding.submissionCutoffAt).toBe(new Date(Date.parse(at) + 60_000).toISOString())
     expect(Date.parse(binding.executionSession.closeAt) - Date.parse(at)).toBe(19 * 60_000)
-    const query = Result.getOrThrow(jevObservationQuery(cycle, protocol, continuousMarketHours, observedAt))
+    const query = Result.getOrThrow(
+      jevObservationQuery(cycle, protocol, continuousMarketHours, observedAt, JevPurpose.Entry),
+    )
     expect(query.feed).toBe('us')
     expect(query.candidateSymbols).toEqual(['BTC/USD', 'ETH/USD', 'SOL/USD'])
     expect(Date.parse(query.rangeStartAt)).toBeLessThan(Date.parse(cycle.window.executionOpenAt))
+    const managementAt = new Date(Date.parse(at) + 120_000).toISOString()
+    expect(
+      Result.isFailure(jevObservationQuery(cycle, protocol, continuousMarketHours, managementAt, JevPurpose.Entry)),
+    ).toBe(true)
+    expect(
+      Result.getOrThrow(jevObservationQuery(cycle, protocol, continuousMarketHours, managementAt, JevPurpose.Manage))
+        .candidateSymbols,
+    ).toEqual(['BTC/USD', 'ETH/USD', 'SOL/USD'])
+    expect(
+      Result.isFailure(
+        jevObservationQuery(cycle, protocol, continuousMarketHours, cycle.window.executionCloseAt, JevPurpose.Manage),
+      ),
+    ).toBe(true)
   })
 }
 
@@ -87,7 +104,13 @@ test('completed crypto cycles rearm after their old entry deadline with all cryp
     )
     const cycle = makeInitialCycle(draft, at)
     const query = Result.getOrThrow(
-      jevObservationQuery(cycle, protocol, continuousMarketHours, new Date(Date.parse(at) + 3000).toISOString()),
+      jevObservationQuery(
+        cycle,
+        protocol,
+        continuousMarketHours,
+        new Date(Date.parse(at) + 3000).toISOString(),
+        JevPurpose.Entry,
+      ),
     )
     expect(query.candidateSymbols).toEqual(['BTC/USD', 'ETH/USD', 'SOL/USD'])
     if (prior !== undefined) expect(cycle.identity.cycleId).not.toBe(prior.identity.cycleId)
@@ -125,13 +148,13 @@ test('an unused expired continuous lease rearms under the same approved contract
   if (next === null) throw new Error('Expected successor lease')
   expect(canRearmUnusedCycle(cycle, candidate, continuousMarketHours, next, nextAt)).toBe(true)
   const equitySession = { date: '2026-10-12', openAt: '2026-10-12T13:30:00.000Z', closeAt: '2026-10-12T20:00:00.000Z' }
-  const calendarMaterial = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  const calendarMaterial = withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: { start: equitySession.date, end: equitySession.date },
     timeZone: 'UTC' as const,
     sessions: [equitySession],
-  }
+  })
   const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
   expect(canRearmUnusedCycle(cycle, candidate, calendar, equitySession, nextAt)).toBe(true)
   expect(nextIntradayEntryAttemptOrdinal(cycle, nextAt, next.entryCutoffAt, true)).toBe(2)

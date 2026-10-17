@@ -17,6 +17,8 @@ import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
+import { JevEntryEconomicsAssessment } from './entry-economics'
+import { JevCandidatePlanStatus } from './batch'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -63,13 +65,25 @@ export const decideJevEntry = (input: unknown) =>
     const eligible: { symbol: string; probability: number }[] = []
     for (const { symbol, inference } of inferences) {
       const answer = inference.response.answers['action']
+      const economics = inference.response.answers['net_economics']
       const quote = observation.snapshot.latestQuotes[symbol]
-      if (answer?.type !== 'choice' || quote === undefined)
+      if (answer?.type !== 'choice' || economics?.type !== 'choice' || quote === undefined)
         return yield* unavailable('Jev entry has no typed action or verified quote')
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
-      const quoteEligible = (yield* jevEntryQuoteExclusion(quote, observation.protocol.maximumSpreadBps)) === null
-      if (answer.choice === 'enter' && probability >= observation.protocol.minimumEntryProbability && quoteEligible)
+      const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
+      const request = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === symbol)
+      const fundedEconomics = Schema.is(
+        Schema.Struct({
+          entryEconomics: Schema.Struct({ breakEvenExitBidUsd: Schema.Finite.check(Schema.isGreaterThan(0)) }),
+        }),
+      )(request?.status === JevCandidatePlanStatus.Requested ? request.request.request.state : undefined)
+      if (
+        answer.choice === 'enter' &&
+        economics.choice === JevEntryEconomicsAssessment.Supported &&
+        fundedEconomics &&
+        quoteEligible
+      )
         eligible.push({ symbol, probability })
     }
     eligible.sort(

@@ -1,3 +1,4 @@
+import { equityClockSession } from '../../equity-hours'
 import type { JevProtocol } from '../../jev/protocol'
 import { equityMarketProfile } from '../../jev/markets'
 import type { MarketCalendarObservation } from '../../broker/alpaca/model'
@@ -39,7 +40,7 @@ export const makeIntradayMomentumTestSnapshot = (
     universeId: protocol.universeId,
     universeSymbolHash: protocol.universeSymbolHash,
     feed: protocol.feed,
-    marketSession: 'regular' as const,
+    marketSession: protocol.feed === 'iex' ? (equityClockSession(eventAt) ?? 'regular') : ('regular' as const),
     delayClass: protocol.delayClass,
     symbol,
     eventAt,

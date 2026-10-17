@@ -94,6 +94,9 @@ the selected history, and focuses the composer when recovery completes. Pending 
 including requests received while another conversation is selected; server resolutions and completed turns clear
 both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
 including events queued before a switch, and adopt the server thread ID when a draft conversation is first created.
+Chat and Finder recreate a permanently closed event stream with an exponential retry delay capped at thirty seconds.
+A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
+transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
 The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;
@@ -255,3 +258,10 @@ The local TLS proxy and isolated test certificate exercise secure cookies, WebSo
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
+
+Tengri error reporting uses the existing private GlitchTip service, with a bounded same-origin browser error tunnel.
+Next instrumentation initializes manual OTLP request tracing and error-only Sentry SDK reporting. Public runtime
+configuration contains only the ingest DSN and immutable release. See the
+[Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
+network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
+validation, stream limits and content-scrubbing checks.

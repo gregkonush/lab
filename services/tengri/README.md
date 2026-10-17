@@ -14,10 +14,38 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
+Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
+verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
+Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
+in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
-then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
-message's storage, so ongoing terminal input does not reserve capacity for later requests.
+then consumes the nonce in a bounded process-wide replay guard before opening vsock. Each proof names one Pod UID,
+and Kubernetes runs one supervisor container/listener for that Pod. Before listening after process start, the supervisor
+waits eight seconds on a monotonic clock: the maximum five-second signed admission lifetime, the existing one-second
+clock-lead bound and two seconds of restart margin.
+The health listener remains live during this wait; readiness returns 503 until the fence clears.
+Every proof that could have executed before a crash therefore expires before the replacement can admit requests.
+The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
+unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
+Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
+Controller assertion replay remains in shared PostgreSQL because controller replicas share that authority. Schema
+verification requires migration `0003_replay_slots.sql` in the same release as the BFF, controller and supervisor.
+It preserves every unexpired nonce while replacing bucket transaction locks with 128 fixed rows per bucket.
+Requests lock one expired row with `FOR UPDATE SKIP LOCKED`, so unrelated nonces in the same bucket can commit
+independently. The unique nonce index still serializes duplicate submissions, and all 8192 slots retain their normal
+durable PostgreSQL commit. Full buckets fail closed without waiting for another request's commit.
+Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
+PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
+rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
+capacity follows the opening message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
+header; previews reserve their bounded body size. Capacity checks never queue large reservations ahead of smaller
+requests. A separate limit of 32 requests bounds work through response headers, without charging ongoing streams.
+Exhausted capacity returns 503 promptly. Capacity checks and body reads have separate trace spans. Per-message size,
+signed deadlines, replay and runtime fencing checks remain enforced.
 
 Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
 nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
@@ -73,10 +101,13 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.5`; journals from another VMM revision require fenced recovery. Disk writes start on the
+`1.16.1+tengri-async-io.6`; journals from another VMM revision require fenced recovery. Disk writes start on the
 bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
 The ring requires pre-registered files and permits only read, write, and flush operations.
-Snapshot restore uses upstream demand paging and normal read-ahead. Snapshot restore consumes the
+New full memory snapshots retain zero pages as file holes, with the same logical length and byte contents. Existing
+nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
+snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
+snapshot pages during sleep. Snapshot restore uses upstream demand paging and normal read-ahead. Snapshot restore consumes the
 generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
@@ -101,6 +132,10 @@ for that fencing proof under the admission gate. If proof is unavailable, the su
 of installing another leader. Cancellation retains an in-progress journal writer until it completes, so a detached
 fsync cannot overwrite the fencing record. This does not provide the independent host execution deadline required for
 the authorization cutover.
+
+Guest openings share the lifecycle barrier so independent admissions can proceed concurrently. Sleep, stop, status
+publication and leader-fence installation take it exclusively. The existing opening byte limits and two-buffer
+admission capacity remain in force.
 
 Deletion of a claimed slot persists proof of VMM termination before deleting the slot Pod, then removes only matching assets with UID
 and resourceVersion preconditions. A retry after Pod deletion uses the durable receipt. No stop proof means no disk
@@ -148,8 +183,10 @@ the home PVC remains the durable boundary. No guest process receives the host Wo
 
 ## Transport and workload identity
 
-Controller renewal timeouts retry only within the last confirmed lease deadline. Ownership loss or a returned error
-closes authority immediately; late renewal replies cannot revive expired authority.
+Controller renewal keeps one in-flight attempt after its two-second warning threshold. Authority still ends at the
+last confirmed lease deadline while that attempt finishes. A successful reply extends authority from the attempt's
+start, so a slow response cannot overstate the database lease. Ownership loss or a returned error closes authority
+immediately; late renewal replies cannot revive expired authority.
 
 Browser requests enter the authenticated BFF. The BFF signs owner-scoped gRPC requests to Tengri with replay protection.
 SPIRE mTLS authenticates both host hops. Signed BFF requests keep their five-second deadline. The independent
@@ -245,7 +282,7 @@ Replay admission hashes each nonce into one of 64 independently locked buckets, 
 An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
 controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
 Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
-both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+all three checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
@@ -366,6 +403,9 @@ Missing or inconsistent clock timing rejects the resume; the controller and gues
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
+The native terminal probe answers foreground/background color queries and the device-status barrier used by the
+pinned Neovim startup. Query parsing retains split sequences; readiness markers and performance limits remain unchanged.
+
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
 and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
@@ -408,3 +448,37 @@ fails the request before Codex starts or steers a turn. Attachments remain with 
 conversation references remain valid.
 If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
 Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
+
+## Error reporting and request traces
+
+Production sends sanitized errors to the existing GlitchTip `proompteng` organization and OTLP traces to Tempo.
+The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projects. W3C trace context crosses the BFF,
+Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
+pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
+`service.version` and GlitchTip release identify the source revision baked into the image.
+Private lifecycle commands propagate W3C `traceparent` to the root guest helper. Host spans separate vsock connection,
+command send and reply wait; joined guest spans separate clock synchronization, filesystem thaw, API and terminal
+readiness. The existing clock-transfer and readiness limits remain enforced.
+
+RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
+are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
+response status and SQLSTATE; event messages and error descriptions are withheld. GlitchTip captures errors, while
+routine warnings such as graceful shutdown remain in logs.
+
+Telemetry excludes request bodies, cookies, tokens, actor identifiers, prompts, terminal output and file contents.
+GlitchTip messages are withheld; source locations, error classes, SQLSTATE and trace IDs remain. Browser ingestion
+accepts only bounded same-origin error envelopes for the configured project. It rebuilds the event and authoritative
+release before forwarding to the fixed private collector. Attachments, replay, sessions and arbitrary destinations
+are rejected. Repeated browser transport failures are limited to one event per operation/status per minute.
+
+The reviewed ConfigMaps supply the public ingest DSNs and private OTLP endpoint. Network policies allow only
+GlitchTip web TCP 8000 and Tempo distributor TCP 4318. The guest firewall additionally allows only the two resolved
+collector service addresses and ports; other private networks remain denied. Newly prepared slots receive the
+configuration through the private guest boot file, without database credentials or a Kubernetes identity.
+Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
+a supervisor image restart alone does not update the guest root or runner environment.
+
+After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
+Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.
+Verify those exact IDs in GlitchTip and Tempo. Exporter flush alone is not proof of ingestion. Then exercise real
+browser, chat, terminal, editor and Chrome requests and verify joined traces and stable streams.
