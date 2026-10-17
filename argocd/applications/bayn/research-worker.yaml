@@ -88,7 +88,7 @@ spec:
                   name: bayn-glitchtip-dsns
                   key: bayn-research
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
           resources:
