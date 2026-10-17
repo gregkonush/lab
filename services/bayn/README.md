@@ -4,6 +4,12 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
+preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
+enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
+[October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
+reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
+
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote

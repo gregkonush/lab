@@ -4,7 +4,7 @@ import { CandidateObservationStore } from './observe-composition/candidate-obser
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result } from 'effect'
+import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Semaphore } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
@@ -24,6 +24,7 @@ import {
   makeRecoveryFirstCycleDriver,
   mutationDecisionBuilder,
   reconciliationForPreparation,
+  runRestateAdvanceWithinTimeout,
 } from './observe-composition/recovery-driver'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { boundedReconciliationPass } from './observe-composition/decision-builder'
@@ -6223,6 +6224,136 @@ test('reconciliation cancels a slow broker read before the aggregate pass deadli
     retryable: true,
   })
 })
+
+test.each(['preflight', 'cycle'] as const)(
+  'a generation deadline during %s retains its safety classification and cancels the stalled work',
+  async (phase) => {
+    const fixture = await executionLifecycleFixture()
+    const services = makeExactReconciliationServices(Authority.Execution)
+    let restrictions = 0
+    let reconciliations = 0
+    let cycleReads = 0
+    let interrupted = 0
+    const forbidden = () => Effect.die('deadline must not reach a decision or broker mutation')
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reconciledAt))
+        const entered = yield* Deferred.make<void>()
+        const stall = Deferred.succeed(entered, undefined).pipe(
+          Effect.andThen(Effect.never),
+          Effect.onInterrupt(() =>
+            Effect.sync(() => {
+              interrupted += 1
+            }),
+          ),
+        )
+        const executionStore = {
+          ...services.executionStore,
+          reconcile: (accountId, snapshot) =>
+            Effect.suspend(() => {
+              reconciliations += 1
+              return phase === 'preflight' && reconciliations === 1
+                ? stall
+                : services.executionStore.reconcile(accountId, snapshot)
+            }),
+          restrictAuthority: () =>
+            Effect.sync(() => {
+              restrictions += 1
+            }),
+        } satisfies ReconciliationStoreShape & AuthorityRestrictionStoreShape
+        const cycleStore: CycleStoreShape = {
+          readOldestUnfinished: () =>
+            Effect.suspend(() => {
+              cycleReads += 1
+              return phase === 'cycle'
+                ? stall
+                : Effect.fail(
+                    new CycleStoreError({
+                      operation: 'read-oldest-unfinished',
+                      failure: 'query',
+                      persistenceFailure: 'connectivity',
+                      message: 'retry reached a fresh cycle read',
+                    }),
+                  )
+            }),
+          acquire: forbidden,
+          read: forbidden,
+          readAuthoritySlot: forbidden,
+          readDecisionDocument: forbidden,
+          bindSnapshot: forbidden,
+          activate: forbidden,
+          bindDecision: forbidden,
+          finish: forbidden,
+          block: forbidden,
+        }
+        return yield* Effect.gen(function* () {
+          const driver = yield* Effect.fromResult(
+            makeRecoveryFirstCycleDriver(
+              { ...fixture.input, reconciliationPassTimeoutMs: 100, reconciliationIntervalMs: 100 },
+              { cycleBindingId: cycle.identity.qualificationRunId, recordPass: () => Effect.void },
+              fixture.preparation,
+              fixture.policy,
+              { _tag: 'Mutation', executionProgram: fixture.input.executionProgram },
+              forbidden,
+              'mutation autonomous cycle loop',
+            ),
+          ).pipe(Effect.flatten)
+          const permit = yield* Semaphore.make(1)
+          const first = yield* runRestateAdvanceWithinTimeout(
+            permit,
+            driver.advance,
+            99,
+            driver.onTimeout,
+            'bayn.execution.generation-pass',
+          ).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          yield* TestClock.adjust(100)
+          const advanced = yield* Fiber.join(first)
+          expect(advanced.observation).toMatchObject({
+            result: 'FAILURE',
+            operation: phase === 'preflight' ? 'reconcile' : 'run-cycle-pass',
+          })
+          expect(interrupted).toBe(1)
+          expect(restrictions).toBe(phase === 'preflight' ? 0 : 1)
+          if (phase === 'preflight') {
+            const retry = yield* driver.advance
+            expect(retry.observation).toMatchObject({ result: 'FAILURE', operation: 'read-oldest-unfinished' })
+            expect(reconciliations).toBe(2)
+            expect(cycleReads).toBe(1)
+            expect(restrictions).toBe(0)
+          }
+        }).pipe(
+          Effect.provideService(CycleStore, cycleStore),
+          Effect.provideService(BrokerEventStore, executionStore),
+          Effect.provideService(FillAccountingStore, executionStore),
+          Effect.provideService(ValuationStore, executionStore),
+          Effect.provideService(ReconciliationStore, executionStore),
+          Effect.provideService(AuthorityGenerationStore, executionStore),
+          Effect.provideService(AuthorityRestrictionStore, executionStore),
+          Effect.provideService(WriterFence, services.writerFence),
+          Effect.provideService(IntentStore, { commit: forbidden, read: forbidden }),
+          Effect.provideService(MutationStore, {
+            authorizeSubmit: forbidden,
+            beginSubmit: forbidden,
+            submitAccepted: forbidden,
+            submitRejected: forbidden,
+            submitDenied: forbidden,
+            submitUnknown: forbidden,
+            beginCancel: forbidden,
+            cancelAccepted: forbidden,
+            cancelUnknown: forbidden,
+            recoveryFound: forbidden,
+            recoveryNotFound: forbidden,
+            recoveryUnknown: forbidden,
+            latest: forbidden,
+          }),
+          Effect.provideService(CandidateObservationStore, { record: forbidden, latestJevWindowEnd: forbidden }),
+          provideJevTestServices,
+        )
+      }).pipe(Effect.provideService(BrokerRead, services.brokerRead), Effect.provide(TestClock.layer())),
+    )
+  },
+)
 
 test('a pending broker cut waits without cycle or order I/O and rechecks expiry on the next pass', async () => {
   const fixture = await executionLifecycleFixture()
