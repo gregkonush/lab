@@ -67,22 +67,16 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
     const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
     const features = new Map(fixture.cut.projection.features)
     if (missing !== null) features.delete(missing)
-    const snapshot = Result.getOrThrow(
-      constructStreamingSnapshot(
-        { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
-        {
-          ...fixture.query,
-          symbols,
-          candidateSymbols: symbols,
-        },
-      ),
+    const snapshotResult = constructStreamingSnapshot(
+      { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
+      { ...fixture.query, symbols, candidateSymbols: symbols, benchmarkSymbols: ['BTC/USD', 'ETH/USD'] },
     )
-    const observationResult = jevObservationForSnapshot(snapshot)
     if (missing === 'BTC/USD') {
-      expect(Result.isFailure(observationResult)).toBe(true)
+      expect(snapshotResult).toMatchObject({ _tag: 'Failure', failure: { reason: 'not-ready' } })
       return
     }
-    const observation = Result.getOrThrow(observationResult).payload
+    const snapshot = Result.getOrThrow(snapshotResult)
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol } = observation
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({

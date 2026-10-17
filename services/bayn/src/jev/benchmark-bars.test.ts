@@ -41,6 +41,7 @@ test('a missing ETH candidate trade excludes ETH while BTC retains the same benc
       ...fixture.query,
       symbols,
       candidateSymbols: symbols,
+      benchmarkSymbols: ['BTC/USD', 'ETH/USD'],
     }),
   )
   const plan = batch(snapshot)
@@ -118,27 +119,28 @@ test('BTC cannot use an ETH feature after its latest completed bar is missing', 
 
 test('current Jev refuses an old crypto benchmark evidence contract', () => {
   const fixture = cryptoMarketFixture('BTC/USD')
-  const { benchmarkEvidencePolicy: _retired, ...query } = fixture.query
+  const { benchmarkEvidencePolicy: _retired, benchmarkSymbols: _symbols, ...query } = fixture.query
   const snapshot = Result.getOrThrow(constructStreamingSnapshot(fixture.cut, query))
   expect(Result.isFailure(jevObservationForSnapshot(snapshot))).toBe(true)
 })
 
 test.each(['BTC/USD', 'ETH/USD'])(
-  'a required %s benchmark failure rejects the complete combined observation',
+  'a required %s benchmark failure is unavailable source data for the complete combined query',
   (benchmark) => {
     const fixture = cryptoMarketFixture('BTC/USD')
     const features = new Map(fixture.cut.projection.features)
     features.delete(benchmark)
     const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
-    const snapshot = Result.getOrThrow(
-      constructStreamingSnapshot(
-        {
-          ...fixture.cut,
-          projection: { ...fixture.cut.projection, features },
-        },
-        { ...fixture.query, symbols, candidateSymbols: symbols },
-      ),
+    const snapshot = constructStreamingSnapshot(
+      {
+        ...fixture.cut,
+        projection: { ...fixture.cut.projection, features },
+      },
+      { ...fixture.query, symbols, candidateSymbols: symbols, benchmarkSymbols: ['BTC/USD', 'ETH/USD'] },
     )
-    expect(Result.isFailure(jevObservationForSnapshot(snapshot))).toBe(true)
+    expect(snapshot).toMatchObject({
+      _tag: 'Failure',
+      failure: { reason: 'not-ready', message: expect.stringContaining('Required completed-bar benchmark') },
+    })
   },
 )

@@ -44,6 +44,7 @@ export interface IntradaySnapshotQuery {
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
   readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -71,10 +72,11 @@ export const usesWindowTradeEvidence = (
   (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto)
 
 export const usesCompletedBarBenchmark = (
-  request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'candidateSymbols'>,
+  request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'benchmarkSymbols' | 'candidateSymbols'>,
   symbol: string,
 ): boolean =>
   request.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars &&
+  request.benchmarkSymbols?.includes(symbol) === true &&
   request.candidateSymbols?.includes(symbol) !== true
 
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
@@ -152,6 +154,7 @@ export interface IntradaySnapshotManifest {
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
   readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed

@@ -59,6 +59,7 @@ export const SnapshotManifestFields = {
   candidateSymbols: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
   candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
   benchmarkEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayBenchmarkEvidencePolicy)),
+  benchmarkSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
   candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
   purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip', 'us']),

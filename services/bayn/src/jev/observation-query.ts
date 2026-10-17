@@ -43,7 +43,12 @@ export const makeJevEntryQuery = (input: {
     universe: market.universe,
     symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
     candidateSymbols: candidates,
-    ...('benchmarkEvidencePolicy' in market ? { benchmarkEvidencePolicy: market.benchmarkEvidencePolicy } : {}),
+    ...('benchmarkEvidencePolicy' in market
+      ? {
+          benchmarkEvidencePolicy: market.benchmarkEvidencePolicy,
+          benchmarkSymbols: [...new Set(candidates.map(jevBenchmarkSymbol))].sort(),
+        }
+      : {}),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),

@@ -11,6 +11,9 @@ or latest-trade field. Missing required benchmark bars or features reject the en
 still requires its own real window trade, fresh two-sided quote, positive own and relative momentum, and supported
 fee-inclusive economics. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
 bars remain valid. Equity benchmarks retain the existing SPY quote, trade and feature contract.
+The immutable query records canonical `benchmarkSymbols`, including symbols that are also candidates. Missing
+required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
+Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 118 retires protocol v8 for new authority generations and requires flat positions, settled orders, complete
 accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v8`.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee

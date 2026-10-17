@@ -117,6 +117,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       candidateSymbols: _candidates,
       candidateEvidencePolicy: _evidencePolicy,
       benchmarkEvidencePolicy: _benchmarkPolicy,
+      benchmarkSymbols: _benchmarkSymbols,
       ...pricingQuery
     } = query
     const pricingSnapshot = Result.getOrThrow(

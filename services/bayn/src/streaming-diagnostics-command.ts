@@ -104,6 +104,7 @@ const DiagnosticQuerySchema = Schema.Struct({
   candidateSymbols: SnapshotManifestFields.candidateSymbols,
   candidateEvidencePolicy: SnapshotManifestFields.candidateEvidencePolicy,
   benchmarkEvidencePolicy: SnapshotManifestFields.benchmarkEvidencePolicy,
+  benchmarkSymbols: SnapshotManifestFields.benchmarkSymbols,
   purpose: SnapshotManifestFields.purpose,
   feed: SnapshotManifestFields.feed,
   delayClass: SnapshotManifestFields.delayClass,

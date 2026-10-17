@@ -124,6 +124,11 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Features))
       if (manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars) {
+        if (
+          manifest.benchmarkSymbols?.join('|') !==
+          [...new Set(requestedCandidates.map(jevBenchmarkSymbol))].sort().join('|')
+        )
+          return yield* Result.fail(invalidObservation(JevObservationCheck.Candidates))
         for (const symbol of new Set(requestedCandidates.map(jevBenchmarkSymbol))) {
           if (
             !manifest.streaming.features.some((feature) => feature.value.material.symbol === symbol) ||

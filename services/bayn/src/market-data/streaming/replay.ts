@@ -142,6 +142,7 @@ export const reproduceStreamingSnapshot = (
       ...(manifest.benchmarkEvidencePolicy === undefined
         ? {}
         : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
@@ -333,6 +334,7 @@ export const reproduceSimulatedSnapshot = (
       ...(manifest.benchmarkEvidencePolicy === undefined
         ? {}
         : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
 
     const reproduced = yield* constructSimulatedSnapshot(

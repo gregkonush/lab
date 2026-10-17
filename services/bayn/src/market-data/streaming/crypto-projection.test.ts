@@ -57,7 +57,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const { query, snapshot, rows } = cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9000, tradeLagMs: 60_000 })
     expect(jevStalePricingSymbols(snapshot)).toEqual([])
     expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
-    const { candidateSymbols: _candidates, benchmarkEvidencePolicy: _benchmarkPolicy, ...requiredQuery } = query
+    const {
+      candidateSymbols: _candidates,
+      benchmarkEvidencePolicy: _benchmarkPolicy,
+      benchmarkSymbols: _benchmarks,
+      ...requiredQuery
+    } = query
     const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
     const staleQuotes = snapshot.quotes.map((quote) =>
       quote.symbol === benchmark
