@@ -108,6 +108,11 @@ turnover boundaries, but is not the live strategy or a reproduction of every nat
 
 ## Interpretation
 
+Report v3 retains base development paths in `development` and the corresponding 20 bp-per-side paths in
+`developmentStress`, in the same policy order. Selection and `developmentReportHash` continue to use only the base
+development paths. Later results retain their existing paired base/stress structure. Stress diagnostics do not
+retune or replace the frozen base-cost selector.
+
 `executionNetPnlMicros` is scenario P&L, not actual fills or all-in profit. The command always returns `qualified=false`
 and `allInProfit=null`. An apparently positive candidate earns only native execution and prospective validation.
 Missing original arrivals, quotes, spread histories, depth, IOC/limit-fill behavior, partial fills, market impact,

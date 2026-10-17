@@ -70,6 +70,11 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
       const development = yield* Effect.forEach(policies, (policy) => evaluate(policy, input.development), {
         concurrency: 1,
       })
+      const developmentStress = yield* Effect.forEach(
+        policies,
+        (policy) => evaluate({ ...policy, adverseBpsPerSide: 20 }, input.development),
+        { concurrency: 1 },
+      )
       const ranked = development
         .filter((r) => r.status === 'COMPLETED' && r.executionNetPnlMicros !== null)
         .sort(
@@ -125,13 +130,14 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
             ),
         )
       const report = {
-        schemaVersion: 'bayn.equity-edge-screen-report.v2',
+        schemaVersion: 'bayn.equity-edge-screen-report.v3',
         inputHash: expectedInputHash,
         input,
         source: source.source,
         coverage: source.coverage,
         selection,
         development,
+        developmentStress,
         later,
         selectedResults,
         decision: positiveInEveryLaterScenario

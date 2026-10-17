@@ -90,6 +90,15 @@ test('offline command validates pins, preserves zero-activity sessions and never
     expect(receipt.selection.policy).toBeNull()
     expect(receipt.selection.trialCount).toBe(13)
     const before = readFileSync(outputPath, 'utf8')
+    const report = JSON.parse(before)
+    expect(report.developmentStress).toHaveLength(report.development.length)
+    expect(report.developmentStress.map((result: { policy: unknown }) => result.policy)).toEqual(
+      report.development.map((result: { policy: Record<string, unknown> }) => ({
+        ...result.policy,
+        adverseBpsPerSide: 20,
+      })),
+    )
+    expect(report.selection.developmentReportHash).toBe(canonicalHashV1(report.development))
     expect(before).toContain('"allInProfit":null')
     expect(before).toContain('"missing":390')
     const rerun = await runtime.runPromiseExit(equityEdgeScreenProgram(args))
