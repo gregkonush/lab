@@ -20,6 +20,10 @@ export enum IntradaySnapshotPurpose {
   Liquidation = 'LIQUIDATION',
 }
 
+export enum IntradayBenchmarkEvidencePolicy {
+  CompletedBars = 'bayn.benchmark-evidence.completed-bars.v1',
+}
+
 export enum IntradayCandidateEvidencePolicy {
   QuoteWithWindowTrade = 'bayn.candidate-evidence.quote-window-trade.v1',
 }
@@ -39,6 +43,8 @@ export interface IntradaySnapshotQuery {
   /** Decision candidates whose unavailable data is recorded separately from the required benchmark. */
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   /** Quote-only execution evidence; omission keeps the full decision-time bar and trade contract. */
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed
@@ -64,6 +70,14 @@ export const usesWindowTradeEvidence = (
 ): boolean =>
   request.candidateEvidencePolicy === IntradayCandidateEvidencePolicy.QuoteWithWindowTrade &&
   (request.candidateSymbols?.includes(symbol) === true || instrumentMarket(symbol) === MarketKind.Crypto)
+
+export const usesCompletedBarBenchmark = (
+  request: Pick<IntradaySnapshotQuery, 'benchmarkEvidencePolicy' | 'benchmarkSymbols' | 'candidateSymbols'>,
+  symbol: string,
+): boolean =>
+  request.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars &&
+  request.benchmarkSymbols?.includes(symbol) === true &&
+  request.candidateSymbols?.includes(symbol) !== true
 
 export interface IntradaySnapshotRequest extends IntradaySnapshotQuery {
   /** Exact Kafka-backed archive version captured before this snapshot is loaded. */
@@ -139,6 +153,8 @@ export interface IntradaySnapshotManifest {
   readonly symbols: readonly string[]
   readonly candidateSymbols?: readonly string[]
   readonly candidateEvidencePolicy?: IntradayCandidateEvidencePolicy
+  readonly benchmarkEvidencePolicy?: IntradayBenchmarkEvidencePolicy
+  readonly benchmarkSymbols?: readonly string[]
   readonly candidateExclusions?: readonly IntradayCandidateExclusion[]
   readonly purpose?: IntradaySnapshotPurpose
   readonly feed: IntradayFeed

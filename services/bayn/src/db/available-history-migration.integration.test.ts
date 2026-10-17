@@ -1,3 +1,4 @@
+import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
 import costSupportedEntryMigration from '../../migrations/0116_cost_supported_entry'
 import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
 import capitalSizingMigration from '../../migrations/0109_capital_sizing_protocol'
@@ -29,6 +30,12 @@ for (const { label, id, protocol, migration } of [
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
   { label: 'equity-hours', id: 113, protocol: 'bayn.jev.protocol.v7', migration: equityHoursMigration },
   { label: 'cost-supported-entry', id: 116, protocol: 'bayn.jev.protocol.v8', migration: costSupportedEntryMigration },
+  {
+    label: 'completed-bar-benchmark',
+    id: 118,
+    protocol: 'bayn.jev.protocol.v9',
+    migration: completedBarBenchmarksMigration,
+  },
 ]) {
   describePostgres(`${label} database cutover`, () => {
     let runtime: ReturnType<typeof makeRuntime>
@@ -169,10 +176,10 @@ for (const { label, id, protocol, migration } of [
           effective: 'OBSERVE',
           status: 'DISCREPANCY',
           reason,
-          succeeds: id !== 116,
+          succeeds: id < 116,
           changes: false,
         })),
-        ...(id === 116
+        ...(id >= 116
           ? [
               {
                 effective: 'OBSERVE',
@@ -236,7 +243,8 @@ for (const { label, id, protocol, migration } of [
       )
     }
 
-    if (id === 116) {
+    if (id === 116 || id === 118) {
+      const retiredProtocol = id === 116 ? 'bayn.jev.protocol.v7' : 'bayn.jev.protocol.v8'
       test('retains historical Jev generations but rejects new retired protocol writes', async () => {
         await runtime.runPromise(
           Effect.gen(function* () {
@@ -247,18 +255,18 @@ for (const { label, id, protocol, migration } of [
               generation_hash text, account_id text, strategy_name text, strategy_parameter_schema_version text,
               CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK(true),
               CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
-                yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)}, 'historical', 'jev', 'bayn.jev.protocol.v7')`
+                yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)}, 'historical', 'jev', ${retiredProtocol})`
                 yield* migration
                 expect(yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations`).toEqual([
-                  { strategy_parameter_schema_version: 'bayn.jev.protocol.v7' },
+                  { strategy_parameter_schema_version: retiredProtocol },
                 ])
                 const rejected = yield* sql
                   .withTransaction(
-                    sql`INSERT INTO authority_generations VALUES (${'b'.repeat(64)}, 'current', 'jev', 'bayn.jev.protocol.v7')`,
+                    sql`INSERT INTO authority_generations VALUES (${'b'.repeat(64)}, 'current', 'jev', ${retiredProtocol})`,
                   )
                   .pipe(Effect.result)
                 expect(Result.isFailure(rejected)).toBe(true)
-                yield* sql`INSERT INTO authority_generations VALUES (${'c'.repeat(64)}, 'current', 'jev', 'bayn.jev.protocol.v8')`
+                yield* sql`INSERT INTO authority_generations VALUES (${'c'.repeat(64)}, 'current', 'jev', ${protocol})`
                 expect(yield* sql`SELECT count(*)::int AS count FROM authority_generations`).toEqual([{ count: 2 }])
               }),
             )

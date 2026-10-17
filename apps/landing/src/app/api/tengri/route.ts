@@ -231,7 +231,7 @@ async function runAction(request: Request) {
         result = await issuePreviewSession(identity, action.agentId, action.port, action.path, action.fragment)
         break
       case 'editor-session':
-        result = await issueEditorSession(identity, action.agentId, action.windowId)
+        result = await issueEditorSession(identity, action.agentId, action.windowId, request.signal)
         break
       case 'browser-session':
         result = await issueBrowserSession(identity, action.agentId)
