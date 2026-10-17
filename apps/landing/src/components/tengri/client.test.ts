@@ -169,11 +169,14 @@ describe('Tengri guest operation coordination', () => {
   test('keeps lifecycle controls available during a catalog read and cancels it on transition', async () => {
     const agentId = 'catalog-lifecycle'
     const started = Promise.withResolvers<void>()
-    globalThis.fetch = (async (_input, init) => {
-      started.resolve()
-      await waitForAbort(init?.signal)
-      throw init?.signal?.reason
-    }) as typeof fetch
+    globalThis.fetch = Object.assign(
+      async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+        started.resolve()
+        await waitForAbort(init?.signal)
+        throw init?.signal?.reason
+      },
+      { preconnect: originalFetch.preconnect },
+    )
     const pending = runTengriAction({ action: 'codex-models', agentId }).catch((error: unknown) => error)
     await started.promise
     const blocked = getTengriGuestOperationSnapshot(agentId)
