@@ -4,9 +4,9 @@ import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
 import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
-import { Result } from 'effect'
+import { BigDecimal, Result } from 'effect'
 
-import { numberToMicros, priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
@@ -33,6 +33,13 @@ import { jevEntryEconomics, JevEntryEconomicsAssessment } from './entry-economic
 import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
+
+const signalPriceMicros = (value: number, field: string) =>
+  Result.gen(function* () {
+    yield* numberToMicros(value, field)
+    const rounded = BigDecimal.round(BigDecimal.fromNumberUnsafe(value), { scale: 6, mode: 'half-ceil' })
+    return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), field, 1)
+  })
 
 export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
   Result.gen(function* () {
@@ -121,11 +128,11 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
     const values = rollingValues(rolling.value)
     return {
       prices: {
-        reference: yield* numberToMicros(values.reference, 'signal reference'),
-        high: yield* numberToMicros(values.high, 'signal high'),
-        low: yield* numberToMicros(values.low, 'signal low'),
+        reference: yield* signalPriceMicros(values.reference, 'signal reference'),
+        high: yield* signalPriceMicros(values.high, 'signal high'),
+        low: yield* signalPriceMicros(values.low, 'signal low'),
       },
-      close: yield* numberToMicros(last.close, 'signal close'),
+      close: yield* signalPriceMicros(last.close, 'signal close'),
       state: {
         symbol,
         bars1m: bars.map(({ open, high, low, close, volume, vwap, tradeCount }, index) => ({
@@ -181,7 +188,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
         ...base.prices,
         bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
         ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        trade: yield* numberToMicros(trade.price, 'signal trade'),
+        trade: yield* signalPriceMicros(trade.price, 'signal trade'),
       },
       state: {
         ...base.state,
@@ -231,8 +238,11 @@ const commonMomentumPrices = (
       return yield* unavailable('Relative momentum requires a common actual observed minute')
     return {
       referenceAt: reference.eventAt,
-      candidate: { ...candidate.prices, reference: yield* numberToMicros(reference.open, 'signal reference') },
-      benchmark: { ...benchmark.prices, reference: yield* numberToMicros(benchmarkReference.open, 'signal reference') },
+      candidate: { ...candidate.prices, reference: yield* signalPriceMicros(reference.open, 'signal reference') },
+      benchmark: {
+        ...benchmark.prices,
+        reference: yield* signalPriceMicros(benchmarkReference.open, 'signal reference'),
+      },
     }
   })
 

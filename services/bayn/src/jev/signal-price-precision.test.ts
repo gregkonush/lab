@@ -5,6 +5,7 @@ import fc from 'fast-check'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { checkProperty } from '../testing/property-test-support'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { jevBenchmarkSignalFor, jevMomentumEntryCandidates, jevSignalFor } from './trading-signals'
 
 const observedPrices = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD', price = 100.123456789012) => {
@@ -83,6 +84,25 @@ test('observed signal rounding does not accept an executable quote with excess p
     ),
   ).toBe(true)
 })
+
+test.each([16586.2835785, 34264.1846865, 68372.0828945])(
+  'observed half-micro price %s keeps decimal rounding',
+  (price) => {
+    const benchmark = Result.getOrThrow(jevBenchmarkSignalFor(observedPrices('BTC/USD', price), 'ETH/USD'))
+    expect(benchmark.prices.bid).toBe(Result.getOrThrow(priceNumberToMicros(price)))
+  },
+)
+
+test('property: accepted nano prices retain their existing half-up signal rounding', () => {
+  checkProperty(
+    'jev-observed-price-rounding-equivalence',
+    fc.property(fc.bigInt({ min: 70_000_000_000n, max: 100_000_000_000_000n }), (atoms) => {
+      const price = Number(atoms) / 1_000_000_000
+      const benchmark = Result.getOrThrow(jevBenchmarkSignalFor(observedPrices('BTC/USD', price), 'ETH/USD'))
+      expect(benchmark.prices.bid).toBe(Result.getOrThrow(priceNumberToMicros(price)))
+    }),
+  )
+}, 150_000)
 
 test('property: sub-micro observed precision preserves normalized benchmark prices and original evidence', () => {
   checkProperty(
