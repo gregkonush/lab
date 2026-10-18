@@ -6,7 +6,7 @@ import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { Result } from 'effect'
 
-import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { numberToMicros, priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
@@ -121,11 +121,11 @@ const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
     const values = rollingValues(rolling.value)
     return {
       prices: {
-        reference: yield* priceNumberToMicros(values.reference),
-        high: yield* priceNumberToMicros(values.high),
-        low: yield* priceNumberToMicros(values.low),
+        reference: yield* numberToMicros(values.reference, 'signal reference'),
+        high: yield* numberToMicros(values.high, 'signal high'),
+        low: yield* numberToMicros(values.low, 'signal low'),
       },
-      close: yield* priceNumberToMicros(last.close),
+      close: yield* numberToMicros(last.close, 'signal close'),
       state: {
         symbol,
         bars1m: bars.map(({ open, high, low, close, volume, vwap, tradeCount }, index) => ({
@@ -181,7 +181,7 @@ export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =
         ...base.prices,
         bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
         ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        trade: yield* priceNumberToMicros(trade.price),
+        trade: yield* numberToMicros(trade.price, 'signal trade'),
       },
       state: {
         ...base.state,
@@ -231,8 +231,8 @@ const commonMomentumPrices = (
       return yield* unavailable('Relative momentum requires a common actual observed minute')
     return {
       referenceAt: reference.eventAt,
-      candidate: { ...candidate.prices, reference: yield* priceNumberToMicros(reference.open) },
-      benchmark: { ...benchmark.prices, reference: yield* priceNumberToMicros(benchmarkReference.open) },
+      candidate: { ...candidate.prices, reference: yield* numberToMicros(reference.open, 'signal reference') },
+      benchmark: { ...benchmark.prices, reference: yield* numberToMicros(benchmarkReference.open, 'signal reference') },
     }
   })
 
