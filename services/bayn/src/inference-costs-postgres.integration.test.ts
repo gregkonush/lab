@@ -86,6 +86,33 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     expect(JSON.stringify(result)).not.toContain('fixture-account')
   })
 
+  test('retains and orders a wide claimed session without spilling its evidence payloads to disk', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        yield* sql`INSERT INTO jev_evaluation_requests
+          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash},
+            jsonb_build_object('retained',repeat(md5(n::text),32))
+          FROM generate_series(512,1,-1) AS n`
+        yield* sql`SET work_mem='64kB'`
+        yield* sql`SET temp_file_limit='0'`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.ensuring(sql`RESET work_mem`.pipe(Effect.andThen(sql`RESET temp_file_limit`), Effect.orDie)),
+        )
+      }),
+    )
+    expect(result.evidence.requests).toHaveLength(512)
+    expect(result.evidence.requests.map((row) => row.requestId)).toEqual(
+      result.evidence.requests.map((row) => row.requestId).toSorted(),
+    )
+    expect(new Set(result.evidence.requests.map((row) => row.requestId)).size).toBe(512)
+    expect(result.evidence.requests.every((row) => row.receipt === null && row.resolution === null)).toBe(true)
+    for (const row of result.evidence.requests) {
+      expect(row.request).toEqual({ retained: row.requestId.slice(0, 32).repeat(32) })
+    }
+  })
+
   test('an unreceipted claim yields incomplete costs, not free inference', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
