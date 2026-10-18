@@ -1411,12 +1411,12 @@ durableTest.each(
                   Date.parse(call.providerStartedAt),
               ),
             )
-            const entry = state.orders[0]?.execution
+            const entry = state.orders[0]?.executions.at(-1)
             expect(entry).toBeDefined()
             if (entry === undefined) throw new Error('Missing measured entry execution')
             expect(Date.parse(entry.submittedAt)).toBeGreaterThanOrEqual(lastEntryResponse)
             for (const order of state.orders) {
-              const execution = order.execution
+              const execution = order.executions.at(-1)
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)

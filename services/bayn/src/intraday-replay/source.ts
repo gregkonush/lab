@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto'
 import { createGunzip } from 'node:zlib'
 import { NodeStream } from '@effect/platform-node'
-import { Cause, Data, Effect, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
+import { Cause, Data, Effect, Exit, FileSystem, Option, Pull, Result, Schema, Semaphore, Stream } from 'effect'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { cryptoMarketProfile } from '../jev/markets'
+import type { IntradayQuote } from '../market-data/intraday/model'
+import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import {
   HistoricalMarketArrivalSchema,
   advanceHistoricalMarketCursor,
@@ -471,6 +473,10 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
     let pendingIndex = 0
     let ended = false
     let advancedToMs = 0
+    let advanceFailure: ReplaySourceFailure | undefined
+    let brokerObserver:
+      | ((atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) => Effect.Effect<void, ReplaySourceFailure>)
+      | undefined
     const permit = yield* Semaphore.make(1)
     const peek = Effect.gen(function* () {
       if (pendingIndex === pending.length && !ended) {
@@ -484,26 +490,61 @@ export const openBacktestSource = (path: string, input: unknown, runId: string, 
       }
       return pending[pendingIndex]
     })
-    const advanceTo = (atMs: number) =>
+    const advanceTo = (atMs: number, publishBroker: boolean) =>
       permit.withPermit(
         Effect.gen(function* () {
+          if (advanceFailure !== undefined) return yield* advanceFailure
           if (!Number.isSafeInteger(atMs) || atMs < advancedToMs)
             return yield* fail('Source clock cannot move backwards')
           while (true) {
             const next = yield* peek
             if (next === undefined || next.availableAtMs > atMs) break
+            const previous = cursor.projection
             cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, next))
             pendingIndex++
+            if (publishBroker && brokerObserver !== undefined) {
+              const quote =
+                next.record.topic === manifest.universe.topics.quotes
+                  ? [...cursor.projection.quotes.values()].find(
+                      (entry) => previous.quotes.get(entry.value.symbol) !== entry,
+                    )
+                  : undefined
+              yield* brokerObserver(next.availableAtMs, quote ?? null)
+            }
           }
+          if (publishBroker && brokerObserver !== undefined) yield* brokerObserver(atMs, null)
           advancedToMs = atMs
-        }),
+        }).pipe(
+          Effect.mapError((cause) => fail('Replay source or broker observation failed', cause)),
+          Effect.onExit((exit) =>
+            Exit.isSuccess(exit)
+              ? Effect.void
+              : Effect.sync(() => {
+                  advanceFailure = fail(
+                    'Replay advancement did not complete; restore source and broker together',
+                    Cause.squash(exit.cause),
+                  )
+                }),
+          ),
+        ),
       )
     return {
       manifest,
       source,
       cursor: Effect.sync(() => cursor),
-      advanceTo,
-      finish: Effect.suspend(() => advanceTo(Math.max(manifest.lastAvailableAtMs, advancedToMs))).pipe(
+      advanceTo: (atMs: number) => advanceTo(atMs, true),
+      observeBroker: (observer: NonNullable<typeof brokerObserver>) =>
+        Effect.acquireRelease(
+          Effect.gen(function* () {
+            if (brokerObserver !== undefined) return yield* fail('Replay source already has its broker observer')
+            brokerObserver = observer
+          }),
+          () =>
+            Effect.sync(() => {
+              brokerObserver = undefined
+            }),
+        ),
+      finish: Effect.suspend(() => advanceTo(Math.max(manifest.lastAvailableAtMs, advancedToMs), false)).pipe(
         Effect.andThen(
           Effect.suspend(() => (ended ? Effect.void : Effect.fail(fail('Source was not fully consumed')))),
         ),

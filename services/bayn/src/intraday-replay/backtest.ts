@@ -39,6 +39,7 @@ import { calculateReplayJevCosts, ReplayJevCostModelSchema } from './jev-costs'
 import {
   BacktestSourceManifestSchema,
   openBacktestSource,
+  ReplaySourceFailure,
   validateBacktestSourceManifest,
   validateBacktestSourceCuts,
   type BacktestSourceReceipt,
@@ -406,6 +407,15 @@ export const runBacktest = (
       quoteAt: (symbol, atMs) =>
         source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
     })
+    yield* source.observeBroker((atMs, quote) =>
+      broker
+        .observeMarket(atMs, quote)
+        .pipe(
+          Effect.mapError(
+            (cause) => new ReplaySourceFailure({ message: 'Replay broker rejected source advancement', cause }),
+          ),
+        ),
+    )
     const runtime = yield* makeReplayExecutionRuntime({
       currentUtcInstant: timing.currentUtcInstant,
       config: {

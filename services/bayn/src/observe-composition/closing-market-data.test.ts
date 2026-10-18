@@ -329,6 +329,7 @@ describe('closing market-data fallback boundaries', () => {
       const request = await fixture()
       const closeWindow = Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: request.closeExpiresAt,
@@ -471,6 +472,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
         recoveryExpiresAt: null,
         observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
@@ -723,6 +725,7 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
         recoveryExpiresAt: null,
         observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,

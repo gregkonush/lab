@@ -118,7 +118,161 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
 })
 
-test('canceled IOC retains the actual arrival quote, modeled price and reason in its durable checkpoint', async () => {
+test('an equity DAY order remains open when its first arrival cannot fill', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
+      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      return { submitted, open: (yield* broker.read.orders({ status: OrderCollection.Open })).value }
+    }),
+  )
+  expect(result.submitted.order.status).toBe(OrderStatus.New)
+  expect(result.submitted.order.filledQuantityAtoms).toBe('0')
+  expect(result.open.map((order) => order.brokerOrderId)).toEqual([result.submitted.order.brokerOrderId])
+})
+
+test('a DAY order captures a later brief crossing before the next account poll', async () => {
+  const state = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
+      yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      for (const [delay, price, offset] of [
+        [1_000, 99, '2'],
+        [1_100, 101, '3'],
+      ] as const) {
+        const at = startMs + delay
+        yield* broker.observeMarket(
+          at,
+          observedQuote(
+            {
+              ...quote,
+              eventAt: new Date(at).toISOString(),
+              ingestedAt: new Date(at).toISOString(),
+              bidPrice: price,
+              askPrice: price,
+              sourceOffset: offset,
+            },
+            at,
+          ),
+        )
+      }
+      yield* TestClock.setTime(startMs + 2_000)
+      return yield* broker.snapshot
+    }),
+  )
+  expect(state.orders[0]?.order.status).toBe(OrderStatus.Filled)
+  expect(state.ledger.fills).toHaveLength(1)
+  expect(state.ledger.fills[0]?.observedAt).toBe('2026-09-04T14:31:01.000Z')
+  expect(state.ledger.fills[0]?.priceMicros).toBe('99010000')
+})
+
+test('a partial DAY order resumes after restart and retains each fill and fee activity', async () => {
+  const laterAt = startMs + 1_000
+  const firstQuote = observedQuote({ ...quote, askSize: 2 })
+  const laterQuote = observedQuote(
+    {
+      ...quote,
+      eventAt: new Date(laterAt).toISOString(),
+      ingestedAt: new Date(laterAt).toISOString(),
+      bidPrice: 100.5,
+      askPrice: 100.5,
+      sourceOffset: '2',
+    },
+    laterAt,
+  )
+  const quoteAt: ReplayBrokerConfig['quoteAt'] = (_symbol, at) => Effect.succeed(at < laterAt ? firstQuote : laterQuote)
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ quoteAt })
+      const first = yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        quoteAt,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      yield* restored.observeMarket(laterAt, laterQuote)
+      yield* TestClock.setTime(laterAt)
+      const completed = yield* restored.checkpoint
+      const secondRestore = yield* makeReplayBroker({
+        ...config,
+        quoteAt,
+        restoreCheckpoint: { value: completed, expectedHash: completed.checkpointHash },
+      })
+      yield* secondRestore.observeMarket(laterAt, laterQuote)
+      return { first, state: yield* restored.snapshot, recovered: yield* secondRestore.snapshot }
+    }),
+  )
+  expect(result.first.order.status).toBe(OrderStatus.PartiallyFilled)
+  expect(result.first.order.filledQuantityAtoms).toBe('2000000000')
+  expect(result.state.orders[0]?.order.status).toBe(OrderStatus.Filled)
+  expect(result.state.orders[0]?.order.filledAveragePriceMicros).toBe('100300000')
+  expect(result.state.fills.map((fill) => fill.quantityAtoms)).toEqual(['2000000000', '3000000000'])
+  expect(result.state.fills.map((fill) => fill.cumulativeQuantityAtoms)).toEqual(['2000000000', '5000000000'])
+  expect(new Set(result.state.fills.map((fill) => fill.activityId)).size).toBe(2)
+  expect(result.recovered).toEqual(result.state)
+})
+
+test('canceling a resting DAY order prevents execution on subsequent quotes', async () => {
+  const state = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
+      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      yield* broker.mutation.cancel(submitted.order.brokerOrderId)
+      const at = startMs + 1_000
+      yield* broker.observeMarket(
+        at,
+        observedQuote(
+          {
+            ...quote,
+            eventAt: new Date(at).toISOString(),
+            ingestedAt: new Date(at).toISOString(),
+            bidPrice: 99,
+            askPrice: 99,
+            sourceOffset: '2',
+          },
+          at,
+        ),
+      )
+      yield* TestClock.setTime(at)
+      return yield* broker.snapshot
+    }),
+  )
+  expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+  expect(state.ledger.fills).toEqual([])
+})
+
+test('an extended-hours DAY order expires at the broker session end, including without another quote', async () => {
+  const result = await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        assumptions: { ...config.assumptions, slippageBps: 1 },
+        calendar: [
+          {
+            ...config.calendar[0],
+            date: '2026-09-04',
+            open: '09:30',
+            close: '16:00',
+            session_open: '0400',
+            session_close: '2000',
+          },
+        ],
+      })
+      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      yield* TestClock.setTime(Date.parse('2026-09-04T21:00:00.000Z'))
+      const afterData = yield* broker.read.orderById(submitted.order.brokerOrderId)
+      yield* TestClock.setTime(Date.parse('2026-09-05T00:00:00.000Z'))
+      const expired = yield* broker.read.orderById(submitted.order.brokerOrderId)
+      return { afterData, expired, state: yield* broker.snapshot }
+    }),
+  )
+  expect(result.afterData.value.status).toBe(OrderStatus.New)
+  expect(result.expired.value.status).toBe(OrderStatus.Expired)
+  expect(result.expired.value.updatedAt).toBe('2026-09-05T00:00:00.000Z')
+  expect(result.state.ledger.fills).toEqual([])
+})
+
+test('an unfilled DAY evaluation retains the actual arrival quote, modeled price and reason in its durable checkpoint', async () => {
   const checkpoint = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
@@ -126,7 +280,7 @@ test('canceled IOC retains the actual arrival quote, modeled price and reason in
       return yield* broker.checkpoint
     }),
   )
-  expect(checkpoint.state.orders[0]?.execution).toMatchObject({
+  expect(checkpoint.state.orders[0]?.executions.at(-1)).toMatchObject({
     arrivedAt: '2026-09-04T14:31:00.100Z',
     quote: {
       eventAt: observedAt,
@@ -136,7 +290,7 @@ test('canceled IOC retains the actual arrival quote, modeled price and reason in
       askSize: 100,
       sourceOffset: quote.sourceOffset,
     },
-    outcome: { status: 'canceled', reason: 'adverse-price-exceeds-limit', adversePriceMicros: '100010000' },
+    outcome: { status: 'unfilled', reason: 'adverse-price-exceeds-limit', adversePriceMicros: '100010000' },
   })
   expect(checkpoint.state.orders[0]?.order.filledQuantityAtoms).toBe('0')
 })
@@ -224,7 +378,7 @@ test.each([0, 100])(
     expect(result.lastArrival).toBe(Date.parse(submittedAt) + 10)
     expect(result.marketAfter).toBe(result.lastArrival)
     expect(result.order.filledAveragePriceMicros).toBe(persistenceMs === 0 ? '100000000' : '100500000')
-    expect(result.checkpoint.state.orders[0]?.execution?.quote?.availableAtMs).toBe(startMs + persistenceMs)
+    expect(result.checkpoint.state.orders[0]?.executions.at(-1)?.quote?.availableAtMs).toBe(startMs + persistenceMs)
   },
 )
 
@@ -257,7 +411,7 @@ test('an inaccurate historical scheduler cannot manufacture a fill', async () =>
   expect(result.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
 })
 
-test('arrival quote drives partial IOC fill and the remainder is canceled once', async () => {
+test('arrival quote drives partial DAY fill and the remainder stays active', async () => {
   const result = await run(
     Effect.gen(function* () {
       const broker = yield* setup({
@@ -278,7 +432,7 @@ test('arrival quote drives partial IOC fill and the remainder is canceled once',
       }
     }),
   )
-  expect(result.filled.order.status).toBe(OrderStatus.Canceled)
+  expect(result.filled.order.status).toBe(OrderStatus.PartiallyFilled)
   expect(result.filled.order.filledQuantityAtoms).toBe('2000000000')
   expect(result.filled.order.filledAveragePriceMicros).toBe('100500000')
   expect(result.duplicate.order.brokerOrderId).toBe(result.filled.order.brokerOrderId)
@@ -288,11 +442,11 @@ test('arrival quote drives partial IOC fill and the remainder is canceled once',
   expect(result.positions[0]?.quantityAtoms).toBe('2000000000')
   expect(result.account.cashMicros).toBe(result.state.ledger.cashMicros)
   expect(result.state.ledger.fills[0]?.quoteSource.offset).toBe(quote.sourceOffset)
-  expect(result.state.orders[0]?.execution?.outcome).toMatchObject({
+  expect(result.state.orders[0]?.executions.at(-1)?.outcome).toMatchObject({
     status: 'filled',
     filledQuantityAtoms: '2000000000',
     fillPriceMicros: '100500000',
-    unfilledRemainder: 'canceled',
+    remainingQuantityAtoms: '3000000000',
   })
 })
 
@@ -301,7 +455,7 @@ test.each([
   { first: '2000000000', second: '1000000000', expectedSecond: '0', askSize: 2, liquidityPpm: 1_000_000 },
   { first: '1000000000', second: '2000000000', expectedSecond: '1000000000', askSize: 4, liquidityPpm: 500_000 },
 ])(
-  'repeated IOC orders consume one quote only once: %o',
+  'repeated limit orders consume one quote only once: %o',
   async ({ first, second, expectedSecond, askSize, liquidityPpm }) => {
     const result = await run(
       Effect.gen(function* () {
@@ -477,7 +631,7 @@ test.each(['stale', 'future', 'crossed', 'zero-bid', 'zero-ask', 'other-feed'] a
         return { receipt, checkpoint: yield* broker.checkpoint }
       }),
     )
-    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
+    expect(result.receipt.order.status).toBe(OrderStatus.New)
     expect(result.receipt.order.filledQuantityAtoms).toBe('0')
     const reasons = {
       stale: ReplayQuoteRejection.Stale,
@@ -487,8 +641,8 @@ test.each(['stale', 'future', 'crossed', 'zero-bid', 'zero-ask', 'other-feed'] a
       'zero-ask': ReplayQuoteRejection.Price,
       'other-feed': ReplayQuoteRejection.Identity,
     }
-    expect(result.checkpoint.state.orders[0]?.execution?.outcome).toEqual({
-      status: 'canceled',
+    expect(result.checkpoint.state.orders[0]?.executions.at(-1)?.outcome).toEqual({
+      status: 'unfilled',
       reason: reasons[kind],
       adversePriceMicros: null,
     })
@@ -510,7 +664,7 @@ test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverab
   expect(result.receipt.order.status).toBe(OrderStatus.Rejected)
   expect(result.lookup.value.status).toBe(OrderStatus.Rejected)
   expect(result.state.ledger.fills).toEqual([])
-  expect(result.state.orders[0]?.execution?.outcome).toEqual({
+  expect(result.state.orders[0]?.executions.at(-1)?.outcome).toEqual({
     status: 'rejected',
     reason: kind === 'oversell' ? 'oversell' : 'insufficient-cash',
   })
@@ -568,7 +722,14 @@ test.each([0, 350])(
             const price = time > closingMs ? 102 : time === closingMs ? 101 : 100
             return Effect.succeed(
               observedQuote(
-                { ...quote, eventAt: new Date(time).toISOString(), bidPrice: price, askPrice: price },
+                {
+                  ...quote,
+                  eventAt: new Date(time).toISOString(),
+                  marketSession:
+                    time >= closingMs && time < Date.parse('2026-09-05T00:00:00.000Z') ? 'post' : 'regular',
+                  bidPrice: price,
+                  askPrice: price,
+                },
                 time,
               ),
             )
@@ -679,6 +840,7 @@ test.each([
                   {
                     ...quote,
                     eventAt: new Date(closeMs).toISOString(),
+                    marketSession: 'post',
                     ingestedAt: new Date(closeMs).toISOString(),
                     bidSize: kind === 'zero-bid' ? 0 : quote.bidSize,
                     sourceOffset: '2',
@@ -728,8 +890,8 @@ test('a quote gap retains an evidenced position mark but cannot supply an execut
   )
   expect(result.account.equityMicros).toBe((BigInt(result.state.ledger.cashMicros) + 500_000_000n).toString())
   expect(result.state.fills).toHaveLength(1)
-  expect(result.state.orders[1]?.execution?.outcome).toMatchObject({
-    status: 'canceled',
+  expect(result.state.orders[1]?.executions.at(-1)?.outcome).toMatchObject({
+    status: 'unfilled',
     reason: ReplayQuoteRejection.Stale,
   })
 })
@@ -807,7 +969,7 @@ test.each(['failure', 'defect', 'conversion'] as const)(
 )
 
 test.each([0, 60_000])(
-  'IOC arriving at or beyond close expires at close with latency %d and preserves closing equity',
+  'DAY arriving at or beyond close expires at close with latency %d and preserves closing equity',
   async (latencyMs) => {
     const close = Date.parse('2026-09-04T20:00:00Z')
     const arrivals: number[] = []
@@ -819,7 +981,7 @@ test.each([0, 60_000])(
             Effect.sync(() => {
               arrivals.push(atMs)
             }).pipe(Effect.andThen(TestClock.setTime(atMs))),
-          quoteAt: () => Effect.die(new Error('An expired IOC must not read an execution quote')),
+          quoteAt: () => Effect.die(new Error('An expired DAY must not read an execution quote')),
         })
         yield* TestClock.setTime(latencyMs === 0 ? close : close - 30_000)
         const receipt = yield* broker.mutation.submit(intent())
@@ -830,8 +992,8 @@ test.each([0, 60_000])(
     )
     expect(arrivals).toEqual([close])
     expect(result.atMs).toBe(close)
-    expect(result.receipt.order.status).toBe(OrderStatus.Canceled)
-    expect(result.receipt.order.canceledAt).toBe('2026-09-04T20:00:00.000Z')
+    expect(result.receipt.order.status).toBe(OrderStatus.Expired)
+    expect(result.receipt.order.updatedAt).toBe('2026-09-04T20:00:00.000Z')
     expect(result.duplicate.order.brokerOrderId).toBe(result.receipt.order.brokerOrderId)
     expect(result.state.fills).toEqual([])
     expect(result.state.ledger.cashMicros).toBe(config.openingCashMicros)
@@ -918,7 +1080,7 @@ test('checkpoint rejects changed economics, requests, source, configuration and 
   )
 })
 
-test('checkpoint cannot claim pending IOC delivery survived a process restart', async () => {
+test('checkpoint cannot claim pending delivery survived a process restart', async () => {
   await run(
     Effect.gen(function* () {
       const broker = yield* setup()
@@ -1020,6 +1182,7 @@ test('an independently retained checkpoint hash rejects a forged zero-fill cance
             const { filledAt: _filledAt, filledAveragePriceMicros: _price, ...order } = entry.order
             return {
               ...entry,
+              executions: [],
               order: {
                 ...order,
                 canceledAt: checkpoint.observedAt,
@@ -1286,27 +1449,72 @@ test('fractional market close requires the captured account fractional-trading s
   )
 })
 
+const cryptoAsset = (symbol: string, observedAt: string) =>
+  Result.getOrThrow(
+    normalizeAssetResult(
+      {
+        id: '12345678-1234-4234-8234-123456789abc',
+        symbol,
+        class: AssetClass.Crypto,
+        exchange: AssetExchange.Crypto,
+        status: AssetStatus.Active,
+        tradable: true,
+        fractionable: true,
+        min_order_size: '0.00001',
+        min_trade_increment: '0.000000001',
+        price_increment: '0.000000001',
+      },
+      symbol,
+      observedAt,
+    ),
+  )
+
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+  test(`${symbol} IOC cancels its partial remainder and cannot fill on a later quote`, async () => {
+    const cryptoQuote = observedQuote({
+      ...quote,
+      symbol,
+      feed: 'us',
+      delayClass: 'real_time_crypto',
+      marketSession: 'continuous',
+      askSize: 2,
+      sourceTopic: 'torghut.crypto.quotes.v1',
+    })
+    const state = await run(
+      Effect.gen(function* () {
+        const broker = yield* setup({
+          assets: [cryptoAsset(symbol, observedAt)],
+          fractionalTrading: true,
+          quoteAt: () => Effect.succeed(cryptoQuote),
+        })
+        const first = yield* submit(broker, intent({ symbol, timeInForce: TimeInForce.ImmediateOrCancel }))
+        expect(first.order.status).toBe(OrderStatus.Canceled)
+        expect(first.order.filledQuantityAtoms).toBe('2000000000')
+        const at = startMs + 1_000
+        yield* broker.observeMarket(
+          at,
+          observedQuote(
+            {
+              ...cryptoQuote.value,
+              eventAt: new Date(at).toISOString(),
+              ingestedAt: new Date(at).toISOString(),
+              askSize: 100,
+              sourceOffset: '2',
+            },
+            at,
+          ),
+        )
+        yield* TestClock.setTime(at)
+        return yield* broker.snapshot
+      }),
+    )
+    expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
+    expect(state.ledger.fills).toHaveLength(1)
+    expect(state.ledger.fills[0]?.quantityAtoms).toBe('2000000000')
+  })
   test(`${symbol} settles and restores the shared broker across Sunday midnight with coin fees and a GTC close`, async () => {
     const start = Date.parse('2026-10-11T23:59:59.950Z')
-    const asset = Result.getOrThrow(
-      normalizeAssetResult(
-        {
-          id: '12345678-1234-4234-8234-123456789abc',
-          symbol,
-          class: AssetClass.Crypto,
-          exchange: AssetExchange.Crypto,
-          status: AssetStatus.Active,
-          tradable: true,
-          fractionable: true,
-          min_order_size: '0.00001',
-          min_trade_increment: '0.000000001',
-          price_increment: '0.000000001',
-        },
-        symbol,
-        new Date(start).toISOString(),
-      ),
-    )
+    const asset = cryptoAsset(symbol, new Date(start).toISOString())
     await run(
       Effect.gen(function* () {
         yield* TestClock.setTime(start)
