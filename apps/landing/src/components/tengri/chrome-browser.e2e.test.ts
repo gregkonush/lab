@@ -27,6 +27,14 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   const errors: string[] = []
   const signOutActions: string[] = []
   let authenticated = true
+  let automaticRenewals = 0
+  const leaseExpiries: number[] = []
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/_tengri/bootstrap' && response.ok()) {
+      const lease = await response.json().catch(() => null)
+      if (lease?.expiresAt) leaseExpiries.push(Date.parse(lease.expiresAt))
+    }
+  })
   let failRevocation = true
   let browserOrigin = ''
   page.on('pageerror', (error) => errors.push(error.message))
@@ -80,7 +88,11 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     const action = route.request().postDataJSON()
     let result: unknown = null
     if (action.action === 'browser-session') {
-      const response = await request.get('http://127.0.0.1:33082/_test/browser', { timeout: 300_000 })
+      if (action.renewal) automaticRenewals++
+      const response = await request.get(
+        `http://127.0.0.1:33082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
+        { timeout: 300_000 },
+      )
       expect(response.ok()).toBeTruthy()
       result = await response.json()
       browserOrigin = (result as { previewOrigin: string }).previewOrigin
@@ -127,6 +139,9 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   const frame = chrome.getByTitle('Chrome browser').contentFrame()
   const canvas = frame.locator('canvas')
   await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true', { timeout: 180_000 })
+  const browserDocument = await frame.locator('#screen').elementHandle()
+  const establishedSockets = sockets.filter((socket) => !socket.isClosed())
+  expect(establishedSockets.length).toBeGreaterThan(0)
   const returnControl = frame.getByRole('button', { name: 'Let agent use browser', exact: true })
   if (await returnControl.isVisible()) {
     await returnControl.click()
@@ -150,9 +165,27 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await state()).loaded?.url).toBe(humanUrl)
   await expect.poll(async () => (await state()).loaded?.userAgent).toContain('Chrome/')
+  await frame.getByRole('button', { name: 'Take control', exact: true }).click()
+  await expect(frame.getByRole('button', { name: 'Let agent use browser', exact: true })).toBeVisible()
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
   await page.keyboard.type('Human input works')
+  await expect.poll(async () => (await state()).input?.message).toBe('Human input works')
+  await expect.poll(() => leaseExpiries[0]).toBeTruthy()
+  const initialExpiry = leaseExpiries.at(-1)!
+  const initialRenewalCount = automaticRenewals
+  await expect.poll(() => automaticRenewals, { timeout: 70_000 }).toBeGreaterThan(initialRenewalCount)
+  await expect.poll(() => Date.now(), { timeout: 70_000 }).toBeGreaterThan(initialExpiry + 1000)
+  await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')
+  expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  expect(establishedSockets.every((socket) => !socket.isClosed())).toBe(true)
+  expect((await state()).loaded?.url).toBe(humanUrl)
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
+  // Reconnect the display's keyboard without changing the guest's retained form focus.
+  await canvas.focus()
   await page.keyboard.press('Enter')
   await expect.poll(async () => (await state()).submitted?.message).toBe('Human input works')
+  await frame.getByRole('button', { name: 'Let agent use browser', exact: true }).click()
+  await expect(frame.getByRole('button', { name: 'Take control', exact: true })).toBeVisible()
   await context.grantPermissions(['clipboard-read', 'clipboard-write'])
   await page.evaluate(() => navigator.clipboard.writeText('Clipboard input works'))
   await page.keyboard.press(`${modifier}+a`)
@@ -197,7 +230,8 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   await computer({ action: 'key', key: 'alt+Right' })
   await expect.poll(async () => (await state()).loaded?.url).toContain('?second=1')
   await computer({ action: 'key', key: 'ctrl+w' })
-  await computer({ action: 'navigate', url: 'http://127.0.0.1:8080/_test/download' })
+  const download = await computer({ action: 'navigate', url: 'http://127.0.0.1:8080/_test/download' })
+  expect(download.isError, JSON.stringify(download.content)).not.toBe(true)
   await expect.poll(async () => (await state()).download).toBe('CHROMIUM_DOWNLOAD_OK\n')
 
   await frame.getByRole('button', { name: 'Take control', exact: true }).click()

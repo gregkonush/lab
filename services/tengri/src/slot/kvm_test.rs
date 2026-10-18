@@ -13,8 +13,10 @@ use tokio::{fs, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
-    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient,
-    probe_output::ProbeOutput, runner, supervisor,
+    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState,
+    client::SlotClient,
+    probe_output::{EDITOR_READY, ProbeOutput, editor_probe_command},
+    runner, supervisor,
 };
 use crate::{
     guest::rpc::{RpcClient, proto},
@@ -687,8 +689,8 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.marker(b"\x1eTENGRI_OUTPUT_READY\x1f").await?;
     let first_output_ms = started.elapsed().as_secs_f64() * 1000.0;
     let started = Instant::now();
-    terminal.input(b"nvim /tmp/tengri-kvm-editor.txt +\"lua vim.schedule(function() vim.cmd('redraw'); io.stderr:write(string.char(30)..'TENGRI_EDITOR_READY'..string.char(31)); io.stderr:flush() end)\"; printf '\\036TENGRI_EDITOR_EXIT\\037'\n").await?;
-    terminal.marker(b"\x1eTENGRI_EDITOR_READY\x1f").await?;
+    terminal.input(&editor_probe_command()).await?;
+    terminal.marker(EDITOR_READY).await?;
     let editor_ms = started.elapsed().as_secs_f64() * 1000.0;
     terminal.input(b"\x1b:qall!\r").await?;
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;

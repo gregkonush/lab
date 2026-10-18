@@ -1,4 +1,4 @@
-import { describe, expect, spyOn, test } from 'bun:test'
+import { afterAll, describe, expect, spyOn, test } from 'bun:test'
 import * as Sentry from '@sentry/node'
 import { Cause, Effect, Exit } from 'effect'
 
@@ -9,8 +9,12 @@ import {
   sanitizeErrorEvent,
 } from './error-tracking'
 import { DiscrepancyKind, ReconciliationStatus, type Reconciliation } from './execution/contracts'
+import { CycleRunnerError } from './cycle/runner'
+import { observePass } from './observe-composition/decision-builder'
 
 describe('GlitchTip error-only safety boundary', () => {
+  afterAll(() => Sentry.close(0))
+
   test('disabled if DSN is missing', () => {
     expect(initializeErrorTracking('bayn', {})).toBe(false)
   })
@@ -158,5 +162,81 @@ describe('GlitchTip error-only safety boundary', () => {
     expect(serialized).not.toContain('customer-id')
     expect(event.message).toBe('Bayn application exception')
     expect(event.exception?.values?.[0]?.stacktrace?.frames?.[0]?.function).toBe('evaluate')
+  })
+
+  test('reports a handled failed pass before projecting it without losing its typed outcome', async () => {
+    const error = new CycleRunnerError({
+      operation: 'run-cycle-pass',
+      failure: 'operational',
+      message: 'private runtime details',
+    })
+    let tags: Readonly<Record<string, unknown>> | undefined
+    const capture = spyOn(Sentry, 'captureException').mockImplementation(() => {
+      tags = Sentry.getCurrentScope().getScopeData().tags
+      return 'd'.repeat(32)
+    })
+    try {
+      const retained = await Effect.runPromise(
+        observePass(() => Effect.sync(() => expect(capture).toHaveBeenCalledTimes(1)), {
+          outcome: 'FAILED',
+          observedAt: '2026-10-18T01:11:07.126Z',
+          error,
+        }),
+      )
+      expect(capture).toHaveBeenCalledWith(error)
+      expect(tags).toMatchObject({
+        service: 'bayn-test',
+        stage: 'bayn.execution.cycle-pass',
+        operation: 'run-cycle-pass',
+        failure: 'operational',
+      })
+      expect(JSON.stringify(tags)).not.toContain('private runtime details')
+      expect(retained).toMatchObject({ result: 'FAILURE', operation: error.operation, failure: error.failure })
+    } finally {
+      capture.mockRestore()
+    }
+  })
+
+  test('broker observation waits and successful passes do not create GlitchTip issues', async () => {
+    const capture = spyOn(Sentry, 'captureException').mockReturnValue('e'.repeat(32))
+    try {
+      await Effect.runPromise(
+        observePass(() => Effect.void, {
+          outcome: 'WAITING',
+          observedAt: '2026-10-18T01:11:07.126Z',
+          waitReason: 'BROKER_OBSERVATION_PENDING',
+        }),
+      )
+      await Effect.runPromise(
+        observePass(() => Effect.void, {
+          outcome: 'SUCCEEDED',
+          observedAt: '2026-10-18T01:11:07.126Z',
+          result: { outcome: 'WINDOW_CLOSED', observedAt: '2026-10-18T01:11:07.126Z' },
+        }),
+      )
+      expect(capture).not.toHaveBeenCalled()
+    } finally {
+      capture.mockRestore()
+    }
+  })
+
+  test('an error-reporting failure cannot replace the durable failed pass', async () => {
+    const capture = spyOn(Sentry, 'captureException').mockImplementation(() => {
+      throw new Error('collector adapter unavailable')
+    })
+    const error = new CycleRunnerError({
+      operation: 'reconcile',
+      failure: 'database',
+      message: 'original pass failure',
+    })
+    try {
+      const retained = await Effect.runPromise(
+        observePass(() => Effect.void, { outcome: 'FAILED', observedAt: '2026-10-18T01:11:07.126Z', error }),
+      )
+      expect(capture).toHaveBeenCalledTimes(1)
+      expect(retained).toMatchObject({ result: 'FAILURE', operation: error.operation, failure: error.failure })
+    } finally {
+      capture.mockRestore()
+    }
   })
 })

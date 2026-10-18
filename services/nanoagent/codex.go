@@ -76,6 +76,7 @@ type codexSubscription struct {
 }
 
 type codexApproval struct {
+	inputParams json.RawMessage
 	generation  *codexProcessGeneration
 	method      string
 	permissions json.RawMessage
@@ -608,6 +609,18 @@ func (supervisor *codexSupervisor) handleServerMessage(
 				map[string]any{"currentTimeAt": time.Now().Unix()},
 			)
 			return
+		case "item/tool/requestUserInput":
+			if err := validateCodexInputRequest(message.Method, message.Params); err != nil {
+				supervisor.respondErrorForGeneration(generation, message.ID, err.Error())
+				return
+			}
+			supervisor.mu.Lock()
+			if supervisor.generation != generation || generation.failure != nil {
+				supervisor.mu.Unlock()
+				return
+			}
+			supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+			supervisor.mu.Unlock()
 		case "item/commandExecution/requestApproval", "item/fileChange/requestApproval", "execCommandApproval", "applyPatchApproval":
 			supervisor.mu.Lock()
 			if supervisor.generation != generation || generation.failure != nil {
@@ -647,6 +660,16 @@ func (supervisor *codexSupervisor) handleServerMessage(
 			}
 			supervisor.mu.Unlock()
 		case "mcpServer/elicitation/request":
+			if codexMCPApprovalDecisions(message.Params) == nil && validateCodexInputRequest(message.Method, message.Params) == nil {
+				supervisor.mu.Lock()
+				if supervisor.generation != generation || generation.failure != nil {
+					supervisor.mu.Unlock()
+					return
+				}
+				supervisor.approvals[approvalID] = codexApproval{generation: generation, method: message.Method, inputParams: append(json.RawMessage(nil), message.Params...), rawID: append(json.RawMessage(nil), message.ID...)}
+				supervisor.mu.Unlock()
+				break
+			}
 			decisions := codexApprovalDecisions(message.Method, message.Params)
 			if decisions != nil && len(raw) > codexEventMaxBytes {
 				raw = boundedCodexMCPApproval(message, decisions)
@@ -743,6 +766,9 @@ func (supervisor *codexSupervisor) resolveApproval(ctx context.Context, id, deci
 }
 
 func codexApprovalResult(approval codexApproval, decision string) (map[string]any, error) {
+	if len(approval.inputParams) > 0 {
+		return nil, errors.New("this request requires a user answer, not an approval decision")
+	}
 	encodedDecision := approval.decisions[decision]
 	if approval.decisions == nil {
 		encodedDecision = defaultCodexApprovalDecisions()[decision]

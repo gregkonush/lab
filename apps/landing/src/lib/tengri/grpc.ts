@@ -1,6 +1,12 @@
 import 'server-only'
 
-import type { TengriCodexImage } from './codex-images'
+import {
+  codexImageMatchesMediaType,
+  isCodexAttachmentPath,
+  isWorkspaceImagePath,
+  MAX_CODEX_IMAGE_BYTES,
+  type TengriCodexImage,
+} from './codex-images'
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -282,6 +288,27 @@ export async function listFiles(identity: TengriIdentity, agentId: string, fileP
 }
 
 export async function readFile(identity: TengriIdentity, agentId: string, filePath: string) {
+  const { content, ...response } = await readFileBytes(identity, agentId, filePath)
+  return { ...response, content: decodeUtf8File(content) }
+}
+
+export async function readCodexAttachment(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isCodexAttachmentPath(filePath)) throw new TengriUnavailableError('Invalid attachment path', 400)
+  return readWorkspaceImage(identity, agentId, filePath)
+}
+
+export async function readWorkspaceImage(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isWorkspaceImagePath(filePath)) throw new TengriUnavailableError('Invalid image path', 400)
+  const result = await readFileBytes(identity, agentId, filePath)
+  const lowerPath = filePath.toLowerCase()
+  const mediaType = lowerPath.endsWith('.png') ? 'image/png' : lowerPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
+  if (result.content.length > MAX_CODEX_IMAGE_BYTES || !codexImageMatchesMediaType(mediaType, result.content)) {
+    throw new TengriUnavailableError('Invalid image attachment', 415)
+  }
+  return { content: result.content, mediaType }
+}
+
+async function readFileBytes(identity: TengriIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
@@ -295,7 +322,7 @@ export async function readFile(identity: TengriIdentity, agentId: string, filePa
   }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(content),
+    content,
     contentType: stringValue(response.contentType, 'application/octet-stream'),
     revision,
   }
@@ -594,6 +621,22 @@ export async function interruptCodexTurn(identity: TengriIdentity, agentId: stri
   await unary('interruptCodexTurn', { agentId, threadId, turnId }, identity)
 }
 
+export async function answerCodexQuestions(
+  identity: TengriIdentity,
+  agentId: string,
+  approvalId: string,
+  response: import('./codex-input').TengriCodexInputResponse,
+) {
+  const { codexInputResponseSchema } = await import('./codex-input')
+  const validated = codexInputResponseSchema.parse(response)
+  await unary<RawRecord>(
+    'resolveCodexApproval',
+    { agentId, approvalId, responseJson: Buffer.from(JSON.stringify(validated)) },
+    identity,
+    130_000,
+  )
+}
+
 export async function resolveCodexApproval(
   identity: TengriIdentity,
   agentId: string,
@@ -635,9 +678,16 @@ export async function issueEditorSession(
   identity: TengriIdentity,
   agentId: string,
   windowId: string,
+  renewal: boolean,
   signal: AbortSignal,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000, signal)
+  const response = await unary<RawRecord>(
+    'issueEditorSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -650,8 +700,20 @@ export async function revokeDesktopPreviews(identity: TengriIdentity) {
   await unary('revokeEditorSessions', {}, identity)
 }
 
-export async function issueBrowserSession(identity: TengriIdentity, agentId: string): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, identity, 400_000)
+export async function issueBrowserSession(
+  identity: TengriIdentity,
+  agentId: string,
+  windowId: string,
+  renewal: boolean,
+  signal: AbortSignal,
+): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>(
+    'issueBrowserSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -699,7 +761,20 @@ async function unary<Response = RawRecord>(
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
-  const signedMetadata = await metadata(identity, methodName, canonicalRequest)
+  const signedMetadata = await metadata(client, identity, methodName, canonicalRequest, signal)
+  return invokeUnary<Response>(client, methodName, canonicalRequest, signedMetadata, deadlineMs, signal)
+}
+
+function invokeUnary<Response>(
+  client: TengriGrpcClient,
+  methodName: string,
+  request: RawRecord,
+  metadata: grpc.Metadata,
+  deadlineMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const method = client[methodName] as UnaryMethod
+  if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedRequestError())
@@ -713,7 +788,7 @@ async function unary<Response = RawRecord>(
       call?.cancel()
       reject(abortedRequestError())
     }
-    call = method.call(client, canonicalRequest, signedMetadata, callOptions(deadlineMs), (error, response) => {
+    call = method.call(client, request, metadata, callOptions(deadlineMs), (error, response) => {
       if (settled) return
       settled = true
       signal?.removeEventListener('abort', onAbort)
@@ -745,7 +820,7 @@ async function stream(
   return method.call(
     client,
     canonicalRequest,
-    await metadata(identity, methodName, canonicalRequest),
+    await metadata(client, identity, methodName, canonicalRequest),
     callOptions(deadlineMs),
   )
 }
@@ -846,12 +921,23 @@ function resolveProtoPath() {
   return existing
 }
 
-async function metadata(identity: TengriIdentity, methodName: string, request: RawRecord) {
+async function metadata(
+  client: TengriGrpcClient,
+  identity: TengriIdentity,
+  methodName: string,
+  request: RawRecord,
+  signal?: AbortSignal,
+) {
   const key = signingKey()
   if (!key) throw new TengriUnavailableError('Tengri signing key is not configured')
   const workspaceName =
     typeof request.agentId === 'string' ? request.agentId : typeof request.id === 'string' ? request.id : ''
   const workspace = workspaceName && methodName !== 'getAgent' ? await getAgent(identity, workspaceName) : undefined
+  const value = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, header) => value.set(key, header))
+  const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
+  if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
@@ -859,14 +945,13 @@ async function metadata(identity: TengriIdentity, methodName: string, request: R
     signed = signTengriMetadata(context, identity.session.recoveryGeneration, key, {
       rpcPath: method.path,
       body: method.requestSerialize(request),
+      audience: binding.audience,
     })
   } catch (cause) {
     throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri signing failed', 503)
   }
-  const value = new grpc.Metadata()
-  const { injectTrace } = await import('@/lib/observability/server')
-  injectTrace((key, header) => value.set(key, header))
   value.set('x-tengri-context-bin', Buffer.from(signed.context))
+  value.set('x-tengri-audience', signed.audience)
   value.set('x-tengri-recovery-generation', signed.recoveryGeneration)
   value.set('x-tengri-nonce', signed.nonce)
   value.set('x-tengri-signature', signed.signature)
@@ -972,6 +1057,9 @@ function decodeUtf8File(content: Uint8Array) {
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {
+  if (agent.conditions?.some((condition) => condition.type === 'Ready' && condition.status === 'Unknown')) {
+    throw new TengriUnavailableError('Runtime status cannot be confirmed. Retrying.', 503)
+  }
   const power = tengriPowerSettingsSchema.safeParse({
     idleTimeoutMinutes: agent.idleTimeoutMinutes,
   })

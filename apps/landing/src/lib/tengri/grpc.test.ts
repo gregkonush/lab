@@ -18,6 +18,7 @@ let runtimeEpoch = 'dddddddd-dddd-4ddd-8ddd-dddddddddddd'
 let runtimePhase = 'AGENT_PHASE_READY'
 let runtimePolicyVersion = 10
 let runtimeDisplayName = 'Tengri'
+let runtimeConditions: Record<string, unknown>[] = []
 const staleAgents: Record<string, unknown>[] = []
 let delayedRuntimeReads = 0
 let agentReads = 0
@@ -50,6 +51,7 @@ function runtimeAgent(id: unknown) {
     memoryMib: 4096,
     workspaceGib: 32,
     idleTimeoutMinutes: 60,
+    conditions: runtimeConditions,
   }
 }
 let ofzServer: grpc.Server
@@ -85,6 +87,7 @@ let fixture: Awaited<ReturnType<typeof createSpiffeFixture>>
 let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
+let receiverAudience = '77777777-7777-4777-8777-777777777777'
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let editorRequestStarted: (() => void) | null = null
@@ -210,6 +213,12 @@ beforeAll(async () => {
   process.env.TENGRI_DESKTOP_ORIGIN = 'https://proompteng.ai'
   server = new grpc.Server()
   server.addService(descriptor.proompteng.runtime.v1.MicroVMControlPlane.service, {
+    getRequestAudience(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { audience: receiverAudience })
+    },
     issueEditorSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -232,6 +241,19 @@ beforeAll(async () => {
         id: 'a'.repeat(24),
         launchUrl: 'https://tengri.example/v1/preview/open#lease',
         previewOrigin: `https://tengri-${'a'.repeat(24)}.example`,
+        expiresAt: '2026-09-09T00:00:00Z',
+      })
+    },
+    issueBrowserSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        id: 'b'.repeat(24),
+        launchUrl: 'https://tengri.example/v1/preview/open#lease',
+        previewOrigin: `https://tengri-${'b'.repeat(24)}.example`,
         expiresAt: '2026-09-09T00:00:00Z',
       })
     },
@@ -292,6 +314,12 @@ beforeAll(async () => {
         architecture: 'ARCHITECTURE_ARM64',
         idleTimeoutMinutes: call.request.idleTimeoutMinutes,
       })
+    },
+    listAgents(
+      _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      callback(null, { agents: [runtimeAgent('agent-test')] })
     },
     getAgent(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -432,6 +460,21 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (
+        String(call.request.path).startsWith('/workspace/.tengri-attachments/') ||
+        call.request.path === '/workspace/chart.png'
+      ) {
+        const content = String(call.request.path).endsWith('.png')
+          ? Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
+          : Buffer.from('not an image')
+        callback(null, {
+          path: call.request.path,
+          content,
+          contentType: 'image/png',
+          revision: createHash('sha256').update(content).digest('hex'),
+        })
+        return
+      }
       if (call.request.path === '/workspace/revision.txt' || call.request.path === '/workspace/wrong-revision.txt') {
         const content = Buffer.from('versioned content\n')
         callback(null, {
@@ -615,6 +658,25 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
+    const { listCodexModels } = await import('./grpc')
+    try {
+      await listCodexModels(identity, 'agent-test')
+      expect(metadataValue('x-tengri-audience')).toBe(receiverAudience)
+      receiverAudience = '88888888-8888-4888-8888-888888888888'
+      await listCodexModels(identity, 'agent-test')
+      expect(metadataValue('x-tengri-audience')).toBe(receiverAudience)
+      receiverAudience = 'not-an-audience'
+      const before = receivedRequest
+      expect(await rejection(listCodexModels(identity, 'agent-test'))).toMatchObject({
+        message: 'Tengri request audience is invalid',
+        status: 503,
+      })
+      expect(receivedRequest).toBe(before)
+    } finally {
+      receiverAudience = '77777777-7777-4777-8777-777777777777'
+    }
+  })
   test('renews the client certificate while an existing signed stream stays open', async () => {
     const { listCodexModels, watchFiles } = await import('./grpc')
     const watch = await watchFiles(identity, 'agent-test', '/renewal')
@@ -799,15 +861,31 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).not.toBe('')
   })
 
+  test('signs browser renewal with its exact agent and desktop window identity', async () => {
+    const { issueBrowserSession } = await import('./grpc')
+    const session = await issueBrowserSession(
+      identity,
+      'agent-test',
+      'desktop-stable-browser-window',
+      true,
+      new AbortController().signal,
+    )
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-browser-window', renewal: true })
+    expect(session.id).toBe('b'.repeat(24))
+    expect(metadataContext().sessionId).toBe(identity.session.id)
+    expect(metadataValue('x-tengri-signature')).not.toBe('')
+  })
+
   test('binds real editor sessions to the window and revokes only their issued lease', async () => {
     const { issueEditorSession, revokePreviewSession } = await import('./grpc')
     const session = await issueEditorSession(
       identity,
       'agent-test',
       'desktop-stable-code-window',
+      false,
       new AbortController().signal,
     )
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window', renewal: false })
     expect(session.id).toBe('a'.repeat(24))
     expect(metadataContext().sessionId).toBe(identity.session.id)
     await revokePreviewSession(identity, 'agent-test', session.id, 'lease')
@@ -823,7 +901,7 @@ describe('Tengri gRPC BFF transport', () => {
       editorRequestCancelled = resolve
     })
     const controller = new AbortController()
-    const pending = issueEditorSession(identity, 'agent-test', 'desktop-editor-cancel', controller.signal).catch(
+    const pending = issueEditorSession(identity, 'agent-test', 'desktop-editor-cancel', false, controller.signal).catch(
       (error: unknown) => error,
     )
     try {
@@ -1102,6 +1180,25 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('serves only verified retained image attachments through the signed file contract', async () => {
+    const { readCodexAttachment, readWorkspaceImage } = await import('./grpc')
+    const prefix = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111'
+    const image = await readCodexAttachment(identity, 'agent-test', `${prefix}.png`)
+    expect(image.mediaType).toBe('image/png')
+    expect((await readWorkspaceImage(identity, 'agent-test', '/workspace/chart.png')).mediaType).toBe('image/png')
+    expect(await rejection(readWorkspaceImage(identity, 'agent-test', '/etc/private.png'))).toMatchObject({
+      status: 400,
+    })
+    expect(Array.from(image.content)).toEqual([137, 80, 78, 71, 13, 10, 26, 10])
+    expect(await rejection(readCodexAttachment(identity, 'agent-test', `${prefix}.jpg`))).toMatchObject({ status: 415 })
+    expect(await rejection(readCodexAttachment(identity, 'agent-test', '/workspace/private.png'))).toMatchObject({
+      status: 400,
+    })
+    expect(
+      await rejection(readCodexAttachment(identity, 'agent-test', '/workspace/.tengri-attachments/../private.png')),
+    ).toMatchObject({ status: 400 })
+  })
+
   test('rejects non-UTF-8 files instead of corrupting their bytes', async () => {
     const { readFile } = await import('./grpc')
     const error = await rejection(readFile(identity, 'agent-test', '/workspace/binary'))
@@ -1126,6 +1223,24 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataContext().sessionId).toBe(identity.session.id)
     const method = descriptor.proompteng.runtime.v1.MicroVMControlPlane.service.UpdatePowerSettings
     expect(metadataValue('x-tengri-signature')).toBe(expectedSignature(method, receivedRequest ?? {}))
+  })
+
+  test('reports uncertain runtime readiness as unavailable without inventing a failed agent', async () => {
+    const { listAgents } = await import('./grpc')
+    const previousPhase = runtimePhase
+    runtimePhase = 'AGENT_PHASE_READY'
+    runtimeConditions = [{ type: 'Ready', status: 'Unknown', reason: 'ReconcileUnavailable' }]
+    try {
+      expect(await rejection(listAgents(identity))).toMatchObject({
+        status: 503,
+        message: 'Runtime status cannot be confirmed. Retrying.',
+      })
+      runtimeConditions = []
+      expect((await listAgents(identity))[0]?.phase).toBe('ready')
+    } finally {
+      runtimeConditions = []
+      runtimePhase = previousPhase
+    }
   })
 
   test('rejects an old runtime response rather than inventing its power settings', async () => {
@@ -1383,6 +1498,17 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('sends validated user answers separately from approval decisions', async () => {
+    const { answerCodexQuestions } = await import('./grpc')
+    const response = { answers: { environment: { answers: ['Staging'] } } }
+    await answerCodexQuestions(identity, 'agent-test', 'question-1', response)
+    if (!receivedRequest) throw new Error('The question response did not reach the gRPC server')
+    expect(receivedRequest.agentId).toBe('agent-test')
+    expect(receivedRequest.approvalId).toBe('question-1')
+    expect(receivedRequest.decision).toBe('CODEX_APPROVAL_DECISION_UNSPECIFIED')
+    expect(JSON.parse(Buffer.from(receivedRequest.responseJson as Uint8Array).toString())).toEqual(response)
+  })
+
   test('preserves structured command approval decisions across gRPC', async () => {
     const { resolveCodexApproval } = await import('./grpc')
 
@@ -1391,6 +1517,7 @@ describe('Tengri gRPC BFF transport', () => {
       agentId: 'agent-test',
       approvalId: 'approval-1',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
+      responseJson: Buffer.alloc(0),
     })
 
     await resolveCodexApproval(identity, 'agent-test', 'approval-2', 'approve-network-policy-amendment')
@@ -1398,6 +1525,7 @@ describe('Tengri gRPC BFF transport', () => {
       agentId: 'agent-test',
       approvalId: 'approval-2',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
+      responseJson: Buffer.alloc(0),
     })
   })
 
@@ -1515,7 +1643,8 @@ function expectedSignature(
   const value = receivedMetadata?.get('x-tengri-context-bin')[0]
   if (!Buffer.isBuffer(value)) throw new Error('Missing binary signed context')
   const payload = [
-    'tengri.ofz.v1',
+    'tengri.ofz.v2',
+    metadataValue('x-tengri-audience'),
     method.path,
     createHash('sha256').update(method.requestSerialize(body)).digest('hex'),
     metadataValue('x-tengri-nonce'),

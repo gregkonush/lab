@@ -20,6 +20,7 @@ import {
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
+  retainSubmittedPromptImages,
 } from './codex-events'
 
 const event: TengriCodexEvent = {
@@ -64,6 +65,25 @@ describe('Accepted prompt retention', () => {
     expect(result.pending.map(({ prompt }) => prompt.id)).toEqual(['sent-2'])
   })
 
+  test('releases image bytes only for the one-to-one matched canonical input', () => {
+    const imagePrompt = {
+      ...prompt,
+      text: '[Image]',
+      images: [{ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' }],
+    }
+    const second = { ...imagePrompt, id: 'sent-2' }
+    const canonical = {
+      id: 'canonical-image',
+      kind: 'user-message' as const,
+      text: '[Local image: /workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png]',
+    }
+    const { matches } = reconcileSubmittedPrompts([canonical], [imagePrompt, second])
+    const retained = retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))
+    expect(retained.images).toBeUndefined()
+    expect(retained.text).toBe(canonical.text)
+    expect(retainSubmittedPromptImages(second, matches.get(second.id))).toBe(second)
+  })
+
   test('matches restored image inputs to the accepted image-only prompt', () => {
     const imagePrompt = { ...prompt, text: '[Image]' }
     const result = reconcileSubmittedPrompts(
@@ -76,6 +96,22 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  test('keeps one pending request when an approval is replayed with a newer sequence', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: 'request-1',
+      text: 'Run the check?',
+    }
+    const first = appendCodexEvent([], approval)
+    const replayed = appendCodexEvent(first, { ...approval, sequence: 8, text: 'Run the updated check?' })
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0].text).toBe('Run the updated check?')
+    expect(appendCodexEvent(replayed, approval)).toBe(replayed)
+    expect(appendCodexEvent(replayed, { ...approval, sequence: 9, approvalId: 'request-2' })).toHaveLength(2)
+  })
+
   const runtimeError: TengriCodexEvent = {
     ...event,
     kind: 'error',

@@ -3,6 +3,8 @@ syntax = "proto3";
 package proompteng.runtime.v1;
 
 service MicroVMControlPlane {
+  // Only the pinned BFF mTLS identity can call this. It conveys no user authority.
+  rpc GetRequestAudience(Empty) returns (RequestAudience);
   rpc CreateAgent(CreateAgentRequest) returns (Agent);
   rpc ListAgents(ListAgentsRequest) returns (ListAgentsResponse);
   rpc GetAgent(GetAgentRequest) returns (Agent);
@@ -36,13 +38,14 @@ service MicroVMControlPlane {
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
 
   rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
-  rpc IssueEditorSession(IssueEditorSessionRequest) returns (PreviewSession);
-  rpc IssueBrowserSession(GetAgentRequest) returns (PreviewSession);
+  rpc IssueEditorSession(IssueDesktopSessionRequest) returns (PreviewSession);
+  rpc IssueBrowserSession(IssueDesktopSessionRequest) returns (PreviewSession);
   rpc RevokeEditorSessions(Empty) returns (Empty);
   rpc RevokePreviewSession(RevokePreviewSessionRequest) returns (Empty);
 }
 
 message Empty {}
+message RequestAudience { string audience = 1; }
 enum CodexHistoryPart {
   CODEX_HISTORY_PART_UNSPECIFIED = 0;
   CODEX_HISTORY_PART_THREAD = 1;
@@ -54,7 +57,7 @@ message CodexHistoryPage {
   string raw_json = 2;
   uint64 event_sequence = 3;
 }
-message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
+message IssueDesktopSessionRequest { string agent_id = 1; string window_id = 2; bool renewal = 3; }
 
 enum Architecture {
   ARCHITECTURE_UNSPECIFIED = 0;
@@ -242,6 +245,7 @@ message ResolveCodexApprovalRequest {
   string agent_id = 1;
   string approval_id = 2;
   CodexApprovalDecision decision = 3;
+  bytes response_json = 4;
 }
 
 message CodexAccount {
