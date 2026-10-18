@@ -1,4 +1,6 @@
 import { describe, expect, test } from 'bun:test'
+import fc from 'fast-check'
+import { checkAsyncProperty } from '../testing/property-test-support'
 import { SubmissionDenialReason } from './submission-denial'
 import { brokerAssetFixture, cachedBrokerStateFixture, submissionProjectionFixture } from './broker-state-cache.fixture'
 
@@ -142,7 +144,7 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
 }
 
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v4',
   intentId: '5'.repeat(64),
   authorityGenerationHash,
   riskDecisionId: '6'.repeat(64),
@@ -154,10 +156,11 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   clientOrderId: 'mutation-authority-intent',
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1000000000',
   notionalLimitMicros: '100000000',
+  limitPriceMicros: '100000000',
   state: IntentState.Approved,
   createdAt: activeAt,
   ...overrides,
@@ -390,6 +393,69 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
 }
 
 describe('final broker mutation authority', () => {
+  test('property: native fractional BUY and SELL orders obey the exact final money ceiling', async () => {
+    await checkAsyncProperty(
+      'native-final-order-ceiling',
+      fc.asyncProperty(
+        fc.constantFrom('AMD', 'BTC/USD', 'ETH/USD', 'SOL/USD'),
+        fc.constantFrom(OrderSide.Buy, OrderSide.Sell),
+        fc.bigInt({ min: 1n, max: 999999999n }),
+        fc.bigInt({ min: 10000n, max: 20000n }),
+        async (symbol, side, fraction, priceTicks) => {
+          const quantity = 1000000000n + fraction
+          const price = priceTicks * 10000n
+          const numerator = quantity * price
+          const ceiling = (numerator + 999999999n) / 1000000000n
+          const proposedIntent = intent({
+            symbol,
+            side,
+            quantityAtoms: quantity.toString(),
+            limitPriceMicros: price.toString(),
+            timeInForce: symbol.includes('/') ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
+            notionalLimitMicros: ((numerator + (side === OrderSide.Buy ? 999999999n : 0n)) / 1000000000n).toString(),
+          })
+          const common = {
+            environment: BrokerEnvironment.Sandbox,
+            brokerAccount: account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' }),
+            proposedIntent,
+            positions:
+              side === OrderSide.Buy
+                ? []
+                : [
+                    position({
+                      symbol,
+                      quantityAtoms: quantity.toString(),
+                      marketPriceMicros: price.toString(),
+                      averageEntryPriceMicros: price.toString(),
+                      marketValueMicros: ceiling.toString(),
+                      costBasisMicros: ceiling.toString(),
+                      unrealizedPnlMicros: '0',
+                    }),
+                  ],
+          }
+          const atCap = await runLiveSubmit({
+            ...common,
+            grant: persistedGrantRecord(
+              { ...defaultLimits, maxOrderNotionalMicros: ceiling.toString() },
+              BrokerEnvironment.Sandbox,
+            ),
+          })
+          expect(atCap.exit._tag).toBe('Success')
+          expect(atCap.submits).toBe(1)
+          const overCap = await runLiveSubmit({
+            ...common,
+            grant: persistedGrantRecord(
+              { ...defaultLimits, maxOrderNotionalMicros: (ceiling - 1n).toString() },
+              BrokerEnvironment.Sandbox,
+            ),
+          })
+          expect(failureTag(overCap.exit)).toBe('OrderNotionalLimitExceeded')
+          expect(overCap.submits).toBe(0)
+        },
+      ),
+    )
+  })
+
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'])
     test(`${symbol} uses the common PAPER submission guard with native precision and cash authority`, async () => {
       const cryptoAccount = account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' })
@@ -398,7 +464,7 @@ describe('final broker mutation authority', () => {
         quantityAtoms: '31234567',
         orderType: OrderType.Limit,
         timeInForce: TimeInForce.ImmediateOrCancel,
-        notionalLimitMicros: '3224150',
+        notionalLimitMicros: '3123457',
       })
       const common = { environment: BrokerEnvironment.Sandbox, brokerAccount: cryptoAccount, proposedIntent }
       const submitted = await runLiveSubmit(common)
@@ -1008,7 +1074,7 @@ describe('final broker mutation authority', () => {
   test('admits an ordinary sell exit using its durable notional cap', async () => {
     const observed = await runLiveSubmit({
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '99000000', notionalLimitMicros: '99000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
@@ -1146,7 +1212,11 @@ describe('final broker mutation authority', () => {
       grant,
       positions: [position({ quantityAtoms: '500000000', marketValueMicros: '50000000' })],
       openOrders: [partialMarketBuy],
-      proposedIntent: intent({ quantityAtoms: '50000000', notionalLimitMicros: '10000000' }),
+      proposedIntent: intent({
+        quantityAtoms: '50000000',
+        limitPriceMicros: '200000000',
+        notionalLimitMicros: '10000000',
+      }),
     })
 
     expect(failureTag(observed.exit)).toBe('OpenOrderMarketPriceUnbounded')
@@ -1184,7 +1254,7 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '99000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '99000000', notionalLimitMicros: '99000000' }),
     })
 
     expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
@@ -1196,11 +1266,22 @@ describe('final broker mutation authority', () => {
     const observed = await runLiveSubmit({
       grant,
       positions: [position()],
-      proposedIntent: intent({ side: OrderSide.Sell, notionalLimitMicros: '90000000' }),
+      proposedIntent: intent({ side: OrderSide.Sell, limitPriceMicros: '90000000', notionalLimitMicros: '90000000' }),
     })
 
     expect(observed.exit._tag).toBe('Success')
     expect(observed.submits).toBe(1)
+  })
+
+  test('rounds a fractional sell outward at the immutable order ceiling', async () => {
+    const observed = await runLiveSubmit({
+      grant: persistedGrantRecord({ ...defaultLimits, maxOrderNotionalMicros: '100000000' }),
+      positions: [position({ quantityAtoms: '1000000001', marketValueMicros: '100000001' })],
+      proposedIntent: intent({ side: OrderSide.Sell, quantityAtoms: '1000000001', notionalLimitMicros: '100000000' }),
+    })
+    expect(observed.exit._tag).toBe('Failure')
+    expect(failureTag(observed.exit)).toBe('OrderNotionalLimitExceeded')
+    expect(observed.submits).toBe(0)
   })
 
   test.each([

@@ -98,7 +98,7 @@ test('property: DAY partial fills conserve the account across quote retries, can
             }
             let broker = yield* makeReplayBroker(config)
             const order: Intent = {
-              schemaVersion: 'bayn.paper-intent.v3',
+              schemaVersion: 'bayn.execution-intent.v4',
               intentId: '1'.repeat(64),
               riskDecisionId: '6'.repeat(64),
               authorityGenerationHash: '2'.repeat(64),
@@ -114,6 +114,10 @@ test('property: DAY partial fills conserve the account across quote retries, can
               timeInForce: TimeInForce.Day,
               quantityAtoms: String(BigInt(input.quantity) * 1_000_000_000n),
               notionalLimitMicros: String(input.quantity * 100_000_000),
+              limitPriceMicros: (
+                (BigInt(String(input.quantity * 100_000_000)) * 1000000000n) /
+                BigInt(String(BigInt(input.quantity) * 1_000_000_000n))
+              ).toString(),
               state: IntentState.IoStarted,
               createdAt: at,
             }

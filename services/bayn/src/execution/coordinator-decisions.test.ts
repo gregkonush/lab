@@ -54,7 +54,7 @@ const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const decisionId = 'b'.repeat(64)
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v4',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: decisionId,
@@ -66,10 +66,11 @@ const intent: Intent = {
   clientOrderId: `b1_${'A'.repeat(43)}`,
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '160000000',
   state: IntentState.Approved,
   createdAt: '2026-07-25T00:00:00.000Z',
 }
@@ -113,18 +114,20 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   quantityAtoms: intent.quantityAtoms,
   filledQuantityAtoms: '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: intent.limitPriceMicros,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status: OrderStatus.Accepted,
-  extendedHours: false,
+  extendedHours: true,
   observedAt: evidence.observedAt,
   ...overrides,
 })
 
 const roundedNotionalIntent: Intent = {
   ...intent,
-  notionalLimitMicros: '200009999',
+  limitPriceMicros: '160010000',
+  notionalLimitMicros: '200012500',
 }
 
 const mutation = (
@@ -256,8 +259,10 @@ describe('execution coordinator decisions', () => {
   test('matches the exact BUY quantity and rejects a notional confirmation', () => {
     const request = encodedRequest(roundedNotionalIntent)
     expect(request).toMatchObject({ qty: '1.25' })
-    expect(exactOrder(roundedNotionalIntent, request, order())).toBe(true)
-    const { quantityAtoms: _quantity, ...base } = order()
+    expect(
+      exactOrder(roundedNotionalIntent, request, order({ limitPriceMicros: roundedNotionalIntent.limitPriceMicros })),
+    ).toBe(true)
+    const { quantityAtoms: _quantity, ...base } = order({ limitPriceMicros: roundedNotionalIntent.limitPriceMicros })
     expect(exactOrder(roundedNotionalIntent, request, { ...base, notionalMicros: '200000000' })).toBe(false)
   })
 

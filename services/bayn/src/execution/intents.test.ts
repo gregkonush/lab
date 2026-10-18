@@ -39,7 +39,7 @@ import {
 const hash = (digit: string): string => digit.repeat(64)
 
 const input: IntentPlan = {
-  schemaVersion: 'bayn.paper-intent-plan.v1',
+  schemaVersion: 'bayn.intent-plan.v2',
   strategyName: 'risk-balanced-trend',
   cycleId: hash('1'),
   decisionHash: hash('2'),
@@ -47,10 +47,11 @@ const input: IntentPlan = {
   accountId: 'paper-account-1',
   symbol: 'NVDA',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '200000000',
   createdAt: '2026-07-22T10:00:00.000Z',
 }
 
@@ -67,28 +68,29 @@ const riskState = (generationHash = hash('a'), maximum = Authority.Execution) =>
 })
 
 const paperIntent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v4',
   authorityGenerationHash: hash('a'),
-  intentId: '132e27353b062538eb5da13a4d6f05b604b3ecdfac499517dd62c7e335fd517c',
+  intentId: 'a30b0a9219261c4f5f1ec7ac98ef893f875443bcb9bbed275c2e476863a0b83f',
   strategyName: input.strategyName,
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
   policyHash: input.policyHash,
   accountId: input.accountId,
-  clientOrderId: 'b1_Ey4nNTsGJTjrXaE6TW8FtgSz7N-sSZUX3WLH4zX9UXw',
+  clientOrderId: 'b1_owsKkhkmHE9fHsesmO-JP4dUQ7y5u-0nXC5HaGOguD8',
   symbol: input.symbol,
   side: input.side,
   orderType: input.orderType,
   timeInForce: input.timeInForce,
   quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
+  limitPriceMicros: input.limitPriceMicros,
   state: IntentState.Planned,
   createdAt: input.createdAt,
 }
 
 const approvedDecision: RiskDecision = {
   schemaVersion: 'bayn.paper-risk-decision.v1',
-  decisionId: 'e37f88b6623adee960cab7caa21d06162445519b27f863cfd501cae65133ad3d',
+  decisionId: '5d21bb2eceaeb3d2ff29e2069b5c211a5737cbfbd6f607bacf3ca8afc3a84844',
   inputHash: hash('d'),
   intentId: paperIntent.intentId,
   policyHash: paperIntent.policyHash,
@@ -149,6 +151,7 @@ const storedRow = {
   time_in_force: paperIntent.timeInForce,
   quantity_atoms: paperIntent.quantityAtoms,
   notional_limit_micros: paperIntent.notionalLimitMicros,
+  limit_price_micros: paperIntent.limitPriceMicros,
   replan_generation_hash: null,
   state: IntentState.Approved,
   terminal_outcome: null,
@@ -174,7 +177,7 @@ describe('deterministic execution intents', () => {
     expect(first.clientOrderId).toHaveLength(46)
     expect(first.state).toBe(IntentState.Planned)
     expect(first.riskDecisionId).toBeUndefined()
-    expect(first.schemaVersion).toBe('bayn.paper-intent.v2')
+    expect(first.schemaVersion).toBe('bayn.reference-intent.v3')
   })
 
   test('binds account, strategy, cycle, decision, and target material', async () => {
@@ -186,10 +189,9 @@ describe('deterministic execution intents', () => {
       { ...input, decisionHash: hash('5') },
       { ...input, symbol: 'AMD' },
       { ...input, side: OrderSide.Sell },
-      { ...input, orderType: OrderType.Limit },
-      { ...input, timeInForce: TimeInForce.GoodUntilCanceled },
-      { ...input, quantityAtoms: '2000000000' },
-      { ...input, notionalLimitMicros: '300000000' },
+      { ...input, limitPriceMicros: '201000000', notionalLimitMicros: '201000000' },
+      { ...input, quantityAtoms: '2000000000', notionalLimitMicros: '400000000' },
+      { ...input, notionalLimitMicros: '300000000', limitPriceMicros: '300000000' },
     ]
     const planned = await Effect.runPromise(Effect.forEach(variants, plan))
 
@@ -234,7 +236,7 @@ describe('deterministic execution intents', () => {
     expect(first).toEqual(replay)
     expect(derivedId).toBe(first.intentId)
     expect(first).toMatchObject({
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v4',
       authorityGenerationHash: hash('a'),
       state: IntentState.Planned,
     })
@@ -243,7 +245,7 @@ describe('deterministic execution intents', () => {
     expect(rotated.clientOrderId).not.toBe(first.clientOrderId)
   })
 
-  test('derives the v3 identity without authority state and rejects malformed material', async () => {
+  test('derives the v4 identity without authority state and rejects malformed material', async () => {
     const [baseline, changedTime, changedGeneration] = await Effect.runPromise(
       Effect.all([
         executionIntentIdForPlan(input, hash('a')),
@@ -287,10 +289,10 @@ describe('pure intent commit decisions', () => {
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) {
       expect(result.success).toEqual({ _tag: 'PreparedCommit', intent: paperIntent, decision: approvedDecision })
-      expect(result.success.intent.intentId).toBe('132e27353b062538eb5da13a4d6f05b604b3ecdfac499517dd62c7e335fd517c')
-      expect(result.success.intent.clientOrderId).toBe('b1_Ey4nNTsGJTjrXaE6TW8FtgSz7N-sSZUX3WLH4zX9UXw')
+      expect(result.success.intent.intentId).toBe('a30b0a9219261c4f5f1ec7ac98ef893f875443bcb9bbed275c2e476863a0b83f')
+      expect(result.success.intent.clientOrderId).toBe('b1_owsKkhkmHE9fHsesmO-JP4dUQ7y5u-0nXC5HaGOguD8')
       expect(result.success.decision.decisionId).toBe(
-        'e37f88b6623adee960cab7caa21d06162445519b27f863cfd501cae65133ad3d',
+        '5d21bb2eceaeb3d2ff29e2069b5c211a5737cbfbd6f607bacf3ca8afc3a84844',
       )
     }
   })
@@ -308,13 +310,13 @@ describe('pure intent commit decisions', () => {
     }
   })
 
-  test('totalizes the exported reference identity helper without changing its golden ID', () => {
+  test('totalizes the exported reference identity helper with its explicit-price golden ID', () => {
     const golden = intentIdForPlan(input)
     const invalid = intentIdForPlan({ ...input, strategyName: 'invalid\ud800strategy' })
 
     expect(golden).toMatchObject({
       _tag: 'Success',
-      success: '60c4fe9c0fefd765c05fe9f2333232b37f645559dba41d61a0dbbb20cd3287c8',
+      success: 'a2d8b9e52713b842fe0959eb34cc618ada577754edcae22ca173984a840fd304',
     })
     expect(Result.isFailure(invalid)).toBe(true)
     if (Result.isFailure(invalid)) {

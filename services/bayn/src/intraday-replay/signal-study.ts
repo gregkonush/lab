@@ -8,7 +8,7 @@ import { jevMarketForSymbol, jevMarketForFeed, jevBenchmarkSymbol } from '../jev
 import { observationSession, isContinuousMarket } from '../market-hours'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
@@ -268,7 +268,7 @@ export const summarizeSignalFactorOutcomes = (
 }
 
 export const studyOrder = (input: {
-  readonly orderType: OrderType.Limit | OrderType.Market
+  readonly orderType: OrderType.Limit
   readonly symbol: string
   readonly side: OrderSide
   readonly quantityAtoms: bigint
@@ -307,15 +307,9 @@ export const studyOrder = (input: {
       symbol: input.symbol,
       side: input.side,
       orderType: input.orderType,
-      timeInForce:
-        input.orderType === OrderType.Limit
-          ? cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
-          : jevMarketForSymbol(input.symbol).market === 'CRYPTO'
-            ? TimeInForce.GoodUntilCanceled
-            : TimeInForce.Day,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: price,
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
@@ -324,7 +318,7 @@ export const studyOrder = (input: {
       order: {
         side: input.side,
         quantityAtoms: input.quantityAtoms,
-        limitPriceMicros: input.orderType === OrderType.Market ? null : terms.expectedExecutionPriceMicros,
+        limitPriceMicros: terms.expectedExecutionPriceMicros,
       },
       quote: {
         priceMicros: yield* priceNumberToMicros(
@@ -339,8 +333,6 @@ export const studyOrder = (input: {
       executionModel: input.protocol.executionModel,
       assumptions: input.assumptions,
     })
-    if (Result.isFailure(simulated) && simulated.failure.reason === 'insufficient-market-close-liquidity')
-      return { status: 'UNRESOLVED' as const, reason: simulated.failure.reason }
     const outcome = yield* simulated
     if (outcome.status === 'unfilled') return { status: 'CANCELED' as const, reason: outcome.reason }
     return {
@@ -375,7 +367,6 @@ export const studyEntryQuantity = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* priceNumberToMicros(input.referencePrice, 'study.reference', 'UP'),
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
