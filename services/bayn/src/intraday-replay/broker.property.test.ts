@@ -8,7 +8,7 @@ import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
-import type { ObservedMarketValue } from '../market-data/streaming/projection'
+import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { checkAsyncProperty } from '../testing/property-test-support'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { utcInstantFromEpochMillis } from '../time'
@@ -62,7 +62,11 @@ test('property: DAY partial fills conserve the account across quote retries, can
         quantity: fc.integer({ min: 1, max: 20 }),
         cancelBefore: fc.integer({ min: 0, max: 10 }),
         quotes: fc.array(
-          fc.record({ cents: fc.integer({ min: 9900, max: 10100 }), size: fc.integer({ min: 0, max: 5 }) }),
+          fc.record({
+            cents: fc.integer({ min: 9900, max: 10100 }),
+            size: fc.integer({ min: 0, max: 5 }),
+            elapsedSeconds: fc.integer({ min: 0, max: 2 }),
+          }),
           { minLength: 2, maxLength: 10 },
         ),
       }),
@@ -87,7 +91,8 @@ test('property: DAY partial fills conserve the account across quote retries, can
               calendar: [
                 { date: '2026-09-04', open: '09:30', close: '16:00', session_open: '0930', session_close: '1600' },
               ],
-              quoteAt: (_symbol, now) => Effect.succeed(retained.findLast((entry) => entry.availableAtMs <= now)),
+              quoteAt: (symbol, now, source) =>
+                Effect.succeed(observedQuoteAt({ quoteHistory: new Map([[symbol, retained]]) }, symbol, now, source)),
               advanceToArrival: (now) => TestClock.setTime(now),
             }
             let broker = yield* makeReplayBroker(config)
@@ -112,8 +117,9 @@ test('property: DAY partial fills conserve the account across quote retries, can
               createdAt: at,
             }
             const submitted = yield* broker.mutation.submit(order)
+            let now = start + 1_000
             for (const [index, next] of input.quotes.entries()) {
-              const now = start + (index + 1) * 1_000
+              now += next.elapsedSeconds * 1_000
               yield* TestClock.setTime(now)
               if (index === input.cancelBefore) yield* broker.mutation.cancel(submitted.order.brokerOrderId)
               const incoming = quote(now - start, next.cents / 100, next.size, String(index + 1))

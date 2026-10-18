@@ -404,8 +404,8 @@ export const runBacktest = (
       assets: prepared.assets,
       calendar: prepared.input.calendar,
       advanceToArrival: advanceTo,
-      quoteAt: (symbol, atMs) =>
-        source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs))),
+      quoteAt: (symbol, atMs, quoteSource) =>
+        source.cursor.pipe(Effect.map((cursor) => observedQuoteAt(cursor.projection, symbol, atMs, quoteSource))),
     })
     yield* source.observeBroker((atMs, quote) =>
       broker

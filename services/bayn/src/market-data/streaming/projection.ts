@@ -38,6 +38,12 @@ export interface ObservedMarketValue<A> {
   readonly sequence: number
   readonly recordHash: string
 }
+export interface ObservedQuoteSource {
+  readonly topic: string
+  readonly partition: number
+  readonly offset: string
+  readonly availableAtMs: number
+}
 export interface ObservedBar extends ObservedMarketValue<IntradayBar> {
   readonly firstPublication?: ObservedMarketValue<IntradayBar>
 }
@@ -421,8 +427,23 @@ export interface StreamingSymbolInputs {
 }
 
 /** Choose the winning revision that had arrived at the observation, preserving earlier cuts across corrections. */
-export const observedQuoteAt = (state: StreamingProjection, symbol: string, observedAtMs: number) =>
-  state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+export const observedQuoteAt = (
+  state: Pick<StreamingProjection, 'quoteHistory'>,
+  symbol: string,
+  observedAtMs: number,
+  source: ObservedQuoteSource | null = null,
+) =>
+  state.quoteHistory
+    .get(symbol)
+    ?.findLast(
+      (entry) =>
+        entry.availableAtMs <= observedAtMs &&
+        (source === null ||
+          (entry.availableAtMs === source.availableAtMs &&
+            entry.value.sourceTopic === source.topic &&
+            entry.value.sourcePartition === source.partition &&
+            entry.value.sourceOffset === source.offset)),
+    )
 
 export const observedBarsAt = (
   state: StreamingProjection,

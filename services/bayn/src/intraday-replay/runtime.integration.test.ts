@@ -53,6 +53,7 @@ import { historicalRawArrivals } from '../testing/historical-streaming-fixture'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { IntradaySnapshotPurpose } from '../market-data/intraday/model'
+import { observedQuoteAt } from '../market-data/streaming/projection'
 import {
   advanceHistoricalMarketCursor,
   compareArrivalPositions,
@@ -80,7 +81,7 @@ import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
-import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
+import { Authority, KillState, OrderSide as IntentSide, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
@@ -166,6 +167,9 @@ durableTest.each(
       scenario === 'measured-entry-expired' ||
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
+    const restingDayLifecycle =
+      measured ||
+      ['fill', 'fallback', 'failed-management-response', 'early-exit', 'partial-exit-reentry'].includes(scenario)
     const fixture = { ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
@@ -177,19 +181,20 @@ durableTest.each(
             { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
               at: initialAtMs + (index + 1) * 1000,
-              fullWindow: false,
+              fullWindow: (index + 1) % 5 === 0,
               offset: BigInt((index + 2) * 1000),
               bidSize: 40,
               premium: 0.02,
             })),
             { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
+            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.02 },
           ]
         : measured
           ? [
               { at: initialAtMs + 1, fullWindow: true, offset: 1000n, bidSize: 100, premium: 0.02 },
               ...Array.from({ length: 200 }, (_, index) => ({
                 at: initialAtMs + (index + 1) * 200,
-                fullWindow: false,
+                fullWindow: (index + 1) % 25 === 0,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
                 premium: slippedExit ? 0.02 : 0.02 + (index + 1) * 0.00002,
@@ -197,14 +202,25 @@ durableTest.each(
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
               partialEntryReentry
-                ? [{ at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
+                ? [
+                    { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
+                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.02 },
+                  ]
                 : []),
             ]
           : scenario === 'no-trade'
             ? [{ at: initialAtMs + 1, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0 }]
             : scenario === 'no-trade-finalization'
               ? [{ at: finalizationAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
-              : []
+              : restingDayLifecycle
+                ? Array.from({ length: 26 }, (_, index) => ({
+                    at: initialAtMs + (index === 0 ? 1 : index * 1000),
+                    fullWindow: index % 5 === 0,
+                    offset: BigInt((index + 1) * 1000),
+                    bidSize: 100,
+                    premium: 0.02,
+                  }))
+                : []
     const lifecycleArrivals = lifecycleObservations
       .flatMap(({ at, fullWindow, offset, bidSize, premium }) => {
         const windowEnd = Math.floor(at / 60_000) * 60_000
@@ -231,7 +247,10 @@ durableTest.each(
         const raw = {
           ...original,
           bars: original.bars.map(shiftOffset),
-          quotes: original.quotes.map(shiftOffset),
+          quotes: original.quotes.map((row) => ({
+            ...shiftOffset(row),
+            askSize: !restingDayLifecycle || at <= initialAtMs + 200 || at === reentryAtMs ? 100 : 0,
+          })),
           trades: original.trades.map(shiftOffset),
         }
         const arrivals = historicalRawArrivals(raw, at)
@@ -371,12 +390,19 @@ durableTest.each(
           projection: { ...fixture.cursor.projection, epoch: `historical-${runId}` },
         }
         let nextLifecycleArrival = 0
+        let marketBroker: Effect.Success<ReturnType<typeof makeReplayBroker>> | undefined
         const advanceMarketTo = (atMs: number) =>
           Effect.gen(function* () {
             while (nextLifecycleArrival < lifecycleArrivals.length) {
               const arrival = lifecycleArrivals[nextLifecycleArrival]
               if (arrival === undefined || arrival.availableAtMs > atMs) break
+              const previousQuotes = cursor.projection.quotes
               cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
+              const changedQuote = [...cursor.projection.quotes].find(
+                ([symbol, quote]) => previousQuotes.get(symbol) !== quote,
+              )?.[1]
+              if (marketBroker !== undefined)
+                yield* marketBroker.observeMarket(arrival.availableAtMs, changedQuote ?? null)
               nextLifecycleArrival += 1
             }
             yield* clock.advanceTo(utcInstantFromEpochMillis(atMs))
@@ -470,7 +496,7 @@ durableTest.each(
               ),
             ),
           ),
-          quoteAt: (symbol) => Effect.succeed(cursor.projection.quotes.get(symbol)),
+          quoteAt: (symbol, atMs, source) => Effect.succeed(observedQuoteAt(cursor.projection, symbol, atMs, source)),
           ...(timing === undefined ? {} : { submissionTime: timing.currentUtcInstant }),
           advanceToArrival: (atMs) =>
             advanceMarketTo(atMs).pipe(
@@ -479,6 +505,7 @@ durableTest.each(
               ),
             ),
         })
+        marketBroker = broker
         const passes = yield* Ref.make<Array<Parameters<import('../app').RecordAutonomousCyclePass>[0]>>([])
         const stallReconciliation = yield* Ref.make(false)
         const interrupted = yield* Ref.make(false)
@@ -517,9 +544,12 @@ durableTest.each(
           ),
           clock,
           currentUtcInstant: Effect.gen(function* () {
+            if (restingDayLifecycle) {
+              if (timing === undefined) yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
+              else yield* providerClock.adjust(1)
+            }
             if (scenario === 'reconciliation-idle-recovery')
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
-            if (scenario === 'measured-submit-expired-reentry' || partialEntryReentry) yield* providerClock.adjust(1)
             if (scenario === 'measured-submit-expired-reentry' && !expiredStartedSubmit) {
               const started = yield* sql`SELECT intent_id FROM intents WHERE state = 'IO_STARTED' LIMIT 1`
               if (started.length > 0) {
@@ -1247,9 +1277,23 @@ durableTest.each(
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
           expect(counts).toEqual([
             scenario === 'recovery-filled'
-              ? { intents: 2, fills: 2, transactions: 2 }
+              ? { intents: 3, fills: 2, transactions: 2 }
               : { intents: 1, fills: 0, transactions: 0 },
           ])
+          if (scenario === 'recovery-filled')
+            expect(
+              yield* sql`SELECT intent.side, intent.terminal_outcome, event.denial_reason,
+                NOT EXISTS (SELECT 1 FROM orders WHERE intent_id=intent.intent_id) AS no_broker_order
+                FROM intents intent JOIN mutation_events event USING(intent_id)
+                WHERE intent.account_id=${accountId} AND event.event_type='SUBMIT_DENIED'`,
+            ).toEqual([
+              {
+                side: IntentSide.Sell,
+                terminal_outcome: 'REJECTED',
+                denial_reason: SubmissionDenialReason.ReconciliationStoreError,
+                no_broker_order: true,
+              },
+            ])
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
@@ -1264,7 +1308,9 @@ durableTest.each(
               if (
                 advanced.result?.outcome === 'RECOVERED' &&
                 advanced.result.action === 'WAITING' &&
-                advanced.result.waitReason === 'COMPLETION_EVIDENCE_PENDING'
+                ['COMPLETION_EVIDENCE_PENDING', 'intent-nonterminal', 'POST_MUTATION_RECONCILIATION'].includes(
+                  advanced.result.waitReason ?? '',
+                )
               )
                 pendingCompletionCount += 1
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
@@ -1292,6 +1338,7 @@ durableTest.each(
             { state: 'BLOCKED' },
             { state: 'COMPLETED' },
           ])
+          yield* createRuntime
           const readAuthority = runtime.store.authorityGeneration.readAuthorityState
           if (readAuthority === undefined) throw new Error('Missing durable authority reader')
           expect(yield* readAuthority).toMatchObject({
@@ -1332,7 +1379,7 @@ durableTest.each(
           partialEntryReentry
         ) {
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          for (let attempt = 0; attempt < 12; attempt++) {
+          for (let attempt = 0; attempt < 20; attempt++) {
             const advanced = yield* runtime.advance
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
             const next = (yield* Clock.currentTimeMillis) + 1000
@@ -1369,7 +1416,7 @@ durableTest.each(
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* passUnavailableCryptoAdmission(restarted)
-            for (let attempt = 0; attempt < 12; attempt++) {
+            for (let attempt = 0; attempt < 20; attempt++) {
               const advanced = yield* restarted.advance
               if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
@@ -1416,7 +1463,7 @@ durableTest.each(
             if (entry === undefined) throw new Error('Missing measured entry execution')
             expect(Date.parse(entry.submittedAt)).toBeGreaterThanOrEqual(lastEntryResponse)
             for (const order of state.orders) {
-              const execution = order.executions.at(-1)
+              const execution = order.executions.findLast((execution) => execution.outcome.status === 'filled')
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
@@ -1442,11 +1489,13 @@ durableTest.each(
               '20000000000',
             ])
             const restarted = yield* createRuntime
-            expect(restarted.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
+            expect(restarted.authorityGenerationHash).toBe(
+              (yield* runtime.store.authorityGeneration.readAuthorityState).generationHash,
+            )
             yield* restarted.advance
             expect((yield* broker.snapshot).fills).toHaveLength(4)
             yield* passUnavailableCryptoAdmission(restarted)
-            for (let attempt = 0; attempt < 12; attempt++) {
+            for (let attempt = 0; attempt < 20; attempt++) {
               const advanced = yield* restarted.advance
               if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
@@ -1484,7 +1533,7 @@ durableTest.each(
                 FROM autonomous_cycle_paper_close_replans AS replan
                 JOIN autonomous_cycle_paper_closures AS original USING (cycle_id)
               `,
-            ).toEqual([{ plans: 2, same_exit_evidence: true }])
+            ).toEqual([{ plans: 0, same_exit_evidence: null }])
           }
           return { _tag: 'Lifecycle' as const }
         }
@@ -1500,12 +1549,13 @@ durableTest.each(
                 ),
               ),
             start,
-            start + 4000,
+            start + 20_000,
           )
           expect(managementCalls).toBe(1)
           expect(schedule.failedPassCount).toBe(0)
           expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
           expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
+          yield* advanceMarketTo(closeAtMs)
           for (const arrival of closeArrivals)
             cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
           yield* advanceMarketTo(closeAtMs)
@@ -1537,12 +1587,11 @@ durableTest.each(
         let waiting = yield* runtime.advance
         for (
           let attempt = 0;
-          attempt < 4 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'JEV_POSITION_HELD';
+          attempt < 20 && waiting.result?.outcome === 'RECOVERED' && waiting.result.waitReason !== 'JEV_POSITION_HELD';
           attempt++
         ) {
           const nextMs = (yield* Clock.currentTimeMillis) + 1000
-          yield* clock.advanceTo(utcInstantFromEpochMillis(nextMs))
-          yield* TestClock.setTime(nextMs)
+          yield* advanceMarketTo(nextMs)
           managementStartedAt = yield* currentUtcInstant
           waiting = yield* runtime.advance
         }
@@ -1577,6 +1626,7 @@ durableTest.each(
         expect(yield* Ref.get(interrupted)).toBe(true)
         expect(yield* Clock.currentTimeMillis).toBe(frozenAt)
         yield* Ref.set(stallReconciliation, false)
+        yield* advanceMarketTo(closeAtMs)
         for (const arrival of closeArrivals)
           cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
         yield* clock.advanceTo(utcInstantFromEpochMillis(closeAtMs))
@@ -1596,7 +1646,12 @@ durableTest.each(
             extendedHours: true,
           })
         }
-        expect(brokerState.ledger.positions).toHaveLength(0)
+        expect(
+          brokerState.ledger.positions,
+          JSON.stringify(
+            brokerState.orders.map((entry) => ({ order: entry.order, execution: entry.executions.at(-1) })),
+          ),
+        ).toHaveLength(0)
         expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,

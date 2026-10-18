@@ -213,12 +213,75 @@ test('a partial DAY order resumes after restart and retains each fill and fee ac
   expect(result.recovered).toEqual(result.state)
 })
 
+test('DAY recovery retains distinct fills from quotes available in the same millisecond', async () => {
+  const universe = {
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    symbols: equityMarketProfile.universe,
+    topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
+  }
+  await run(
+    Effect.gen(function* () {
+      let projection = incorporateRecordedMarketValue(
+        emptyStreamingProjection('equal-time-day-fills'),
+        { ...quote, askSize: 0 },
+        universe,
+        startMs,
+      )
+      const quoteAt: ReplayBrokerConfig['quoteAt'] = (symbol, atMs, source) =>
+        Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source))
+      const broker = yield* setup({ quoteAt })
+      yield* submit(broker, intent({ quantityAtoms: '3000000000', notionalLimitMicros: '303000000' }))
+      const atMs = startMs + 1_000
+      yield* TestClock.setTime(atMs)
+      for (const [index, price] of [99, 100].entries()) {
+        projection = incorporateRecordedMarketValue(
+          projection,
+          {
+            ...quote,
+            sourceOffset: String(BigInt(quote.sourceOffset) + BigInt(index + 1)),
+            eventAt: new Date(atMs).toISOString(),
+            ingestedAt: new Date(atMs).toISOString(),
+            bidPrice: price,
+            askPrice: price,
+            askSize: 1,
+          },
+          universe,
+          atMs,
+        )
+        const incoming = projection.quotes.get('AAPL')
+        if (incoming === undefined) throw new Error('Missing accepted equal-time quote')
+        yield* broker.observeMarket(atMs, incoming)
+      }
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.orders[0]?.order.status).toBe(OrderStatus.PartiallyFilled)
+      expect(checkpoint.state.ledger.fills.map((fill) => fill.observedAt)).toEqual([
+        new Date(atMs).toISOString(),
+        new Date(atMs).toISOString(),
+      ])
+      expect(new Set(checkpoint.state.ledger.fills.map((fill) => fill.quoteSource.offset)).size).toBe(2)
+      const restored = yield* makeReplayBroker({
+        ...config,
+        quoteAt,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
+      const current = projection.quotes.get('AAPL')
+      if (current === undefined) throw new Error('Missing accepted equal-time quote')
+      yield* restored.observeMarket(atMs, current)
+      expect(yield* restored.snapshot).toEqual(yield* broker.snapshot)
+    }),
+  )
+})
+
 test('canceling a resting DAY order prevents execution on subsequent quotes', async () => {
   const state = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
       const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
-      yield* broker.mutation.cancel(submitted.order.brokerOrderId)
+      const canceled = yield* broker.mutation.cancel(submitted.order.brokerOrderId)
+      expect(canceled.evidence.status).toBe(204)
+      expect(canceled.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(null)))
       const at = startMs + 1_000
       yield* broker.observeMarket(
         at,
@@ -775,7 +838,7 @@ test('delayed close selects the retained projection quote available at close', a
         startMs,
       )
       const broker = yield* setup({
-        quoteAt: (symbol, atMs) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs)),
+        quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
       })
       yield* submit(broker, intent())
       for (const [index, availableAtMs, eventAtMs, price] of [

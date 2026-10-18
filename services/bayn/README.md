@@ -1433,7 +1433,9 @@ remainder through the same quote economics and accounting. Displayed liquidity i
 
 Replay checkpoint v4 and broker state v2 retain every quote execution and uniquely identify partial-fill and fee
 activities. Restoration reconstructs cumulative order quantities, average prices, cash, inventory, fees and native
-activities before exposing the broker. Earlier replay checkpoint schemas cannot resume this contract. Missing
+activities before exposing the broker. Each fill selects its retained quote by topic, partition, offset and availability
+time, including separate quotes in the same millisecond. Replay cancellations use the shared Alpaca HTTP 204 response
+decoder and empty-response hash. Earlier replay checkpoint schemas cannot resume this contract. Missing
 original arrival receipts and PAPER's different liquidity assumptions still prevent claiming historical live-fill parity.
 
 The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable

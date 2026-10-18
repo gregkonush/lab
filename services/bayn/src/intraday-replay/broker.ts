@@ -35,6 +35,7 @@ import {
 import {
   orderRequestRequiresFractionalTrading,
   prepareCancel,
+  classifyCancelResponse,
   prepareSubmit,
 } from '../broker/alpaca-mutations/decisions'
 import {
@@ -50,7 +51,7 @@ import { numberToMicros, notionalMicros, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import type { IntradayQuote } from '../market-data/intraday/model'
-import type { ObservedMarketValue } from '../market-data/streaming/projection'
+import type { ObservedMarketValue, ObservedQuoteSource } from '../market-data/streaming/projection'
 import type { ExecutionModelV6Schema } from '../execution-model-contract'
 import type { ReplayQuoteProtocol } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
@@ -95,6 +96,7 @@ export interface ReplayBrokerConfig {
   readonly quoteAt: (
     symbol: string,
     nowMs: number,
+    source: ObservedQuoteSource | null,
   ) => Effect.Effect<ObservedMarketValue<IntradayQuote> | undefined, ReplayBrokerFailure>
 }
 
@@ -102,12 +104,7 @@ export interface ReplayBrokerFill extends EconomicReplayFill {
   readonly executionIndex: number
   readonly brokerOrderId: string
   readonly clientOrderId: string
-  readonly quoteSource: {
-    readonly topic: string
-    readonly partition: number
-    readonly offset: string
-    readonly availableAtMs: number
-  }
+  readonly quoteSource: ObservedQuoteSource
 }
 
 type ReplayOrder = Order & { readonly quantityAtoms: string; readonly submittedAt: string }
@@ -605,7 +602,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         let valuationQualified = true
         for (const position of closingLedger.positions) {
           const atMs = Date.parse(closeAt)
-          const quote = yield* config.quoteAt(position.symbol, atMs)
+          const quote = yield* config.quoteAt(position.symbol, atMs, null)
           if (!valuationQuoteUsable(quote, position.symbol, atMs))
             return yield* new ReplayBrokerFailure({ message: 'Session close has no retained valuation quote' })
           if (
@@ -625,7 +622,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       for (const fill of restored.state.ledger.fills) {
         const order = restored.state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
         const arrivedAtMs = Date.parse(fill.observedAt)
-        const quote = yield* config.quoteAt(fill.symbol, arrivedAtMs)
+        const quote = yield* config.quoteAt(fill.symbol, arrivedAtMs, fill.quoteSource)
         if (
           order === undefined ||
           !quoteUsable(quote, fill.symbol, arrivedAtMs) ||
@@ -682,7 +679,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       const marked = yield* Effect.forEach(current.ledger.positions, (position) =>
         Effect.gen(function* () {
           const metadata = asset(position.symbol)
-          const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt))
+          const quote = yield* config.quoteAt(position.symbol, Date.parse(observedAt), null)
           if (metadata === undefined || !valuationQuoteUsable(quote, position.symbol, Date.parse(observedAt)))
             return yield* new ReplayBrokerFailure({
               message: `Replay position mark unavailable for ${position.symbol}`,
@@ -1020,7 +1017,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 (session !== undefined &&
                   submittedAtMs >= Date.parse(request.extended_hours ? session.sessionOpenAt : session.regularOpenAt) &&
                   arrivedAtMs < closeMs)
-              const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs) : undefined
+              const quote = sessionOpen ? yield* config.quoteAt(intent.symbol, arrivedAtMs, null) : undefined
               const unavailableReason = sessionOpen
                 ? replayQuoteRejection(quote, intent.symbol, arrivedAtMs, {
                     ...config.protocol,
@@ -1099,8 +1096,14 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 : entry,
             ),
           }))
-          const receipt = yield* evidence({ brokerOrderId, canceledAt: observedAt }, observedAt)
-          return { requestHash: prepared.requestHash, brokerOrderId, evidence: receipt.evidence }
+          return yield* Effect.fromResult(
+            classifyCancelResponse({
+              ...prepared,
+              status: 204,
+              requestId: `replay-cancel-${prepared.requestHash}`,
+              observedAt,
+            }),
+          )
         }).pipe(
           Effect.mapError((cause) =>
             cause instanceof BrokerMutationError
