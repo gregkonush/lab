@@ -86,7 +86,7 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const initialTime = '1969-12-31T23:59:59.000Z'
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v4',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -98,10 +98,11 @@ const intent: Intent = {
   clientOrderId: `b1_${'A'.repeat(43)}`,
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '160000000',
   state: IntentState.Approved,
   createdAt: initialTime,
 }
@@ -137,11 +138,12 @@ const brokerOrder = (
     : { quantityAtoms: intent.quantityAtoms }),
   filledQuantityAtoms: status === OrderStatus.Filled ? intent.quantityAtoms : '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: intent.limitPriceMicros,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status,
-  extendedHours: false,
+  extendedHours: true,
   observedAt,
 })
 
@@ -1319,7 +1321,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
   const latest = new Map<MutationOperation, MutationEvent>()
   let submitCalls = 0
-  let submittedCloseOnly: boolean | undefined
   let cancelCalls = 0
   let lookupCalls = 0
   let lookupClientOrderId: string | undefined
@@ -1628,9 +1629,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const mutation: BrokerMutationShape = {
-    submit: (submitted, closeOnly = false) => {
+    submit: (submitted) => {
       submitCalls += 1
-      submittedCloseOnly = closeOnly
       if (latest.get(MutationOperation.Submit)?.eventType !== MutationEventType.SubmitStarted) {
         return Effect.die(new Error('submit happened before SUBMIT_STARTED was durable'))
       }
@@ -1683,7 +1683,6 @@ const makeHarness = (options: HarnessOptions = {}) => {
     read,
     mutations: mutationStore,
     calls: () => ({ submit: submitCalls, cancel: cancelCalls, lookup: lookupCalls }),
-    submittedCloseOnly: () => submittedCloseOnly,
     lookupClientOrderId: () => lookupClientOrderId,
     intent: () => stored.intent,
     state: () => stored.intent.state,
@@ -1881,7 +1880,7 @@ describe('execution coordinator', () => {
     expect(harness.state()).toBe(IntentState.Acknowledged)
   })
 
-  test('propagates close-only short-cover encoding through the durable submit boundary', async () => {
+  test('uses the common explicit LIMIT request for a close-only short cover', async () => {
     const harness = makeHarness({ submittedOrder: brokerOrder(OrderStatus.Accepted, undefined, 'quantity') })
     const accepted = await Effect.runPromise(harness.provide(submit(intentId, 1_000, true)))
 
@@ -1889,8 +1888,13 @@ describe('execution coordinator', () => {
       eventType: MutationEventType.SubmitAccepted,
       requestHash: canonicalHashV1(encodedRequest(intent)),
     })
-    expect(encodedRequest(intent)).toMatchObject({ side: 'buy', qty: '1.25' })
-    expect(harness.submittedCloseOnly()).toBe(true)
+    expect(encodedRequest(intent)).toMatchObject({
+      side: 'buy',
+      qty: '1.25',
+      type: 'limit',
+      time_in_force: 'day',
+      limit_price: '160',
+    })
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
@@ -2105,9 +2109,9 @@ describe('execution coordinator', () => {
     expect(harness.calls()).toEqual({ submit: 1, cancel: 0, lookup: 0 })
   })
 
-  test('accepts the broker-determined filled quantity for an exact notional market order', async () => {
+  test('records a canceled LIMIT partial fill without changing the submitted quantity', async () => {
     const harness = makeHarness({
-      submittedOrder: { ...brokerOrder(OrderStatus.Filled), filledQuantityAtoms: '500000000' },
+      submittedOrder: { ...brokerOrder(OrderStatus.Canceled), filledQuantityAtoms: '500000000' },
     })
 
     const result = await Effect.runPromise(harness.provide(submit(intentId, 1_000)))

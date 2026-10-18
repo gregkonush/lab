@@ -16,7 +16,7 @@ import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../reconciliation'
 import { canonicalHashV1Result } from '../hash'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   configuredCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
@@ -115,7 +115,7 @@ test('retains the exact compatible mandate without changing its account or risk 
 test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
   for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
     const policy = await Effect.runPromise(
-      loadQuoteBoundExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
+      loadExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
     )
     const hash = Result.getOrThrow(canonicalHashV1Result(policy))
     const outcome = await Effect.runPromise(

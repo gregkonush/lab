@@ -1,8 +1,8 @@
+import { executionIntentSchemaVersion } from './execution/contracts'
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { instrumentMarket, MarketKind } from './instruments'
-import { notionalMicros } from './execution-model'
+import { ceilDiv } from './strategy/execution-model/fixed-point'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import {
   AccountSnapshotSchema,
@@ -45,9 +45,7 @@ import { utcInstantFromEpochMillis } from './time'
 import { intradayAgeNanos } from './market-data/intraday/time'
 import {
   legacyExecutionAuthorityToken,
-  legacyExecutionIntentSchemaVersion,
   legacyObserveAuthorityToken,
-  legacyRiskPolicySchemaVersion,
   legacyRiskDecisionSchemaVersion,
   legacyRiskEvaluationInputV2SchemaVersion,
   legacyRiskEvaluationInputV3SchemaVersion,
@@ -230,31 +228,16 @@ const RiskPolicyFields = {
   decisionTtlMs: AgeMilliseconds,
 } as const
 
-const LegacyRiskPolicyV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
-  ...RiskPolicyFields,
-  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
-})
-
 export const executionRiskPolicySchemaVersion = 'bayn.execution-risk-policy.v3' as const
 
 export const ExecutionRiskPolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionRiskPolicySchemaVersion),
   ...RiskPolicyFields,
-  allowedOrderTypes: Schema.Array(Schema.Enum(OrderType)).check(
-    Schema.isMinLength(1),
-    Schema.isUnique(),
-    SortedUniqueStrings,
-  ),
+  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Limit)]),
 })
 
-export const PolicySchema = Schema.Union([LegacyRiskPolicyV2Schema, ExecutionRiskPolicySchema])
+export const PolicySchema = ExecutionRiskPolicySchema
 export type Policy = typeof PolicySchema.Type
-
-const policyAllowsOrderType = (policy: Policy, orderType: OrderType): boolean =>
-  policy.schemaVersion === legacyRiskPolicySchemaVersion
-    ? orderType === OrderType.Market
-    : policy.allowedOrderTypes.includes(orderType)
 
 export const EntryQuoteFreshnessSchema = Schema.Struct({
   eventAt: Schema.Union([UtcInstant, UtcOrderTimestampSchema]),
@@ -743,7 +726,7 @@ const parseRiskFacts = (
 })
 
 const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, RiskEvaluationFailure> => {
-  const orderNotional = notionalMicros(facts.intentQuantityAtoms, facts.expectedExecutionPriceMicros)
+  const orderNotional = ceilDiv(facts.intentQuantityAtoms * facts.expectedExecutionPriceMicros, QUANTITY_SCALE)
   if (Result.isFailure(orderNotional)) {
     return Result.fail(
       computeRiskMetricsFailure(
@@ -865,15 +848,8 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
     ),
   )
 
-const isBrokerSupportedMarketCloseOrder = (facts: RiskFacts): boolean =>
-  isPositionReducingCloseOrder(facts) &&
-  facts.intent.orderType === OrderType.Market &&
-  facts.intent.timeInForce ===
-    (instrumentMarket(facts.intent.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)
-
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
-  const brokerSupportedMarketClose = isBrokerSupportedMarketCloseOrder(facts)
   const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
@@ -913,19 +889,15 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      policyAllowsOrderType(policy, intent.orderType) || brokerSupportedMarketClose,
+      policy.allowedOrderTypes.includes(intent.orderType),
       intent.orderType,
-      brokerSupportedMarketClose
-        ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
-        : policy.allowedOrderTypes.join(','),
+      policy.allowedOrderTypes.join(','),
     ),
     makeGate(
       Gate.TimeInForce,
-      policy.allowedTimeInForce.includes(intent.timeInForce) || brokerSupportedMarketClose,
+      policy.allowedTimeInForce.includes(intent.timeInForce),
       intent.timeInForce,
-      brokerSupportedMarketClose
-        ? `${policy.allowedTimeInForce.join(',')}|${intent.timeInForce}_MARKET_CLOSE_ONLY`
-        : policy.allowedTimeInForce.join(','),
+      policy.allowedTimeInForce.join(','),
     ),
   ]
 }
@@ -1197,7 +1169,7 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
     Result.map(
       riskEvidenceHash(facts, {
         schemaVersion:
-          facts.intent.schemaVersion === legacyExecutionIntentSchemaVersion
+          facts.intent.schemaVersion === executionIntentSchemaVersion
             ? legacyRiskEvaluationInputV3SchemaVersion
             : legacyRiskEvaluationInputV2SchemaVersion,
         intent: facts.intent,
@@ -1302,7 +1274,7 @@ const makeRiskEvaluation = (
   )
 
 const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Result<void, RiskEvaluationFailure> => {
-  if (intent.schemaVersion === legacyExecutionIntentSchemaVersion) {
+  if (intent.schemaVersion === executionIntentSchemaVersion) {
     if (state.authority.maximum !== Authority.Execution) {
       return Result.fail(
         bindRiskAuthorityFailure(
@@ -1382,6 +1354,14 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
     decodeRiskInputFailure('policy', 'risk policy is invalid', {}, cause),
   )
   if (Result.isFailure(policy)) return Result.fail(policy.failure)
+  if (intent.success.limitPriceMicros !== state.success.expectedExecutionPriceMicros)
+    return Result.fail(
+      decodeRiskInputFailure('intent', 'risk execution price differs from the explicit LIMIT bound', {
+        intentId: intent.success.intentId,
+        limitPriceMicros: intent.success.limitPriceMicros,
+        expectedExecutionPriceMicros: state.success.expectedExecutionPriceMicros,
+      }),
+    )
   const proposedPositions = Result.mapError(
     decodeProposedPositionsResult(input.proposedPositions ?? state.success.positions),
     (cause) => decodeRiskInputFailure('positions', 'proposed risk positions are invalid', {}, cause),

@@ -83,11 +83,11 @@ const strategy: ExecutionStrategyIdentity = {
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
 const riskPolicy: Policy = {
-  schemaVersion: 'bayn.paper-risk-policy.v2',
+  schemaVersion: 'bayn.execution-risk-policy.v3',
   accountId,
   brokerMode: BrokerMode.Execution,
   allowedSymbols: ['AMD'],
-  allowedOrderTypes: [OrderType.Market],
+  allowedOrderTypes: [OrderType.Limit],
   allowedTimeInForce: [TimeInForce.Day],
   maxOrderNotionalMicros: '10000000000',
   maxSymbolExposureMicros: '25000000000',
@@ -231,7 +231,7 @@ const finalLiveFixture = () => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
   const riskDecisionId = '6'.repeat(64)
   const intent: Intent = {
-    schemaVersion: 'bayn.paper-intent.v3',
+    schemaVersion: 'bayn.execution-intent.v4',
     intentId: '5'.repeat(64),
     authorityGenerationHash,
     riskDecisionId,
@@ -243,10 +243,11 @@ const finalLiveFixture = () => {
     clientOrderId: `b1_${'C'.repeat(43)}`,
     symbol: 'AMD',
     side: OrderSide.Buy,
-    orderType: OrderType.Market,
+    orderType: OrderType.Limit,
     timeInForce: TimeInForce.Day,
     quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
+    limitPriceMicros: '100000000',
     state: IntentState.IoStarted,
     createdAt: '2026-07-28T07:59:00.000Z',
   }
@@ -1090,7 +1091,7 @@ describe('same-code execution program composition', () => {
     const intentId = 'a'.repeat(64)
     const decisionId = 'b'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v4',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1102,10 +1103,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'A'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }
@@ -1321,7 +1323,7 @@ describe('same-code execution program composition', () => {
     const intentId = '7'.repeat(64)
     const decisionId = '8'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v4',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1333,10 +1335,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'B'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }

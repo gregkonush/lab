@@ -526,7 +526,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
         const path = `${directory}/${index}.ndjson.gz`
         yield* fs.writeFile(path, bytes)
         const base = {
-          schemaVersion: 'bayn.backtest-source.v1' as const,
+          schemaVersion: 'bayn.backtest-source.v2' as const,
           encoding: 'ndjson-gzip' as const,
           transport: 'captured-kafka' as const,
           origin: 'Synthetic disjoint market cursor integration fixture',
@@ -539,12 +539,14 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
           positions: [
             { topic: profile.sourceTopics.quotes, partition: 0, startOffset: '0', endOffsetExclusive: String(offset) },
           ],
-          universe: {
-            universeId: profile.universeId,
-            universeSymbolHash: profile.universeSymbolHash,
-            symbols: profile.universe,
-            topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
-          },
+          marketSources: [
+            {
+              universeId: profile.universeId,
+              universeSymbolHash: profile.universeSymbolHash,
+              symbols: profile.universe,
+              topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
+            },
+          ] as const,
           deliveryModel: {
             schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
             description: 'Synthetic source integration',

@@ -1,3 +1,5 @@
+import { intentIdentitySchemaVersion } from '../contracts'
+import { executionIntentSchemaVersion, intentPlanSchemaVersion, referenceIntentSchemaVersion } from '../contracts'
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../../hash'
@@ -18,15 +20,7 @@ import {
   type ReferenceIntent,
   type RiskDecision,
 } from '../contracts'
-import {
-  legacyExecutionIntentSchemaVersion,
-  legacyIntentIdentityV1SchemaVersion,
-  legacyIntentIdentityV2SchemaVersion,
-  legacyIntentIdentityV3SchemaVersion,
-  legacyIntentPlanSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
-  legacyRiskDecisionSchemaVersion,
-} from '../legacy-wire'
+import { legacyRiskDecisionSchemaVersion } from '../legacy-wire'
 import type { State } from '../../risk'
 import {
   Sha256Schema as Sha256,
@@ -39,7 +33,7 @@ import { WriterFenceError } from '../writer-fence'
 import { Pipeable } from '../../pipeable'
 
 export const IntentPlanSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyIntentPlanSchemaVersion),
+  schemaVersion: Schema.Literal(intentPlanSchemaVersion),
   strategyName: NonEmptyString,
   cycleId: Sha256,
   decisionHash: Sha256,
@@ -47,10 +41,11 @@ export const IntentPlanSchema = Schema.Struct({
   accountId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Enum(OrderType),
-  timeInForce: Schema.Enum(TimeInForce),
+  orderType: Schema.Literal(OrderType.Limit),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
   quantityAtoms: PositiveMicrosSchema,
   notionalLimitMicros: PositiveMicrosSchema,
+  limitPriceMicros: PositiveMicrosSchema,
   /** Binds a residual close intent to the immediately preceding close-plan generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),
   createdAt: UtcInstant,
@@ -102,7 +97,7 @@ const canonicalHashResult = (
   )
 
 const referenceIdentityMaterial = (input: IntentPlan) => ({
-  schemaVersion: legacyIntentIdentityV1SchemaVersion,
+  schemaVersion: 'bayn.reference-intent-identity.v2',
   strategyName: input.strategyName,
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
@@ -113,13 +108,11 @@ const referenceIdentityMaterial = (input: IntentPlan) => ({
   timeInForce: input.timeInForce,
   quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
+  limitPriceMicros: input.limitPriceMicros,
 })
 
 const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
-  schemaVersion:
-    input.replanGenerationHash === undefined
-      ? legacyIntentIdentityV2SchemaVersion
-      : legacyIntentIdentityV3SchemaVersion,
+  schemaVersion: intentIdentitySchemaVersion,
   authorityGenerationHash,
   strategyName: input.strategyName,
   cycleId: input.cycleId,
@@ -131,6 +124,7 @@ const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: s
   timeInForce: input.timeInForce,
   quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
+  limitPriceMicros: input.limitPriceMicros,
   ...(input.replanGenerationHash === undefined ? {} : { replanGenerationHash: input.replanGenerationHash }),
 })
 
@@ -206,7 +200,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
       ReferenceIntentSchema,
       strictParseOptions,
     )({
-      schemaVersion: legacyReferenceIntentSchemaVersion,
+      schemaVersion: referenceIntentSchemaVersion,
       intentId: intentId.success,
       strategyName: decoded.strategyName,
       cycleId: decoded.cycleId,
@@ -220,6 +214,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
       timeInForce: decoded.timeInForce,
       quantityAtoms: decoded.quantityAtoms,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      limitPriceMicros: decoded.limitPriceMicros,
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
@@ -235,7 +230,7 @@ export const makeExecutionIntentFromDecodedPlan = (
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
     decodeIntentResult({
-      schemaVersion: legacyExecutionIntentSchemaVersion,
+      schemaVersion: executionIntentSchemaVersion,
       authorityGenerationHash,
       intentId: intentId.success,
       strategyName: decoded.strategyName,
@@ -250,6 +245,7 @@ export const makeExecutionIntentFromDecodedPlan = (
       timeInForce: decoded.timeInForce,
       quantityAtoms: decoded.quantityAtoms,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      limitPriceMicros: decoded.limitPriceMicros,
       ...(decoded.replanGenerationHash === undefined ? {} : { replanGenerationHash: decoded.replanGenerationHash }),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
@@ -353,7 +349,7 @@ export class IntentStore extends Context.Service<IntentStore, IntentStoreService
 ) {}
 
 const intentRowFields = {
-  schema_version: Schema.Literal(legacyExecutionIntentSchemaVersion),
+  schema_version: Schema.Literal(executionIntentSchemaVersion),
   intent_id: Sha256,
   risk_decision_id: Schema.NullOr(Sha256),
   authority_generation_hash: Sha256,
@@ -369,6 +365,7 @@ const intentRowFields = {
   time_in_force: Schema.Enum(TimeInForce),
   quantity_atoms: PositiveMicrosSchema,
   notional_limit_micros: PositiveMicrosSchema,
+  limit_price_micros: PositiveMicrosSchema,
   replan_generation_hash: Schema.NullOr(Sha256),
   state: Schema.Enum(IntentState),
   terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
@@ -448,6 +445,7 @@ const storedRowToRecord = (row: StoredRow): Result.Result<StoredIntent, StoredRo
     timeInForce: row.time_in_force,
     quantityAtoms: row.quantity_atoms,
     notionalLimitMicros: row.notional_limit_micros,
+    limitPriceMicros: row.limit_price_micros,
     ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
@@ -513,7 +511,7 @@ export interface PreparedCommit {
 }
 
 const planFromIntent = (intent: Intent): IntentPlan => ({
-  schemaVersion: legacyIntentPlanSchemaVersion,
+  schemaVersion: intentPlanSchemaVersion,
   strategyName: intent.strategyName,
   cycleId: intent.cycleId,
   decisionHash: intent.decisionHash,
@@ -525,6 +523,7 @@ const planFromIntent = (intent: Intent): IntentPlan => ({
   timeInForce: intent.timeInForce,
   quantityAtoms: intent.quantityAtoms,
   notionalLimitMicros: intent.notionalLimitMicros,
+  limitPriceMicros: intent.limitPriceMicros,
   ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
@@ -592,6 +591,7 @@ const immutableIntentMaterial = (intent: Intent) => ({
   timeInForce: intent.timeInForce,
   quantityAtoms: intent.quantityAtoms,
   notionalLimitMicros: intent.notionalLimitMicros,
+  limitPriceMicros: intent.limitPriceMicros,
   ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
