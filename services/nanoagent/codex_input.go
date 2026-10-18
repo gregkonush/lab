@@ -109,6 +109,16 @@ func validateCodexInputRequest(method string, raw json.RawMessage) error {
 				}
 			}
 		}
+		for _, name := range []string{"minLength", "maxLength", "minimum", "maximum"} {
+			if encoded, ok := property[name]; ok {
+				var limit float64
+				if json.Unmarshal(encoded, &limit) != nil || string(encoded) == "null" ||
+					((name == "minLength" || name == "maxLength") && (kind != "string" || limit < 0 || limit != math.Trunc(limit))) ||
+					((name == "minimum" || name == "maximum") && kind != "number" && kind != "integer") {
+					return errors.New("invalid elicitation field constraint")
+				}
+			}
+		}
 		if encoded, ok := property["enum"]; ok {
 			var choices []json.RawMessage
 			if json.Unmarshal(encoded, &choices) != nil || len(choices) == 0 || len(choices) > 20 {

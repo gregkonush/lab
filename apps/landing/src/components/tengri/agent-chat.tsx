@@ -113,7 +113,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const retainedEvents = useRef<CodexBufferedEvent[]>([])
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
-  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => readApprovalMode(agentId))
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
   const autoApprovalAttempts = useRef(new Set<string>())
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])

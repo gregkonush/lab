@@ -30,7 +30,7 @@ export function CodexQuestionCard({
         .superRefine((value, context) => {
           if (!value && !field.required) return
           const issue = (message: string) => context.addIssue({ code: 'custom', message })
-          if (!value.trim()) {
+          if (request.mode === 'questions' ? !value.trim() : !value && field.type !== 'string') {
             issue('Choose an option or enter an answer.')
             return
           }

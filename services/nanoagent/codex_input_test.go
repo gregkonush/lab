@@ -91,3 +91,19 @@ func TestCodexInputRequestBoundsAndURLConfirmation(t *testing.T) {
 		t.Fatal("unsafe URL accepted")
 	}
 }
+
+func TestCodexInputRejectsMalformedFormConstraints(t *testing.T) {
+	for _, property := range []string{
+		`{"type":"string","minLength":"2"}`,
+		`{"type":"string","maxLength":-1}`,
+		`{"type":"string","minLength":1.5}`,
+		`{"type":"string","maximum":3}`,
+		`{"type":"number","minimum":null}`,
+		`{"type":"boolean","maxLength":2}`,
+	} {
+		raw := json.RawMessage(`{"mode":"form","requestedSchema":{"type":"object","properties":{"value":` + property + `}}}`)
+		if validateCodexInputRequest("mcpServer/elicitation/request", raw) == nil {
+			t.Fatalf("accepted malformed field constraint: %s", property)
+		}
+	}
+}
