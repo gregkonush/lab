@@ -440,6 +440,12 @@ It preserves the provider's selected label and numbers; a genuinely nonmaximum l
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
+An entry batch with no requested candidates commits its verified plan and complete excluded result in one PostgreSQL
+statement. Admission still reproduces the stored observation and checks the original clock and evidence deadline.
+An insertion failure rolls back both records; concurrent retries reuse the immutable result. Older unfinished plans
+retain their existing recovery path. This avoids a second finalization transaction on all-excluded observations
+without changing which exclusions can support a no-entry decision.
+
 Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
 batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
 transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
