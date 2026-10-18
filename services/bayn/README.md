@@ -64,6 +64,8 @@ coin-denominated buy fees and the existing rounded transaction-fee schedule. Sel
 action and a `supported` net-economics assessment; adverse or uncertain economics abstain. The model assessment
 remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
 above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
+Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
+within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
 Protocol v9 and trading-signal input v8 replace their executable predecessors. Migration 118 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
@@ -82,6 +84,9 @@ execution from fresh exact reconciled broker positions. Recovery does not author
 hours, extend an unresolved order's immutable lease, or submit after the broker session closes.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Observed bar references, ranges, completed closes and trade signals can carry more than nine decimal places.
+Jev rounds these non-executable signal values to micros with decimal half-up rounding while preserving the original values and source hashes in
+its observation and model input. Executable bid/ask conversion retains nine-decimal validation and adverse rounding.
 Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
 up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
 fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
@@ -120,6 +125,11 @@ the recorded enter probability ranks simultaneous eligible enter actions, with s
 retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
 same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
+
+Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
+controller handles without terminating its process. Reports retain typed operation and failure tags while redacting
+exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
+error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
 ## Profitability goal
 
@@ -1407,6 +1417,10 @@ Production execution and simulation use `makeTradingEngine`. The engine construc
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
 or accounting coordinator.
+
+The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
+buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
+and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
 
 `backtest-command.js` runs one or more consecutive exchange-calendar sessions through that engine. One simulated
 broker, account, portfolio, PostgreSQL database, and TigerBeetle ledger span the entire run. Cash, positions, fees,

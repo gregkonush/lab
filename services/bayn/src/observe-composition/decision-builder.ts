@@ -29,6 +29,7 @@ import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type MarketCalendarQu
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
+import { reportCyclePassFailure } from '../error-tracking'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   CycleDecisionBuildError,
@@ -1971,5 +1972,8 @@ export const observePass = (
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const retained = retainAutonomousCyclePassObservation(observation)
-  return recordPass(retained).pipe(Effect.as(retained))
+  return (observation.outcome === 'FAILED' ? reportCyclePassFailure(observation.error) : Effect.void).pipe(
+    Effect.andThen(recordPass(retained)),
+    Effect.as(retained),
+  )
 }

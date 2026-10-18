@@ -24,6 +24,18 @@ pub struct Principal {
     pub context: RequestContext,
     pub recovery_generation: u64,
     pub action: Action,
+    #[serde(skip)]
+    verified_rpc_admission: bool,
+}
+
+impl Principal {
+    pub(crate) fn policy_context(&self) -> Result<RequestContext, Status> {
+        let mut context = self.context.clone();
+        if self.verified_rpc_admission {
+            context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        }
+        Ok(context)
+    }
 }
 
 #[cfg(test)]
@@ -33,6 +45,7 @@ impl Principal {
             owner_hash: owner_hash.into(),
             recovery_generation: 1,
             action,
+            verified_rpc_admission: false,
             context: RequestContext {
                 actor: Some(ofz::proto::Actor {
                     identity: Some(Identity::HumanId(owner_hash.into())),
@@ -251,6 +264,7 @@ impl Authenticator {
             context,
             recovery_generation,
             action,
+            verified_rpc_admission: true,
         })
     }
 }

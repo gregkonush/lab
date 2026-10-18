@@ -1,3 +1,4 @@
+import { codexInputResponseSchema } from './codex-input'
 import { z } from 'zod'
 import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
 import {
@@ -182,6 +183,12 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     })
     .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
   z.strictObject({ action: z.literal('interrupt-turn'), agentId, threadId: codexId, turnId: codexId }),
+  z.strictObject({
+    action: z.literal('answer-questions'),
+    agentId,
+    approvalId: codexId,
+    response: codexInputResponseSchema,
+  }),
   z.strictObject({
     action: z.literal('resolve-approval'),
     agentId,

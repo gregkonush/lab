@@ -163,6 +163,7 @@ jobs:
         run: bash services/ofz/test-control.sh identity
 
   build-ofz:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: validate
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
@@ -173,5 +174,4 @@ jobs:
       publish_kargo_tag: true
       kargo_tag_include_run_id: true
       release_artifact_name: ofz-image-release
-      pr_number: ${{ github.event.pull_request.number && format('{0}-ofz', github.event.pull_request.number) || '' }}
     secrets: inherit

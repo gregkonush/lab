@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use std::{env, sync::Arc, time::Duration};
 
 use http::{HeaderMap, Request};
@@ -78,6 +79,8 @@ pub struct Telemetry {
     _traces: Option<SdkTracerProvider>,
 }
 
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
 pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let release = env::var("APP_SOURCE_REVISION").unwrap_or_else(|_| "development".into());
@@ -87,7 +90,7 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
             let exporter = opentelemetry_otlp::SpanExporter::builder()
                 .with_http()
                 .with_endpoint(endpoint)
-                .with_timeout(Duration::from_secs(3))
+                .with_timeout(EXPORT_TIMEOUT)
                 .build()?;
             Ok::<_, anyhow::Error>(
                 SdkTracerProvider::builder()
@@ -384,10 +387,12 @@ impl Telemetry {
             trace_id != "00000000000000000000000000000000",
             "trace context is not initialized"
         );
-        provider.force_flush()?;
+        provider.force_flush().with_context(|| {
+            format!("OTLP flush failed for trace {trace_id} and event {event_id}")
+        })?;
         anyhow::ensure!(
-            client.flush(Some(Duration::from_secs(3))),
-            "GlitchTip export did not flush"
+            client.flush(Some(EXPORT_TIMEOUT)),
+            "GlitchTip export did not flush for event {event_id} and trace {trace_id}"
         );
         Ok(
             serde_json::json!({"eventId": event_id, "traceId": trace_id, "release": env::var("APP_SOURCE_REVISION").unwrap_or_default()}),
