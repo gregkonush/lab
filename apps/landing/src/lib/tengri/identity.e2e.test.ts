@@ -1009,19 +1009,29 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    const webAuthnPolicy = Object.fromEntries(
+      Object.entries(z.record(z.string(), z.unknown()).parse(await (await adminCall('')).json())).filter(
+        ([key]) => key.startsWith('webAuthnPolicy') && !key.startsWith('webAuthnPolicyPasswordless'),
+      ),
+    )
     await adminCall('', 'PUT', {
+      ...webAuthnPolicy,
       loginTheme: 'keycloak',
       sslRequired: 'none',
       webAuthnPolicyUserVerificationRequirement: 'required',
     })
+    expect(
+      z.object({ webAuthnPolicyUserVerificationRequirement: z.string() }).parse(await (await adminCall('')).json())
+        .webAuthnPolicyUserVerificationRequirement,
+    ).toBe('required')
     expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
     await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
-    expect(
-      z
-        .object({ loginTheme: z.string(), webAuthnPolicyUserVerificationRequirement: z.string() })
-        .parse(await (await adminCall('')).json()),
-    ).toEqual({ loginTheme: 'tengri', webAuthnPolicyUserVerificationRequirement: 'discouraged' })
+    expect(await (await adminCall('')).json()).toMatchObject({
+      ...webAuthnPolicy,
+      loginTheme: 'tengri',
+      webAuthnPolicyUserVerificationRequirement: 'discouraged',
+    })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z

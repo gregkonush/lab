@@ -8,7 +8,9 @@ provider, exact client callbacks, protocol mappers, required actions and authent
 Repeat runs verify configuration and fail on drift outside the managed login theme and WebAuthn user-verification
 policy. After verification they reconcile those settings and the mounted GitHub and BFF client secrets through the
 administrator API, then verify the realm settings and BFF secret readback. They preserve users, passkeys and broker
-links. The isolated browser fixture migrates the former PIN-required policy, rotates both secrets after passkey
+links. Keycloak replaces the WebAuthn policy as a unit when its RP entity name is present, so reconciliation sends
+the current complete policy with only the user-verification requirement changed. The isolated browser fixture
+migrates the former PIN-required policy, rotates both secrets after passkey
 enrollment, rejects the old BFF secret and completes a fresh login using the rotated GitHub and BFF credentials.
 
 The dedicated `tengri` login theme extends Keycloak's built-in theme. Its registration module uses Keycloak 26.7.4's

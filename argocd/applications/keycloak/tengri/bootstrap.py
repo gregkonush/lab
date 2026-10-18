@@ -226,12 +226,18 @@ def bootstrap():
         if request("GET", client_path + "/client-secret", token).get("value") != secret:
             raise RuntimeError("Dedicated client credential reconciliation failed")
     managed = {
-        "enabled": True,
-        "loginTheme": realm["loginTheme"],
-        "webAuthnPolicyUserVerificationRequirement": realm[
+        key: value
+        for key, value in request("GET", path, token).items()
+        if key.startswith("webAuthnPolicy")
+        and not key.startswith("webAuthnPolicyPasswordless")
+    }
+    managed.update(
+        enabled=True,
+        loginTheme=realm["loginTheme"],
+        webAuthnPolicyUserVerificationRequirement=realm[
             "webAuthnPolicyUserVerificationRequirement"
         ],
-    }
+    )
     request(
         "PUT",
         path,
