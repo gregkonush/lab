@@ -96,12 +96,13 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v4'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v5'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v2'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v3'),
+    createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
     ledger: Schema.Struct({
@@ -180,6 +181,12 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
     )
       return yield* fail('Broker checkpoint hash, source or configuration does not match this run')
     const state = decoded.state
+    if (
+      state.createdAt > decoded.observedAt ||
+      state.orders.some(({ order }) => order.submittedAt < state.createdAt) ||
+      state.ledger.fills.some((fill) => fill.observedAt < state.createdAt)
+    )
+      return yield* fail('Broker checkpoint account inception does not bound its activity and observation')
     const orderIds = new Set<string>(),
       clientIds = new Set<string>()
     for (const { order, requestHash } of state.orders) {
@@ -364,7 +371,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         { start: close.sessionDate, end: close.sessionDate },
       )
       const session = calendar.sessions[0]
-      if (session === undefined || session.closeAt > decoded.observedAt)
+      if (session === undefined || session.closeAt > decoded.observedAt || session.closeAt < state.createdAt)
         return yield* fail('Broker checkpoint records a close before market close')
     }
     return decoded
@@ -375,7 +382,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v4' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v5' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

@@ -499,7 +499,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       if (ids.has(batch.plan.batchId)) return yield* new SignalStudyFailure({ message: 'Duplicate retained batch' })
       ids.add(batch.plan.batchId)
       if (
-        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v1' ||
+        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v2' ||
         manifest.streaming.runId !== input.runId ||
         manifest.streaming.sourceManifestHash !== sourceHash
       )

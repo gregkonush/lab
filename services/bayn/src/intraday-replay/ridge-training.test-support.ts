@@ -67,7 +67,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     .sort()
     .map((topic) => ({ topic, partition: 0 }))
   const source: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'original-capture',
     dataSha256: sha256(body),
@@ -84,16 +84,16 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       startOffset: '0',
       endOffsetExclusive: String(captured.events.filter((event) => event.record.topic === topic).length),
     })),
-    universe: captured.universe,
+    marketSources: [captured.universe] as const,
     deliveryModel: captured.source.deliveryModel,
   }
   const receiptText = JSON.stringify({
-    schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+    schemaVersion: 'bayn.original-capture-replay-receipt.v2',
     recordedAt: iso(endMs + 1),
     origin: source.origin,
     coverageStartMs: source.coverageStartMs,
     coverageEndMs: source.coverageEndMs,
-    universe: source.universe,
+    marketSources: source.marketSources,
     positions: source.positions,
     nativeVisiblePartitions,
     deliveryModel: source.deliveryModel,
@@ -122,7 +122,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v3',
+      schemaVersion: 'bayn.backtest.v4',
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
@@ -134,7 +134,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'SYNTHETIC fixed-candidate training',
-      sessionDates: trainingSessions.map((session) => session.date),
+      interval: { startAt: trainingSessions[0]!.openAt, endAt: trainingSessions.at(-1)!.closeAt },
       calendar: rawCalendar.slice(0, 3),
       build,
       assumptions: {

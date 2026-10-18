@@ -49,7 +49,7 @@ import { MutationOutcome, OrderSide as IntentSide, type Intent } from '../execut
 import { quantityFromNumber } from '../quantity'
 import { numberToMicros, notionalMicros, MICROS } from '../execution-model'
 import { canonicalHashV1Result } from '../hash'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import type { ObservedMarketValue, ObservedQuoteSource } from '../market-data/streaming/projection'
 import type { ExecutionModelV6Schema } from '../execution-model-contract'
@@ -116,7 +116,8 @@ export interface ReplayBrokerOrder {
   readonly order: ReplayOrder
 }
 export interface ReplayBrokerState {
-  readonly schemaVersion: 'bayn.simulated-broker-state.v2'
+  readonly schemaVersion: 'bayn.simulated-broker-state.v3'
+  readonly createdAt: string
   readonly runId: string
   readonly accountId: string
   readonly ledger: ReplayLedger<ReplayBrokerFill>
@@ -175,6 +176,7 @@ const newYorkDate = new Intl.DateTimeFormat('en-CA', {
 /** No HTTP client or credentials are acquired. Both ports operate on the same simulated broker state. */
 export const makeReplayBroker = (config: ReplayBrokerConfig) =>
   Effect.gen(function* () {
+    const acquiredAtMs = yield* Clock.currentTimeMillis
     yield* Effect.fromResult(Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(config.runId))
     if (!Number.isSafeInteger(config.assumptions.latencyMs) || config.assumptions.latencyMs < 0)
       return yield* new ReplayBrokerFailure({ message: 'Replay broker latency must be a nonnegative integer' })
@@ -201,12 +203,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       })
     if (restored !== undefined && Date.parse(restored.observedAt) !== (yield* Clock.currentTimeMillis))
       return yield* new ReplayBrokerFailure({ message: 'Broker restore clock must equal the checkpoint observation' })
+    const accountCreatedAt = restored?.state.createdAt ?? utcInstantFromEpochMillis(acquiredAtMs)
+    const startedAtMs = Date.parse(accountCreatedAt)
     const brokerScope = yield* Effect.scope
     const accountId = `replay-${config.runId}`
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
     const state = yield* SynchronizedRef.make<ReplayBrokerState>(
       restored?.state ?? {
-        schemaVersion: 'bayn.simulated-broker-state.v2',
+        schemaVersion: 'bayn.simulated-broker-state.v3',
+        createdAt: accountCreatedAt,
         runId: config.runId,
         accountId,
         ledger,
@@ -267,15 +272,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       nowMs: number,
     ): quote is ObservedMarketValue<IntradayQuote> =>
       replayQuoteRejection(quote, symbol, nowMs, { ...config.protocol, ...jevMarketForSymbol(symbol) }) === null
-    const sessions = yield* Effect.fromResult(
+    const normalizedCalendars = yield* Effect.fromResult(
       Result.all(
-        config.calendar.map((entry) =>
-          normalizeMarketCalendarResult([entry], { start: entry.date, end: entry.date }).pipe(
-            Result.map((calendar) => calendar.providerSessions[0]),
-          ),
-        ),
+        config.calendar.map((entry) => normalizeMarketCalendarResult([entry], { start: entry.date, end: entry.date })),
       ),
     )
+    const sessions = normalizedCalendars.map((calendar) => calendar.providerSessions[0])
+    const referenceSessions = normalizedCalendars
+      .flatMap((calendar) => calendar.sessions)
+      .toSorted((a, b) => a.date.localeCompare(b.date))
     const sessionFor = (order: ReplayOrder) =>
       sessions.find((session) => session?.date === newYorkDate.format(Date.parse(order.submittedAt)))
     const expirationAt = (order: ReplayOrder) => {
@@ -757,6 +762,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
 
     const read: BrokerReadShape = {
       account: Effect.gen(function* () {
+        yield* synchronizeReferenceEquities
         const current = yield* readState
         const { positions, observedAt } = yield* markedPositions
         const date = newYorkDate.format(Date.parse(observedAt))
@@ -1114,33 +1120,48 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       orderById: read.orderById,
       orderByClientId: read.orderByClientId,
     }
-    const completeSession = (sessionDate: string) =>
+    const synchronizeReferenceEquities = Effect.gen(function* () {
+      const observedAt = yield* now
+      let current = yield* readState
+      for (const session of referenceSessions) {
+        if (
+          Date.parse(session.closeAt) < startedAtMs ||
+          session.closeAt > observedAt ||
+          current.sessionCloses.some((close) => close.sessionDate === session.date)
+        )
+          continue
+        const closing = yield* closingEquity(current, session.closeAt)
+        if (!closing.valuationQualified) continue
+        const close = { sessionDate: session.date, equityMicros: closing.equityMicros }
+        yield* updateCommittedState(observedAt, (value) =>
+          value.sessionCloses.some((prior) => prior.sessionDate === session.date)
+            ? value
+            : { ...value, sessionCloses: [...value.sessionCloses, close] },
+        )
+        current = yield* readState
+        if (
+          current.sessionCloses.find((prior) => prior.sessionDate === session.date)?.equityMicros !== close.equityMicros
+        )
+          return yield* new ReplayBrokerFailure({ message: 'Broker reference equity changed after it was recorded' })
+      }
+    })
+    const valuationAt = (input: string) =>
       Effect.gen(function* () {
-        const calendar = yield* read.marketCalendar({ start: sessionDate, end: sessionDate })
-        const session = calendar.value.sessions.find((value) => value.date === sessionDate)
-        const observedAtMs = yield* Clock.currentTimeMillis
-        if (session === undefined || Date.parse(session.closeAt) > observedAtMs)
+        const at = yield* Effect.fromResult(Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(input))
+        if (Date.parse(at) > (yield* Clock.currentTimeMillis))
           return yield* new ReplayBrokerFailure({
-            message: 'Session equity cannot be captured before the recorded market close',
+            message: 'Valuation cannot be captured before its requested boundary',
           })
         const current = yield* readState
         if (current.orders.some((record) => record.deliveryFailure !== undefined))
-          return yield* new ReplayBrokerFailure({
-            message: 'Cannot complete simulation after a broker delivery failure',
-          })
+          return yield* new ReplayBrokerFailure({ message: 'Cannot value simulation after a broker delivery failure' })
         if (current.orders.some((record) => isOpen(record.order)))
-          return yield* new ReplayBrokerFailure({ message: 'Cannot complete session with unresolved broker orders' })
-        const closing = yield* closingEquity(current, session.closeAt)
-        const close = { sessionDate: session.date, equityMicros: closing.equityMicros }
-        const previous = current.sessionCloses.find((value) => value.sessionDate === sessionDate)
-        if (previous !== undefined && previous.equityMicros !== close.equityMicros)
-          return yield* new ReplayBrokerFailure({ message: 'Session close changed after it was recorded' })
-        if (previous === undefined)
-          yield* updateCommittedState(yield* now, (value) => ({
-            ...value,
-            sessionCloses: [...value.sessionCloses, close],
-          }))
-        return { ...close, valuationQualified: closing.valuationQualified }
+          return yield* new ReplayBrokerFailure({
+            message: 'Cannot value a reporting boundary with unresolved broker orders',
+          })
+        const closing = yield* closingEquity(current, at)
+        yield* synchronizeReferenceEquities
+        return { at, ...closing }
       })
     const checkpoint = Effect.gen(function* () {
       const observedAt = yield* now
@@ -1168,7 +1189,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       },
       mutation,
       observeMarket,
-      completeSession,
+      valuationAt,
       valuation: markedPositions.pipe(Effect.map(({ valuation }) => valuation)),
       snapshot: readState,
       checkpoint,

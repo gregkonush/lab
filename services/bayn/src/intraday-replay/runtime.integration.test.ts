@@ -968,6 +968,7 @@ durableTest.each(
           ])
           expect(
             assessBacktestSession({
+              finalWindow: true,
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,
@@ -1004,6 +1005,7 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           const assessment = assessBacktestSession({
+            finalWindow: true,
             ...schedule,
             valuationFailureCount: 0,
             remainingPositionCount: state.ledger.positions.length,
@@ -1575,6 +1577,7 @@ durableTest.each(
           expect(managementCalls).toBe(1)
           expect(
             assessBacktestSession({
+              finalWindow: true,
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,

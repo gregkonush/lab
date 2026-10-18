@@ -182,7 +182,7 @@ durableTest(
         })
         yield* timing.run(Effect.void)
         const now = yield* Clock.currentTimeMillis
-        const close = yield* broker.completeSession('2026-09-04')
+        const close = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
         const state = yield* broker.snapshot
         const current = (yield* broker.read.account).value
         expect(now).toBeGreaterThan(closeMs + 50)
@@ -232,7 +232,7 @@ durableTest(
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v3',
+          schemaVersion: 'bayn.backtest.v4',
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
@@ -241,7 +241,7 @@ durableTest(
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',
-          sessionDates: ['2026-09-04'],
+          interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
           source,
           openingCashMicros: '100000000000',
           fractionalTrading: false,
