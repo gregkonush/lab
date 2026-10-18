@@ -19,17 +19,58 @@
 +        }
 +    }
 +    Ok(memory)
-@@ -747,0 +760,9 @@
-+        for region in self.iter() {
-+            // SAFETY: Each region is a valid mapping for its complete length.
+@@ -748,10 +760,8 @@
+-        self.iter()
+-            .flat_map(|region| region.slots())
+-            .try_for_each(|(mem_slot, plugged)| {
+-                if !plugged {
+-                    let ilen = i64::try_from(mem_slot.slice.len()).unwrap();
+-                    writer.seek(SeekFrom::Current(ilen)).unwrap();
+-                } else if zeroed_destination {
+-                    write_sparse_memory(&mem_slot.slice, writer)?;
+-                } else {
+-                    writer.write_all_volatile(&mem_slot.slice)?;
++        let capture: Result<(), MemoryError> = (|| {
++            for region in self.iter() {
++                // SAFETY: Each region is a valid mapping for its complete length.
++                let result = unsafe {
++                    libc::madvise(region.as_ptr().cast(), region.len() as usize, libc::MADV_NORMAL)
++                };
++                if result != 0 {
++                    return Err(MemoryError::Madvise(std::io::Error::last_os_error()));
+@@ -759,3 +769,28 @@
+-                Ok(())
+-            })
+-            .map_err(MemoryError::WriteMemory)
++            }
++            self.iter()
++                .flat_map(|region| region.slots())
++                .try_for_each(|(mem_slot, plugged)| {
++                    if !plugged {
++                        let ilen = i64::try_from(mem_slot.slice.len()).unwrap();
++                        writer.seek(SeekFrom::Current(ilen)).unwrap();
++                    } else if zeroed_destination {
++                        write_sparse_memory(&mem_slot.slice, writer)?;
++                    } else {
++                        writer.write_all_volatile(&mem_slot.slice)?;
++                    }
++                    Ok(())
++                })
++                .map_err(MemoryError::WriteMemory)
++        })();
++        // The caller may resume this VM after a capture or subsequent flush failure.
++        let restore = self.iter().try_for_each(|region| {
++            // SAFETY: Each region remains mapped for its complete length.
 +            let result = unsafe {
-+                libc::madvise(region.as_ptr().cast(), region.len() as usize, libc::MADV_NORMAL)
++                libc::madvise(region.as_ptr().cast(), region.len() as usize, libc::MADV_RANDOM)
 +            };
 +            if result != 0 {
 +                return Err(MemoryError::Madvise(std::io::Error::last_os_error()));
 +            }
-+        }
-@@ -1156,0 +1178,42 @@
++            Ok(())
++        });
++        capture.and(restore)
+@@ -1156,0 +1192,48 @@
 +    }
 +
 +    #[test]
@@ -62,11 +103,17 @@
 +        );
 +
 +        let memory = into_region_ext(regions);
++        let mut unwritable = File::open("/dev/null").unwrap();
++        assert!(memory.dump(&mut unwritable, false).is_err());
++        assert!(
++            is_random(),
++            "failed snapshot capture changed interactive read-ahead"
++        );
 +        let mut destination = TempFile::new().unwrap().into_file();
 +        memory.dump(&mut destination, false).unwrap();
 +        assert!(
-+            !is_random(),
-+            "full snapshot capture must restore normal read-ahead"
++            is_random(),
++            "successful snapshot capture changed interactive read-ahead"
 +        );
 +        destination.rewind().unwrap();
 +        let mut captured = Vec::new();

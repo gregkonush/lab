@@ -164,7 +164,8 @@ New full memory snapshots retain zero pages as file holes, with the same logical
 nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
 snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
 snapshot pages during sleep. Interactive restore uses demand paging with speculative read-ahead disabled. Full capture
-restores normal read-ahead before its sequential scan. Snapshot restore consumes the
+uses normal read-ahead for its sequential scan, then restores the interactive hint on success and failure so the live
+VM can recover from a failed save or flush. Snapshot restore consumes the
 generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.

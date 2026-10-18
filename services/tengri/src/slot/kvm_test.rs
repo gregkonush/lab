@@ -348,7 +348,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         eprintln!(
             "real KVM resume {} IO before:\n{}",
             index + 1,
-            fs::read_to_string("/sys/fs/cgroup/io.stat").await?
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
         );
         eprintln!(
             "real KVM resume {} memory before: {}",
@@ -391,7 +391,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         eprintln!(
             "real KVM resume {} IO after:\n{}",
             index + 1,
-            fs::read_to_string("/sys/fs/cgroup/io.stat").await?
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
         );
         eprintln!(
             "real KVM resume {} memory after: {}",
