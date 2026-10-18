@@ -342,7 +342,7 @@ export const studyOrder = (input: {
     if (Result.isFailure(simulated) && simulated.failure.reason === 'insufficient-market-close-liquidity')
       return { status: 'UNRESOLVED' as const, reason: simulated.failure.reason }
     const outcome = yield* simulated
-    if (outcome.status === 'canceled') return { status: 'CANCELED' as const, reason: outcome.reason }
+    if (outcome.status === 'unfilled') return { status: 'CANCELED' as const, reason: outcome.reason }
     return {
       status: 'FILLED' as const,
       fill: {

@@ -7,7 +7,7 @@ import { notionalMicros } from '../execution-model'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 
-export interface IntradayReplayIocAssumptions {
+export interface ReplayExecutionAssumptions {
   readonly slippageBps: number
   readonly availableLiquidityPpm: number
 }
@@ -28,7 +28,7 @@ export const ReplayInstrumentsSchema = Schema.Record(
 export const replayInstrument = (
   symbol: string,
   instruments: typeof ReplayInstrumentsSchema.Type,
-): Result.Result<Instrument, IntradayReplayIocCoreFailure> => {
+): Result.Result<Instrument, ReplayExecutionFailure> => {
   const terms = instruments[symbol]
   if (terms === undefined) return Result.fail(invalid('instrument', symbol, 'invalid-execution-model'))
   return Result.succeed({
@@ -42,45 +42,45 @@ export const replayInstrument = (
 
 type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
 
-export interface IntradayReplayIocCoreOrder {
+export interface ReplayExecutionOrder {
   readonly side: OrderSide
   readonly quantityAtoms: bigint
   readonly limitPriceMicros: bigint | null
 }
 
 /** Executable quote values selected from one event-time market snapshot. */
-export interface IntradayReplayIocCoreQuote {
+export interface ReplayExecutionQuote {
   readonly priceMicros: bigint
   readonly displayedQuantityAtoms: bigint
 }
 
-export interface IntradayReplayIocCoreInput {
+export interface ReplayExecutionInput {
   readonly instrument: Instrument
-  readonly order: IntradayReplayIocCoreOrder
-  readonly quote: IntradayReplayIocCoreQuote
+  readonly order: ReplayExecutionOrder
+  readonly quote: ReplayExecutionQuote
   readonly executionModel: IntradayMomentumProtocol['executionModel']
-  readonly assumptions: IntradayReplayIocAssumptions
+  readonly assumptions: ReplayExecutionAssumptions
 }
 
-export type IntradayReplayIocCoreOutcome =
+export type ReplayExecutionOutcome =
   | {
       readonly status: 'filled'
       readonly requestedQuantityAtoms: bigint
       readonly filledQuantityAtoms: bigint
       readonly fillPriceMicros: bigint
       readonly fillNotionalMicros: bigint
-      readonly unfilledRemainder: 'none' | 'canceled'
+      readonly remainingQuantityAtoms: bigint
     }
   | {
-      readonly status: 'canceled'
+      readonly status: 'unfilled'
       readonly adversePriceMicros: bigint
       readonly requestedQuantityAtoms: bigint
       readonly filledQuantityAtoms: bigint
       readonly reason: 'adverse-price-exceeds-limit' | 'no-displayed-liquidity' | 'zero-after-instrument-rounding'
-      readonly unfilledRemainder: 'canceled'
+      readonly remainingQuantityAtoms: bigint
     }
 
-export interface IntradayReplayIocCoreFailure {
+export interface ReplayExecutionFailure {
   readonly _tag: 'InvalidIntradayReplayCoreInput'
   readonly field: string
   readonly value: unknown
@@ -93,11 +93,12 @@ export interface IntradayReplayIocCoreFailure {
     | 'insufficient-market-close-liquidity'
 }
 
-const invalid = (
-  field: string,
-  value: unknown,
-  reason: IntradayReplayIocCoreFailure['reason'],
-): IntradayReplayIocCoreFailure => ({ _tag: 'InvalidIntradayReplayCoreInput', field, value, reason })
+const invalid = (field: string, value: unknown, reason: ReplayExecutionFailure['reason']): ReplayExecutionFailure => ({
+  _tag: 'InvalidIntradayReplayCoreInput',
+  field,
+  value,
+  reason,
+})
 
 const modelQuantityIncrement = (value: string): bigint | undefined => {
   if (!isPositiveMicros(value)) return undefined
@@ -106,8 +107,8 @@ const modelQuantityIncrement = (value: string): bigint | undefined => {
 }
 
 export const simulateIntradayReplayExecution = (
-  input: IntradayReplayIocCoreInput,
-): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> => {
+  input: ReplayExecutionInput,
+): Result.Result<ReplayExecutionOutcome, ReplayExecutionFailure> => {
   const { order, quote, assumptions, executionModel: model, instrument } = input
   const quantityIncrement =
     order.limitPriceMicros === null && instrument.market === MarketKind.Equity ? 1n : instrument.quantityIncrementAtoms
@@ -171,16 +172,14 @@ export const simulateIntradayReplayExecution = (
     order.side === OrderSide.Buy
       ? ((quotedAdversePrice + priceIncrement - 1n) / priceIncrement) * priceIncrement
       : (quotedAdversePrice / priceIncrement) * priceIncrement
-  const cancel = (
-    reason: CoreCancelReason,
-  ): Result.Result<IntradayReplayIocCoreOutcome, IntradayReplayIocCoreFailure> =>
+  const cancel = (reason: CoreCancelReason): Result.Result<ReplayExecutionOutcome, ReplayExecutionFailure> =>
     Result.succeed({
-      status: 'canceled',
+      status: 'unfilled',
       adversePriceMicros: adversePrice,
       requestedQuantityAtoms: order.quantityAtoms,
       filledQuantityAtoms: 0n,
       reason,
-      unfilledRemainder: 'canceled',
+      remainingQuantityAtoms: order.quantityAtoms,
     })
   if (
     order.limitPriceMicros !== null &&
@@ -204,13 +203,13 @@ export const simulateIntradayReplayExecution = (
       invalid('notional', { quantityAtoms: requestedOrAvailable, priceMicros: adversePrice }, 'invalid-notional'),
     ),
     Result.map(
-      (fillNotionalMicros): IntradayReplayIocCoreOutcome => ({
+      (fillNotionalMicros): ReplayExecutionOutcome => ({
         status: 'filled',
         requestedQuantityAtoms: order.quantityAtoms,
         filledQuantityAtoms: requestedOrAvailable,
         fillPriceMicros: adversePrice,
         fillNotionalMicros,
-        unfilledRemainder: requestedOrAvailable < order.quantityAtoms ? 'canceled' : 'none',
+        remainingQuantityAtoms: order.quantityAtoms - requestedOrAvailable,
       }),
     ),
   )
