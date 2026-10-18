@@ -56,7 +56,7 @@ const config: ReplayBrokerConfig = {
   openingCashMicros: '10000000000',
   assumptions: { latencyMs: 100, slippageBps: 0, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 },
   fractionalTrading: false,
-  calendar: [{ date: '2026-09-04', open: '09:30', close: '16:00' }],
+  calendar: [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
   assets: [
     Result.getOrThrow(
       normalizeAssetResult(
@@ -90,7 +90,7 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   symbol: 'AAPL',
   side: OrderSide.Buy,
   orderType: OrderType.Limit,
-  timeInForce: TimeInForce.ImmediateOrCancel,
+  timeInForce: TimeInForce.Day,
   quantityAtoms: '5000000000',
   notionalLimitMicros: '505000000',
   state: IntentState.IoStarted,
@@ -111,6 +111,12 @@ const submit = (broker: Broker, order: Intent) =>
   })
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
+
+test('an equity-only replay account leaves crypto eligibility unknown', async () => {
+  const account = await run(setup().pipe(Effect.flatMap((broker) => broker.read.account)))
+  expect(account.value.cryptoStatus).toBeNull()
+  expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
+})
 
 test('canceled IOC retains the actual arrival quote, modeled price and reason in its durable checkpoint', async () => {
   const checkpoint = await run(
@@ -554,7 +560,10 @@ test.each([0, 350])(
     const result = await run(
       Effect.gen(function* () {
         const broker = yield* setup({
-          calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+          calendar: [
+            ...config.calendar,
+            { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+          ],
           quoteAt: (_symbol, time) => {
             const price = time > closingMs ? 102 : time === closingMs ? 101 : 100
             return Effect.succeed(
@@ -642,7 +651,10 @@ test('missing session close prevents a fabricated next-day equity baseline', asy
   const result = await run(
     Effect.gen(function* () {
       const broker = yield* setup({
-        calendar: [...config.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+        calendar: [
+          ...config.calendar,
+          { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        ],
       })
       yield* TestClock.setTime(Date.parse('2026-09-08T13:30:00.000Z'))
       return yield* Effect.result(broker.read.account)
@@ -1320,10 +1332,14 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
             ),
         }
         const broker = yield* makeReplayBroker(frozen)
+        const openingAccount = (yield* broker.read.account).value
+        expect(openingAccount.cryptoStatus).toBe('ACTIVE')
+        expect(openingAccount.nonMarginableBuyingPowerMicros).toBe(config.openingCashMicros)
         yield* submit(
           broker,
           intent({
             symbol,
+            timeInForce: TimeInForce.ImmediateOrCancel,
             quantityAtoms: '33050000',
             notionalLimitMicros: '3338050',
             createdAt: new Date(start).toISOString(),
@@ -1334,6 +1350,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(held.state.orders[0]?.order.assetClass).toBe(AssetClass.Crypto)
         expect(held.state.fees[0]?.netAmountMicros).toBe('0')
         expect(held.state.fees[0]?.coinDebit?.quantityAtoms).toBe('82625')
+        expect((yield* broker.read.account).value.nonMarginableBuyingPowerMicros).toBe(held.state.ledger.cashMicros)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(held, frozen)).state.ledger).toEqual(held.state.ledger)
         const restored = yield* makeReplayBroker({
           ...frozen,
@@ -1360,6 +1377,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.GoodUntilCanceled)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.ledger).toEqual(flat.state.ledger)
         expect(flat.state.fees[1]?.cryptoCashFee).toBe(true)
+        expect((yield* restored.read.account).value.nonMarginableBuyingPowerMicros).toBe(flat.state.ledger.cashMicros)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.fees).toEqual(flat.state.fees)
         const { checkpointHash: _hash, ...material } = flat
         const oldMaterial = {

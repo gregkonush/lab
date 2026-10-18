@@ -14,8 +14,15 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
+Controller ownership uses a 60-second SQL and Kubernetes lease, renewed every five seconds. Acquisition and renewal
+measure their local deadline from the start of the attempt, so a delayed commit never grants an extra lease window.
+Acquisition waits within that window for the durable result; an unconfirmed acquisition grants no authority. Renewal
+keeps its in-flight commit until the previously confirmed deadline, then fences all controller work. This covers the
+observed 20.9-second commit tail without changing request lifetimes or synchronous database durability. After a crash,
+ownership expires after 60 seconds; election polling and durable acquisition can add failover time. A known ownership
+loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
-Replay and ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
 verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
 Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
@@ -23,13 +30,63 @@ in total. Promote the Ofz managed-role limits and 220-connection server budget b
 reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
-then consumes the nonce in shared PostgreSQL before opening vsock. Buffered admission capacity follows the opening
-message's storage, so ongoing terminal input does not reserve capacity for later requests.
+then consumes the nonce in a bounded process-wide replay guard before opening vsock. Each proof names one Pod UID,
+and Kubernetes runs one supervisor container/listener for that Pod. Before listening after process start, the supervisor
+waits eight seconds on a monotonic clock: the maximum five-second signed admission lifetime, the existing one-second
+clock-lead bound and two seconds of restart margin.
+The health listener remains live during this wait; readiness returns 503 until the fence clears.
+Every proof that could have executed before a crash therefore expires before the replacement can admit requests.
+The guard is shared across admission instances and allows one consumer per nonce, with 64 buckets of at most 128
+unexpired entries. A read-only SQL deadline check preserves the database clock and future bound without a WAL commit.
+Signature, body, runtime, recovery generation and current SQL leadership checks still precede effects.
+The BFF obtains a random process audience through `GetRequestAudience` over the pinned SPIFFE mTLS channel before
+signing each controller request. Signing domain `tengri.ofz.v2` binds that audience as well as the method, body, nonce,
+context and recovery generation. Each controller consumes nonces in one shared process window with 64 buckets of
+128 live entries, expiring at the signed five-second deadline. A restart chooses a different audience; requests
+captured for the previous process or another replica fail before effects, even when their signatures are otherwise
+valid. Replacing only the audience invalidates the HMAC. Live entries are never evicted to admit more work, and no
+expired assertion can become valid again after a backwards clock correction: the replay window keeps a nondecreasing
+clock floor for its process audience. No
+request is automatically replayed if its receiver changes between audience lookup and submission. There is no v1
+signature path. Regenerate the independent Rust/TypeScript vector with
+`node services/tengri/fixtures/generate-ofz-request-v2.mjs`.
+The SQL replay schema remains required for the BFF's shared OAuth and one-use capability state. Controller request
+authentication no longer adds a WAL commit before Ofz can evaluate the request.
+Repeated metadata and observation requests reuse an already committed Ofz audit receipt for the exact actor,
+session, grant, origin, workspace/runtime, action, resource, target and recovery generation. Every request still calls
+Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
+cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
+Control submissions retain their separate durable audits and session activity updates.
+Conversation history, Codex events and file streams share their workspace admission with the guest connection, so one
+stream submission does not create a second parent audit. Guest sub-operations retain their separate control audits;
+stream disclosure and revocation still check current Ofz policy using the original admission's receipt.
+Controller runtime-state reads and guest health probes use the same bounded receipt cache. Its binding includes the
+current recovery generation, read from Ofz before each lookup. Ofz still checks workload policy and current runtime
+state before and after validating the durable receipt; changing the owner, epoch, membership, archive health or fence
+cannot reuse a previous decision. Terminal cleanup remains a separately audited control submission.
+Transport failures during reconciliation mark readiness `Unknown` and retain the last observed guest phase. The BFF
+reports that uncertainty as unavailable, preserving the existing desktop until a new observation succeeds. A transport
+timeout does not establish that the VM failed; actual lifecycle and invariant failures retain their failure handling.
+Ofz policy checks and durable audit receipts still precede every guest operation. Supervisor request admission no longer adds a
+PostgreSQL commit inside the short-lived Ofz decision window. The supervisor replay guard changes no signed fields;
+rolling a supervisor adds an eight-second startup fence and retains the runner, guest and home. Buffered admission
+capacity follows the opening message's storage, with a 64 MiB total byte budget. RPCs reserve their declared opening size after reading the frame
+header; previews reserve their bounded body size. Capacity checks never queue large reservations ahead of smaller
+requests. A separate limit of 32 requests bounds work through response headers, without charging ongoing streams.
+Exhausted capacity returns 503 promptly. Capacity checks and body reads have separate trace spans. Per-message size,
+signed deadlines, replay and runtime fencing checks remain enforced.
 
 Nanoagent verifies the proof again against its root-owned runtime claim and recovery generation and consumes a local
 nonce before handler effects. Runtime changes fence unary responses and stream output. HTTP and WebSocket preview
 openings bind the actual verb, escaped path/query and body; preview proof and claim headers are removed before reaching
 the application. Scoped content remains denied until bounded observer handlers exist.
+Preview WebSockets send protocol keepalives on both proxy hops every twenty seconds so idle connections remain open.
+Control frames do not record user activity or postpone automatic sleep; runtime and policy revocation still close the stream.
+Desktop previews renew their 30-minute SQL lease and HttpOnly cookie through fresh authenticated tickets on the same
+window origin. Token rotation rejects new handshakes using the old credential. Established sockets retain their
+actor/session/grant, workspace/runtime, permission, origin, recovery generation and port binding. They check the
+current unexpired lease and fresh Ofz policy every second, with the existing two-second deadline. Renewal preserves
+both application documents and sockets; deletion, expiry or policy denial still closes them within three seconds.
 
 The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
 supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
@@ -257,11 +314,16 @@ whose `TENGRI_INTERNAL_HMAC_SECRET` entry must contain the same rotated key. The
 Only Ofz's `migrate-runtime` command runs the checksum-bound schema migration as `tengri_migrator`. Applications
 verify that schema before serving. SQL stores hashed replay receipts, hashed one-use tickets and preview sessions;
 plaintext credentials are returned only to their caller. Limits and atomic redemption apply across replicas.
-Replay admission hashes each nonce into one of 64 independently locked buckets, each capped at 128 unexpired entries.
-An unrelated bucket can commit while another request is still open. Duplicate rejection remains atomic across
-controllers and supervisors, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
-Migration `0002_replay_buckets.sql` replaces the global replay lock while preserving accepted nonces. Ofz must apply
-both checksum-bound migrations before the new BFF, controller and supervisor start; no older schema is accepted.
+Replay admission hashes each nonce into one of 64 buckets with 128 fixed slots. An expired slot is claimed with
+`FOR UPDATE SKIP LOCKED`; unrelated nonces can proceed even in the same bucket. Duplicate rejection remains atomic
+across replicas, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
+Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Migration
+`0004_leadership_window.sql` installs the 60-second ownership window. Migration `0005_capability_slots.sql` preserves
+existing capabilities and assigns unique capacity slots. Ticket and preview writers skip slots reserved by in-flight
+transactions and skip locked expired rows instead of taking one global lock through commit. Database constraints
+retain the limits of 128 tickets, 96 previews, and 16 of each per workspace. Reissuing an existing preview retains
+its slots and replaces its token atomically. Ofz must apply all five checksum-bound migrations
+before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,
 Firecracker guest, home, slot claim and Pod identity. Active streams reconnect to their existing guest sessions.
@@ -382,6 +444,11 @@ Missing or inconsistent clock timing rejects the resume; the controller and gues
 The fixture checks that its binary contains the exact native lifecycle test before configuring devices. A successful
 container exit also requires a nonempty `result.json`; an empty test selection cannot qualify an image for publication.
 
+The native terminal probe answers foreground/background color queries and the device-status barrier used by the
+pinned Neovim startup. Query parsing retains split sequences. Editor readiness requires a marker rendered in the
+managed editor's buffer, rather than a separate stderr message. The command constructs the marker from character
+codes so shell echo cannot satisfy the probe. The one-second screen limit and all other performance limits remain unchanged.
+
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
 and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
@@ -432,6 +499,9 @@ The browser, BFF, Tengri host, Ofz, and Nanoagent have separate GlitchTip projec
 Ofz, controller, supervisor and guest request boundaries; HTTP failures return `x-trace-id`. Request spans and SQL
 pool, leadership, replay, policy-read and audit spans contain operation names and timings. Trace resource
 `service.version` and GlitchTip release identify the source revision baked into the image.
+Private lifecycle commands propagate W3C `traceparent` to the root guest helper. Host spans separate vsock connection,
+command send and reply wait; joined guest spans separate clock synchronization, filesystem thaw, API and terminal
+readiness. The existing clock-transfer and readiness limits remain enforced.
 
 RPC span names come from the compiled protobuf descriptors. Unknown request paths and dynamic Rust tracing fields
 are excluded from export. Trace attributes retain only operation names, database system, standard HTTP methods,
@@ -450,6 +520,14 @@ collector service addresses and ports; other private networks remain denied. New
 configuration through the private guest boot file, without database credentials or a Kubernetes identity.
 Existing active guests need an explicitly fenced cold replacement retaining their home to install the new guest SDK;
 a supervisor image restart alone does not update the guest root or runner environment.
+
+RPC failures retain their numeric `rpc.grpc.status_code` in Tempo. GlitchTip events also carry a bounded
+`grpc_code` tag and a status-specific title. Expected cancellation, validation, missing-resource, precondition and
+authorization rejections remain visible in traces and logs without creating server-error issues. Transport failures,
+server deadlines, capacity failures and internal errors still create error events. Spare-slot maintenance allows at
+most two minutes from Pod creation for networking and initial container status. Within that bound it waits for the
+supervisor's replay startup fence plus readiness timeout before probing. Failed containers, changed Pod identities
+and failures after either startup window still surface.
 
 After the normal release and promotion, run `tengri telemetry-check` in a controller and `ofz telemetry-check` in an
 Ofz API Pod. Each emits one synthetic error and trace, flushes both exporters, and prints their IDs and source revision.

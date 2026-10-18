@@ -778,7 +778,7 @@ const frozenControlFixture = () => {
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v5',
+        inputDefinition: 'bayn.jev-trading-signal-state.v8',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -789,8 +789,8 @@ const frozenControlFixture = () => {
       fractionalTrading: false,
       calendar: [
         ...retained.input.input.calendar,
-        { date: '2026-09-08', open: '09:30', close: '16:00' },
-        { date: '2026-09-09', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
       ],
       assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,

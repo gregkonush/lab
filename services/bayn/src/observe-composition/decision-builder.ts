@@ -1,3 +1,4 @@
+import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
@@ -27,6 +28,8 @@ import type { AutonomousCycleStartup } from '../app'
 import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type MarketCalendarQuery } from '../broker/alpaca'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
+import { unusedEntryExpiresAt } from '../cycle/entry-admission'
+import { reportCyclePassFailure } from '../error-tracking'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   CycleDecisionBuildError,
@@ -155,7 +158,9 @@ const loadExecutionRiskPolicyDataFirst = (
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [isQuoteBoundExecutionModel(executionModel) ? OrderType.Limit : OrderType.Market],
-    allowedTimeInForce: [isQuoteBoundExecutionModel(executionModel) ? TimeInForce.ImmediateOrCancel : TimeInForce.Day],
+    allowedTimeInForce: isQuoteBoundExecutionModel(executionModel)
+      ? [TimeInForce.Day, TimeInForce.ImmediateOrCancel]
+      : [TimeInForce.Day],
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })
@@ -183,7 +188,7 @@ const loadQuoteBoundExecutionRiskPolicyDataFirst = (
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
     allowedOrderTypes: [OrderType.Limit],
-    allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+    allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })
@@ -198,7 +203,7 @@ export const loadQuoteBoundExecutionRiskPolicy = Pipeable.by<
 
 type ObserveStrategy = StrategyRuntime
 
-class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
+export class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
   readonly timeoutMs: number
   readonly message: string
 }> {}
@@ -935,6 +940,12 @@ const compileObserveStrategyDecision = <R>(
         ),
       ),
     )
+    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
+    if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry admission expired before its model evidence completed',
+        readiness: DecisionReadinessReason.NoEligibleCandidate,
+      })
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
       decision.selectedSymbols.length === 0 &&
@@ -971,12 +982,12 @@ const compileObserveStrategyDecision = <R>(
       })
     const pricingAt = yield* currentUtcInstant
     if (
-      pricingAt >= evidence.batchPlan.expiresAt ||
+      Date.parse(pricingAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt) ||
       (pricingReconciliation?.freshUntil !== undefined &&
         Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
     )
       return yield* new JevAwaitingEvidence({
-        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingQuery =
@@ -999,9 +1010,9 @@ const compileObserveStrategyDecision = <R>(
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (evaluatedAt >= evidence.batchPlan.expiresAt)
+    if (Date.parse(evaluatedAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
-        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
@@ -1115,7 +1126,11 @@ export const prepareObservePlanner = <R>(
               allocationCapitalMicros: overrides.allocationCapitalMicros,
               executionTerms: {
                 orderType: OrderType.Limit,
-                timeInForce: TimeInForce.ImmediateOrCancel,
+                timeInForce: cashSpotLimitTimeInForce(
+                  input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+                    ? MarketKind.Crypto
+                    : MarketKind.Equity,
+                ),
                 priceReference: 'verified-adverse-quote-boundary' as const,
                 snapshotId: compiled.executionMarketData.snapshotId,
                 snapshotContentHash: compiled.executionMarketData.contentHash,
@@ -1521,7 +1536,7 @@ export const selectClosingSymbolPass = (
   const fractionalSymbols = activePositions
     .filter(
       ({ symbol, quantityAtoms }) =>
-        instrumentMarket(symbol) === MarketKind.Equity && BigInt(quantityAtoms) % 1_000_000_000n !== 0n,
+        cashSpotClosingOrderType(instrumentMarket(symbol), BigInt(quantityAtoms)) === OrderType.Market,
     )
     .map(({ symbol }) => symbol)
   return fractionalSymbols.length > 0
@@ -1553,7 +1568,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const executionModel = preparation.executionModel
-    if (executionModel.schemaVersion !== 'bayn.execution-model.v5' || !isIntradayAutonomousCycle(cycle)) {
+    if (executionModel.schemaVersion !== 'bayn.execution-model.v6' || !isIntradayAutonomousCycle(cycle)) {
       return yield* mutationRunnerError({
         message: 'execution close requires the active intraday execution contract',
         failure: 'contract',
@@ -1623,6 +1638,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       })
     }
     // Reconciliation can cross the deadline; the early guard never replaces this final check.
+    if (evaluatedAt >= closeExpiresAt)
+      return yield* new ExecutionCloseAwaitingMarketData({
+        message: 'execution close lease expired before construction',
+        observedAt: evaluatedAt,
+      })
     if (source === 'reconciled-position') yield* requireFallbackWindow(evaluatedAt)
     const entryMarketData = entryDocument.bindings.executionMarketData
     const persistedUniverse = isSnapshotExecutionMarketDataBinding(entryMarketData)
@@ -1673,8 +1693,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       if (
         closingPass.kind === 'broker-position' ||
         source === 'reconciled-position' ||
-        (cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1' &&
-          evaluatedAt >= cycle.window.executionCloseAt)
+        evaluatedAt >= cycle.window.executionCloseAt
       ) {
         const binding = yield* Effect.fromResult(
           reconciledPositionLiquidationBinding(cycle, executionSession.calendar, reconciliation.brokerState, symbols),
@@ -1816,6 +1835,13 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             askPriceMicros: closeExecutionMarketData.askPriceMicros,
           }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
+    const reconciledEquityLimit =
+      reconciledPositionClose &&
+      symbols.every(
+        (symbol) =>
+          instrumentMarket(symbol) === MarketKind.Equity &&
+          cashSpotClosingOrderType(instrumentMarket(symbol), positionQuantities.get(symbol) ?? 0n) === OrderType.Limit,
+      )
     const plannerInput: TargetPlannerInput = {
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
       ...commonPlannerInput,
@@ -1830,7 +1856,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       executionTerms: reconciledPositionClose
         ? {
             executionPurpose: 'forced-close',
-            orderType: OrderType.Market,
+            orderType: reconciledEquityLimit ? OrderType.Limit : OrderType.Market,
             timeInForce: symbols.every((symbol) => instrumentMarket(symbol) === MarketKind.Crypto)
               ? TimeInForce.GoodUntilCanceled
               : TimeInForce.Day,
@@ -1854,7 +1880,11 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
           : {
               executionPurpose: 'forced-close',
               orderType: OrderType.Limit,
-              timeInForce: TimeInForce.ImmediateOrCancel,
+              timeInForce: cashSpotLimitTimeInForce(
+                cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+                  ? MarketKind.Crypto
+                  : MarketKind.Equity,
+              ),
               priceReference: 'verified-adverse-quote-boundary',
               snapshotId: closeExecutionMarketData.binding.snapshotId,
               snapshotContentHash: closeExecutionMarketData.binding.contentHash,
@@ -1866,7 +1896,9 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const closeLimitSlippageBps =
-      reconciledPositionClose || requiresFractionalClose ? undefined : policy.maxAdverseSlippageBps
+      (reconciledPositionClose && !reconciledEquityLimit) || requiresFractionalClose
+        ? undefined
+        : policy.maxAdverseSlippageBps
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
         limitSlippageBps: closeLimitSlippageBps ?? 0,
@@ -1940,5 +1972,8 @@ export const observePass = (
   observation: CyclePassObservation,
 ): Effect.Effect<AutonomousCyclePassObservation> => {
   const retained = retainAutonomousCyclePassObservation(observation)
-  return recordPass(retained).pipe(Effect.as(retained))
+  return (observation.outcome === 'FAILED' ? reportCyclePassFailure(observation.error) : Effect.void).pipe(
+    Effect.andThen(recordPass(retained)),
+    Effect.as(retained),
+  )
 }

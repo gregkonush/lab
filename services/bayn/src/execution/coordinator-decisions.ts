@@ -332,7 +332,7 @@ const exactOrderDataFirst = (intent: Intent, request: OrderRequestBody, order: O
     order.timeInForce === request.time_in_force &&
     representationMatches &&
     order.limitPriceMicros === (limitPrice.success === undefined ? undefined : limitPrice.success.toString()) &&
-    order.extendedHours === false
+    order.extendedHours === request.extended_hours
   )
 }
 

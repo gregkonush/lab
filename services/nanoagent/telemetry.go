@@ -22,13 +22,14 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-func initializeTelemetry() (func(), error) {
+func initializeTelemetry(component string) (func(), error) {
 	if err := sentry.Init(sentry.ClientOptions{
 		Dsn: os.Getenv("SENTRY_DSN"), Release: os.Getenv("APP_SOURCE_REVISION"),
 		Environment: "production", MaxBreadcrumbs: -1, BeforeSend: sanitizeGuestError,
 	}); err != nil {
 		return nil, err
 	}
+	sentry.ConfigureScope(func(scope *sentry.Scope) { scope.SetTag("component", component) })
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 	var provider *sdktrace.TracerProvider
 	if endpoint := os.Getenv("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT"); endpoint != "" {
@@ -41,6 +42,7 @@ func initializeTelemetry() (func(), error) {
 			sdktrace.WithResource(resource.NewSchemaless(
 				attribute.String("service.name", "nanoagent"),
 				attribute.String("service.namespace", "tengri"),
+				attribute.String("tengri.component", component),
 				attribute.String("service.version", os.Getenv("APP_SOURCE_REVISION")),
 				attribute.String("deployment.environment.name", "production"),
 			)),
@@ -129,7 +131,10 @@ func observeGuestHTTP(next http.Handler) http.Handler {
 		metrics := httpsnoop.CaptureMetrics(next, w, r.WithContext(ctx))
 		span.SetAttributes(attribute.Int("http.response.status_code", metrics.Code))
 		if metrics.Code >= 500 {
-			reportGuestError(ctx, operation, http.StatusText(metrics.Code))
+			span.SetStatus(otelcodes.Error, http.StatusText(metrics.Code))
+			if r.URL.Path != "/readyz" && r.URL.Path != "/healthz" && r.URL.Path != "/livez" {
+				reportGuestError(ctx, operation, http.StatusText(metrics.Code))
+			}
 		}
 	})
 }

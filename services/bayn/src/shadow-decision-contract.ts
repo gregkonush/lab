@@ -1,10 +1,17 @@
 import { exchangeSessions } from './market-hours'
-import { isContinuousMarket, sameMarketHours, marketHoursAreCanonical } from './market-hours'
+import {
+  isContinuousMarket,
+  sameMarketHours,
+  marketHoursAreCanonical,
+  executionCloseRecoveryExpiry,
+} from './market-hours'
 
 import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
 import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { jevMaximumEntryAskMicros } from './jev/entry-economics'
+import { JevCandidatePlanStatus } from './jev/batch'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
 import { JevExitReason } from './jev/exit'
 import {
@@ -52,7 +59,6 @@ import {
   legacyExecutionAuthorityToken,
   legacyIntentPlanSchemaVersion,
   legacyObserveAuthorityToken,
-  legacyPositionSchemaVersion,
 } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
@@ -1114,7 +1120,8 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: dividePositionMicrosAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityAtoms: target.targetQuantityAtoms,
@@ -1195,7 +1202,32 @@ const jevEntryEvidenceIssues = (
         issue:
           'Jev entry quantity limits must reproduce the recorded capital, selected weights and instrument precision',
       })
+    for (const symbol of target.selectedSymbols) {
+      const candidate = batchPlan.candidates.find((entry) => entry.symbol === symbol)
+      // The target schema has reproduced this exact request from its immutable source rows.
+      const quoted = Schema.decodeUnknownResult(
+        Schema.Struct({ candidate: Schema.Struct({ quote: Schema.Struct({ ask: Schema.Finite }) }) }),
+      )(candidate?.status === JevCandidatePlanStatus.Requested ? candidate.request.request.state : undefined)
+      const originalAsk = quoted.pipe(
+        Result.flatMap((state) => priceNumberToMicros(state.candidate.quote.ask, 'ask', 'UP')),
+      )
+      const pricedAsk = document.plannerInput.referencePrices.askPriceMicros[symbol]
+      if (
+        Result.isFailure(originalAsk) ||
+        pricedAsk === undefined ||
+        BigInt(pricedAsk) > jevMaximumEntryAskMicros(observation.protocol, originalAsk.success)
+      )
+        issues.push({
+          path: ['plannerInput', 'referencePrices'],
+          issue: 'entry pricing exceeds the inference-bound cost ceiling',
+        })
+    }
   }
+  if ((document.entryLimitSlippageBps ?? 0) > observation.protocol.maximumEntryLimitSlippageBps)
+    issues.push({
+      path: ['entryLimitSlippageBps'],
+      issue: 'entry limit allowance exceeds the inference-bound cost ceiling',
+    })
   const source = document.bindings.decisionMarketData ?? document.bindings.executionMarketData
   const pricing = document.bindings.executionMarketData
   // JevEntryTargetSchema has already reproduced the observation. Exact manifest and row equality binds that
@@ -1384,6 +1416,18 @@ const executionMaterialIssues = (
   const usesExtendedCloseLease =
     document.executionSession !== undefined &&
     document.submissionCutoffAt > document.executionSession.submissionCutoffAt
+  if (
+    document.executionSession !== undefined &&
+    document.createdAt >= document.executionSession.executionSession.closeAt
+  ) {
+    const deadline = executionCloseRecoveryExpiry(document.executionSession.calendar, document.createdAt)
+    if (deadline === null || document.expiresAt > deadline || !usesReconciledPositionMark)
+      issues.push({
+        path: ['expiresAt'],
+        issue:
+          'post-session recovery requires a bounded close lease within verified broker hours and fresh reconciled positions',
+      })
+  }
   const isClosePlan = isFlatExecutionTarget(strategyDecision) || usesExtendedCloseLease
   if (
     document.entryLimitSlippageBps !== undefined &&
@@ -1402,13 +1446,15 @@ const executionMaterialIssues = (
     (!isClosePlan ||
       !intradayStrategy ||
       targetExecutionTerms?.orderType !== OrderType.Limit ||
-      targetExecutionTerms.timeInForce !== TimeInForce.ImmediateOrCancel ||
+      !([TimeInForce.Day, TimeInForce.ImmediateOrCancel] as const).some(
+        (duration) => duration === targetExecutionTerms.timeInForce,
+      ) ||
       document.riskPolicy === undefined ||
       document.closeLimitSlippageBps > document.riskPolicy.maxAdverseSlippageBps)
   ) {
     issues.push({
       path: ['closeLimitSlippageBps'],
-      issue: 'close limit allowance must bind a close-only IOC plan within the intraday risk policy',
+      issue: 'close limit allowance must bind a close-only limit plan within the intraday risk policy',
     })
   }
   const requiresLiquidationMarketData = targetExecutionTerms?.executionPurpose !== undefined

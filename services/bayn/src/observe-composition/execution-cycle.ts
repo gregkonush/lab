@@ -1,3 +1,4 @@
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { Effect, Option, Result } from 'effect'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
@@ -10,7 +11,6 @@ import {
   type CycleRunResult,
 } from '../cycle/runner'
 import { CycleStore } from '../cycle/store'
-import { MarketSchedule } from '../market-hours'
 import { hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
@@ -428,7 +428,7 @@ const entryExecutionCycleIntentEvidence = (
           ]
     })
     if (dispositions.some((disposition) => disposition === 'UNSUCCESSFUL')) return 'UNSUCCESSFUL'
-    return dispositions.length > 0 && dispositions.every((disposition) => disposition === 'BENIGN_ZERO_FILL_IOC')
+    return dispositions.length > 0 && dispositions.every((disposition) => disposition === 'BENIGN_ZERO_FILL_LIMIT')
       ? 'BENIGN_ZERO_FILL'
       : 'COMPLETE'
   })
@@ -769,7 +769,7 @@ const executeBoundExecutionCycle = (
     const reconcile = reconciliation.read
     const observedAt = yield* currentUtcInstant
     const runtimeMatchesCycle = runtimeStrategyMatchesCycle(input, cycle)
-    if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v5') {
+    if (!runtimeMatchesCycle || preparation.executionModel.schemaVersion !== 'bayn.execution-model.v6') {
       return yield* mutationRunnerError({
         message: 'bound execution cycle does not match the active intraday runtime',
         failure: 'contract',
@@ -790,10 +790,10 @@ const executeBoundExecutionCycle = (
     }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
-        marketSchedule:
-          cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-            ? MarketSchedule.Continuous
-            : MarketSchedule.Sessions,
+        recoveryExpiresAt:
+          document.executionSession === undefined
+            ? null
+            : executionCloseRecoveryExpiry(document.executionSession.calendar, observedAt),
         observedAt,
         executionCloseAt: cycle.window.executionCloseAt,
         ...sessionCloseLeads,

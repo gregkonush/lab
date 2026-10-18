@@ -1,3 +1,5 @@
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { quantityFromNumber } from '../quantity'
@@ -23,6 +25,7 @@ import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
 import {
   jevMomentumEntryCandidates,
+  jevBenchmarkSignalFor,
   jevSignalFor,
   reproduceJevTradingSignalBatchEvidence,
 } from '../jev/trading-signals'
@@ -126,7 +129,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
     for (const candidate of plan.candidates) {
       if (candidate.status === 'EXCLUDED') continue
       const { prices: values } = yield* jevSignalFor(snapshot, candidate.symbol)
-      const { prices: benchmark } = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
+      const { prices: benchmark } = yield* jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
       const quote = snapshot.latestQuotes[candidate.symbol]
       if (quote === undefined) return yield* Result.fail(new SignalStudyFailure({ message: 'Missing candidate quote' }))
       const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(values, candidate.symbol, benchmark)
@@ -306,7 +309,7 @@ export const studyOrder = (input: {
       orderType: input.orderType,
       timeInForce:
         input.orderType === OrderType.Limit
-          ? TimeInForce.ImmediateOrCancel
+          ? cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
           : jevMarketForSymbol(input.symbol).market === 'CRYPTO'
             ? TimeInForce.GoodUntilCanceled
             : TimeInForce.Day,
@@ -369,7 +372,7 @@ export const studyEntryQuantity = (input: {
       symbol: input.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* priceNumberToMicros(input.referencePrice, 'study.reference', 'UP'),
       executionModel: input.protocol.executionModel,

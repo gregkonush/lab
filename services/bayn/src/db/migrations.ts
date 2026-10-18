@@ -1,3 +1,9 @@
+import completedBarBenchmarks from '../../migrations/0118_completed_bar_benchmarks'
+import riskValuationIndexes from '../../migrations/0117_risk_valuation_indexes'
+import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
+import requiredPositionCost from '../../migrations/0115_required_position_cost'
+import limitOrderCompletion from '../../migrations/0114_limit_order_completion'
+import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
 import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
 import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
 import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
@@ -114,6 +120,12 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '118_completed_bar_benchmarks': completedBarBenchmarks,
+  '117_risk_valuation_indexes': riskValuationIndexes,
+  '116_cost_supported_entry': costSupportedEntry,
+  '115_required_position_cost': requiredPositionCost,
+  '114_limit_order_completion': limitOrderCompletion,
+  '113_extended_equity_hours': extendedEquityHours,
   '112_broker_cash_settlements': brokerCashSettlements,
   '111_model_action_protocol': modelActionProtocol,
   '109_capital_sizing_protocol': capitalSizingProtocol,

@@ -52,6 +52,31 @@ async fn identity_is_verified_over_authenticated_grpc() {
 }
 
 #[tokio::test]
+async fn grpc_question_answers_preserve_the_payload_without_an_approval_decision() {
+    let response = serde_json::to_vec(&serde_json::json!({
+        "answers": {"target": {"answers": ["Staging"]}}
+    }))
+    .unwrap();
+    let expected = response.clone();
+    let fixture = TestServer::start(TestService {
+        resolve_codex_approval: Some(std::sync::Arc::new(move |request| {
+            let request = request.into_inner();
+            assert_eq!(request.approval_id, "question-1");
+            assert!(request.decision.is_empty());
+            assert_eq!(request.response_json, expected);
+            Ok(proto::Empty {})
+        })),
+        ..Default::default()
+    })
+    .await;
+    fixture
+        .guest
+        .answer_codex_input("question-1", response)
+        .await
+        .unwrap();
+}
+
+#[tokio::test]
 async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
     use std::sync::{Arc, Mutex};
     let paths = Arc::new(Mutex::new(Vec::new()));

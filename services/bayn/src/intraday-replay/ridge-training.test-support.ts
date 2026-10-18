@@ -17,6 +17,8 @@ import { validateBacktestSourceReceipt, type BacktestSourceManifest } from './so
 export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded' = 'resolved') => {
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const rawCalendar = (['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'] as const).map((date) => ({
+    session_open: '0930',
+    session_close: '1010',
     date,
     open: '09:30',
     close: '10:10',
@@ -127,7 +129,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v5',
+        inputDefinition: 'bayn.jev-trading-signal-state.v8',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',

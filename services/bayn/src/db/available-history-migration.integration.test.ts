@@ -1,12 +1,16 @@
+import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
+import costSupportedEntryMigration from '../../migrations/0116_cost_supported_entry'
+import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
 import capitalSizingMigration from '../../migrations/0109_capital_sizing_protocol'
 import modelActionMigration from '../../migrations/0111_model_action_protocol'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import availableHistoryMigration from '../../migrations/0108_available_history_protocol'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
+import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
 
@@ -24,6 +28,14 @@ for (const { label, id, protocol, migration } of [
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
+  { label: 'equity-hours', id: 113, protocol: 'bayn.jev.protocol.v7', migration: equityHoursMigration },
+  { label: 'cost-supported-entry', id: 116, protocol: 'bayn.jev.protocol.v8', migration: costSupportedEntryMigration },
+  {
+    label: 'completed-bar-benchmark',
+    id: 118,
+    protocol: 'bayn.jev.protocol.v9',
+    migration: completedBarBenchmarksMigration,
+  },
 ]) {
   describePostgres(`${label} database cutover`, () => {
     let runtime: ReturnType<typeof makeRuntime>
@@ -39,16 +51,29 @@ for (const { label, id, protocol, migration } of [
           const sql = yield* PgClient.PgClient
           yield* sql`DROP SCHEMA public CASCADE`
           yield* sql`CREATE SCHEMA public`
-          yield* postgresMigrations
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(
+              Effect.map((migrations) =>
+                migrations.filter(([migrationId]) => migrationId < id || (id === 111 && migrationId === id)),
+              ),
+            ),
+            table: 'schema_migrations',
+          })
         }),
       ),
     )
     afterAll(async () => runtime.dispose())
 
-    test('installs the current protocol constraint on a fresh database', async () => {
+    test('installs its protocol constraint on a fresh database', async () => {
       await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
+          yield* PgMigrator.run({
+            loader: migrationLoader.pipe(
+              Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId <= id)),
+            ),
+            table: 'schema_migrations',
+          })
           const rows = yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id=${id}`
           expect(rows).toHaveLength(1)
           const constraints = yield* sql`SELECT pg_get_constraintdef(oid) AS definition FROM pg_constraint
@@ -57,6 +82,34 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id === 113) {
+      test('upgrades an already-recorded equity-hours migration to native limit completion', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* PgMigrator.run({
+              loader: migrationLoader.pipe(
+                Effect.map((migrations) => migrations.filter(([migrationId]) => migrationId <= id)),
+              ),
+              table: 'schema_migrations',
+            })
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id >= 113`).toEqual([
+              { migration_id: 113 },
+            ])
+            yield* postgresMigrations
+            expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id = 114`).toEqual([
+              { migration_id: 114 },
+            ])
+            const [completion] = yield* sql`SELECT
+              to_regprocedure('paper_partial_ioc_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NULL AS retired_absent,
+              to_regprocedure('paper_partial_limit_entry_is_reconciled_flat(text,text,numeric,timestamptz)') IS NOT NULL AS current_present,
+              paper_cycle_completion_evidence_matches(${'f'.repeat(64)}, ${'e'.repeat(64)}, clock_timestamp()) AS unbound_completed`
+            expect(completion).toEqual({ retired_absent: true, current_present: true, unbound_completed: false })
+          }),
+        )
+      })
+    }
 
     test('refuses a held broker position without changing authority or protocol constraints', async () => {
       await runtime.runPromise(
@@ -103,14 +156,14 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 111) {
+    if (id >= 111) {
       test.each([
         { effective: 'PAPER', status: 'DISCREPANCY', reason: null, succeeds: false, changes: false },
         { effective: 'PAPER', status: 'EXACT', reason: null, succeeds: true, changes: true },
         {
           effective: 'OBSERVE',
           status: 'EXACT',
-          reason: 'BLOCKED_CAPITAL_SIZING_CUTOVER',
+          reason: id === 111 ? 'BLOCKED_CAPITAL_SIZING_CUTOVER' : 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
           succeeds: true,
           changes: true,
         },
@@ -119,7 +172,25 @@ for (const { label, id, protocol, migration } of [
           'operator hold',
           'unrecognized safety restriction',
           'reconciliation discrepancy malformed',
-        ].map((reason) => ({ effective: 'OBSERVE', status: 'DISCREPANCY', reason, succeeds: true, changes: false })),
+        ].map((reason) => ({
+          effective: 'OBSERVE',
+          status: 'DISCREPANCY',
+          reason,
+          succeeds: id < 116,
+          changes: false,
+        })),
+        ...(id >= 116
+          ? [
+              {
+                effective: 'OBSERVE',
+                status: 'DISCREPANCY',
+                reason: 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER',
+                succeeds: false,
+                changes: false,
+              },
+              { effective: 'OBSERVE', status: 'EXACT', reason: 'operator hold', succeeds: true, changes: false },
+            ]
+          : []),
       ])(
         'protocol cutover retains non-cutover restrictions: %j',
         async ({ effective, status, reason, succeeds, changes }) => {
@@ -134,12 +205,16 @@ for (const { label, id, protocol, migration } of [
                 CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
                   yield* sql`CREATE TEMP TABLE authority_state (
                 generation_hash text,maximum text,effective text,kill_state text,reason text,version bigint,updated_at timestamptz) ON COMMIT DROP`
-                  yield* sql`CREATE TEMP TABLE reconciliations (account_id text,status text,reconciled_at timestamptz,reconciliation_id text) ON COMMIT DROP`
+                  yield* sql`CREATE TEMP TABLE reconciliations (
+                account_id text,status text,reconciled_at timestamptz,reconciliation_id text,
+                expected_hash text,observed_hash text,discrepancies jsonb) ON COMMIT DROP`
                   yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)},'paper-cutover','jev','bayn.jev.protocol.v5')`
                   yield* sql`INSERT INTO authority_state VALUES (${'a'.repeat(64)},'PAPER',${effective},
                 ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},${reason},1,clock_timestamp())`
-                  yield* sql`INSERT INTO reconciliations VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
+                  yield* sql`INSERT INTO reconciliations (account_id,status,reconciled_at,reconciliation_id)
+                VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
                   const result = yield* sql.withTransaction(migration).pipe(Effect.result)
+                  if (succeeds) yield* Effect.fromResult(result)
                   expect(Result.isSuccess(result)).toBe(succeeds)
                   const [state] =
                     yield* sql`SELECT maximum,effective,kill_state,reason,version::text AS version FROM authority_state`
@@ -166,6 +241,38 @@ for (const { label, id, protocol, migration } of [
           )
         },
       )
+    }
+
+    if (id === 116 || id === 118) {
+      const retiredProtocol = id === 116 ? 'bayn.jev.protocol.v7' : 'bayn.jev.protocol.v8'
+      test('retains historical Jev generations but rejects new retired protocol writes', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`CREATE TEMP TABLE authority_generations (
+              generation_hash text, account_id text, strategy_name text, strategy_parameter_schema_version text,
+              CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK(true),
+              CONSTRAINT authority_generations_strategy_contract_check CHECK(true)) ON COMMIT DROP`
+                yield* sql`INSERT INTO authority_generations VALUES (${'a'.repeat(64)}, 'historical', 'jev', ${retiredProtocol})`
+                yield* migration
+                expect(yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations`).toEqual([
+                  { strategy_parameter_schema_version: retiredProtocol },
+                ])
+                const rejected = yield* sql
+                  .withTransaction(
+                    sql`INSERT INTO authority_generations VALUES (${'b'.repeat(64)}, 'current', 'jev', ${retiredProtocol})`,
+                  )
+                  .pipe(Effect.result)
+                expect(Result.isFailure(rejected)).toBe(true)
+                yield* sql`INSERT INTO authority_generations VALUES (${'c'.repeat(64)}, 'current', 'jev', ${protocol})`
+                expect(yield* sql`SELECT count(*)::int AS count FROM authority_generations`).toEqual([{ count: 2 }])
+              }),
+            )
+          }),
+        )
+      })
     }
   })
 }

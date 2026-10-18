@@ -2,7 +2,7 @@
 
 Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
-The running cluster still uses the old contract until the reviewed, coordinated hard cutover.
+Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
 
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
@@ -45,10 +45,22 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require both migrations through `0002_replay_buckets.sql`; they cannot
+checksum. The BFF, controller and supervisor require all six migrations through `0006_preview_lease_identity.sql`; they cannot
 initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
+
+Concurrent access decisions share a bounded audit writer per API process. It collects at most 32 receipts for up to
+five milliseconds and uses one pooled connection and durable commit for the batch. Every receipt and outbox entry
+still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
+a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
+The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+
+Repeated controller runtime-state reads and guest health probes may reference their original durable observation
+receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
+including the eight-hour age limit, while still re-reading current authority and policy on every call. The receipt
+identifies a committed observation; it never replaces an authorization decision. Terminal cleanup cannot reuse an
+observation receipt and retains a new durable audit for each submission.
 
 Initial platform setup uses `ofz bootstrap /var/run/ofz/bootstrap/manifest.json`, followed by
 `ofz activate /var/run/ofz/bootstrap/manifest.json`. Both commands require the `ofz_migrator` schema owner in
@@ -250,7 +262,7 @@ They are excluded from the active application until coordinated release, identit
 ## API image delivery
 
 `nix build .#ofz-image` builds the API for the native Linux architecture from the locked Cargo dependencies, canonical
-authorization protobuf, policy catalog, and both database migrations. The runtime contains the API and certificate
+authorization protobuf, policy catalog, and all three database migrations. The runtime contains the API and certificate
 roots, runs as UID/GID 65532, and exposes the mTLS API on port 9443. The same binary provides `serve`, `migrate`,
 `migrate-runtime`, `bootstrap` and `activate`.
 
@@ -264,8 +276,10 @@ Ofz image-packaging and documentation changes do not rebuild native Tengri guest
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
 
-
-Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. RPC traces retain the
+numeric status code. Expected session expiry, denied requests and client validation failures remain traceable without
+creating server-error issues; transport, deadline, capacity and internal failures still emit GlitchTip events with a
+bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.

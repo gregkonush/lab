@@ -1,5 +1,6 @@
 import { Result, Schema } from 'effect'
 
+import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { MarketKind, instrumentMarket } from '../instruments'
 import { canonicalHashV1, sha256 } from '../hash'
 import {
@@ -33,6 +34,7 @@ export const cryptoMarketProfile = Object.freeze({
   universe: cryptoUniverse.symbols,
   candidateSymbols: cryptoUniverse.symbols,
   feed: 'us' as const,
+  benchmarkEvidencePolicy: IntradayBenchmarkEvidencePolicy.CompletedBars,
   delayClass: 'real_time_crypto' as const,
   sourceTopics: Object.freeze({ bars: cryptoRawTopic, quotes: cryptoRawTopic, trades: cryptoRawTopic }),
   streamingInput: Object.freeze({

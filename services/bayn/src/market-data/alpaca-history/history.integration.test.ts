@@ -86,6 +86,24 @@ const prepareHistoryStorageFixture = Effect.gen(function* () {
     yield* sql.asCommand(sql.unsafe(statement))
 })
 
+test('extended-session acquisition fixture partitions events without inventing missing prints', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped()
+      const captured = yield* backfillAlpacaHistory(historyFixtureRequest, directory)
+      const dataset = yield* readHistoricalDataset(directory, captured.datasetId)
+      expect(captured.records).toBe(420)
+      for (const kind of ['bars', 'quotes', 'trades']) {
+        const chunks = dataset.manifest.chunks.filter((chunk) => chunk.kind === kind)
+        expect(chunks.reduce((count, chunk) => count + chunk.rowCount, 0)).toBe(140)
+        if (kind !== 'bars') expect(chunks.some((chunk) => chunk.rowCount === 0)).toBe(true)
+        for (const chunk of chunks) yield* readHistoricalChunk(dataset, chunk)
+      }
+    }).pipe(Effect.scoped, Effect.provide(fixtureLayer)),
+  )
+})
+
 featureTest(
   'REST acquisition and shared Dorvud feature production produce a verified two-session engine source',
   async () => {
@@ -201,25 +219,28 @@ storeTest(
       for (const [key, value] of request.urlParams) url.searchParams.set(key, value)
       if (!url.pathname.endsWith('/quotes')) return historyFixtureHttp.execute(request)
       const page = Number(url.searchParams.get('page_token') ?? '0')
+      const start = Date.parse(url.searchParams.get('start') ?? '')
+      const end = Date.parse(url.searchParams.get('end') ?? '')
+      const pageQuotes = Array.from({ length: page === 25 ? 3 : 10_000 }, (_, index) => ({
+        t: new Date(Date.parse('2026-09-11T13:30:00Z') + page * 10_000 + index).toISOString(),
+        bp: 100,
+        bs: 10,
+        ap: 100.1,
+        as: 20,
+        bx: 'V',
+        ax: 'V',
+        c: ['R'],
+        z: 'C',
+      })).filter(({ t }) => Date.parse(t) >= start && Date.parse(t) <= end)
       return Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
           new Response(
             JSON.stringify({
               quotes: {
-                SPY: Array.from({ length: page === 25 ? 3 : 10_000 }, (_, index) => ({
-                  t: new Date(Date.parse('2026-09-11T13:30:00Z') + page * 10_000 + index).toISOString(),
-                  bp: 100,
-                  bs: 10,
-                  ap: 100.1,
-                  as: 20,
-                  bx: 'V',
-                  ax: 'V',
-                  c: ['R'],
-                  z: 'C',
-                })),
+                SPY: pageQuotes,
               },
-              next_page_token: page < 25 ? String(page + 1) : null,
+              next_page_token: pageQuotes.length > 0 && page < 25 ? String(page + 1) : null,
             }),
             { status: 200 },
           ),
@@ -255,7 +276,7 @@ storeTest(
         const restored = `${directory}/restored`
         yield* restoreHistoricalDataset(captured.datasetId, restored)
         const dataset = yield* readHistoricalDataset(directory, captured.datasetId)
-        const quoteChunk = dataset.manifest.chunks.find((chunk) => chunk.kind === 'quotes')
+        const quoteChunk = dataset.manifest.chunks.find((chunk) => chunk.kind === 'quotes' && chunk.rowCount > 0)
         expect(quoteChunk?.rowCount).toBe(250_003)
         if (quoteChunk === undefined) throw new Error('Large quote capture is absent')
         expect(sha256(yield* fs.readFileString(`${restored}/${quoteChunk.path}`))).toBe(quoteChunk.sha256)

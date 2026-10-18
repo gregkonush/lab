@@ -82,7 +82,11 @@ const positionEvent = (
   occurredAt: observedAt,
   observedAt,
   position: {
-    schemaVersion: 'bayn.paper-position.v1',
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: (
+      (BigInt(marketValueMicros.startsWith('-') ? '-500000' : '2000000') * BigInt('100000000')) /
+      1_000_000_000n
+    ).toString(),
     accountId,
     symbol,
     quantityAtoms: marketValueMicros.startsWith('-') ? '-500000' : '2000000',

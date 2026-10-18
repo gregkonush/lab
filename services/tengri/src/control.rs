@@ -16,6 +16,16 @@ use uuid::Uuid;
 const MIGRATIONS: &[(i32, &[u8])] = &[
     (1, include_bytes!("../migrations/0001_control.sql")),
     (2, include_bytes!("../migrations/0002_replay_buckets.sql")),
+    (3, include_bytes!("../migrations/0003_replay_slots.sql")),
+    (
+        4,
+        include_bytes!("../migrations/0004_leadership_window.sql"),
+    ),
+    (5, include_bytes!("../migrations/0005_capability_slots.sql")),
+    (
+        6,
+        include_bytes!("../migrations/0006_preview_lease_identity.sql"),
+    ),
 ];
 
 #[derive(Clone)]
@@ -108,10 +118,9 @@ impl Database {
             .runtime(deadpool_postgres::Runtime::Tokio1)
             .build()
         };
-        Ok(Self {
-            pool: pool(if role == "tengri_controller" { 12 } else { 2 })?,
-            coordination: pool(2)?,
-        })
+        let coordination = pool(2)?;
+        let pool = pool(if role == "tengri_controller" { 12 } else { 2 })?;
+        Ok(Self { pool, coordination })
     }
 
     #[cfg(test)]
@@ -130,10 +139,9 @@ impl Database {
                 .build()
                 .unwrap()
         };
-        Self {
-            pool: pool(),
-            coordination: pool(),
-        }
+        let coordination = pool();
+        let pool = pool();
+        Self { pool, coordination }
     }
 
     #[cfg(test)]
@@ -195,19 +203,23 @@ impl Database {
         Ok(())
     }
 
-    #[tracing::instrument(name = "db.consume_nonce", skip_all, fields(db.system.name = "postgresql"))]
-    pub async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), Status> {
-        let client = self.connection().await?;
-        let consumed: bool = client
+    #[tracing::instrument(name = "db.guest_admission.deadline", skip_all, fields(db.system.name = "postgresql"))]
+    pub async fn verify_guest_deadline(&self, expires_at_ms: u64) -> Result<(), Status> {
+        let expires_at_ms = i64::try_from(expires_at_ms)
+            .map_err(|_| Status::unauthenticated("invalid guest request deadline"))?;
+        let client = self.coordination_connection().await?;
+        let valid: bool = client
             .query_one(
-                "SELECT tengri.consume_nonce($1,$2)",
-                &[&key, &expires_at_ms],
+                "SELECT $1>tengri.now_ms() AND $1<=tengri.now_ms()+6000",
+                &[&expires_at_ms],
             )
             .await
             .map_err(sql_error)?
             .get(0);
-        if !consumed {
-            return Err(Status::unauthenticated("request nonce already used"));
+        if !valid {
+            return Err(Status::unauthenticated(
+                "guest request deadline expired or invalid",
+            ));
         }
         Ok(())
     }

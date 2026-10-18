@@ -33,12 +33,12 @@ import {
   type AssetObservation,
   type FillActivity,
   type MarketCalendarObservation,
-  type MarketCalendarSession,
   type Order,
   type Position,
 } from './model'
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
 import { Pipeable } from '../../pipeable'
+import { equityDataSession } from '../../equity-hours'
 import { quantityFromDecimal } from '../../quantity'
 import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
 import { cashReportingQuantum } from './cash-reporting'
@@ -628,8 +628,8 @@ const normalizeMarketCalendarResultDataFirst = (
   query: typeof MarketCalendarQueryBase.Type,
 ): Result.Result<MarketCalendarObservation, BrokerReadContractFailure> =>
   Result.gen(function* () {
-    const sessions = yield* Result.all(
-      raw.map((session): Result.Result<MarketCalendarSession, BrokerReadContractFailure> => {
+    const providerSessions = yield* Result.all(
+      raw.map((session) => {
         if (session.date < query.start || session.date > query.end) {
           return Result.fail(
             contractFailure({
@@ -654,11 +654,25 @@ const normalizeMarketCalendarResultDataFirst = (
               }),
             )
           }
-          return { date: session.date, openAt, closeAt }
+          const fullTime = (value: string) => `${value.slice(0, 2)}:${value.slice(2, 4)}`
+          const sessionOpenAt = yield* marketCalendarInstantResult(session.date, fullTime(session.session_open), 'open')
+          const sessionCloseAt = yield* marketCalendarInstantResult(
+            session.date,
+            fullTime(session.session_close),
+            'close',
+          )
+          return { date: session.date, regularOpenAt: openAt, regularCloseAt: closeAt, sessionOpenAt, sessionCloseAt }
         })
       }),
     )
-    sessions.sort((left, right) => (left.date < right.date ? -1 : left.date > right.date ? 1 : 0))
+    providerSessions.sort((left, right) => (left.date < right.date ? -1 : left.date > right.date ? 1 : 0))
+    const sessions = yield* Result.all(
+      providerSessions.map((session) =>
+        equityDataSession(session).pipe(
+          Result.mapError((cause) => contractFailure({ reason: 'CALENDAR_HOURS', message: cause.message })),
+        ),
+      ),
+    )
     for (let index = 1; index < sessions.length; index += 1) {
       if (sessions[index - 1]?.date === sessions[index]?.date) {
         return yield* Result.fail(
@@ -675,6 +689,7 @@ const normalizeMarketCalendarResultDataFirst = (
       requestedRange: { start: query.start, end: query.end },
       timeZone: 'UTC' as const,
       sessions,
+      providerSessions,
     }
     const normalizedResponseHash = yield* hashResult(normalized, 'market calendar response')
     return { ...normalized, normalizedResponseHash }

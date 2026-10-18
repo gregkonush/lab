@@ -348,8 +348,8 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v6')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('chosen-model-action')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v9')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('cost-supported-model-action')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)
@@ -429,10 +429,13 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
   // The Monday equity fixture follows Sunday crypto; both source cursors must carry the same cash ledger.
   const equityAt = Date.parse('2026-10-12T14:01:03.100Z')
   const calendar = Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-10-12', open: '09:30', close: '16:00' }], {
-      start: '2026-10-12',
-      end: '2026-10-12',
-    }),
+    normalizeMarketCalendarResult(
+      [{ session_open: '0930', session_close: '1600', date: '2026-10-12', open: '09:30', close: '16:00' }],
+      {
+        start: '2026-10-12',
+        end: '2026-10-12',
+      },
+    ),
   )
   const query = {
     ...fixture.query,

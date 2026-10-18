@@ -1,4 +1,5 @@
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
+import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
 import { isContinuousMarket, type MarketHours } from '../market-hours'
@@ -272,13 +273,18 @@ export const compileJevEntry = (
     const entryQuotes: Record<string, EntryQuoteFreshness> = {}
     for (const symbol of symbols) {
       const quote = pricingSnapshot.latestQuotes[symbol]
-      if (quote === undefined)
+      const originalQuote = decisionSnapshot.latestQuotes[symbol]
+      if (quote === undefined || originalQuote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
       const exclusion = yield* jevEntryQuoteExclusion(quote)
-      if (exclusion !== null)
+      const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
+      const withinCostBound =
+        BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
+        jevMaximumEntryAskMicros(decision.evidence.observation.protocol, originalAsk)
+      if (exclusion !== null || !withinCostBound)
         return yield* Result.fail(
           new JevAwaitingEvidence({
-            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion}`,
+            message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion ?? 'entry cost price ceiling'}`,
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )
@@ -347,7 +353,7 @@ export const evaluateJevPositionManagement = (input: {
       }
       const firstFill = portfolio.entryFills[0]
       const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
-      if (firstFill === undefined || position?.schemaVersion !== 'bayn.position.v2')
+      if (firstFill === undefined || position === undefined)
         return yield* new JevContractError({ message: 'Managed position is missing its validated fill or cost basis' })
       maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, input.protocol.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt

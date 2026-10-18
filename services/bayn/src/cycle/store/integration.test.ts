@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 
 import { NodeServices } from '@effect/platform-node'
@@ -69,7 +70,7 @@ const draft = (
 ) => {
   const calendar = value(
     makeExecutionCalendarObservation({
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       date: sessionDate,
       openAt: '2026-08-28T13:30:00.000Z',
@@ -279,8 +280,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
         feeActivities: forbidden,
         marketCalendar: () =>
           Effect.succeed({
-            value: {
-              schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+            value: withProviderSessions({
+              schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
               source: 'alpaca-v2-calendar',
               timeZone: 'UTC',
               requestedRange: { start: sessionDate, end: sessionDate },
@@ -288,7 +289,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               sessions: [
                 { date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' },
               ],
-            },
+            }),
             evidence: {
               requestId: 'recovery-calendar',
               status: 200,
@@ -991,7 +992,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               cycle_id text, decision_hash text, account_id text, updated_at timestamptz
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
-              cycle_id text, decision_hash text, document jsonb
+              cycle_id text, decision_hash text, document jsonb,
+              created_at timestamptz DEFAULT '2026-09-08T17:00:00Z'
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE intents (
               intent_id text, account_id text, cycle_id text, strategy_name text, decision_hash text,
@@ -1149,10 +1151,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD submission_cutoff_at timestamptz,
               ADD submission_open_at timestamptz,
               ADD qualification_run_id text,
+              ADD strategy_name text DEFAULT 'intraday-momentum',
               ADD strategy_protocol_hash text,
               ADD schema_version text,
               ADD identity_schema_version text,
-              ADD snapshot_id text`
+              ADD snapshot_id text,
+              ADD created_at timestamptz DEFAULT '2026-09-08T17:00:00Z'`
             yield* sql`ALTER TABLE intents ADD state_version integer DEFAULT 1`
             yield* sql`CREATE TEMP TABLE authority_generations (
               generation_hash text, account_id text, maximum text, activation_schema_version text,

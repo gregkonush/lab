@@ -74,7 +74,9 @@ read-only SPIFFE CSI socket. `SPIFFE_ID` selects its exact `spiffe://proompteng.
 identity; `TENGRI_SPIFFE_ID` pins `spiffe://proompteng.ai/ns/tengri/sa/tengri`. The server-only Workload API
 client validates the URI, private-key match, validity window, and CA bundle before creating a TLS gRPC client.
 Renewal creates a new client; existing streams retain their previous client until that certificate expires and then
-reconnect with their event cursor. HMAC metadata still binds every request to its authenticated GitHub owner.
+reconnect with their event cursor. Before signing a request, the BFF reads that controller process's random audience
+over the pinned mTLS channel. The v2 HMAC binds the audience, authenticated GitHub owner, session, method, payload,
+runtime, deadline and recovery generation. A changed receiver rejects the request; the BFF does not replay it.
 Missing, denied, malformed, or expired identity fails the request; there is no plaintext option. Local development
 requires an attested SPIRE identity too. Native tests use a private fixture Workload API and real TLS certificates.
 
@@ -94,6 +96,15 @@ the selected history, and focuses the composer when recovery completes. Pending 
 including requests received while another conversation is selected; server resolutions and completed turns clear
 both retained requests and visible controls. Notices remain attached to the conversation selected when they arrive,
 including events queued before a switch, and adopt the server thread ID when a draft conversation is first created.
+Chat and Finder recreate a permanently closed event stream with an exponential retry delay capped at thirty seconds.
+A replacement chat stream starts at the latest received event cursor. Native browser reconnection remains active for
+transient connection errors; closing the view cancels pending retries and ignores callbacks from retired streams.
+The model catalog and saved-conversation startup retry temporary HTTP and network failures, with a delay capped at thirty seconds.
+Successful recovery clears the catalog error and keeps the unsent draft. Permission and validation failures require
+an explicit retry; recovery never submits or retries a turn. Closing chat or choosing another conversation cancels
+the pending startup retry. Manual conversation recovery cancels the automatic request before taking over.
+Catalog and conversation-history reads keep lifecycle controls available and are cancelled when a transition starts.
+Browser cancellation propagates to the gRPC request. A rejected transition lets these reads recover without closing chat.
 The event buffer bounds ordinary history while retaining pending approvals
 until resolution or completion. Successful recovery merges the persisted registry and clears unavailable markers
 from this tab or another tab with a newer timestamp;
@@ -230,10 +241,38 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
 
+The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
+workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
+native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
+The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
+the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+
+Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
+suppress duplicates; only a matching item in saved history retires the local accepted copy.
+
+Local `/workspace/...` links in agent messages open file tabs above the conversation. The sidebar remains visible,
+and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
+shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
+File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
+PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
+Local image links can open image file tabs. Retained image reads use the authenticated,
+owner-authorized file contract, validate raster signatures and size, and disable caching. Missing images show an
+unavailable placeholder. Arbitrary remote Markdown images remain disabled.
+
 Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
 Lifecycle changes are blocked while a window has unsaved edits or its save state is unknown. Settings and installed
 extensions live in the persistent guest home; stable window origins preserve VS Code's workspace identity and native backups across reload.
+Editor launches retain the backend's cold-start budget. Completed transient failures retry twice after one and two
+seconds using the same window identity. Closing the window cancels its pending request through the editor RPC and
+clears its retry timer; authorization denials
+surface immediately, and exhausted retries expose the normal Retry control.
+Code and Chrome renew their 30-minute preview leases halfway through the server-confirmed lifetime. A hidden
+authenticated bootstrap refreshes the HttpOnly cookie on the existing window origin. Code remains mounted with its
+unsaved buffers; Chrome keeps its display, form contents and takeover state. Existing sockets retain fresh Ofz
+checks and the current bound lease. Rotated credentials cannot open new sockets. A renewal failure remains visible and
+retry uses the same origin. Renewal neither launches guest processes nor bypasses a fresh Ofz decision.
 Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
 Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
 the desktop keeps the user signed in and shows the error so they can retry.
@@ -253,6 +292,7 @@ are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CS
 Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
+Docker browser fixtures reset their disposable Chromium profile for each run and retain the installed engine cache.
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
 
