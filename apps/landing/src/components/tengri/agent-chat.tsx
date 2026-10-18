@@ -1290,7 +1290,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ) : null}
               <div
                 ref={conversationContentRef}
-                className="mx-auto w-full max-w-3xl space-y-4"
+                className="mx-auto w-full max-w-3xl space-y-2"
                 role="log"
                 aria-label="Conversation"
                 aria-live="polite"
