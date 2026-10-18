@@ -212,6 +212,10 @@ impl Database {
                 6,
                 include_str!("../../tengri/migrations/0006_preview_lease_identity.sql"),
             ),
+            (
+                7,
+                include_str!("../../tengri/migrations/0007_ephemeral_oauth.sql"),
+            ),
         ];
         let mut client = self
             .pool
