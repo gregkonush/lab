@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
-import { Deferred, Effect, Exit, Result } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
 import { canonicalHashV1OrThrow, sha256 } from '../../hash'
@@ -17,7 +18,7 @@ import {
   nativeArrivalObservationFixture as observation,
 } from './native-arrival.test-support'
 import { CaptureDisposition } from './transport-evidence'
-import { checkProperty } from '../../testing/property-test-support'
+import { checkAsyncProperty, checkProperty } from '../../testing/property-test-support'
 import { decodeKafkaTransportValue } from './kafka'
 
 test('native chunks preserve exact non-ASCII bytes, equal arrival times and exceptional transport timestamps', () => {
@@ -152,36 +153,318 @@ test('scope finalization flushes the last short chunk and confirms its exact dur
   expect(capture.status()).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 2, queuedCompressedBytes: 0 })
 })
 
-test('compressed queue overflow retains a contiguous prefix and permanently marks the missing suffix incomplete', async () => {
+test('a full compressed queue backpressures deliveries and resumes the exact prefix after persistence recovers', async () => {
   const { chunks, ends, store } = memoryStore()
   const capture = await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
         const paused = yield* Deferred.make<void>()
+        const writing = yield* Deferred.make<void>()
         const capture = yield* makeNativeArrivalJournal(
           epoch,
-          { ...store, append: (batch) => Deferred.await(paused).pipe(Effect.andThen(store.append(batch))) },
+          {
+            ...store,
+            append: (batch) =>
+              Deferred.succeed(writing, undefined).pipe(
+                Effect.andThen(Deferred.await(paused)),
+                Effect.andThen(store.append(batch)),
+              ),
+          },
           { chunkBytes: 1, queueBytes: 1_500 },
         )
-        for (let sequence = 1; sequence <= 100; sequence++)
-          yield* capture.observe(observation(sequence, sha256(String(sequence)).repeat(4)))
-        expect(capture.status().status).toBe('INCOMPLETE')
-        expect(capture.status().queuedCompressedBytes).toBeLessThanOrEqual(1_500)
+        const producer = yield* Effect.forEach(
+          Array.from({ length: 100 }, (_, index) => index + 1),
+          (sequence) => capture.observe(observation(sequence, sha256(String(sequence)).repeat(4))),
+          { discard: true },
+        ).pipe(Effect.forkChild)
+        yield* Deferred.await(writing)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        const pressured = capture.status()
         yield* Deferred.succeed(paused, undefined)
-        yield* Effect.yieldNow
+        yield* Fiber.join(producer)
+        expect(pressured.status).toBe('RECORDING')
+        expect(pressured.observedConsumerSequence).toBeLessThan(100)
+        expect(pressured.queuedCompressedBytes).toBeLessThanOrEqual(1_500)
         return capture
       }),
     ),
   )
-  expect(chunks.length).toBeGreaterThan(0)
-  expect(chunks.length).toBeLessThan(100)
+  expect(chunks).toHaveLength(100)
   expect(chunks.map((chunk) => chunk.header.firstConsumerSequence)).toEqual(chunks.map((_, index) => index + 1))
+  expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual(
+    Array.from({ length: 100 }, (_, index) =>
+      nativeArrival(epoch, observation(index + 1, sha256(String(index + 1)).repeat(4))),
+    ),
+  )
   expect(ends[0]).toMatchObject({
+    status: 'STOPPED',
+    observedConsumerSequence: 100,
+    durableConsumerSequence: 100,
+  })
+  expect(capture.status()).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 100, queuedCompressedBytes: 0 })
+})
+
+test('a persistence failure releases a backpressured producer without claiming a durable suffix', async () => {
+  const { chunks, ends, store } = memoryStore()
+  const capture = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const paused = yield* Deferred.make<void>()
+        const writing = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: () =>
+              Deferred.succeed(writing, undefined).pipe(
+                Effect.andThen(Deferred.await(paused)),
+                Effect.andThen(
+                  Effect.fail(new NativeArrivalCaptureError({ message: 'synthetic persistence failure' })),
+                ),
+              ),
+          },
+          { chunkBytes: 1, queueBytes: 1_500 },
+        )
+        const producer = yield* Effect.forEach(
+          Array.from({ length: 100 }, (_, index) => index + 1),
+          (sequence) => capture.observe(observation(sequence)),
+          { discard: true },
+        ).pipe(Effect.forkChild)
+        yield* Deferred.await(writing)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        const pressured = capture.status()
+        yield* Deferred.succeed(paused, undefined)
+        yield* Fiber.join(producer)
+        expect(pressured.observedConsumerSequence).toBeLessThan(100)
+        return capture
+      }),
+    ),
+  )
+  expect(chunks).toHaveLength(0)
+  expect(ends).toHaveLength(0)
+  expect(capture.status()).toMatchObject({
     status: 'INCOMPLETE',
     observedConsumerSequence: 100,
-    durableConsumerSequence: chunks.length,
+    durableConsumerSequence: 0,
   })
-  expect(capture.status().status).toBe('INCOMPLETE')
+})
+
+test('interrupting a backpressured owner drains and seals only its actually observed prefix', async () => {
+  const { chunks, ends, store } = memoryStore()
+  let observed = 0
+  let calls = 0
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const writing = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: (batch) =>
+              Effect.suspend(() => {
+                calls++
+                return calls === 1
+                  ? Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never))
+                  : store.append(batch)
+              }),
+          },
+          { chunkBytes: 1, queueBytes: 1_500 },
+        )
+        yield* Effect.forEach(
+          Array.from({ length: 100 }, (_, index) => index + 1),
+          (sequence) => capture.observe(observation(sequence)),
+          { discard: true },
+        ).pipe(Effect.forkScoped)
+        yield* Deferred.await(writing)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        observed = capture.status().observedConsumerSequence
+        return yield* Effect.interrupt
+      }),
+    ),
+  )
+  expect(Exit.hasInterrupts(exit)).toBe(true)
+  expect(observed).toBeGreaterThan(0)
+  expect(observed).toBeLessThan(100)
+  expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual(
+    Array.from({ length: observed }, (_, index) => nativeArrival(epoch, observation(index + 1))),
+  )
+  expect(ends).toHaveLength(1)
+  expect(ends[0]).toMatchObject({
+    status: 'STOPPED',
+    observedConsumerSequence: observed,
+    durableConsumerSequence: observed,
+    consumerScopeCompleted: false,
+  })
+})
+
+test('property: delayed persistence keeps randomized original deliveries ordered within the compressed byte bound', async () => {
+  await checkAsyncProperty(
+    'native-arrival-backpressure',
+    fc.asyncProperty(
+      fc.array(fc.uint8Array({ maxLength: 128 }), { minLength: 8, maxLength: 24 }),
+      fc.integer({ min: 1_600, max: 3_200 }),
+      async (values, queueBytes) => {
+        const inputs = values.map((value, index) => observation(index + 1, Buffer.from(value).toString('hex')))
+        const { chunks, ends, store } = memoryStore()
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const paused = yield* Deferred.make<void>()
+              const writing = yield* Deferred.make<void>()
+              const capture = yield* makeNativeArrivalJournal(
+                epoch,
+                {
+                  ...store,
+                  append: (batch) =>
+                    Deferred.succeed(writing, undefined).pipe(
+                      Effect.andThen(Deferred.await(paused)),
+                      Effect.andThen(store.append(batch)),
+                    ),
+                },
+                { chunkBytes: 1, queueBytes },
+              )
+              const producer = yield* Effect.forEach(inputs, capture.observe, { discard: true }).pipe(Effect.forkChild)
+              yield* Deferred.await(writing)
+              for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+              const pressured = capture.status()
+              yield* Deferred.succeed(paused, undefined)
+              yield* Fiber.join(producer)
+              expect(pressured.status).toBe('RECORDING')
+              expect(pressured.queuedCompressedBytes).toBeLessThanOrEqual(queueBytes)
+            }),
+          ),
+        )
+        expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual(
+          inputs.map((input) => nativeArrival(epoch, input)),
+        )
+        expect(chunks.map((chunk) => chunk.header.previousHash)).toEqual(
+          chunks.map((_, index) => (index === 0 ? null : chunks[index - 1]?.contentHash)),
+        )
+        expect(ends).toHaveLength(1)
+        expect(ends[0]).toMatchObject({
+          status: 'STOPPED',
+          observedConsumerSequence: inputs.length,
+          durableConsumerSequence: inputs.length,
+        })
+      },
+    ),
+  )
+})
+
+test('an individually oversized compressed chunk fails without waiting for impossible queue space', async () => {
+  const { chunks, ends, store } = memoryStore()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const capture = yield* makeNativeArrivalJournal(epoch, store, { chunkBytes: 1, queueBytes: 1 })
+        yield* capture.observe(observation(1))
+        expect(capture.status()).toMatchObject({ status: 'INCOMPLETE', durableConsumerSequence: 0 })
+      }),
+    ),
+  )
+  expect(chunks).toHaveLength(0)
+  expect(ends[0]).toMatchObject({ status: 'INCOMPLETE', observedConsumerSequence: 1, durableConsumerSequence: 0 })
+})
+
+test('interruption before staging a large next delivery cannot seal a missing suffix as stopped', async () => {
+  const { chunks, ends, store } = memoryStore()
+  const value = 'x'.repeat(1_000_000)
+  const first = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, observation(1, value))]))
+  let calls = 0
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const writing = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: (batch) =>
+              Effect.suspend(() => {
+                calls++
+                return calls === 1
+                  ? Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never))
+                  : store.append(batch)
+              }),
+          },
+          { chunkBytes: 4 * 1024 * 1024, queueBytes: first.compressed.byteLength + 100 },
+        )
+        yield* Effect.forEach([1, 2, 3, 4], (sequence) => capture.observe(observation(sequence, value)), {
+          discard: true,
+        }).pipe(Effect.forkScoped)
+        yield* Deferred.await(writing)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        return yield* Effect.interrupt
+      }),
+    ),
+  )
+  expect(Exit.hasInterrupts(exit)).toBe(true)
+  expect(chunks.length).toBeGreaterThan(0)
+  expect(ends).toHaveLength(1)
+  expect(ends[0]?.status).toBe('INCOMPLETE')
+  expect(ends[0]?.observedConsumerSequence).toBeGreaterThan(ends[0]?.durableConsumerSequence ?? 0)
+})
+
+test('a delivery waiting behind the ticker remains observed when shutdown interrupts its permit wait', async () => {
+  const { chunks, ends, store } = memoryStore()
+  const firstInput = observation(1, 'x'.repeat(1_024))
+  const first = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, firstInput)]))
+  const second = Result.getOrThrow(
+    makeNativeArrivalChunk(epoch, 1, first.contentHash, [nativeArrival(epoch, observation(2))]),
+  )
+  let calls = 0
+  let delivered = 0
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const writing = yield* Deferred.make<void>()
+        const receiving = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: (batch) =>
+              Effect.suspend(() => {
+                calls++
+                return calls === 1
+                  ? Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never))
+                  : store.append(batch)
+              }),
+          },
+          {
+            chunkBytes: Buffer.byteLength(JSON.stringify(nativeArrival(epoch, firstInput))) + 1,
+            queueBytes: Math.max(first.compressed.byteLength, second.compressed.byteLength),
+          },
+        )
+        yield* capture.observe(firstInput)
+        yield* Deferred.await(writing)
+        yield* capture.observe(observation(2))
+        yield* TestClock.adjust('1 second')
+        yield* Deferred.succeed(receiving, undefined).pipe(
+          Effect.andThen(capture.observe(observation(3))),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(receiving)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        delivered = capture.status().observedConsumerSequence
+        return yield* Effect.interrupt
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(Exit.hasInterrupts(exit)).toBe(true)
+  expect(delivered).toBe(3)
+  expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual([
+    nativeArrival(epoch, firstInput),
+    nativeArrival(epoch, observation(2)),
+  ])
+  expect(ends).toHaveLength(1)
+  expect(ends[0]).toMatchObject({
+    status: 'INCOMPLETE',
+    observedConsumerSequence: 3,
+    durableConsumerSequence: 2,
+    consumerScopeCompleted: false,
+  })
 })
 
 test('missing raw bytes invalidate retention rather than fabricate an original arrival', async () => {
