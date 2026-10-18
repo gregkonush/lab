@@ -20,7 +20,7 @@ import {
 } from './runtime'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
-const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSize = 100) => {
+const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSize = 100, quoteAt?: string) => {
   const fixture = nativeJevFixture()
   const retained = nativeJevDecisionEvidence(fixture)
   const batchPlan = Result.getOrThrow(
@@ -45,7 +45,16 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     {
       ...fixture.snapshot,
       quotes: fixture.snapshot.quotes.map((quote) =>
-        quote.symbol === 'AAPL' ? { ...quote, bidPrice, askPrice, bidSize, askSize } : quote,
+        quote.symbol === 'AAPL'
+          ? {
+              ...quote,
+              bidPrice,
+              askPrice,
+              bidSize,
+              askSize,
+              ...(quoteAt === undefined ? {} : { eventAt: quoteAt, ingestedAt: quoteAt }),
+            }
+          : quote,
       ),
     },
     query,
@@ -54,6 +63,16 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
 }
 
 describe('Jev entry execution quote eligibility', () => {
+  test('an approved entry compiles with a fresh execution quote from before the minute boundary', () => {
+    const quoteAt = '2026-09-04T14:29:59.000Z'
+    const { fixture, decision, pricing } = pricingFixture(100, 100.02, 100, 100, quoteAt)
+    expect(decision.selectedSymbols).toEqual(['AAPL'])
+    const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
+    expect(compiled.entryQuotes['AAPL']?.eventAt).toBe(quoteAt)
+    expect(compiled.entryQuotes['AAPL']?.maximumAgeMs).toBeLessThanOrEqual(fixture.protocol.maximumQuoteAgeMs)
+    expect(compiled.priceMicros['AAPL']).toBe('100020000')
+  })
+
   test('a fresh narrow execution quote compiles after an eligible model decision', () => {
     const { fixture, decision, pricing } = pricingFixture(100, 100.02)
     expect(decision.selectedSymbols).toEqual(['AAPL'])
