@@ -159,6 +159,11 @@ after version-specific readback and COMPLIANCE retention verification. An uncert
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
 
+If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
+the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
+race does not invalidate archive health or terminate the exporter. Missing outbox entries, failed uploads, invalid
+retention, and actual acknowledgement changes still fence access.
+
 Run `bash services/ofz/test-control.sh archive` for the real owner CLI, PostgreSQL and S3 qualification. It uses the
 production credential generator, writer policy and synchronized SQLite/object configuration. It proves initial
 archive-gated activation, deletion/retention denial, uncertain uploads, out-of-order commits, archive loss and
