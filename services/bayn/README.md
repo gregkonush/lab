@@ -31,23 +31,33 @@ Replay verifies those roles again; candidate quote/trade exclusions cannot downg
 Migration 118 retires protocol v8 for new authority generations and requires flat positions, settled orders, complete
 accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v8`.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
-calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading. Fractional equity holdings use the same
-MARKET/DAY terms and impact model as the close planner. Estimated net liquidation includes that sell
+calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
 predictive edge or profit.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
-and at most one open position. Crypto uses cash buying power, quantity-based LIMIT/IOC entries and closes, and
-MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
+and at most one open position. All entries, ordinary exits and forced closes use quantity-based LIMIT orders:
+DAY with `extended_hours=true` for equities, including fractions, and IOC for crypto at every hour.
+Crypto uses cash buying power; shorting and margin remain disabled.
+Current `bayn.execution-intent.v4` intents store an explicit `limitPriceMicros`. That price binds the deterministic
+intent identity, immutable SQL row, request, recovery checks and replay checkpoint. Buy spending rounds up to a micro;
+sell proceeds round down. Risk caps and turnover use the conservative ceiling on either side. The adapter preserves
+the explicit price rather than reconstructing it from rounded notional. Migrations 121 and 122 refuse nonterminal intents,
+unfinished bound cycles or unresolved mutations before installing the new write constraints. Decision documents use
+`bayn.observe-shadow-decision.v2` and `bayn.paper-cycle-decision.v2`; SQL lifecycle and completion guards require this
+same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
+reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
+Recovery derives duration from the held instruments and processes one market per pass. There is no MARKET or GTC
+submission path.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
-three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
+three-minute close lease. Fresh reconciled positions can authorize the existing close-only liquidation binding after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
 The generic continuous-cycle close phase starts only when the last admitted entry's fifteen-minute holding
 allowance ends, leaving the existing three-minute recovery reserve. The position's own maximum-hold trigger still
@@ -449,6 +459,12 @@ An insertion failure rolls back both records; concurrent retries reuse the immut
 retain their existing recovery path. This avoids a second finalization transaction on all-excluded observations
 without changing which exclusions can support a no-entry decision.
 
+An on-time, verified all-excluded batch reports `SNAPSHOT_UNAVAILABLE` for missing candidate evidence or
+`SNAPSHOT_STALE` for stale candidate pricing, with the affected symbols in its readiness message. It does not report
+an inference outage when no model request was made. The observation remains unusable: source exclusions do not become
+verified non-signals. Expired or inconsistent batch evidence retains `INFERENCE_UNAVAILABLE`; requested-candidate
+evaluation and all trading, freshness, and accounting checks are unchanged.
+
 Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
 batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
 transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
@@ -518,7 +534,7 @@ and insertion. A late transaction rolls back. Production uses the database wall 
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the inference deadline.
 New entries and quote-backed instrument-quantized closes use
-IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
+native LIMIT/DAY equity or LIMIT/IOC crypto orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
 verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
 decision retains the original quote, phase-specific allowance, exact limit notional, and risk evidence; historical decisions without
 an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.
@@ -1437,22 +1453,25 @@ quotes in availability order, including brief crossings between controller polls
 after trading ends cannot mutate the broker. Crypto LIMIT/IOC orders evaluate their arrival once and cancel any
 remainder through the same quote economics and accounting. Displayed liquidity is shared across orders and retries.
 
-Replay checkpoint v4 and broker state v2 retain every quote execution and uniquely identify partial-fill and fee
+Replay checkpoint v5 and broker state v3 retain every quote execution and uniquely identify partial-fill and fee
 activities. Restoration reconstructs cumulative order quantities, average prices, cash, inventory, fees and native
-activities before exposing the broker. Each fill selects its retained quote by topic, partition, offset and availability
+activities before exposing the broker. Account inception is retained across restart so regular-close equity references cannot be fabricated before the simulated account began. Each fill selects its retained quote by topic, partition, offset and availability
 time, including separate quotes in the same millisecond. Replay cancellations use the shared Alpaca HTTP 204 response
 decoder and empty-response hash. Earlier replay checkpoint schemas cannot resume this contract. Missing
 original arrival receipts and PAPER's different liquidity assumptions still prevent claiming historical live-fill parity.
+
+Regular-close reference equity retains its valuation qualification through restart. A stale quote or empty bid
+still supplies the retained accounting mark for the next day's broker reference, but leaves economic qualification
+incomplete for that reporting cut and subsequent cuts. A later fresh quote cannot qualify the missing historical evidence.
 
 The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
 buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
 and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
 
-`backtest-command.js` runs one or more consecutive exchange-calendar sessions through that engine. One simulated
+`backtest-command.js` runs one continuous interval through that engine, including nights and weekends. One simulated
 broker, account, portfolio, PostgreSQL database, and TigerBeetle ledger span the entire run. Cash, positions, fees,
-risk history, and unresolved orders are retained between sessions. The command rejects duplicate session dates,
-missing calendar entries, and skipped intervening sessions. Separate experiments use separate run identities and
-fresh databases.
+risk history, and unresolved orders carry across UTC reporting boundaries. The broker calendar still controls equity
+sessions and expiry. It does not close the crypto market. Separate experiments use separate run identities and fresh databases.
 
 ```sh
 bun run --filter @proompteng/bayn build
@@ -1465,14 +1484,14 @@ node services/bayn/dist/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The input is `bayn.backtest.v3` in `src/intraday-replay/backtest.ts`. It binds `sessionDates`, the full calendar,
+The input is `bayn.backtest.v4` in `src/intraday-replay/backtest.ts`. It binds an explicit UTC `interval` with `startAt` and `endAt`, the full broker calendar,
 source manifest, native Jev build and strategy identities, opening cash, asset metadata, execution assumptions,
 controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
 Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v2"`. Its `costs` object contains
+`inputDefinition: "bayn.jev-trading-signal-state.v8"`. Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
 `allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
 
@@ -1520,17 +1539,17 @@ The broker calendar must include the next trading session after the final replay
 selects that successor after finishing its last position; omitting it is an input error even when all requested market
 hours have data. Retain the actual Alpaca calendar response, including holidays and early closes. The export's
 `calendar.json` lists the selected data sessions; extend the backtest calendar with verified broker calendar context.
-The successor supplies scheduling context only and does not add a replay session or require market events for that day.
+The successor supplies scheduling context only. The declared interval controls execution and source coverage.
 
-Every input uses `bayn.backtest-source.v1`, a complete source file, and a separately pinned source receipt. Captured Kafka and historical REST declare different transport provenance. Hashes, source
-coordinates, partition inventory, record ordering, and coverage must validate before database setup. Capture receipts
+Every input uses `bayn.backtest-source.v2`, a complete source file, and a separately pinned source receipt. Captured Kafka and historical REST declare different transport provenance. Hashes, source
+coordinates, the complete `marketSources` inventory, record ordering, and interval coverage must validate before database setup. A native capture retains every configured market in its original global consumer sequence. Capture receipts
 establish the retained stream's bounds; they do not establish historical liquidity or original delivery for REST data.
 See the [streaming guide](src/market-data/streaming/README.md) for source capture and Dorvud feature regeneration.
 
 Each pass records the engine's decision/cycle result and simulated broker state. Entry and position-management waits
 retain typed readiness: pending, rejected or expired inference and unavailable market inputs count as missing decision
 data, even when a later deterministic exit succeeds. A verified model hold remains distinct from unavailable evidence.
-The final `bayn.backtest-report.v2`
+The final `bayn.backtest-report.v3`
 retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
 and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps

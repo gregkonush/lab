@@ -314,7 +314,7 @@ test('a new technical revision supersedes the previous value before matching raw
 
 test('rolling regeneration time cannot admit technical records computed after their arrival', () => {
   const regeneratedAtMs = end + 86_400_000
-  const source = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), universe, regeneratedAtMs))
+  const source = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), [universe], regeneratedAtMs))
   const rollingCursor = Result.getOrThrow(
     advanceHistoricalMarketCursor(source, {
       availableAtMs: observed,
@@ -351,8 +351,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
   const source = {
     runId: 'c'.repeat(64),
     sourceManifestHash: 'e'.repeat(64),
-    featureTopic: universe.topics.features,
-    technicalFeatureTopic: topic,
+    marketSources: [universe] as const,
     regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs,
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
@@ -360,7 +359,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
       tieBreak: 'availability-topic-partition-offset' as const,
     },
   }
-  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, universe, undefined, source))
+  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, [universe], undefined, source))
   const cursor = Result.getOrThrow(
     advanceHistoricalMarketCursor(
       {
@@ -394,7 +393,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
     ),
   ).toBe(true)
   const tooEarly = Result.getOrThrow(
-    createHistoricalMarketCursor(source.runId, universe, undefined, {
+    createHistoricalMarketCursor(source.runId, [universe], undefined, {
       ...source,
       regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs - 10_000,
     }),
@@ -438,15 +437,14 @@ test('live and simulated snapshots reproduce technical payload and provenance, r
   const source = {
     runId: 'a'.repeat(64),
     sourceManifestHash: 'b'.repeat(64),
-    featureTopic: universe.topics.features,
-    technicalFeatureTopic: topic,
+    marketSources: [universe] as const,
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
       description: 'literal test availability',
       tieBreak: 'availability-topic-partition-offset' as const,
     },
   }
-  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, universe, undefined, source))
+  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, [universe], undefined, source))
   const cursor = {
     ...empty,
     projection: { ...ready, epoch: empty.projection.epoch, availabilityMode: 'simulated' as const },
@@ -454,6 +452,12 @@ test('live and simulated snapshots reproduce technical payload and provenance, r
   const simulated = Result.getOrThrow(constructSimulatedSnapshot(cursor, source, query))
   expect(Result.getOrThrow(reproduceSimulatedSnapshot(simulated.manifest, rows)).manifest).toEqual(simulated.manifest)
   expect(
-    Result.isFailure(constructSimulatedSnapshot(cursor, { ...source, technicalFeatureTopic: 'other' }, query)),
+    Result.isFailure(
+      constructSimulatedSnapshot(
+        cursor,
+        { ...source, marketSources: [{ ...universe, topics: { ...universe.topics, technicalFeatures: 'other' } }] },
+        query,
+      ),
+    ),
   ).toBe(true)
 })

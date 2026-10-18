@@ -267,18 +267,9 @@ export const reproduceSimulatedSnapshot = (
       sequence: _sequence,
       ...source
     } = evidence
-    if (evidence.technicalFeatureTopic !== evidence.technical?.topic)
+    const universe = evidence.marketSources.find((source) => source.universeId === manifest.universeId)
+    if (universe === undefined || universe.topics.technicalFeatures !== evidence.technical?.topic)
       return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
-    const universe: StreamingUniverse = {
-      universeId: manifest.universeId,
-      universeSymbolHash: manifest.universeSymbolHash,
-      symbols: manifest.universe,
-      topics: {
-        ...manifest.sourceTopics,
-        features: evidence.featureTopic,
-        ...(evidence.technicalFeatureTopic === undefined ? {} : { technicalFeatures: evidence.technicalFeatureTopic }),
-      },
-    }
     const bounds = new Map(
       evidence.positions.map((position) => [
         topicPartitionKey(position.topic, position.partition),
@@ -341,7 +332,7 @@ export const reproduceSimulatedSnapshot = (
       {
         runId: evidence.runId,
         source,
-        universe,
+        marketSources: evidence.marketSources,
         projection: {
           ...projection,
           offsets: new Map(

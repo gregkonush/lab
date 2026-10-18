@@ -1311,8 +1311,18 @@ describePostgres('PostgreSQL execution persistence', () => {
         const retain = (fill: FillEventInput) =>
           Effect.gen(function* () {
             const intentId = hash(fill.fill.fillId)
-            yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+            if (historical || overreleased) {
+              // Preserve the actual pre-cutover format when testing immutable fee migrations.
+              yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
           VALUES(${intentId},'bayn.paper-intent.v3',${accountId},${fill.fill.clientOrderId},'ETH/USD',${fill.fill.side},'LIMIT','IOC',${fill.fill.quantityAtoms},'100000000','PLANNED',${fill.occurredAt},${fill.occurredAt},${cycleId},'jev',${hash(fill.fill.fillId + 'decision')},${hash('settlement-policy')},${generationHash})`
+            } else {
+              const price = BigInt(fill.fill.priceAtoms) / 1000n
+              const notional =
+                (BigInt(fill.fill.quantityAtoms) * price + (fill.fill.side === OrderSide.Buy ? 999999999n : 0n)) /
+                1000000000n
+              yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,limit_price_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+          VALUES(${intentId},'bayn.execution-intent.v4',${accountId},${fill.fill.clientOrderId},'ETH/USD',${fill.fill.side},'LIMIT','IOC',${fill.fill.quantityAtoms},${notional.toString()},${price.toString()},'PLANNED',${fill.occurredAt},${fill.occurredAt},${cycleId},'jev',${hash(fill.fill.fillId + 'decision')},${hash('settlement-policy')},${generationHash})`
+            }
             yield* accounting.account(fill)
             return {
               ...order(),

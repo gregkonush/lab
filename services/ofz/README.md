@@ -45,7 +45,7 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all six migrations through `0006_preview_lease_identity.sql`; they cannot
+checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
 initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
@@ -158,6 +158,10 @@ hashes and database timestamps. Its immutable key includes the complete payload 
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
+seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
+unchanged.
 
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit

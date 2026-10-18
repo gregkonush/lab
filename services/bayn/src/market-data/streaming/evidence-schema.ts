@@ -12,6 +12,7 @@ import {
 import { TechnicalMarketFeatureSchema } from '../features/technical-contract'
 import { NativeMarketFeatureSchema } from '../features/native-feature'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
+import { MarketSourcesSchema } from './raw-events'
 
 const PositionFields = { topic: StrictNonEmptyStringSchema, partition: NonNegativeIntegerSchema }
 const Timestamp = NonNegativeIntegerSchema.check(Schema.isLessThanOrEqualTo(253402300799999))
@@ -106,13 +107,12 @@ export const SimulatedSnapshotSourceSchema = Schema.Struct({
     }),
     OriginalCaptureDeliverySchema,
   ]),
-  featureTopic: StrictNonEmptyStringSchema,
-  technicalFeatureTopic: Schema.optionalKey(StrictNonEmptyStringSchema),
+  marketSources: MarketSourcesSchema,
   regeneratedFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
   regeneratedTechnicalFeaturesRecordedAtMs: Schema.optionalKey(Timestamp),
 })
 export const SimulatedSnapshotEvidenceSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-input-cut.v1'),
+  schemaVersion: Schema.Literal('bayn.simulated-input-cut.v2'),
   ...SimulatedSnapshotSourceSchema.fields,
   ...CutFields,
 })

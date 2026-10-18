@@ -44,7 +44,12 @@ describe('Ofz-backed browser authentication boundary', () => {
       expect(response.status).toBe(503)
       expect(capture).toHaveBeenCalledTimes(1)
       expect(capture.mock.calls[0]?.[0]).toMatchObject({ code: 'ENOENT' })
-      expect(await response.text()).not.toContain('missing-secret')
+      const body = await response.text()
+      expect(JSON.parse(body)).toEqual({
+        error: 'Sign-in is unavailable. Try again shortly.',
+        auditReceiptId: '',
+      })
+      expect(body).not.toContain('missing-secret')
     } finally {
       process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = settings.TENGRI_OIDC_CLIENT_SECRET_FILE
       capture.mockRestore()

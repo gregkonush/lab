@@ -109,7 +109,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
       Result.getOrThrow(
         simulateIntradayReplayExecution({
           ...shared,
-          order: { side: OrderSide.Sell, quantityAtoms: 32_967_375n, limitPriceMicros: null },
+          order: { side: OrderSide.Sell, quantityAtoms: 32_967_375n, limitPriceMicros: 99_900_000n },
         }),
       ),
     ).toMatchObject({ status: 'filled', filledQuantityAtoms: 32_967_375n })

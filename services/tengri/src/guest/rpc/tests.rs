@@ -14,20 +14,13 @@ async fn identity_is_verified_over_authenticated_grpc() {
     use super::test_server::{TestServer, TestService};
     use std::sync::Arc;
     for (id, version, expected) in [
-        (
-            "expected",
-            tengri::guest_authorization::PROTOCOL_VERSION,
-            true,
-        ),
-        (
-            "wrong",
-            tengri::guest_authorization::PROTOCOL_VERSION,
-            false,
-        ),
+        ("expected", tengri::GUEST_API_PROTOCOL_VERSION, true),
+        ("wrong", tengri::GUEST_API_PROTOCOL_VERSION, false),
         ("expected", 0, false),
         ("expected", 1, false),
         ("expected", 2, false),
         ("expected", 3, false),
+        ("expected", 4, false),
     ] {
         let fixture = TestServer::start(TestService {
             get_info: Some(Arc::new(move |request| {
@@ -94,7 +87,7 @@ async fn grpc_only_guest_rejects_legacy_http_without_discovery_or_fallback() {
     assert!(
         matches!(client.verify_identity("expected").await, Err(GuestError::Api { status: StatusCode::SERVICE_UNAVAILABLE, message }) if message.contains("Sleep and resume"))
     );
-    assert!(client.list_files("/").await.is_err());
+    assert!(client.list_files("/workspace").await.is_err());
     server.abort();
     let paths = paths.lock().unwrap();
     assert_eq!(
@@ -127,7 +120,7 @@ async fn grpc_read_requires_valid_matching_revision() {
             ..Default::default()
         })
         .await;
-        let result = fixture.guest.read_file("/file").await;
+        let result = fixture.guest.read_file("/workspace/file").await;
         match expected {
             "missing" => assert!(matches!(result, Err(GuestError::MissingFileRevision))),
             "invalid" => assert!(matches!(result, Err(GuestError::InvalidFileRevision))),
@@ -157,7 +150,7 @@ async fn grpc_terminal_creation_reconciles_lost_response() {
     .await;
     let creation = fixture
         .guest
-        .create_terminal("creation-identity", "/", 80, 24)
+        .create_terminal("creation-identity", "/workspace", 80, 24)
         .await
         .unwrap();
     assert_eq!(creation.session.id, "terminal");
@@ -185,7 +178,7 @@ async fn grpc_terminal_creation_validates_the_creation_identity() {
         .await;
         let result = fixture
             .guest
-            .create_terminal("creation-identity", "/", 80, 24)
+            .create_terminal("creation-identity", "/workspace", 80, 24)
             .await;
         assert!(
             matches!(result, Err(GuestError::TerminalCreationIdentityMismatch { created_terminal_id, .. }) if created_terminal_id == created.then(|| "terminal".to_owned()))
@@ -219,13 +212,16 @@ async fn grpc_write_validates_preconditions_and_receipts() {
         })
         .await;
         assert!(matches!(
-            fixture.guest.write_file("/file", b"content", "bad").await,
+            fixture
+                .guest
+                .write_file("/workspace/file", b"content", "bad")
+                .await,
             Err(GuestError::InvalidFileRevision)
         ));
         assert_eq!(
             fixture
                 .guest
-                .write_file("/file", b"content", "missing")
+                .write_file("/workspace/file", b"content", "missing")
                 .await
                 .is_ok(),
             expected
@@ -356,7 +352,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                     get_info: Some(Arc::new(|_| {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
-                            protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                            protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                         })
                     })),
                     ..Default::default()
@@ -562,28 +558,32 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     assert_eq!(response.into_text().unwrap(), "guest:ping");
     websocket.close(None).await.unwrap();
     let rpc = guest.rpc.clone();
-    let directory = guest.create_directory("/files").await.unwrap();
+    let directory = guest.create_directory("/workspace/files").await.unwrap();
     assert!(directory.directory);
-    let mut events = guest.watch_files("/files", None).await.unwrap();
+    let mut events = guest.watch_files("/workspace/files", None).await.unwrap();
     let snapshot = tokio::time::timeout(Duration::from_secs(5), events.next())
         .await
         .unwrap()
         .unwrap()
         .unwrap();
     assert_eq!(snapshot.kind, "reset");
-    assert_eq!(snapshot.path, "/files");
+    assert_eq!(snapshot.path, "/workspace/files");
     let content: Vec<u8> = (0..MAX_GUEST_FILE_BYTES).map(|i| i as u8).collect();
     let write = guest
-        .write_file("/files/binary.dat", &content, "missing")
+        .write_file("/workspace/files/binary.dat", &content, "missing")
         .await
         .unwrap();
     assert_eq!(write.size, content.len() as i64);
     assert_eq!(
-        guest.read_file("/files/binary.dat").await.unwrap().content,
+        guest
+            .read_file("/workspace/files/binary.dat")
+            .await
+            .unwrap()
+            .content,
         content
     );
     let conflict = guest
-        .write_file("/files/binary.dat", b"stale", "missing")
+        .write_file("/workspace/files/binary.dat", b"stale", "missing")
         .await
         .unwrap_err();
     match conflict {
@@ -602,18 +602,32 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
         .unwrap()
         .unwrap();
     assert!(event.sequence > 0);
-    assert_eq!(event.path, "/files/binary.dat");
+    assert_eq!(event.path, "/workspace/files/binary.dat");
     drop(events);
-    let search = guest.search_files("binary", "/files", 10).await.unwrap();
-    assert_eq!(search.entries[0].path, "/files/binary.dat");
-    assert_eq!(guest.list_files("/files").await.unwrap().entries.len(), 1);
-    guest
-        .move_file("/files/binary.dat", "/files/moved.dat")
+    let search = guest
+        .search_files("binary", "/workspace/files", 10)
         .await
         .unwrap();
-    guest.delete_file("/files/moved.dat", false).await.unwrap();
+    assert_eq!(search.entries[0].path, "/workspace/files/binary.dat");
+    assert_eq!(
+        guest
+            .list_files("/workspace/files")
+            .await
+            .unwrap()
+            .entries
+            .len(),
+        1
+    );
+    guest
+        .move_file("/workspace/files/binary.dat", "/workspace/files/moved.dat")
+        .await
+        .unwrap();
+    guest
+        .delete_file("/workspace/files/moved.dat", false)
+        .await
+        .unwrap();
     assert!(matches!(
-        guest.read_file("/.tengri/private").await,
+        guest.read_file("/workspace/.tengri/private").await,
         Err(GuestError::Api {
             status: StatusCode::NOT_FOUND,
             ..
@@ -656,12 +670,12 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     ));
 
     let created = guest
-        .create_terminal("interop-terminal-creation", "/", 80, 24)
+        .create_terminal("interop-terminal-creation", "/workspace", 80, 24)
         .await
         .unwrap();
     assert!(created.created);
     let repeated = guest
-        .create_terminal("interop-terminal-creation", "/", 80, 24)
+        .create_terminal("interop-terminal-creation", "/workspace", 80, 24)
         .await
         .unwrap();
     assert!(!repeated.created);
@@ -737,7 +751,7 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     let mut wrong = guest.rpc.clone();
     wrong.authorization = MetadataValue::try_from("Bearer wrong").unwrap();
     assert!(matches!(
-        wrong.list_files("/").await,
+        wrong.list_files("/workspace").await,
         Err(GuestError::Api {
             status: StatusCode::UNAUTHORIZED,
             ..

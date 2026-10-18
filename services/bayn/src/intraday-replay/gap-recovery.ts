@@ -143,23 +143,23 @@ export enum GapExitAction {
 const originalSource = (cursor: HistoricalMarketCursor, atMs: number, sessionOpenMs: number) =>
   Result.gen(function* () {
     const source = yield* Schema.decodeUnknownResult(SimulatedSnapshotSourceSchema, strictParseOptions)(cursor.source)
+    const market = cursor.marketSources.find((value) => value.universeId === gapRecoveryDefinition.universeId)
     if (
+      market === undefined ||
+      (yield* canonicalHashV1Result(source.marketSources)) !== (yield* canonicalHashV1Result(cursor.marketSources)) ||
       source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       source.runId !== cursor.runId ||
       cursor.projection.availabilityMode !== 'simulated' ||
-      source.featureTopic !== gapRecoveryDefinition.featureTopic ||
-      source.featureTopic !== cursor.universe.topics.features ||
-      source.technicalFeatureTopic !== cursor.universe.topics.technicalFeatures ||
+      market.topics.features !== gapRecoveryDefinition.featureTopic ||
       source.regeneratedFeaturesRecordedAtMs !== undefined ||
       source.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
-      cursor.universe.universeId !== gapRecoveryDefinition.universeId ||
-      cursor.universe.universeSymbolHash !== gapRecoveryDefinition.universeSymbolHash ||
-      cursor.universe.symbols.join(',') !== universe.join(',') ||
+      market.universeId !== gapRecoveryDefinition.universeId ||
+      market.universeSymbolHash !== gapRecoveryDefinition.universeSymbolHash ||
+      market.symbols.join(',') !== universe.join(',') ||
       Object.entries(gapRecoveryDefinition.sourceTopics).some(
-        ([channel, topic]) =>
-          cursor.universe.topics[channel as keyof typeof gapRecoveryDefinition.sourceTopics] !== topic,
+        ([channel, topic]) => market.topics[channel as keyof typeof gapRecoveryDefinition.sourceTopics] !== topic,
       ) ||
       (cursor.lastArrival !== null &&
         (cursor.lastArrival.availableAtMs > atMs ||

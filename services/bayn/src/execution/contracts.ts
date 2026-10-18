@@ -1,4 +1,6 @@
 import { pipe, Result, Schema } from 'effect'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { quantityScale } from '../quantity'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { ResearchCapitalGrantSchema } from './mandate'
@@ -23,17 +25,20 @@ import {
   legacyAuthorityStateSchemaVersion,
   legacyBrokerErrorSchemaVersion,
   legacyBrokerEventSchemaVersion,
-  legacyExecutionIntentSchemaVersion,
   legacyFillSchemaVersion,
   legacyOrderV2SchemaVersion,
   legacyRateLimitSchemaVersion,
   legacyReconciliationSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
   legacyResearchGrantProofSchemaVersion,
   legacyRiskDecisionSchemaVersion,
   legacyRiskInputSchemaVersion,
   legacyValuationSchemaVersion,
 } from './legacy-wire'
+
+export const executionIntentSchemaVersion = 'bayn.execution-intent.v4' as const
+export const referenceIntentSchemaVersion = 'bayn.reference-intent.v3' as const
+export const intentPlanSchemaVersion = 'bayn.intent-plan.v2' as const
+export const intentIdentitySchemaVersion = 'bayn.execution-intent-identity.v4' as const
 
 const U32_MAX = 4_294_967_295
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -405,10 +410,11 @@ const intentFields = {
   clientOrderId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Enum(OrderType),
-  timeInForce: Schema.Enum(TimeInForce),
+  orderType: Schema.Literal(OrderType.Limit),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
   quantityAtoms: PositiveMicros,
   notionalLimitMicros: PositiveMicros,
+  limitPriceMicros: PositiveMicros,
   /** Hash of the prior close plan that authorizes a distinct residual close generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),
   state: Schema.Enum(IntentState),
@@ -417,12 +423,12 @@ const intentFields = {
 } as const
 
 const ReferenceIntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyReferenceIntentSchemaVersion),
+  schemaVersion: Schema.Literal(referenceIntentSchemaVersion),
   ...intentFields,
 })
 
 const IntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyExecutionIntentSchemaVersion),
+  schemaVersion: Schema.Literal(executionIntentSchemaVersion),
   authorityGenerationHash: Sha256,
   ...intentFields,
 })
@@ -431,6 +437,17 @@ type IntentContract = typeof ReferenceIntentBase.Type | typeof IntentBase.Type
 
 const intentContractIssues = (intent: IntentContract): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  if (
+    intent.timeInForce !==
+    (instrumentMarket(intent.symbol) === MarketKind.Crypto ? TimeInForce.ImmediateOrCancel : TimeInForce.Day)
+  )
+    issues.push({ path: ['timeInForce'], issue: 'must use the native instrument LIMIT duration' })
+  const notional =
+    (BigInt(intent.quantityAtoms) * BigInt(intent.limitPriceMicros) +
+      (intent.side === OrderSide.Buy ? quantityScale - 1n : 0n)) /
+    quantityScale
+  if (notional !== BigInt(intent.notionalLimitMicros))
+    issues.push({ path: ['notionalLimitMicros'], issue: 'must match the explicit LIMIT price and quantity' })
   const terminal = intent.state === IntentState.Terminal
   if (terminal !== (intent.terminalOutcome !== undefined)) {
     issues.push({

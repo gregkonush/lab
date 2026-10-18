@@ -35,8 +35,12 @@ import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
 import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
 import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
+import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
+import type { DatabaseError } from '../db/database-error'
+import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
+import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
-import { operationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
@@ -97,8 +101,11 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
   },
 ]
 
-export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
-  plan.config.kafka === undefined
+export const WorkerMarketProjectionLive = (
+  plan: ApplicationIdentity,
+): Layer.Layer<KafkaMarketProjection, DatabaseError | OperationalError> => {
+  const kafka = plan.config.kafka
+  return kafka === undefined
     ? Layer.effect(
         KafkaMarketProjection,
         Effect.fail(
@@ -109,7 +116,36 @@ export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
           }),
         ),
       )
-    : KafkaMarketProjectionLive(plan.config.kafka, workerStreamingUniverse(plan))
+    : Layer.unwrap(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const store = makeNativeArrivalStore(sql)
+          return KafkaMarketProjectionLive(kafka, workerStreamingUniverse(plan), (bootstrap, sources) =>
+            Effect.gen(function* () {
+              const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(plan.config.build, bootstrap, sources))
+              return yield* makeNativeArrivalJournal(
+                {
+                  schemaVersion: 'bayn.native-arrival-epoch.v1',
+                  captureId,
+                  build: plan.config.build,
+                  bootstrap,
+                  sources,
+                },
+                store,
+              )
+            }),
+          )
+        }),
+      ).pipe(
+        Layer.provide(
+          Layer.merge(
+            PostgresClientLive(plan.config, { maxConnections: 1, applicationName: 'bayn-native-arrival' }),
+            PostgresMigrationsLive(plan.config),
+          ),
+        ),
+        Layer.provide(NodeServices.layer),
+      )
+}
 
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,

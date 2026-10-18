@@ -299,7 +299,7 @@ export const makeCycleQueries = (
           FROM autonomous_cycle_shadow_decisions AS stored
           WHERE stored.cycle_id = cycle.cycle_id
             AND stored.decision_hash = cycle.decision_hash
-            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+            AND stored.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
             AND stored.document ->> 'mode' = 'PAPER'
             AND stored.document #>> '{targetPlan,status}' = 'PLANNED'
           LIMIT 1

@@ -137,8 +137,9 @@ const order: Order = {
   ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),
   symbol: fill.symbol,
   side: fill.side,
-  orderType: OrderType.Market,
-  timeInForce: TimeInForce.Day,
+  orderType: OrderType.Limit,
+  limitPriceMicros: fillPriceMicros,
+  timeInForce: TimeInForce.Day as const,
   quantityAtoms: fill.quantityAtoms,
   filledQuantityAtoms: fill.quantityAtoms,
   status: OrderStatus.Filled,
@@ -148,11 +149,12 @@ const order: Order = {
 const requestIntent = {
   clientOrderId: fill.clientOrderId,
   notionalLimitMicros: fillPriceMicros,
-  orderType: OrderType.Market,
+  limitPriceMicros: fillPriceMicros,
+  orderType: OrderType.Limit,
   quantityAtoms: fill.quantityAtoms,
   side: fill.side,
   symbol: fill.symbol,
-  timeInForce: TimeInForce.Day,
+  timeInForce: TimeInForce.Day as const,
 } as const
 
 const currentSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
@@ -171,7 +173,7 @@ const intentRow = {
   client_order_id: fill.clientOrderId,
   symbol: fill.symbol,
   side: fill.side,
-  order_type: OrderType.Market,
+  order_type: OrderType.Limit,
   time_in_force: order.timeInForce,
   quantity_atoms: fill.quantityAtoms,
   notional_limit_micros: fillPriceMicros,
@@ -413,8 +415,9 @@ describe('PostgreSQL reconciliation algebra', () => {
   })
 
   test('projects only the hash-bound recorded submit body without guessing a wire format', () => {
-    const market = Result.getOrThrow(orderRequestBody(requestIntent))
-    const limit = { ...market, type: 'limit', time_in_force: 'ioc', limit_price: '100' }
+    const limit = Result.getOrThrow(orderRequestBody(requestIntent))
+    const { limit_price: _limitPrice, ...terms } = limit
+    const market = { ...terms, type: 'market', extended_hours: false }
     const recorded = [market, limit].map((body) => ({
       ...intentRow,
       submit_request_hash: canonicalHashV1(body),

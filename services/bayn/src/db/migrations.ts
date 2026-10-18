@@ -1,3 +1,7 @@
+import explicitLimitDecisions from '../../migrations/0122_explicit_limit_decisions'
+import explicitLimitIntents from '../../migrations/0121_explicit_limit_intents'
+import mixedMarketReplay from '../../migrations/0120_mixed_market_replay'
+import nativeArrivalRetention from '../../migrations/0119_native_arrival_retention'
 import completedBarBenchmarks from '../../migrations/0118_completed_bar_benchmarks'
 import riskValuationIndexes from '../../migrations/0117_risk_valuation_indexes'
 import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
@@ -120,6 +124,10 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '122_explicit_limit_decisions': explicitLimitDecisions,
+  '121_explicit_limit_intents': explicitLimitIntents,
+  '120_mixed_market_replay': mixedMarketReplay,
+  '119_native_arrival_retention': nativeArrivalRetention,
   '118_completed_bar_benchmarks': completedBarBenchmarks,
   '117_risk_valuation_indexes': riskValuationIndexes,
   '116_cost_supported_entry': costSupportedEntry,

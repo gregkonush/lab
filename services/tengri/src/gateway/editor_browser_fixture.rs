@@ -36,7 +36,7 @@ async fn editor_browser_acceptance_fixture() {
             (if https {
                 "https://gateway.tengri.localhost:3443"
             } else {
-                "http://localhost:33082"
+                "http://localhost:18082"
             })
             .to_owned(),
             Arc::new(crate::control::Database::shared_fixture().await),
@@ -47,7 +47,7 @@ async fn editor_browser_acceptance_fixture() {
             (if https {
                 "https://tengri-{session}.tengri.localhost:3443"
             } else {
-                "http://tengri-{session}.tengri.localhost:33083"
+                "http://tengri-{session}.tengri.localhost:18083"
             })
             .to_owned(),
             (if https {
@@ -191,15 +191,15 @@ async fn editor_browser_acceptance_fixture() {
             }),
         );
     let preview = preview_router(state);
-    let control_listener = tokio::net::TcpListener::bind("127.0.0.1:33082")
+    let control_listener = tokio::net::TcpListener::bind("127.0.0.1:18082")
         .await
         .unwrap();
-    let preview_listener = tokio::net::TcpListener::bind("127.0.0.1:33083")
+    let preview_listener = tokio::net::TcpListener::bind("127.0.0.1:18083")
         .await
         .unwrap();
     let mut control_shutdown = shutdown_rx.clone();
     let mut preview_shutdown = shutdown_rx;
-    eprintln!("Editor gateway fixture listening on 33082 / 33083");
+    eprintln!("Editor gateway fixture listening on 18082 / 18083");
     let (a, b) = tokio::join!(
         axum::serve(control_listener, control).with_graceful_shutdown(async move {
             let _ = control_shutdown.changed().await;

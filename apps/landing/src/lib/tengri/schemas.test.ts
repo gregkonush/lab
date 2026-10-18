@@ -117,7 +117,7 @@ describe('Tengri BFF action schema', () => {
         action: 'create-terminal',
         agentId: 'agent-123',
         creationId: 'terminal-creation-123',
-        cwd: '/',
+        cwd: '/workspace',
         columns: 10_000,
         rows: 24,
       }).success,
@@ -246,7 +246,18 @@ describe('Tengri BFF action schema', () => {
   })
 
   test('requires absolute clean file paths and rejects undeclared action fields', () => {
-    for (const path of ['workspace/file.ts', '/workspace/file.ts\u0000secret', '/workspace/file.ts\nnext']) {
+    for (const path of [
+      'workspace/file.ts',
+      '/',
+      '/lab/README.md',
+      '/workspace-other/report.txt',
+      '/workspace/',
+      '/workspace//report.txt',
+      '/workspace/../report.txt',
+      '/workspace/./report.txt',
+      '/workspace/file.ts\u0000secret',
+      '/workspace/file.ts\nnext',
+    ]) {
       expect(tengriActionSchema.safeParse({ action: 'read-file', agentId: 'agent-123', path }).success).toBe(false)
     }
     expect(
