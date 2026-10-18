@@ -140,16 +140,16 @@ export const loadStrategyExecutionRiskPolicy = (
   riskPolicyHash?: string,
 ) =>
   Effect.gen(function* () {
-    const executionModel = yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
+    yield* Effect.fromResult(decodeStrategyExecutionModel(strategy))
     const symbols = strategyDefinition(strategy).parameters.universe
-    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel)
+    const retainedPolicy = yield* loadExecutionRiskPolicy(accountId, symbols)
     if (
       riskPolicyHash === undefined ||
       riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(retainedPolicy)))
     )
       return retainedPolicy
     if (brokerEnvironment === BrokerEnvironment.Sandbox) {
-      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, executionModel, BrokerEnvironment.Sandbox)
+      const paperPolicy = yield* loadExecutionRiskPolicy(accountId, symbols, BrokerEnvironment.Sandbox)
       if (riskPolicyHash === (yield* Effect.fromResult(canonicalHashV1Result(paperPolicy)))) return paperPolicy
     }
     return yield* operationalError({

@@ -36,7 +36,6 @@ export const jevEntryEconomics = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       quantityAtoms: quantityScale,
       referencePriceMicros: jevMaximumEntryAskMicros(protocol, input.askMicros),
-      executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
     })
     const maximumEntryPrice = pricing.expectedExecutionPriceMicros

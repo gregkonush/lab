@@ -41,6 +41,13 @@ The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
+
+The BFF's SQL pool serves only OAuth attempt creation and consumption. Five-minute attempts use one shared unlogged
+PostgreSQL table, so sign-in does not wait for WAL or synchronous replication. Consumption remains atomic across BFF
+replicas. A database crash or failover discards unfinished attempts and requires a fresh sign-in; it cannot authorize
+a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
+query deadline, verified database TLS, and existing attempt expiry and capacity limits.
+
 `/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
@@ -111,7 +118,9 @@ from this tab or another tab with a newer timestamp;
 ordinary selection preserves row order. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
-send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
+send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
+New selections use GPT-6.1 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
+supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
 starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
 use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
@@ -162,6 +171,13 @@ the Deployment directly.
 Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
 and preserves the local draft.
+
+Finder, chat file links, image attachments, terminal working directories, and the Code bridge use canonical
+`/workspace` paths. The signed request retains that path until the guest validates it and resolves it inside the
+retained home. The BFF requires guest API version 5 in the controller's authenticated audience response before
+signing a request. The controller verifies that version in the guest's identity response before forwarding operations.
+Mixed release versions fail closed. The older virtual file
+namespace is removed; upgrade retained guests with a fenced cold replacement before verifying this release.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
@@ -289,7 +305,7 @@ and SpiceDB fixture, migrates the shared runtime database and supplies separate 
 and verifies the pinned upstream release, starts real Nanoagent and Tengri gateway fixtures, and drives the actual workbench
 through Chromium. Set `OFZ_FIXTURE_SSH` to use the authorized remote Docker host for the database. Provisioning and identity
 are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
-Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
+Ports 8080, 13338, 3143, 18082, 18083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 Docker browser fixtures reset their disposable Chromium profile for each run and retain the installed engine cache.
@@ -302,3 +318,11 @@ configuration contains only the ingest DSN and immutable release. See the
 [Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
 network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
 validation, stream limits and content-scrubbing checks.
+
+Chat file links display absolute `/workspace/...` guest paths and translate them to workspace-relative file API
+paths for text and image reads. Switching file tabs retains loaded contents and the Source/Rendered view without
+refetching; reopening an existing file preserves tab order. A failed inline image offers an explicit retry.
+
+Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
+with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
+reconnects its own transport without reloading the retained browser document.

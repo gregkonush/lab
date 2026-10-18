@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = guestauth.ProtocolVersion
+const guestProtocolVersion = 5
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {

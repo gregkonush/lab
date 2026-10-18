@@ -164,7 +164,7 @@ featureTest(
         )
         expect(manifest.transport).toBe('alpaca-rest')
         expect(receipt.value).toMatchObject({
-          schemaVersion: 'bayn.alpaca-rest-replay-receipt.v2',
+          schemaVersion: 'bayn.alpaca-rest-replay-receipt.v3',
           acquiredSymbols: ['AAPL', 'SPY'],
           unacquiredSymbols: ['AMD'],
         })

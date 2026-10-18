@@ -15,6 +15,16 @@ export const simulationFixture = (
 ) => {
   const fixture = historicalStreamingFixture(returns)
   const { input, protocol } = fixture
+  const universe = {
+    universeId: equityMarketProfile.universeId,
+    universeSymbolHash: equityMarketProfile.universeSymbolHash,
+    symbols: protocol.universe,
+    topics: {
+      ...equityMarketProfile.sourceTopics,
+      features: equityMarketProfile.streamingInput.featureTopic,
+      ...(technicalFeatureTopic === undefined ? {} : { technicalFeatures: technicalFeatureTopic }),
+    },
+  }
   const source = {
     runId: input.arrivals.runId,
     sourceManifestHash: canonicalHashV1(input),
@@ -23,26 +33,11 @@ export const simulationFixture = (
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
       tieBreak: 'availability-topic-partition-offset' as const,
     },
-    featureTopic: equityMarketProfile.streamingInput.featureTopic,
-    ...(technicalFeatureTopic === undefined ? {} : { technicalFeatureTopic }),
+    marketSources: [universe] as const,
     ...(regeneratedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs: regeneratedAtMs }),
   }
   let cursor: HistoricalMarketCursor = Result.getOrThrow(
-    createHistoricalMarketCursor(
-      source.runId,
-      {
-        universeId: equityMarketProfile.universeId,
-        universeSymbolHash: equityMarketProfile.universeSymbolHash,
-        symbols: protocol.universe,
-        topics: {
-          ...equityMarketProfile.sourceTopics,
-          features: source.featureTopic,
-          ...(technicalFeatureTopic === undefined ? {} : { technicalFeatures: technicalFeatureTopic }),
-        },
-      },
-      regeneratedAtMs,
-      source,
-    ),
+    createHistoricalMarketCursor(source.runId, source.marketSources, regeneratedAtMs, source),
   )
   const events = input.arrivals.events.toSorted(
     (a, b) =>
@@ -53,7 +48,7 @@ export const simulationFixture = (
   )
   for (const arrival of events) {
     const event =
-      regeneratedAtMs !== undefined && arrival.record.topic === source.featureTopic
+      regeneratedAtMs !== undefined && arrival.record.topic === universe.topics.features
         ? {
             ...arrival,
             record: {

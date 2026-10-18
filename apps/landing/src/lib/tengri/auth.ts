@@ -224,7 +224,13 @@ export async function handleTengriAuth(request: Request) {
           : new OfzError(exhausted.success ? 429 : 503)
     if (failure.status >= 500) reportServerError(error, 'tengri.auth', failure.status)
     return Response.json(
-      { error: failure.message, auditReceiptId: failure.auditReceiptId },
+      {
+        error:
+          failure.status === 503 && !(error instanceof OfzError)
+            ? 'Sign-in is unavailable. Try again shortly.'
+            : failure.message,
+        auditReceiptId: failure.auditReceiptId,
+      },
       { status: failure.status, headers: responseHeaders },
     )
   }

@@ -1,3 +1,5 @@
+import { intentPlanSchemaVersion } from './execution/contracts'
+import { MarketSourcesSchema } from './market-data/streaming/raw-events'
 import { exchangeSessions } from './market-hours'
 import {
   isContinuousMarket,
@@ -30,10 +32,10 @@ import {
 } from './market-data/streaming/evidence-schema'
 import { Data, Result, Schema } from 'effect'
 
-import { instrumentMarket, MarketKind } from './instruments'
 import { quantizeInstrumentPriceMicros } from './broker/alpaca-price'
 import { makeExecutionCalendarObservation } from './cycle'
-import { priceNumberToMicros, notionalMicros } from './execution-model'
+import { priceNumberToMicros } from './execution-model'
+import { ceilDiv } from './strategy/execution-model/fixed-point'
 import {
   executionIntentIdForDecodedPlan,
   intentIdForPlan,
@@ -54,12 +56,7 @@ import {
   type Position,
 } from './execution/contracts'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
-import {
-  legacyCycleDecisionSchemaVersion,
-  legacyExecutionAuthorityToken,
-  legacyIntentPlanSchemaVersion,
-  legacyObserveAuthorityToken,
-} from './execution/legacy-wire'
+import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
 import {
@@ -91,16 +88,18 @@ import {
 } from './strategy/intraday-momentum/model'
 import {
   defaultIntradayMomentumProtocolDocument,
-  intradayMomentumExecutionModel,
   intradayMomentumSnapshotSymbols,
 } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
+
+export const executionCycleDecisionSchemaVersion = 'bayn.paper-cycle-decision.v2' as const
+export const observeShadowDecisionSchemaVersion = 'bayn.observe-shadow-decision.v2' as const
 
 const ExecutionMarketDataBindingBase = Schema.Union([
   Schema.Struct({
     ...ExecutionMarketDataBindingFields,
     schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v4'),
-    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v2'),
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
     streaming: SimulatedSnapshotEvidenceSchema,
   }),
@@ -363,6 +362,7 @@ export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 
 const DeltaRiskEvaluationSchema = Schema.Struct({
   notionalLimitMicros: PositiveMicrosSchema,
+  limitPriceMicros: PositiveMicrosSchema,
   facts: Schema.optionalKey(
     Schema.Struct({
       state: StateSchema,
@@ -374,7 +374,7 @@ const DeltaRiskEvaluationSchema = Schema.Struct({
 export type DeltaRiskEvaluation = typeof DeltaRiskEvaluationSchema.Type
 
 const ObserveShadowDecisionMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.observe-shadow-decision.v1'),
+  schemaVersion: Schema.Literal(observeShadowDecisionSchemaVersion),
   mode: Schema.Literal(legacyObserveAuthorityToken),
   dispatchable: Schema.Literal(false),
   bindings: ShadowDecisionBindingsSchema,
@@ -417,9 +417,10 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
     const target = targets[index]
     if (target !== undefined) {
       const identity = intentIdForPlan({
-        schemaVersion: legacyIntentPlanSchemaVersion,
+        schemaVersion: intentPlanSchemaVersion,
         ...target,
         notionalLimitMicros: risk.notionalLimitMicros,
+        limitPriceMicros: risk.limitPriceMicros,
       })
       if (Result.isFailure(identity)) {
         issues.push({
@@ -514,7 +515,7 @@ const PersistedIntradaySnapshotRowsSchema = Schema.Struct({
 })
 
 const ExecutionDecisionMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyCycleDecisionSchemaVersion),
+  schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,
@@ -964,12 +965,17 @@ const streamingPricingEvidenceIssues = (
     return [
       { path: ['executionMarketDataRows'], issue: 'streaming execution prices require their reproducible input cut' },
     ]
-  const prices = document.plannerInput?.referencePrices
+  const plannerInput = document.plannerInput
+  const prices = plannerInput?.referencePrices
   const terms =
     document.plannerInput !== undefined && 'executionTerms' in document.plannerInput
       ? document.plannerInput.executionTerms
       : undefined
-  if (prices?.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1' || terms === undefined)
+  if (
+    plannerInput === undefined ||
+    prices?.schemaVersion !== 'bayn.intraday-snapshot-reference-prices.v1' ||
+    terms === undefined
+  )
     return [{ path: ['plannerInput'], issue: 'streaming execution requires quote-bound planner inputs' }]
   for (const symbol of binding.symbols) {
     const quote = snapshot.latestQuotes[symbol]
@@ -984,7 +990,7 @@ const streamingPricingEvidenceIssues = (
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
-    const increment = instrumentMarket(symbol) === MarketKind.Equity ? 1_000_000_000n : 1n
+    const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
     if (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
       prices.askPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, ask, 'UP').toString() ||
@@ -1504,7 +1510,10 @@ const executionMaterialIssues = (
             other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
             other.streaming.regeneratedTechnicalFeaturesRecordedAtMs !==
               binding.streaming.regeneratedTechnicalFeaturesRecordedAtMs ||
-            other.streaming.featureTopic !== binding.streaming.featureTopic ||
+            !Schema.toEquivalence(MarketSourcesSchema)(
+              other.streaming.marketSources,
+              binding.streaming.marketSources,
+            ) ||
             other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
       )
     )
@@ -1763,9 +1772,10 @@ const executionMaterialIssues = (
     const risk = document.deltaRisk[index]
     if (risk === undefined) continue
     const plan = {
-      schemaVersion: legacyIntentPlanSchemaVersion,
+      schemaVersion: intentPlanSchemaVersion,
       ...target,
       notionalLimitMicros: risk.notionalLimitMicros,
+      limitPriceMicros: risk.limitPriceMicros,
       ...(document.replanGenerationHash === undefined ? {} : { replanGenerationHash: document.replanGenerationHash }),
     } as const
     const identity = executionIntentIdForDecodedPlan(plan, document.bindings.authorityGenerationHash)
@@ -1802,7 +1812,6 @@ const executionMaterialIssues = (
               timeInForce: target.timeInForce,
               quantityAtoms: BigInt(target.quantityAtoms),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
-              executionModel: intradayMomentumExecutionModel,
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
             })
       const expectedProposedPositionsHash =
@@ -1837,6 +1846,7 @@ const executionMaterialIssues = (
         pricing === undefined ||
         Result.isFailure(pricing) ||
         risk.notionalLimitMicros !== pricing.success.notionalLimitMicros.toString() ||
+        risk.limitPriceMicros !== pricing.success.expectedExecutionPriceMicros.toString() ||
         facts.state.expectedExecutionPriceMicros !== pricing.success.expectedExecutionPriceMicros.toString() ||
         !proposedPositionsMatch ||
         Result.isFailure(executionIntent) ||
@@ -1904,7 +1914,7 @@ const executionMaterialIssues = (
     const expectedNotional =
       facts === undefined
         ? Result.succeed(BigInt(risk.notionalLimitMicros))
-        : notionalMicros(BigInt(target.quantityAtoms), BigInt(facts.state.expectedExecutionPriceMicros))
+        : ceilDiv(BigInt(target.quantityAtoms) * BigInt(facts.state.expectedExecutionPriceMicros), quantityScale)
     if (Result.isFailure(expectedNotional)) {
       issues.push({
         path: ['deltaRisk', index],

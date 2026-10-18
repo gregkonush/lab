@@ -40,7 +40,7 @@ export {
   buildMutationShadowCycleDecision,
   buildObserveCycleDecision,
   loadObserveRiskPolicy,
-  loadQuoteBoundExecutionRiskPolicy,
+  loadExecutionRiskPolicy,
   prepareObservePlanner,
 } from './observe-composition/decision-builder'
 export type {

@@ -140,7 +140,7 @@ export const sixBarFixture = (
   const source = {
     runId: canonicalHashV1({ fixture: 'six-bar-research', eventsHash }),
     sourceManifestHash: eventsHash,
-    featureTopic: sixBarUniverse.topics.features,
+    marketSources: [sixBarUniverse],
     deliveryModel: {
       schemaVersion: 'bayn.original-capture-arrivals.v1',
       description: 'Synthetic original-format receipts, not a captured market session.',
@@ -184,7 +184,7 @@ export const sixBarFixture = (
 
 export const replaySixBarFixture = (fixture: ReturnType<typeof sixBarFixture>, observedAtMs = sixBarObservedMs) => {
   let cursor: HistoricalMarketCursor = Result.getOrThrow(
-    createHistoricalMarketCursor(fixture.source.runId, fixture.universe, undefined, fixture.source),
+    createHistoricalMarketCursor(fixture.source.runId, [fixture.universe], undefined, fixture.source),
   )
   for (const event of fixture.events) {
     if (event.availableAtMs > observedAtMs) break
