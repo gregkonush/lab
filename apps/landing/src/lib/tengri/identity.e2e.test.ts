@@ -839,10 +839,10 @@ identityTest(
     const page = await context.newPage()
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
-    await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
-        transport: 'internal',
+        transport: 'usb',
         hasResidentKey: true,
         hasUserVerification: true,
         isUserVerified: true,
@@ -890,6 +890,7 @@ identityTest(
     }
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
     )
@@ -1008,11 +1009,29 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
-    await adminCall('', 'PUT', { loginTheme: 'keycloak', sslRequired: 'none' })
+    const webAuthnPolicy = Object.fromEntries(
+      Object.entries(z.record(z.string(), z.unknown()).parse(await (await adminCall('')).json())).filter(
+        ([key]) => key.startsWith('webAuthnPolicy') && !key.startsWith('webAuthnPolicyPasswordless'),
+      ),
+    )
+    await adminCall('', 'PUT', {
+      ...webAuthnPolicy,
+      loginTheme: 'keycloak',
+      sslRequired: 'none',
+      webAuthnPolicyUserVerificationRequirement: 'required',
+    })
+    expect(
+      z.object({ webAuthnPolicyUserVerificationRequirement: z.string() }).parse(await (await adminCall('')).json())
+        .webAuthnPolicyUserVerificationRequirement,
+    ).toBe('required')
     expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
     await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
-    expect(z.object({ loginTheme: z.string() }).parse(await (await adminCall('')).json()).loginTheme).toBe('tengri')
+    expect(await (await adminCall('')).json()).toMatchObject({
+      ...webAuthnPolicy,
+      loginTheme: 'tengri',
+      webAuthnPolicyUserVerificationRequirement: 'discouraged',
+    })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -1365,7 +1384,7 @@ identityTest(
     await secondCdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
-        transport: 'internal',
+        transport: 'usb',
         hasResidentKey: true,
         hasUserVerification: true,
         isUserVerified: true,
