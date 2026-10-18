@@ -126,6 +126,22 @@ export const makeNativeArrivalChunk = (
     const last = records.at(-1)
     if (first === undefined || last === undefined)
       return yield* Result.fail(new NativeArrivalCaptureError({ message: 'Cannot retain an empty arrival chunk' }))
+    let previousAvailableAtMs = first.availableAtMs
+    for (const [index, record] of records.entries()) {
+      if (
+        !Number.isSafeInteger(record.availableAtMs) ||
+        record.availableAtMs < 0 ||
+        record.availableAtMs < previousAvailableAtMs ||
+        !Number.isSafeInteger(record.receipt.consumerSequence) ||
+        record.receipt.consumerSequence < 1 ||
+        record.receipt.consumerSequence !== first.receipt.consumerSequence + index ||
+        record.receipt.sequence !== record.receipt.consumerSequence
+      )
+        return yield* Result.fail(
+          new NativeArrivalCaptureError({ message: 'Native arrival chunk is not an ordered consumer prefix' }),
+        )
+      previousAvailableAtMs = record.availableAtMs
+    }
     const text = records.map((record) => JSON.stringify(record) + '\n').join('')
     const compressed = yield* Result.try({
       try: () => gzipSync(text, { level: 1 }),

@@ -106,19 +106,21 @@ export const makeNativeArrivalJournal = (
         }
       }
     })
+    let reportedFailure = false
     const reportFailure = (cause: NativeArrivalCaptureError) =>
-      Effect.sync(() => fail(cause)).pipe(
+      Effect.sync(() => {
+        fail(cause)
+        reportedFailure = true
+      }).pipe(
         Effect.andThen(Effect.logError('Native market arrival retention is incomplete', cause)),
         Effect.annotateLogs({ captureId: epoch.captureId, consumerEpoch: epoch.bootstrap.epoch }),
       )
-    let reportedFailure = false
     const worker = yield* Effect.forever(
       Queue.take(wake).pipe(
         Effect.andThen(drain),
         Effect.andThen(
           Effect.suspend(() => {
             if (failure === undefined || reportedFailure) return Effect.void
-            reportedFailure = true
             return reportFailure(failure)
           }),
         ),
@@ -132,6 +134,7 @@ export const makeNativeArrivalJournal = (
         yield* Fiber.interrupt(ticker)
         yield* Fiber.interrupt(worker)
         flush()
+        if (failure !== undefined && !reportedFailure) yield* reportFailure(failure)
         yield* drain
         if (state === 'RECORDING') state = 'STOPPED'
         yield* store.end({

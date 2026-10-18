@@ -81,6 +81,31 @@ test('native chunk validation rejects changed bytes, missing deliveries and rewr
   }
 })
 
+test('a clock regression recovered within one chunk cannot be sealed as complete retained evidence', async () => {
+  const inputs = [100, 90, 100].map((availableAtMs, index) => ({ ...observation(index + 1), availableAtMs }))
+  expect(
+    Result.isFailure(
+      makeNativeArrivalChunk(
+        epoch,
+        0,
+        null,
+        inputs.map((input) => nativeArrival(epoch, input)),
+      ),
+    ),
+  ).toBe(true)
+  const { chunks, ends, store } = memoryStore()
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const capture = yield* makeNativeArrivalJournal(epoch, store)
+        for (const input of inputs) yield* capture.observe(input)
+      }),
+    ),
+  )
+  expect(chunks).toHaveLength(0)
+  expect(ends[0]).toMatchObject({ status: 'INCOMPLETE', observedConsumerSequence: 3, durableConsumerSequence: 0 })
+})
+
 const memoryStore = () => {
   const chunks: NativeArrivalChunk[] = []
   const ends: NativeArrivalEnd[] = []
@@ -248,6 +273,13 @@ test('property: original bytes and delivered sequence survive chunking while com
             record: { ...observation(index + 1).record, ...decodeKafkaTransportValue(Buffer.from(value), true, true) },
           }),
         )
+        if (records.length >= 3) {
+          const first = records[0]
+          const second = records[1]
+          if (first === undefined || second === undefined) throw new Error('Missing generated clock boundary')
+          const regressed = [first, { ...second, availableAtMs: first.availableAtMs - 1 }, ...records.slice(2)]
+          expect(Result.isFailure(makeNativeArrivalChunk(epoch, 0, null, regressed))).toBe(true)
+        }
         let previous: string | null = null
         for (let index = 0; index < records.length; index += width) {
           const subset = records.slice(index, index + width)
