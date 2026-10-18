@@ -251,6 +251,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           evidence: { requestId: `replay-${contentHash}`, status: 200, contentHash, observedAt },
         })),
       )
+    const cryptoEnabled = config.assets.some((value) => value.assetClass === AssetClass.Crypto)
     const asset = (symbol: string) =>
       config.assets.find(
         (entry): entry is AssetObservation & { readonly assetClass: AssetClass.UsEquity | AssetClass.Crypto } =>
@@ -502,9 +503,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           positions.reduce((total, position) => total + BigInt(position.marketValueMicros), 0n)
         return yield* evidence(
           {
-            cryptoStatus: null,
+            cryptoStatus: cryptoEnabled ? 'ACTIVE' : null,
             cashReportingQuantumMicros: '1' as const,
-            nonMarginableBuyingPowerMicros: null,
+            nonMarginableBuyingPowerMicros: cryptoEnabled ? current.ledger.cashMicros : null,
 
             id: accountId,
             status: AccountStatus.Active,

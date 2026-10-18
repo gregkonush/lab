@@ -286,14 +286,13 @@ jobs:
 
   build-proompteng:
     needs: changes
-    if: needs.changes.outputs.proompteng == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.proompteng == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
-      pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 

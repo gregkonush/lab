@@ -1,6 +1,12 @@
 import 'server-only'
 
-import type { TengriCodexImage } from './codex-images'
+import {
+  codexImageMatchesMediaType,
+  isCodexAttachmentPath,
+  isWorkspaceImagePath,
+  MAX_CODEX_IMAGE_BYTES,
+  type TengriCodexImage,
+} from './codex-images'
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -46,8 +52,8 @@ import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import type { CodexHistoryPage } from './codex-history'
+import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
-const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
@@ -152,7 +158,7 @@ export async function createAgent(identity: TengriIdentity, displayName: string,
     throw error
   }
   const agent = normalizeAgent(
-    await unary<RawAgent>('createAgent', { displayName, reservationId: operationId }, identity, 35_000),
+    await unary<RawAgent>('createAgent', { displayName, reservationId: operationId }, identity),
   )
   return setRuntime(identity, agent.id, agent.uid, intent, true)
 }
@@ -247,7 +253,7 @@ export async function updatePowerSettings(identity: TengriIdentity, id: string, 
         idleTimeoutMinutes: power.idleTimeoutMinutes,
       },
       identity,
-      DEFAULT_GRPC_DEADLINE_MS,
+      TENGRI_UNARY_TIMEOUT_MS,
       undefined,
       POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS,
     ),
@@ -276,17 +282,36 @@ export async function listFiles(identity: TengriIdentity, agentId: string, fileP
     'listFiles',
     { agentId, path: filePath },
     identity,
-    130_000,
   )
   return { path: stringValue(response.path, '/'), entries: (response.entries ?? []).map(normalizeFileEntry) }
 }
 
 export async function readFile(identity: TengriIdentity, agentId: string, filePath: string) {
+  const { content, ...response } = await readFileBytes(identity, agentId, filePath)
+  return { ...response, content: decodeUtf8File(content) }
+}
+
+export async function readCodexAttachment(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isCodexAttachmentPath(filePath)) throw new TengriUnavailableError('Invalid attachment path', 400)
+  return readWorkspaceImage(identity, agentId, filePath)
+}
+
+export async function readWorkspaceImage(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isWorkspaceImagePath(filePath)) throw new TengriUnavailableError('Invalid image path', 400)
+  const result = await readFileBytes(identity, agentId, filePath)
+  const lowerPath = filePath.toLowerCase()
+  const mediaType = lowerPath.endsWith('.png') ? 'image/png' : lowerPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
+  if (result.content.length > MAX_CODEX_IMAGE_BYTES || !codexImageMatchesMediaType(mediaType, result.content)) {
+    throw new TengriUnavailableError('Invalid image attachment', 415)
+  }
+  return { content: result.content, mediaType }
+}
+
+async function readFileBytes(identity: TengriIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
     identity,
-    130_000,
   )
   const content = response.content ?? new Uint8Array()
   const revision = stringValue(response.revision)
@@ -295,7 +320,7 @@ export async function readFile(identity: TengriIdentity, agentId: string, filePa
   }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(content),
+    content,
     contentType: stringValue(response.contentType, 'application/octet-stream'),
     revision,
   }
@@ -317,7 +342,7 @@ export async function writeFile(
     'writeFile',
     { agentId, path: filePath, content: bytes, expectedRevision },
     identity,
-    130_000,
+    TENGRI_UNARY_TIMEOUT_MS,
     signal,
   )
   if (response.revision !== createHash('sha256').update(bytes).digest('hex')) {
@@ -327,17 +352,15 @@ export async function writeFile(
 }
 
 export async function createDirectory(identity: TengriIdentity, agentId: string, filePath: string) {
-  return normalizeFileEntry(await unary<RawRecord>('createDirectory', { agentId, path: filePath }, identity, 130_000))
+  return normalizeFileEntry(await unary<RawRecord>('createDirectory', { agentId, path: filePath }, identity))
 }
 
 export async function moveFile(identity: TengriIdentity, agentId: string, sourcePath: string, destinationPath: string) {
-  return normalizeFileEntry(
-    await unary<RawRecord>('moveFile', { agentId, sourcePath, destinationPath }, identity, 130_000),
-  )
+  return normalizeFileEntry(await unary<RawRecord>('moveFile', { agentId, sourcePath, destinationPath }, identity))
 }
 
 export async function deleteFile(identity: TengriIdentity, agentId: string, filePath: string, recursive: boolean) {
-  await unary('deleteFile', { agentId, path: filePath, recursive }, identity, 130_000)
+  await unary('deleteFile', { agentId, path: filePath, recursive }, identity)
 }
 
 export async function searchFiles(identity: TengriIdentity, agentId: string, filePath: string, query: string) {
@@ -345,7 +368,6 @@ export async function searchFiles(identity: TengriIdentity, agentId: string, fil
     'searchFiles',
     { agentId, path: filePath, query, limit: 100 },
     identity,
-    130_000,
   )
   return {
     entries: (response.entries ?? []).map(normalizeFileEntry),
@@ -371,7 +393,7 @@ export function normalizeFileEvent(event: RawRecord): TengriFileEvent {
 }
 
 export async function listTerminals(identity: TengriIdentity, agentId: string) {
-  const response = await unary<{ sessions?: RawRecord[] }>('listTerminals', { agentId }, identity, 130_000)
+  const response = await unary<{ sessions?: RawRecord[] }>('listTerminals', { agentId }, identity)
   return (response.sessions ?? []).map(normalizeTerminal)
 }
 
@@ -385,20 +407,38 @@ export async function createTerminal(
   signal?: AbortSignal,
 ) {
   return normalizeTerminal(
-    await unary<RawRecord>('createTerminal', { agentId, creationId, cwd, columns, rows }, identity, 130_000, signal),
+    await unary<RawRecord>(
+      'createTerminal',
+      { agentId, creationId, cwd, columns, rows },
+      identity,
+      TENGRI_UNARY_TIMEOUT_MS,
+      signal,
+    ),
   )
 }
 
-export async function terminateTerminal(identity: TengriIdentity, agentId: string, terminalId: string) {
-  await unary('terminateTerminal', { agentId, terminalId }, identity)
+export async function terminateTerminal(
+  identity: TengriIdentity,
+  agentId: string,
+  terminalId: string,
+  signal?: AbortSignal,
+) {
+  await unary('terminateTerminal', { agentId, terminalId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
 }
 
 export async function issueTerminalTicket(
   identity: TengriIdentity,
   agentId: string,
   terminalId: string,
+  signal?: AbortSignal,
 ): Promise<TengriTerminalTicket> {
-  const response = await unary<RawRecord>('issueTerminalTicket', { agentId, terminalId }, identity)
+  const response = await unary<RawRecord>(
+    'issueTerminalTicket',
+    { agentId, terminalId },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   return {
     websocketUrl: stringValue(response.websocketUrl),
     ticket: stringValue(response.ticket),
@@ -411,7 +451,7 @@ export async function getCodexAccount(
   agentId: string,
   signal?: AbortSignal,
 ): Promise<TengriCodexAccount> {
-  const response = await unary<RawRecord>('getCodexAccount', { agentId }, identity, 130_000, signal)
+  const response = await unary<RawRecord>('getCodexAccount', { agentId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
   return {
     authenticated: Boolean(response.authenticated),
     email: stringValue(response.email),
@@ -425,7 +465,7 @@ export async function getCodexLogin(
   signal?: AbortSignal,
 ): Promise<TengriCodexLogin | null> {
   try {
-    const response = await unary<RawRecord>('getCodexLogin', { agentId }, identity, 130_000, signal)
+    const response = await unary<RawRecord>('getCodexLogin', { agentId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
     return normalizeCodexLogin(response)
   } catch (error) {
     if (error instanceof TengriUnavailableError && error.status === 404) return null
@@ -434,7 +474,7 @@ export async function getCodexLogin(
 }
 
 export async function startCodexLogin(identity: TengriIdentity, agentId: string): Promise<TengriCodexLogin> {
-  const response = await unary<RawRecord>('startCodexLogin', { agentId }, identity, 130_000)
+  const response = await unary<RawRecord>('startCodexLogin', { agentId }, identity)
   return normalizeCodexLogin(response)
 }
 
@@ -453,7 +493,13 @@ export async function listCodexModels(
   cursor?: string,
   signal?: AbortSignal,
 ) {
-  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000, signal)
+  const response = await unary<RawRecord>(
+    'listCodexModels',
+    { agentId, cursor },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   try {
     return parseCodexModelPage(stringValue(response.rawJson))
   } catch {
@@ -466,7 +512,7 @@ export async function createCodexThread(
   agentId: string,
   options: TengriCodexOptions = {},
 ): Promise<TengriCodexThread> {
-  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, identity, 130_000)
+  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, identity)
   return normalizeCodexThread(response)
 }
 
@@ -482,7 +528,7 @@ export async function resumeCodexThread(
     { agentId, threadId, ...options },
     identity,
     NO_PRESERVED_SCALAR_DEFAULTS,
-    130_000,
+    TENGRI_UNARY_TIMEOUT_MS,
   )
   return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
     if (error instanceof TengriUnavailableError)
@@ -561,7 +607,6 @@ export async function sendCodexTurn(
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
       },
       identity,
-      130_000,
     ),
   )
 }
@@ -585,13 +630,28 @@ export async function steerCodexTurn(
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
       },
       identity,
-      130_000,
     ),
   )
 }
 
 export async function interruptCodexTurn(identity: TengriIdentity, agentId: string, threadId: string, turnId: string) {
   await unary('interruptCodexTurn', { agentId, threadId, turnId }, identity)
+}
+
+export async function answerCodexQuestions(
+  identity: TengriIdentity,
+  agentId: string,
+  approvalId: string,
+  response: import('./codex-input').TengriCodexInputResponse,
+) {
+  const { codexInputResponseSchema } = await import('./codex-input')
+  const validated = codexInputResponseSchema.parse(response)
+  await unary<RawRecord>(
+    'resolveCodexApproval',
+    { agentId, approvalId, responseJson: Buffer.from(JSON.stringify(validated)) },
+    identity,
+    130_000,
+  )
 }
 
 export async function resolveCodexApproval(
@@ -622,7 +682,7 @@ export async function issuePreviewSession(
   path: string,
   fragment: string,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, identity, 130_000)
+  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, identity)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -710,7 +770,7 @@ async function unary<Response = RawRecord>(
   methodName: string,
   request: RawRecord,
   identity: TengriIdentity,
-  deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
+  deadlineMs = TENGRI_UNARY_TIMEOUT_MS,
   signal?: AbortSignal,
   preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
 ): Promise<Response> {
@@ -896,6 +956,7 @@ async function metadata(
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
+  context.deadlineUnixMs = BigInt(Date.now() + 4000)
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {
