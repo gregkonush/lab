@@ -542,6 +542,52 @@ identityTest(
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
+    await bffAdmin.query(`
+      CREATE FUNCTION tengri.fixture_oauth_commit_delay() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN PERFORM pg_sleep(2.2); RETURN NULL; END;
+      $$;
+      CREATE CONSTRAINT TRIGGER fixture_oauth_commit_delay
+      AFTER INSERT OR DELETE ON tengri.oauth_attempts DEFERRABLE INITIALLY DEFERRED
+      FOR EACH ROW EXECUTE FUNCTION tengri.fixture_oauth_commit_delay();
+    `)
+    try {
+      const started = performance.now()
+      const response = await authRoute.POST(
+        new Request(`${base}/api/auth/login`, {
+          method: 'POST',
+          headers: { host: new URL(base).host, origin: base, 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(performance.now() - started).toBeGreaterThan(2000)
+      const url = new URL(z.object({ url: z.string().url() }).parse(await response.json()).url)
+      const state = z.string().length(43).parse(url.searchParams.get('state'))
+      const binding = z
+        .string()
+        .length(43)
+        .parse(response.headers.getSetCookie()[0]?.match(/^__Host-tengri-oauth=([^;]+);/)?.[1])
+      const { controlDatabase, hashOpaque } = await import('./control-db')
+      const database = await controlDatabase()
+      const remaining = await bffAdmin.query<{ remaining: string }>(
+        'SELECT expires_at_ms-tengri.now_ms() AS remaining FROM tengri.oauth_attempts WHERE state_hash=$1',
+        [hashOpaque(state)],
+      )
+      expect(Number(remaining.rows[0]?.remaining)).toBeGreaterThan(0)
+      expect(Number(remaining.rows[0]?.remaining)).toBeLessThanOrEqual(300000)
+      const consume = () =>
+        database.query(
+          'DELETE FROM tengri.oauth_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at_ms>tengri.now_ms() RETURNING operation_id',
+          [hashOpaque(state), hashOpaque(binding)],
+        )
+      const consuming = performance.now()
+      expect((await consume()).rowCount).toBe(1)
+      expect(performance.now() - consuming).toBeGreaterThan(2000)
+      expect((await consume()).rowCount).toBe(0)
+    } finally {
+      await bffAdmin.query(
+        'DROP TRIGGER fixture_oauth_commit_delay ON tengri.oauth_attempts; DROP FUNCTION tengri.fixture_oauth_commit_delay()',
+      )
+    }
     const freeCachePort = async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
         const candidate = 10000 + Math.floor(Math.random() * 5000)
