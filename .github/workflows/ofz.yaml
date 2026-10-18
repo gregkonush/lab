@@ -39,7 +39,6 @@ on:
       - '.github/workflows/ofz.yaml'
       - '.github/workflows/product-nix-images.yml'
       - '.github/workflows/tengri-images.yml'
-      - '.github/workflows/tengri-native.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'

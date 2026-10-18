@@ -430,9 +430,10 @@ Pull requests run source, authorization, database, browser, and editor validatio
 and Proompteng release images build only from `main`. PRs do not build unused native image archives or export
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
-Each architecture builds its controller and guest in `tengri-native.yml`, then runs its native tests as soon as those
-two images succeed. AMD64 qualification does not wait for ARM64 builds. Publication still requires both architectures
-and the full controller and guest source validation.
+Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
+native qualification. Guest test binaries stay local to that job. Native qualification does not import or export a
+separate registry cache or wait for the other architecture. Publication still requires both architectures and the full
+controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
@@ -466,10 +467,10 @@ and fixture builds share the Dockerfile's real-source release compilation. A pin
 dependencies independently of application source. The image build runs the controller binary's release unit tests and
 retains the exact native test binary in its build stage. The source validation job owns all-target tests, generated CRD
 checks, database integration, and RPC interoperability. The `kvm-test` target copies the native binary from the same stage;
-the production runtime excludes fixture binaries. Native validation imports the runtime's main-only registry cache,
-so it does not compile Tengri again when the cache is available. Cache exports are best effort;
+the production runtime excludes fixture binaries. Native validation reuses the runtime's local compilation and the
+same source-revision build argument. Cache exports are best effort;
 BuildKit reports export errors without canceling required image publication
-or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
+or native validation.
 
 The fixture uses a private Docker
 network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.

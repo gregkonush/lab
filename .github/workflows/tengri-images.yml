@@ -16,7 +16,6 @@ on:
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
-      - '.github/workflows/tengri-native.yml'
       - 'nix/tengri-schema-hash.py'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -31,7 +30,6 @@ on:
       - '.github/workflows/ofz.yaml'
       - '.github/workflows/product-nix-images.yml'
       - '.github/workflows/tengri-images.yml'
-      - '.github/workflows/tengri-native.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
@@ -207,7 +205,8 @@ jobs:
 
   build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    name: Native (${{ matrix.architecture }})
+    name: Build and validate native (${{ matrix.architecture }})
+    timeout-minutes: 90
     strategy:
       fail-fast: false
       matrix:
@@ -216,11 +215,117 @@ jobs:
             runner: arc-amd64
           - architecture: arm64
             runner: arc-arm64
-    uses: ./.github/workflows/tengri-native.yml
-    with:
-      architecture: ${{ matrix.architecture }}
-      runner: ${{ matrix.runner }}
-      kvm_samples: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Rust for the owning Ofz migrator
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.90.0
+
+      - name: Cache Ofz migrator dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: ofz-native-migrator-${{ matrix.architecture }}
+          workspaces: services/ofz -> target
+
+      - name: Install execution network and fixture build tools
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2 build-essential protobuf-compiler openssl
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+        with:
+          driver-opts: network=host
+
+      - name: Build nanoagent image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          platforms: linux/${{ matrix.architecture }}
+          push: true
+          tags: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
+          provenance: mode=max
+          sbom: true
+
+      - name: Build guest test binaries
+        uses: docker/build-push-action@v6
+        with:
+          context: services/nanoagent
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          platforms: linux/${{ matrix.architecture }}
+          target: kvm-tests
+          outputs: type=local,dest=${{ runner.temp }}/nanoagent-tests
+
+      - name: Pull and verify paired boot artifacts
+        env:
+          ARCHITECTURE: ${{ matrix.architecture }}
+        run: |
+          set -euo pipefail
+          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
+          docker pull "$guest"
+          docker run --rm --read-only --cap-drop ALL \
+            --entrypoint /usr/bin/sha256sum "$guest" --check /guest/SHA256SUMS
+
+      - name: Build tengri image
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          file: services/tengri/Dockerfile
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
+          platforms: linux/${{ matrix.architecture }}
+          push: true
+          tags: ${{ env.TENGRI_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
+          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
+          provenance: mode=max
+          sbom: true
+
+      - name: Build native KVM test harness
+        uses: docker/build-push-action@v6
+        with:
+          context: services/tengri
+          file: services/tengri/Dockerfile
+          build-args: SOURCE_REVISION=${{ github.sha }}
+          target: kvm-test
+          platforms: linux/${{ matrix.architecture }}
+          load: true
+          tags: tengri-kvm-test:validation
+          build-contexts: |
+            ofz-proto=proto
+            ofz-catalog=services/ofz
+            nanoagent-tests=${{ runner.temp }}/nanoagent-tests
+
+      - name: Verify real guest administration and snapshot lifecycle
+        id: kvm
+        env:
+          TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
+          TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
+          TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
+          TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
+          TENGRI_KVM_SECCOMP: ${{ github.workspace }}/.artifacts/runner-seccomp.json
+        run: |
+          mkdir -p .artifacts
+          jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
+            devices/galactic/omni/tengri-runner-${{ matrix.architecture }}.json > "$TENGRI_KVM_SECCOMP"
+          bash services/ofz/test-control.sh kvm
+
+      - name: Retain KVM diagnostics
+        if: always() && steps.kvm.outcome != '' && steps.kvm.outcome != 'skipped'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
+          path: .artifacts/kvm/
+          include-hidden-files: true
+          if-no-files-found: error
+          retention-days: 7
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'

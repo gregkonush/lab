@@ -7,7 +7,6 @@ import YAML from 'yaml'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
-const nativeImagesPath = resolve(repositoryRoot, '.github/workflows/tengri-native.yml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
@@ -30,87 +29,91 @@ describe('Tengri image workflow', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       on: { workflow_dispatch: { inputs: { kvm_samples: { options: string[]; default: string } } } }
       jobs: {
-        build: { with: { kvm_samples: string } }
+        build: { steps: Array<{ name?: string; env?: Record<string, string> }> }
         publish: { needs: string[] }
       }
     }
     const input = workflow.on.workflow_dispatch.inputs.kvm_samples
     expect(input.options).toEqual(['3', '50'])
     expect(input.default).toBe('3')
-    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
-    const test = native.jobs['validate-kvm'].steps.find(
-      (step: { name: string }) => step.name === 'Verify real guest administration and snapshot lifecycle',
+    const test = workflow.jobs.build.steps.find(
+      (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
     )
-    expect(workflow.jobs.build.with.kvm_samples).toBe(
+    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe(
       "${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}",
     )
-    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe('${{ inputs.kvm_samples }}')
     expect(workflow.jobs.publish.needs).toContain('build')
-    expect(native.jobs['validate-kvm'].needs).toBe('build')
   })
 
-  it('builds cohort images only on main and reuses the native harness cache', () => {
+  it('builds and qualifies each architecture on one builder without publishing PR images', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
         {
           if?: string
-          uses?: string
           strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
-          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }>
+          steps: Array<{
+            name?: string
+            uses?: string
+            run?: string
+            with?: Record<string, unknown>
+            'continue-on-error'?: boolean
+          }>
         }
       >
     }
-    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
-    const runtime = native.jobs.build?.steps.find((step: { name: string }) => step.name === 'Build native image')
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     expect(workflow.jobs.build?.if).toBe(releaseOnly)
-    expect(native.jobs.build.if).toBe(`github.repository == 'proompteng/lab' && ${releaseOnly}`)
-    expect(workflow.jobs.build?.uses).toBe('./.github/workflows/tengri-native.yml')
     expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
       { architecture: 'amd64', runner: 'arc-amd64' },
       { architecture: 'arm64', runner: 'arc-arm64' },
     ])
-    expect(native.jobs['validate-kvm']?.needs).toBe('build')
-    expect(native.jobs.build.strategy.matrix.include.map((entry: { service: string }) => entry.service)).toEqual([
-      'tengri',
-      'nanoagent',
-    ])
-    expect(native.jobs.build['runs-on']).toBe('${{ inputs.runner }}')
-    expect(native.jobs['validate-kvm']['runs-on']).toBe('${{ inputs.runner }}')
-    const migratorCache = native.jobs['validate-kvm'].steps.find(
-      (step: { name: string }) => step.name === 'Cache Ofz migrator dependencies',
-    )
-    expect(migratorCache?.uses).toBe('Swatinem/rust-cache@v2')
-    expect(migratorCache?.with?.workspaces).toBe('services/ofz -> target')
-    expect(migratorCache?.with?.['shared-key']).toBe('ofz-native-migrator-${{ inputs.architecture }}')
+    expect(workflow.jobs['validate-kvm']).toBeUndefined()
     expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
     expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
-    expect(runtime?.with?.push).toBe(true)
-    expect(runtime?.with?.load).toBeUndefined()
-    expect(runtime?.with?.['cache-from']).toBe('type=registry,ref=${{ matrix.image }}:cache-${{ inputs.architecture }}')
-    expect(runtime?.with?.['cache-to']).toBe(
-      'type=registry,ref=${{ matrix.image }}:cache-${{ inputs.architecture }},mode=max,ignore-error=true',
+    const steps = workflow.jobs.build.steps
+    expect(steps.filter((step) => step.uses === 'docker/setup-buildx-action@v3')).toHaveLength(1)
+    const guestIndex = steps.findIndex((step) => step.name === 'Build nanoagent image')
+    const controllerIndex = steps.findIndex((step) => step.name === 'Build tengri image')
+    const harnessIndex = steps.findIndex((step) => step.name === 'Build native KVM test harness')
+    const qualificationIndex = steps.findIndex(
+      (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
     )
-    expect(readFileSync(imagesPath, 'utf8')).not.toContain('tengri-kvm-fixture-')
-    expect(native.jobs.build?.steps.map((step: { name: string }) => step.name)).not.toContain(
-      'Build isolated KVM test image',
-    )
-    expect(runtime?.with?.['cache-to']).toContain('mode=max')
-    expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
-    expect(runtime?.['continue-on-error']).not.toBe(true)
-    const harness = native.jobs['validate-kvm']?.steps.find(
-      (step: { name: string }) => step.name === 'Build native KVM test harness',
-    )
-    expect(harness?.with?.['cache-from']).toContain(':cache-kvm-')
-    expect(harness?.with?.['cache-to']).toContain(':cache-kvm-')
-    expect(harness?.with?.['cache-to']).toContain('ignore-error=true')
-    expect(harness?.['continue-on-error']).not.toBe(true)
+    expect(guestIndex).toBeGreaterThanOrEqual(0)
+    expect(controllerIndex).toBeGreaterThan(guestIndex)
+    expect(harnessIndex).toBeGreaterThan(controllerIndex)
+    expect(qualificationIndex).toBeGreaterThan(harnessIndex)
+    for (const [name, image] of [
+      ['tengri', 'TENGRI_IMAGE'],
+      ['nanoagent', 'NANOAGENT_IMAGE'],
+    ]) {
+      const build = steps.find((step) => step.name === `Build ${name} image`)
+      expect(build?.with?.context).toBe(`services/${name}`)
+      expect(build?.with?.push).toBe(true)
+      expect(build?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
+      const cache = 'type=registry,ref=${{ env.' + image + ' }}:cache-${{ matrix.architecture }}'
+      expect(build?.with?.['cache-from']).toBe(cache)
+      expect(build?.with?.['cache-to']).toBe(`${cache},mode=max,ignore-error=true`)
+      expect(build?.['continue-on-error']).not.toBe(true)
+    }
+    const guestTests = steps.find((step) => step.name === 'Build guest test binaries')
+    expect(guestTests?.with?.outputs).toBe('type=local,dest=${{ runner.temp }}/nanoagent-tests')
+    expect(guestTests?.with?.push).toBeUndefined()
+    expect(guestTests?.with?.['cache-to']).toBeUndefined()
+    const harness = steps[harnessIndex]
+    expect(harness?.with?.file).toBe(steps[controllerIndex]?.with?.file)
+    expect(harness?.with?.['build-args']).toBe('SOURCE_REVISION=${{ github.sha }}')
+    expect(harness?.with?.['build-contexts']).toContain('nanoagent-tests=${{ runner.temp }}/nanoagent-tests')
+    expect(harness?.with?.['cache-from']).toBeUndefined()
+    expect(harness?.with?.['cache-to']).toBeUndefined()
     expect(harness?.with?.load).toBe(true)
     expect(harness?.with?.push).not.toBe(true)
-    const pairedBoot = native.jobs['validate-kvm']?.steps.find(
-      (step: { name: string }) => step.name === 'Pull and verify paired boot artifacts',
-    )
+    expect(harness?.['continue-on-error']).not.toBe(true)
+    const migratorCache = steps.find((step) => step.name === 'Cache Ofz migrator dependencies')
+    expect(migratorCache?.uses).toBe('Swatinem/rust-cache@v2')
+    expect(migratorCache?.with?.workspaces).toBe('services/ofz -> target')
+    expect(migratorCache?.with?.['shared-key']).toBe('ofz-native-migrator-${{ matrix.architecture }}')
+    const pairedBoot = steps.find((step) => step.name === 'Pull and verify paired boot artifacts')
     expect(pairedBoot?.run).toContain('docker pull "$guest"')
     expect(pairedBoot?.run).toContain('--check /guest/SHA256SUMS')
 
@@ -121,8 +124,7 @@ describe('Tengri image workflow', () => {
     const products = YAML.parse(
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
-    expect(products.jobs['build-proompteng'].if).toBe(`${releaseOnly} && needs.changes.outputs.proompteng == 'true'`)
-    for (const service of ['app', 'synthesis', 'docs']) {
+    for (const service of ['proompteng', 'app', 'synthesis', 'docs']) {
       expect(products.jobs[`build-${service}`].if).toBe(`${releaseOnly} && needs.changes.outputs.${service} == 'true'`)
       expect(products.jobs[`build-${service}`].with.pr_number).toBeUndefined()
     }
@@ -130,7 +132,7 @@ describe('Tengri image workflow', () => {
   })
 
   it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
-    const workflow = YAML.parse(readFileSync(nativeImagesPath, 'utf8')) as {
+    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }> }>
     }
     const dockerfile = readFileSync(tengriDockerfilePath, 'utf8')
@@ -149,12 +151,9 @@ describe('Tengri image workflow', () => {
     expect(fixture).toContain('COPY --from=build /out-kvm-test /fixture/kvm-test')
     expect(fixture).not.toContain('cargo ')
     expect(existsSync(resolve(repositoryRoot, 'services/tengri/Dockerfile.kvm-test'))).toBe(false)
-    const harness = workflow.jobs['validate-kvm'].steps.find((step) => step.name === 'Build native KVM test harness')
+    const harness = workflow.jobs.build.steps.find((step) => step.name === 'Build native KVM test harness')
     expect(harness?.with?.file).toBe('services/tengri/Dockerfile')
     expect(harness?.with?.target).toBe('kvm-test')
-    expect(harness?.with?.['cache-from']).toContain(
-      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ inputs.architecture }}',
-    )
   })
 
   it.each(['0', '1', '2', 'invalid'])(
@@ -291,11 +290,8 @@ exit 0
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
-    expect(native.jobs.build.strategy.matrix.include.map((entry: { service: string }) => entry.service)).toEqual([
-      'tengri',
-      'nanoagent',
-    ])
+    expect(source).toContain('Build tengri image')
+    expect(source).toContain('Build nanoagent image')
     expect(source).toContain('architecture: amd64')
     expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
@@ -320,7 +316,6 @@ exit 0
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
     expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
-    expect(native.jobs['validate-kvm'].needs).toBe('build')
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
@@ -345,8 +340,6 @@ exit 0
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
     expect(images.jobs?.publish?.needs).toContain('build')
-    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
-    expect(native.jobs['validate-kvm'].needs).toBe('build')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {
