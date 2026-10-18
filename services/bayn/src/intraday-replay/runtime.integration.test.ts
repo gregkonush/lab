@@ -1017,8 +1017,13 @@ durableTest.each(
           if (scenario !== 'no-trade') {
             expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
             expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
-            if (scenario === 'failed-model-response' || scenario === 'no-signal-missing-source') {
+            if (scenario === 'failed-model-response') {
               expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
+              expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
+            }
+            if (scenario === 'no-signal-missing-source') {
+              expect(schedule.readinessCounts[DecisionReadinessReason.SnapshotUnavailable]).toBeGreaterThan(0)
+              expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeUndefined()
               expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
             }
           } else {

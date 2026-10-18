@@ -449,6 +449,12 @@ An insertion failure rolls back both records; concurrent retries reuse the immut
 retain their existing recovery path. This avoids a second finalization transaction on all-excluded observations
 without changing which exclusions can support a no-entry decision.
 
+An on-time, verified all-excluded batch reports `SNAPSHOT_UNAVAILABLE` for missing candidate evidence or
+`SNAPSHOT_STALE` for stale candidate pricing, with the affected symbols in its readiness message. It does not report
+an inference outage when no model request was made. The observation remains unusable: source exclusions do not become
+verified non-signals. Expired or inconsistent batch evidence retains `INFERENCE_UNAVAILABLE`; requested-candidate
+evaluation and all trading, freshness, and accounting checks are unchanged.
+
 Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
 batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
 transaction. Entry results retain every excluded candidate in plan order. Entry batches with multiple requested
