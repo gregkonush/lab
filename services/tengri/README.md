@@ -57,6 +57,9 @@ session, grant, origin, workspace/runtime, action, resource, target and recovery
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
 cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
 Control submissions retain their separate durable audits and session activity updates.
+Conversation history, Codex events and file streams share their workspace admission with the guest connection, so one
+stream submission does not create a second parent audit. Guest sub-operations retain their separate control audits;
+stream disclosure and revocation still check current Ofz policy using the original admission's receipt.
 Controller runtime-state reads and guest health probes use the same bounded receipt cache. Its binding includes the
 current recovery generation, read from Ofz before each lookup. Ofz still checks workload policy and current runtime
 state before and after validating the durable receipt; changing the owner, epoch, membership, archive health or fence
