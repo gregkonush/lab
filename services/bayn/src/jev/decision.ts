@@ -17,7 +17,6 @@ import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
-import { JevEntryEconomicsAssessment } from './entry-economics'
 import { JevCandidatePlanStatus } from './batch'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
@@ -65,9 +64,8 @@ export const decideJevEntry = (input: unknown) =>
     const eligible: { symbol: string; probability: number }[] = []
     for (const { symbol, inference } of inferences) {
       const answer = inference.response.answers['action']
-      const economics = inference.response.answers['net_economics']
       const quote = observation.snapshot.latestQuotes[symbol]
-      if (answer?.type !== 'choice' || economics?.type !== 'choice' || quote === undefined)
+      if (answer?.type !== 'choice' || quote === undefined)
         return yield* unavailable('Jev entry has no typed action or verified quote')
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
@@ -78,13 +76,7 @@ export const decideJevEntry = (input: unknown) =>
           entryEconomics: Schema.Struct({ breakEvenExitBidUsd: Schema.Finite.check(Schema.isGreaterThan(0)) }),
         }),
       )(request?.status === JevCandidatePlanStatus.Requested ? request.request.request.state : undefined)
-      if (
-        answer.choice === 'enter' &&
-        economics.choice === JevEntryEconomicsAssessment.Supported &&
-        fundedEconomics &&
-        quoteEligible
-      )
-        eligible.push({ symbol, probability })
+      if (answer.choice === 'enter' && fundedEconomics && quoteEligible) eligible.push({ symbol, probability })
     }
     eligible.sort(
       (left, right) =>
