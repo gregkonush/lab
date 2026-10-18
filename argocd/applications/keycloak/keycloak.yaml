@@ -191,3 +191,7 @@ spec:
                 path: theme.properties
               - key: webauthnRegister.js
                 path: resources/js/webauthnRegister.js
+              - key: webauthnAuthenticate.js
+                path: resources/js/webauthnAuthenticate.js
+              - key: webauthn-authenticate.ftl
+                path: webauthn-authenticate.ftl

@@ -532,8 +532,16 @@ def validate(targets):
                 "key": "webauthnRegister.js",
                 "path": "resources/js/webauthnRegister.js",
             },
+            {
+                "key": "webauthnAuthenticate.js",
+                "path": "resources/js/webauthnAuthenticate.js",
+            },
+            {
+                "key": "webauthn-authenticate.ftl",
+                "path": "webauthn-authenticate.ftl",
+            },
         ],
-        "keycloak: registration assets must use the paths imported by the built-in template",
+        "keycloak: WebAuthn assets must use the paths imported by the built-in templates",
     )
     theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
     require(
@@ -543,8 +551,14 @@ def validate(targets):
             "webauthnRegister.js": (
                 theme_root / "resources/js/webauthnRegister.js"
             ).read_text(),
+            "webauthnAuthenticate.js": (
+                theme_root / "resources/js/webauthnAuthenticate.js"
+            ).read_text(),
+            "webauthn-authenticate.ftl": (
+                theme_root / "webauthn-authenticate.ftl"
+            ).read_text(),
         },
-        "keycloak: the deployed theme must contain the browser-qualified registration module",
+        "keycloak: the deployed theme must contain the browser-qualified WebAuthn modules",
     )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",

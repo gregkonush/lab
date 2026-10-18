@@ -24,3 +24,5 @@ configMapGenerator:
     files:
       - theme.properties=tengri/theme/login/theme.properties
       - webauthnRegister.js=tengri/theme/login/resources/js/webauthnRegister.js
+      - webauthnAuthenticate.js=tengri/theme/login/resources/js/webauthnAuthenticate.js
+      - webauthn-authenticate.ftl=tengri/theme/login/webauthn-authenticate.ftl
