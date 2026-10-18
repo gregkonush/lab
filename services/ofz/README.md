@@ -55,6 +55,12 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+The server and initial audited transports allow thirty seconds for durable admission. Clients issue 25-second request
+contexts, leaving five seconds of headroom below the server's unchanged thirty-second validation ceiling.
+Ofz still rechecks current authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
+bounded to two seconds. This processing budget does not extend the BFF's five-second signed assertion admission.
+Ofz, Tengri and the BFF export traces in the background with a ten-second network budget. Diagnostic flush failures
+retain their trace and event IDs for collector readback. An unsuccessful flush remains a failed verification.
 
 Repeated controller runtime-state reads and guest health probes may reference their original durable observation
 receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
@@ -152,6 +158,11 @@ hashes and database timestamps. Its immutable key includes the complete payload 
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+
+If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
+the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
+race does not invalidate archive health or terminate the exporter. Missing outbox entries, failed uploads, invalid
+retention, and actual acknowledgement changes still fence access.
 
 Run `bash services/ofz/test-control.sh archive` for the real owner CLI, PostgreSQL and S3 qualification. It uses the
 production credential generator, writer policy and synchronized SQLite/object configuration. It proves initial

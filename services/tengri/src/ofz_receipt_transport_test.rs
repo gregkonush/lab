@@ -3,7 +3,7 @@ use std::{
     convert::Infallible,
     future::Future,
     pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tokio::sync::Mutex;
 
@@ -12,6 +12,8 @@ struct CheckService {
     calls: Arc<Mutex<Vec<CheckRequest>>>,
     allowed: Arc<AtomicBool>,
     concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
+    delay_ms: Arc<AtomicU64>,
+    database_clock_offset_ms: Arc<AtomicU64>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -23,12 +25,20 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
         let service = self.clone();
         Box::pin(async move {
             let request = request.into_inner();
+            let database_now = now_ms()? - service.database_clock_offset_ms.load(Ordering::SeqCst);
+            if request.context.as_ref().unwrap().deadline_unix_ms > database_now + 30_000 {
+                return Err(Status::deadline_exceeded("invalid authorization deadline"));
+            }
             let receipt = if request.stream_receipt_id.is_empty() {
                 uuid::Uuid::new_v4().to_string()
             } else {
                 request.stream_receipt_id.clone()
             };
             service.calls.lock().await.push(request);
+            tokio::time::sleep(Duration::from_millis(
+                service.delay_ms.load(Ordering::SeqCst),
+            ))
+            .await;
             let concurrent = service.concurrent.lock().await.clone();
             if let Some(concurrent) = concurrent {
                 concurrent.wait().await;
@@ -54,6 +64,8 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         calls: Arc::new(Mutex::new(Vec::new())),
         allowed: Arc::new(AtomicBool::new(true)),
         concurrent: Arc::new(Mutex::new(None)),
+        delay_ms: Arc::new(AtomicU64::new(0)),
+        database_clock_offset_ms: Arc::new(AtomicU64::new(0)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -235,5 +247,100 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         "an expired queued request must never reach Ofz"
     );
     drop(guard);
+
+    service
+        .database_clock_offset_ms
+        .store(1000, Ordering::SeqCst);
+
+    // The BFF assertion is checked on controller admission; a durable Ofz audit is
+    // followed by a fresh policy decision, rather than extending that assertion.
+    let mut expired_principal =
+        crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    expired_principal.context.deadline_unix_ms = now_ms().unwrap() - 1;
+    let expired = crate::authz::WorkspaceAuthorization::new(client.clone())
+        .access(
+            &expired_principal,
+            uid,
+            &expired_principal.context.runtime_epoch,
+            "/workspace/expired-audit",
+        )
+        .unwrap();
+    let calls = service.calls.lock().await.len();
+    assert_eq!(
+        expired.require().await.unwrap_err().code(),
+        tonic::Code::DeadlineExceeded
+    );
+    assert_eq!(
+        service.calls.lock().await.len(),
+        calls,
+        "an expired initial submission must not start a durable audit"
+    );
+    let submission = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    let auth = crate::auth::Authenticator::fixture("https://proompteng.ai".into());
+    let path = "/proompteng.runtime.v1.MicroVMControlPlane/ListFiles";
+    let request = crate::auth::signed_fixture_request(
+        crate::grpc::proto::ListFilesRequest {
+            agent_id: "agent-test".into(),
+            path: "/workspace/slow-audit".into(),
+        },
+        &submission,
+        path,
+        auth.audience(),
+    );
+    let principal = auth.authorize(&request, path).await.unwrap();
+    let captured: crate::auth::Principal =
+        serde_json::from_value(serde_json::to_value(&principal).unwrap()).unwrap();
+    tokio::time::sleep(Duration::from_millis(5100)).await;
+    assert!(submission.context.deadline_unix_ms < now_ms().unwrap());
+    assert_eq!(
+        auth.authorize(&request, path).await.unwrap_err().code(),
+        tonic::Code::Unauthenticated,
+        "the original assertion cannot be admitted again after it expires"
+    );
+    let captured_access = crate::authz::WorkspaceAuthorization::new(client.clone())
+        .access(
+            &captured,
+            uid,
+            &captured.context.runtime_epoch,
+            "/workspace/captured-audit",
+        )
+        .unwrap();
+    assert_eq!(
+        captured_access.require().await.unwrap_err().code(),
+        tonic::Code::DeadlineExceeded,
+        "serialized capabilities must not inherit verified RPC admission"
+    );
+    let access = crate::authz::WorkspaceAuthorization::new(client)
+        .access(
+            &principal,
+            uid,
+            &principal.context.runtime_epoch,
+            "/workspace/slow-audit",
+        )
+        .unwrap();
+    service.delay_ms.store(6100, Ordering::SeqCst);
+    access
+        .require()
+        .await
+        .expect("durable audit must outlive a five-second commit stall");
+    let last = service.calls.lock().await.last().cloned().unwrap();
+    assert!(last.context.unwrap().deadline_unix_ms > now_ms().unwrap());
+
+    service.delay_ms.store(0, Ordering::SeqCst);
+    service.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        access.require().await.unwrap_err().code(),
+        tonic::Code::PermissionDenied,
+        "a committed receipt must still check current revocation"
+    );
+
+    service.allowed.store(true, Ordering::SeqCst);
+    service.delay_ms.store(2100, Ordering::SeqCst);
+    let started = tokio::time::Instant::now();
+    assert!(
+        access.require().await.is_err(),
+        "receipt revalidation must retain its two-second deadline"
+    );
+    assert!(started.elapsed() < Duration::from_millis(2100));
     server.abort();
 }
