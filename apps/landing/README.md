@@ -298,7 +298,7 @@ and SpiceDB fixture, migrates the shared runtime database and supplies separate 
 and verifies the pinned upstream release, starts real Nanoagent and Tengri gateway fixtures, and drives the actual workbench
 through Chromium. Set `OFZ_FIXTURE_SSH` to use the authorized remote Docker host for the database. Provisioning and identity
 are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
-Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
+Ports 8080, 13338, 3143, 18082, 18083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 Docker browser fixtures reset their disposable Chromium profile for each run and retain the installed engine cache.

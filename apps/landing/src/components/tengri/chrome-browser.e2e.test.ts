@@ -102,7 +102,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     if (action.action === 'browser-session') {
       if (action.renewal) automaticRenewals++
       const response = await request.get(
-        `http://127.0.0.1:33082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
+        `http://127.0.0.1:18082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
         { timeout: 300_000 },
       )
       expect(response.ok()).toBeTruthy()
@@ -114,10 +114,10 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
         await route.fulfill({ status: 503, json: { error: 'Desktop preview sessions could not be revoked' } })
         return
       }
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke-desktop-previews')
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke', { data: action })
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'list-files') result = { path: action.path, entries: [] }
     else if (action.action === 'codex-account')
