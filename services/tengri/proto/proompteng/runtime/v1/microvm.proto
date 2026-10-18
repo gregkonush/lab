@@ -38,8 +38,8 @@ service MicroVMControlPlane {
   rpc WatchCodexEvents(WatchCodexEventsRequest) returns (stream CodexEvent);
 
   rpc IssuePreviewSession(IssuePreviewSessionRequest) returns (PreviewSession);
-  rpc IssueEditorSession(IssueEditorSessionRequest) returns (PreviewSession);
-  rpc IssueBrowserSession(GetAgentRequest) returns (PreviewSession);
+  rpc IssueEditorSession(IssueDesktopSessionRequest) returns (PreviewSession);
+  rpc IssueBrowserSession(IssueDesktopSessionRequest) returns (PreviewSession);
   rpc RevokeEditorSessions(Empty) returns (Empty);
   rpc RevokePreviewSession(RevokePreviewSessionRequest) returns (Empty);
 }
@@ -57,7 +57,7 @@ message CodexHistoryPage {
   string raw_json = 2;
   uint64 event_sequence = 3;
 }
-message IssueEditorSessionRequest { string agent_id = 1; string window_id = 2; }
+message IssueDesktopSessionRequest { string agent_id = 1; string window_id = 2; bool renewal = 3; }
 
 enum Architecture {
   ARCHITECTURE_UNSPECIFIED = 0;

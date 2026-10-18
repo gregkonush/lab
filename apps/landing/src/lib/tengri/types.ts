@@ -210,7 +210,7 @@ export type TengriAction =
         | 'deny'
     }
   | { action: 'preview-session'; agentId: string; port: number; path: string; fragment: string }
-  | { action: 'editor-session'; agentId: string; windowId: string }
-  | { action: 'browser-session'; agentId: string }
+  | { action: 'editor-session'; agentId: string; windowId: string; renewal: boolean }
+  | { action: 'browser-session'; agentId: string; windowId: string; renewal: boolean }
   | { action: 'revoke-editor-sessions' }
   | { action: 'revoke-preview-session'; agentId: string; sessionId: string; revocationToken: string }

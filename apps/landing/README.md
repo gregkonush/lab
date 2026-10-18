@@ -268,6 +268,11 @@ Editor launches retain the backend's cold-start budget. Completed transient fail
 seconds using the same window identity. Closing the window cancels its pending request through the editor RPC and
 clears its retry timer; authorization denials
 surface immediately, and exhausted retries expose the normal Retry control.
+Code and Chrome renew their 30-minute preview leases halfway through the server-confirmed lifetime. A hidden
+authenticated bootstrap refreshes the HttpOnly cookie on the existing window origin. Code remains mounted with its
+unsaved buffers; Chrome keeps its display, form contents and takeover state. Existing sockets retain fresh Ofz
+checks and the current bound lease. Rotated credentials cannot open new sockets. A renewal failure remains visible and
+retry uses the same origin. Renewal neither launches guest processes nor bypasses a fresh Ofz decision.
 Recoverable drafts from the previous editor remain available as downloads and never overwrite workspace files.
 Sign-out first revokes the user's editor sessions, including those opened in other desktop tabs. If revocation fails,
 the desktop keeps the user signed in and shows the error so they can retry.
@@ -287,6 +292,7 @@ are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CS
 Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
+Docker browser fixtures reset their disposable Chromium profile for each run and retain the installed engine cache.
 The verified release is cached under `node_modules/.cache/tengri-code-server`; `TENGRI_EDITOR_INSTALL_HOME` can select
 an existing installation cache without reusing a test workspace.
 

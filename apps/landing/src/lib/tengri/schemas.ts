@@ -212,9 +212,15 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('editor-session'),
     agentId,
     windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
   }),
   z.strictObject({ action: z.literal('revoke-editor-sessions') }),
-  z.strictObject({ action: z.literal('browser-session'), agentId }),
+  z.strictObject({
+    action: z.literal('browser-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
+  }),
   z.strictObject({
     action: z.literal('revoke-preview-session'),
     agentId,

@@ -43,6 +43,9 @@ and at most one open position. Crypto uses cash buying power, quantity-based LIM
 MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
+Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
+constructing a decision that the durable contract must reject.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
@@ -117,6 +120,11 @@ the recorded enter probability ranks simultaneous eligible enter actions, with s
 retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
 same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
+
+Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
+controller handles without terminating its process. Reports retain typed operation and failure tags while redacting
+exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
+error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
 ## Profitability goal
 
@@ -1404,6 +1412,10 @@ Production execution and simulation use `makeTradingEngine`. The engine construc
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
 or accounting coordinator.
+
+The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
+buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
+and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
 
 `backtest-command.js` runs one or more consecutive exchange-calendar sessions through that engine. One simulated
 broker, account, portfolio, PostgreSQL database, and TigerBeetle ledger span the entire run. Cash, positions, fees,

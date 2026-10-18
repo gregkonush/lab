@@ -68,6 +68,8 @@ export function controlDatabase(): Promise<Pool> {
     '0002_replay_buckets.sql',
     '0003_replay_slots.sql',
     '0004_leadership_window.sql',
+    '0005_capability_slots.sql',
+    '0006_preview_lease_identity.sql',
   ].map((file) =>
     createHash('sha256')
       .update(readFileSync(path.join(migrationDirectory, file)))
