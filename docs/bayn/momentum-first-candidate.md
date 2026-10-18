@@ -13,6 +13,13 @@ use integer price micros and exact rational arithmetic; rounded displayed basis 
 stock return can qualify while SPY is declining. There is no restored 15 bp absolute threshold, 10 bp excess threshold,
 breakout threshold, range-location threshold, new technical indicator, or calibrated profit claim.
 
+For crypto, the candidate endpoint is its fresh executable midpoint; the benchmark endpoint is its last completed
+bar close. Both returns use the first actual minute present in both histories. The immutable query explicitly
+declares required benchmark symbols, including those that are also candidates. Missing required benchmark bars
+or native features make the complete query unavailable before inference. Candidate trade/quote exclusions cannot
+downgrade that requirement. A missing ETH print can exclude ETH as a candidate while BTC still uses valid ETH bars.
+Equities retain the existing executable SPY benchmark contract.
+
 Existing source identity, latest completed minute, freshness, two-sided displayed-size and market-specific entry-spread checks remain.
 The entry spread ceiling is 5 bp for equities and 25 bp for crypto. The complete recorded candidate universe survives as requested candidates or explicit exclusions. Missing,
 future, malformed or stale evidence cannot become a valid non-signal. If every candidate is positively verified but
@@ -36,13 +43,13 @@ never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- The only active protocol is `bayn.jev.protocol.v8`, with `cost-supported-model-action` entry selection and
+- The only active protocol is `bayn.jev.protocol.v9`, with `cost-supported-model-action` entry selection and
   `capital-weighted-session-limit` sizing. Both an enter action and supported net economics are required. Retired protocols and their numeric entry floor are rejected by the runtime
-- The current behavior is `bayn.jev.cost-supported-cash-spot.behavior.v1`. Protocol, behavior, observation, batch v4,
+- The current behavior is `bayn.jev.completed-bar-benchmark.behavior.v1`. Protocol, behavior, observation, batch v4,
   cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles
-- Trading-signal input v7 includes an explicit fee break-even exit bid and a net-economics question. Entry
+- Trading-signal input v8 includes an explicit fee break-even exit bid and a net-economics question. Entry
   pricing retains its fresh-quote lifetime and must stay within the inference-bound price ceiling, in addition to
-  final spread, displayed-size and risk checks. Migration 116 requires flat settled inventory before this cutover
+  final spread, displayed-size and risk checks. Migration 118 requires flat settled inventory before this cutover
 - Keep one durable observation per completed signal minute/purpose/cycle, the existing minute-plus-two-second window,
   pending-batch recovery, ten-second original deadline, at most fifteen eligible concurrent requests, and no queued
   historical catch-up. Every requested result must finish validly before selection. No top-K cutoff is introduced
@@ -60,9 +67,12 @@ Activation pairs `strategy.ts`, the compiled Nix strategy identities, runtime ma
 mandate. It does not add an environment toggle or generic strategy registry. The mandate retains the same sandbox
 account, credentials, exposure/loss limits, protective exits and existing account/day turnover history.
 
-The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v6 policy.
-Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 111 admits the v6 authority
-identity after flat, settled, freshly reconciled cutover. Historical evidence and account/day turnover remain immutable. A new PAPER mandate must bind the published v6 image and strategy.
+Publish the v9 cutover in OBSERVE first. Restore PAPER only with a new same-account mandate bound to the verified
+published v9 strategy and image after native cutover proof.
+
+The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v9 policy.
+Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 118 admits the v9 authority
+identity after flat, settled, freshly reconciled cutover. Historical evidence and account/day turnover remain immutable. A new PAPER mandate must bind the published v9 image and strategy.
 
 PAPER research activation requires an explicit immutable Research mandate, current build/strategy/account/risk bindings,
 and fresh exact, flat sandbox reconciliation. It does not require a previously profitable result. Before making an

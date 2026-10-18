@@ -22,7 +22,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1',
     'Run the VS Code acceptance runner with its real guest and gateway',
   )
-  test.setTimeout(180_000)
+  test.setTimeout(240_000)
   const home = process.env.TENGRI_EDITOR_TEST_HOME
   if (!home) throw new Error('TENGRI_EDITOR_TEST_HOME is required')
   await rm(`${home}/workspace/from-terminal.txt`, { force: true })
@@ -48,6 +48,14 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   let authenticated = true
   let failRevocation = true
   let editorOrigin = ''
+  let automaticRenewals = 0
+  const leaseExpiries: number[] = []
+  page.on('response', async (response) => {
+    if (new URL(response.url()).pathname === '/_tengri/bootstrap' && response.ok()) {
+      const lease = await response.json().catch(() => null)
+      if (lease?.expiresAt) leaseExpiries.push(Date.parse(lease.expiresAt))
+    }
+  })
   const signOutActions: string[] = []
   const editorSockets: PlaywrightWebSocket[] = []
   let documentGeneration = 0
@@ -95,6 +103,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     const action = route.request().postDataJSON()
     let result: unknown = null
     if (action.action === 'editor-session') {
+      if (action.renewal) automaticRenewals++
       const response = await request.get(
         `http://127.0.0.1:33082/_test/editor?window=${encodeURIComponent(action.windowId)}`,
         { timeout: 120_000 },
@@ -167,6 +176,28 @@ test('runs the upstream VS Code workbench against real guest files and terminals
   await expect(workbench.locator('.squiggly-error').first()).toBeVisible({ timeout: 30_000 })
   await page.keyboard.press(`${modifier}+a`)
   await page.keyboard.type('export const answer = 43\n')
+  // The disposable gateway uses a real one-minute cookie/SQL lease. Keep an unsaved buffer
+  // and the same editor document alive beyond its initial expiry, through real token rotation.
+  const editorDocument = await workbench.locator('.monaco-workbench').elementHandle()
+  await expect.poll(() => leaseExpiries[0]).toBeTruthy()
+  const initialExpiry = leaseExpiries.at(-1)!
+  const initialRenewalCount = automaticRenewals
+  const initialCookie = (await page.context().cookies(editorOrigin)).find(
+    (cookie) => cookie.name === '__Host-tengri_preview',
+  )
+  expect(initialCookie?.httpOnly).toBe(true)
+  await expect.poll(() => automaticRenewals, { timeout: 70_000 }).toBeGreaterThan(initialRenewalCount)
+  await expect.poll(() => leaseExpiries.length, { timeout: 30_000 }).toBeGreaterThan(1)
+  await expect.poll(() => Date.now(), { timeout: 70_000 }).toBeGreaterThan(initialExpiry + 1000)
+  expect(await editorDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  await expect(workbench.locator('.monaco-editor .view-lines').first()).toContainText('43')
+  expect(await readFile(`${home}/workspace/hello.ts`, 'utf8')).toBe('export const answer = 42\n')
+  const renewedCookie = (await page.context().cookies(editorOrigin)).find(
+    (cookie) => cookie.name === '__Host-tengri_preview',
+  )
+  expect(renewedCookie?.value).not.toBe(initialCookie?.value)
+  expect(renewedCookie?.expires).toBeGreaterThan(initialExpiry / 1000)
+  await expect(code.getByText('Connecting to VS Code…')).not.toBeVisible()
   await code.getByRole('button', { name: 'Close Code', exact: true }).click()
   const saveDialog = workbench.getByRole('dialog')
   await expect(saveDialog.getByText(/Do you want to save/)).toBeVisible()

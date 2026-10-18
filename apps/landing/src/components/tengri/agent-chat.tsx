@@ -3,6 +3,7 @@
 import { watchTengriEvents } from './event-stream'
 
 import { reportBrowserFailure } from '@/lib/observability/client'
+import { CodexHistoryInterruptedError } from '@/lib/tengri/codex-history'
 
 import {
   Select,
@@ -52,7 +53,11 @@ import {
   upsertStoredConversation,
   type StoredConversation,
 } from './agent-conversation-storage'
+import { CodexQuestionCard } from './codex-question-card'
+import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
+import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
+import { WorkspaceFileLinkProvider } from './workspace-file-link'
 import { CodexCopyButton } from './codex-copy-button'
 import {
   appendCodexEvent,
@@ -79,6 +84,7 @@ import {
   parseCodexEvent,
   reconcileCodexEventsWithRestoredHistory,
   reconcileSubmittedPrompts,
+  retainSubmittedPromptImages,
   type CodexApprovalDecision,
   type CodexBufferedEvent,
   type CodexTranscriptItem,
@@ -107,6 +113,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const retainedEvents = useRef<CodexBufferedEvent[]>([])
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
+  const autoApprovalAttempts = useRef(new Set<string>())
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -144,6 +152,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const restoredHistorySequenceRef = useRef(0)
   const replayRecoveryRef = useRef(false)
   const threadResumeGeneration = useRef(0)
+  const threadStartupController = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const canStartTurn = Boolean(selectedOptions)
@@ -272,6 +281,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEvents([])
     retainedEvents.current = []
     setSubmittedPrompts([])
+    setApprovalMode(readApprovalMode(agentId))
+    autoApprovalAttempts.current.clear()
     draftsRef.current.clear()
     lastScrollTop.current = 0
     setPrompt('')
@@ -331,18 +342,32 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   useEffect(() => {
     if (!account?.authenticated) return
     const controller = new AbortController()
+    let timer = 0
+    let retryDelay = 1_000
     setModels(null)
     setModelError('')
-    void loadCodexModels(agentId, controller.signal)
-      .then((models) => {
-        if (!controller.signal.aborted) setModels(models)
-      })
-      .catch((cause: unknown) => {
+    const load = async () => {
+      try {
+        const models = await loadCodexModels(agentId, controller.signal)
+        if (!controller.signal.aborted) {
+          setModels(models)
+          setModelError('')
+        }
+      } catch (cause: unknown) {
         if (!controller.signal.aborted) {
           setModelError(cause instanceof Error ? cause.message : 'Codex models could not be loaded')
+          if (retryableReadFailure(cause)) {
+            timer = window.setTimeout(() => void load(), retryDelay)
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+          }
         }
-      })
-    return () => controller.abort()
+      }
+    }
+    void load()
+    return () => {
+      controller.abort()
+      window.clearTimeout(timer)
+    }
   }, [account?.authenticated, agentId, modelReload])
 
   useEffect(() => {
@@ -414,37 +439,47 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (!account?.authenticated || !threadId || threadReady || replayRecoveryRef.current || (!models && !modelError))
       return
     const controller = new AbortController()
-    const resumeSequence = lastEventSequence.current
+    threadStartupController.current = controller
+    let timer = 0
+    let retryDelay = 1_000
+    controller.signal.addEventListener('abort', () => window.clearTimeout(timer), { once: true })
     const generation = ++threadResumeGeneration.current
-    void runTengriAction<TengriCodexThread>(
-      { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
-      controller.signal,
-    )
-      .then((thread) => {
-        if (
-          controller.signal.aborted ||
-          !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
-        ) {
-          return
-        }
+    const current = () =>
+      !controller.signal.aborted &&
+      codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
+    const resume = async () => {
+      if (!current()) return
+      const resumeSequence = lastEventSequence.current
+      try {
+        const thread = await runTengriAction<TengriCodexThread>(
+          { action: 'resume-thread', agentId, threadId, ...optionsRef.current },
+          controller.signal,
+        )
+        if (!current()) return
         commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
         setThreadReady(true)
         setError('')
-      })
-      .catch((cause: unknown) => {
-        if (
-          !controller.signal.aborted &&
-          codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
-        ) {
+      } catch (cause: unknown) {
+        if (current()) {
           setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
+          if (retryableReadFailure(cause)) {
+            timer = window.setTimeout(() => void resume(), retryDelay)
+            retryDelay = Math.min(retryDelay * 2, 30_000)
+          }
         }
-      })
-    return () => controller.abort()
+      }
+    }
+    void resume()
+    return () => {
+      controller.abort()
+      if (threadStartupController.current === controller) threadStartupController.current = null
+    }
   }, [account?.authenticated, agentId, commitThreadState, modelError, models, threadId, threadReady])
 
   const recoverThreadState = useCallback(async () => {
     const currentThread = threadIdRef.current
     if (!currentThread || replayRecoveryRef.current) return
+    threadStartupController.current?.abort()
     const recoverySequence = lastEventSequence.current
     replayRecoveryRef.current = true
     const generation = ++threadResumeGeneration.current
@@ -669,7 +704,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         card: update ? (
           renderEvent(update)
         ) : (
-          <CodexEventCard key={`wrap-${threadId}-${item.id}-${item.kind}`} kind={item.kind} text={item.text} />
+          <CodexEventCard
+            key={`wrap-${threadId}-${item.id}-${item.kind}`}
+            agentId={agentId}
+            kind={item.kind}
+            text={item.text}
+          />
         ),
       }
     }),
@@ -682,14 +722,14 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         card: renderEvent(update),
       })),
   ]
-  const {
-    acknowledged,
-    matchedItemIds,
-    pending: pendingPrompts,
-  } = reconcileSubmittedPrompts(
+  const currentSubmissions = submittedPrompts.filter((prompt) => prompt.threadId === threadId)
+  const { pending: pendingPrompts, matches: livePromptMatches } = reconcileSubmittedPrompts(
     transcriptCards,
-    submittedPrompts.filter((prompt) => prompt.threadId === threadId),
+    currentSubmissions,
   )
+  // A live echo can be evicted or excluded by a later snapshot. Retire our accepted
+  // copy only once authoritative history contains it, while suppressing live duplicates.
+  const { acknowledged, matchedItemIds } = reconcileSubmittedPrompts(historyItems, currentSubmissions)
   useEffect(() => {
     if (acknowledged.size) {
       setSubmittedPrompts((current) =>
@@ -706,20 +746,79 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       )
     }
   }, [acknowledged, matchedItemIds, threadId])
+  useEffect(() => {
+    if (
+      !currentSubmissions.some(
+        (prompt) => retainSubmittedPromptImages(prompt, livePromptMatches.get(prompt.id)) !== prompt,
+      )
+    )
+      return
+    setSubmittedPrompts((current) =>
+      current.map((prompt) =>
+        prompt.threadId === threadId ? retainSubmittedPromptImages(prompt, livePromptMatches.get(prompt.id)) : prompt,
+      ),
+    )
+  }, [currentSubmissions, livePromptMatches, threadId])
+  useEffect(() => {
+    if (approvalMode !== 'auto') return
+    const pendingIds = new Set(renderedEvents.map(({ event }) => event.approvalId))
+    for (const id of autoApprovalAttempts.current) if (!pendingIds.has(id)) autoApprovalAttempts.current.delete(id)
+    for (const { event } of renderedEvents) {
+      const decision = automaticApprovalDecision(event)
+      if (
+        !decision ||
+        !event.approvalId ||
+        autoApprovalAttempts.current.has(event.approvalId) ||
+        resolvingApprovals.has(event.approvalId)
+      )
+        continue
+      autoApprovalAttempts.current.add(event.approvalId)
+      void resolveApproval(event, decision)
+    }
+  }, [approvalMode, renderedEvents, resolvingApprovals, resolveApproval])
   for (const { prompt, beforeItemId } of pendingPrompts) {
     const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
       id: prompt.id,
       kind: 'user-message',
       text: prompt.text,
-      card: <CodexEventCard key={prompt.id} kind="user-message" text={prompt.text} />,
+      card: (
+        <CodexEventCard
+          key={prompt.id}
+          agentId={agentId}
+          kind="user-message"
+          text={prompt.text}
+          images={prompt.images}
+        />
+      ),
     })
   }
 
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
+    const question = codexQuestionRequest(event)
+    if (question)
+      return (
+        <CodexQuestionCard
+          key={event.approvalId}
+          agentId={agentId}
+          approvalId={event.approvalId}
+          request={question}
+          onAnswered={() => {
+            retainedEvents.current = retainedEvents.current.filter((item) => item.approvalId !== event.approvalId)
+            setEvents((current) => current.filter((item) => item.approvalId !== event.approvalId))
+          }}
+        />
+      )
+    if (
+      approvalMode === 'auto' &&
+      automaticApprovalDecision(event) &&
+      (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
+    )
+      return null
     return (
       <CodexEventCard
         key={codexEventWrapperKey(event)}
+        agentId={agentId}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
@@ -795,6 +894,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         id: submissionId,
         threadId: threadIdRef.current,
         text: [text, ...inputImages.map(() => '[Image]')].filter(Boolean).join('\n'),
+        images: inputImages,
         previousItemIds,
       },
     ])
@@ -1024,19 +1124,30 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }
 
-  const approvalPending = renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId)
+  const approvalPending = renderedEvents.some(
+    ({ event }) =>
+      event.kind === 'approval' &&
+      event.approvalId &&
+      !(
+        approvalMode === 'auto' &&
+        automaticApprovalDecision(event) &&
+        (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
+      ),
+  )
   const agentStatus =
     eventStreamState === 'reconnecting'
       ? 'Reconnecting'
       : replayRecovering
         ? 'Recovering'
-        : approvalPending
-          ? 'Approval needed'
-          : activeTurnId || submitting
-            ? 'Working'
-            : eventStreamState === 'connecting'
-              ? 'Connecting'
-              : 'Ready'
+        : renderedEvents.some(({ event }) => codexQuestionRequest(event))
+          ? 'Input requested'
+          : approvalPending
+            ? 'Approval needed'
+            : activeTurnId || submitting
+              ? 'Working'
+              : eventStreamState === 'connecting'
+                ? 'Connecting'
+                : 'Ready'
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
@@ -1151,228 +1262,257 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           )}
         </div>
 
-        <div className="relative min-h-0 flex-1">
-          <div
-            ref={conversationRef}
-            data-testid="agent-conversation-scroll"
-            className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
-            onScroll={(event) => {
-              const conversation = event.currentTarget
-              const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
-              if (atBottom) setFollowingConversation(true)
-              else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
-              lastScrollTop.current = conversation.scrollTop
-            }}
-          >
-            {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
-              <EmptyConversation
-                onSelectPrompt={(text) => {
-                  setPrompt(text)
-                  requestAnimationFrame(() => {
-                    const textarea = promptRef.current
-                    textarea?.focus()
-                    textarea?.setSelectionRange(text.length, text.length)
-                  })
-                }}
-              />
-            ) : null}
+        <WorkspaceFileLinkProvider agentId={agentId} conversationId={threadId}>
+          <div className="relative min-h-0 flex-1">
             <div
-              ref={conversationContentRef}
-              className="mx-auto w-full max-w-3xl space-y-4"
-              role="log"
-              aria-label="Conversation"
-              aria-live="polite"
-              aria-relevant="additions text"
-            >
-              {transcriptCards.map((item) => item.card)}
-              {activeTurnId && !approvalPending ? (
-                <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
-                  <span className="tengri-thinking-shimmer inline-block">Thinking</span>
-                </div>
-              ) : null}
-            </div>
-          </div>
-          {!followingConversation ? (
-            <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
-              <button
-                type="button"
-                className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
-                onClick={() => setFollowingConversation(true)}
-              >
-                <ArrowDown className="size-3" aria-hidden="true" />
-                Jump to latest
-              </button>
-            </div>
-          ) : null}
-        </div>
-
-        <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
-          <div className="mx-auto w-full max-w-3xl">
-            {selectionWarning ? (
-              <p role="status" className="mb-2 text-label-12 text-amber-200/80">
-                {selectionWarning}
-              </p>
-            ) : null}
-            <StreamStatus error={errorMessage} state={eventStreamState} />
-            {replayRecovering ? (
-              <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
-                Recovering the active conversation…
-              </p>
-            ) : threadId && !threadReady ? (
-              <div className="mx-auto mb-3 w-full text-label-12">
-                {conversationMissing ? (
-                  <p className="mb-2 text-zinc-400">
-                    This saved conversation is no longer available. Start a new conversation to continue in this
-                    workspace.
-                  </p>
-                ) : null}
-                <div className="flex items-center justify-center gap-3">
-                  <button
-                    type="button"
-                    className="rounded text-blue-400 outline-none hover:text-blue-300 focus-visible:ring-1 focus-visible:ring-blue-400"
-                    onClick={() => void recoverThreadState()}
-                  >
-                    Retry conversation recovery
-                  </button>
-                  {conversationMissing ? (
-                    <button
-                      type="button"
-                      disabled={!canChangeConversation}
-                      className="rounded-md border border-white/[0.08] px-2.5 py-1.5 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35"
-                      onClick={newConversation}
-                    >
-                      Start a new conversation
-                    </button>
-                  ) : null}
-                </div>
-              </div>
-            ) : null}
-            <form
-              aria-label="Message composer"
-              aria-busy={replayRecovering}
-              className="w-full rounded-2xl bg-zinc-900/60 transition-colors focus-within:bg-zinc-900/80 motion-reduce:transition-none"
-              onSubmit={(event) => {
-                event.preventDefault()
-                void send()
+              ref={conversationRef}
+              data-testid="agent-conversation-scroll"
+              className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
+              onScroll={(event) => {
+                const conversation = event.currentTarget
+                const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
+                if (atBottom) setFollowingConversation(true)
+                else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
+                lastScrollTop.current = conversation.scrollTop
               }}
             >
-              <div className="px-3 pt-3 pb-1">
-                <textarea
-                  ref={promptRef}
-                  data-window-default-focus
-                  aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
-                  disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
-                  value={prompt}
-                  onChange={(event) => setPrompt(event.target.value)}
-                  onPaste={(event) => {
-                    const files = Array.from(event.clipboardData.items)
-                      .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
-                      .flatMap((item) => {
-                        const file = item.getAsFile()
-                        return file ? [file] : []
-                      })
-                    if (!files.length) return
-                    event.preventDefault()
-                    const text = event.clipboardData.getData('text/plain')
-                    if (text) {
-                      const start = event.currentTarget.selectionStart
-                      const end = event.currentTarget.selectionEnd
-                      setPrompt((current) => current.slice(0, start) + text + current.slice(end))
-                    }
-                    void pasteImages(files)
+              {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
+                <EmptyConversation
+                  onSelectPrompt={(text) => {
+                    setPrompt(text)
+                    requestAnimationFrame(() => {
+                      const textarea = promptRef.current
+                      textarea?.focus()
+                      textarea?.setSelectionRange(text.length, text.length)
+                    })
                   }}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
-                      event.preventDefault()
-                      void send()
-                    }
-                  }}
-                  rows={1}
-                  placeholder={
-                    replayRecovering
-                      ? 'Recovering conversation…'
-                      : activeTurnId
-                        ? 'Steer the current turn…'
-                        : 'Message your agent…'
-                  }
-                  className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-copy-14 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
                 />
-                {images.length ? (
-                  <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
-                    {images.map((image) => (
-                      <li
-                        key={image.id}
-                        className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-lg bg-white/[0.03] ring-1 ring-white/[0.08]"
-                      >
-                        {image.input ? (
-                          <img
-                            alt={image.name}
-                            src={codexImageUrl(image.input)}
-                            className="h-full w-full object-cover"
-                          />
-                        ) : (
-                          <LoaderCircle
-                            aria-label={`Reading ${image.name}`}
-                            className="size-4 animate-spin text-zinc-500 motion-reduce:animate-none"
-                          />
-                        )}
-                        <button
-                          type="button"
-                          aria-label={`Remove image ${image.name}`}
-                          disabled={submitting}
-                          onClick={() =>
-                            commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))
-                          }
-                          className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-zinc-950/90 text-zinc-200 outline-none ring-1 ring-white/[0.08] transition-colors hover:bg-zinc-800 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
-                        >
-                          <X className="size-3" aria-hidden="true" />
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
+              ) : null}
+              <div
+                ref={conversationContentRef}
+                className="mx-auto w-full max-w-3xl space-y-4"
+                role="log"
+                aria-label="Conversation"
+                aria-live="polite"
+                aria-relevant="additions text"
+              >
+                {transcriptCards.map((item) => item.card)}
+                {activeTurnId && !approvalPending ? (
+                  <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
+                    <span className="tengri-thinking-shimmer inline-block">Thinking</span>
+                  </div>
                 ) : null}
               </div>
-              <div className="flex items-end gap-2 px-2 pt-1 pb-2">
-                <CodexModelPicker
-                  disabled={Boolean(activeTurnId) || submitting || replayRecovering}
-                  error={modelError}
-                  models={models}
-                  onChange={selectOptions}
-                  onRetry={() => setModelReload((version) => version + 1)}
-                  selection={selection}
-                />
+            </div>
+            {!followingConversation ? (
+              <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
                 <button
-                  type={showStopAction ? 'button' : 'submit'}
-                  aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
-                  disabled={
-                    (!showStopAction && !prompt.trim() && !images.length) ||
-                    readingImages ||
-                    submitting ||
-                    interrupting ||
-                    replayRecovering ||
-                    (!activeTurnId && !canStartTurn) ||
-                    Boolean(threadId && !threadReady)
-                  }
-                  onClick={showStopAction ? () => void interruptTurn() : undefined}
-                  className={cn(
-                    'mb-0.5 grid size-7 shrink-0 place-items-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:bg-zinc-800 disabled:text-zinc-500 motion-reduce:transition-none',
-                    showStopAction
-                      ? 'bg-zinc-100 text-zinc-900 hover:bg-white'
-                      : 'bg-zinc-100 text-zinc-900 hover:bg-white',
-                  )}
+                  type="button"
+                  className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                  onClick={() => setFollowingConversation(true)}
                 >
-                  {submitting || interrupting ? (
-                    <LoaderCircle className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
-                  ) : showStopAction ? (
-                    <Square className="h-3 w-3 fill-current" aria-hidden="true" />
-                  ) : (
-                    <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
-                  )}
+                  <ArrowDown className="size-3" aria-hidden="true" />
+                  Jump to latest
                 </button>
               </div>
-            </form>
+            ) : null}
           </div>
-        </div>
+
+          <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
+            <div className="mx-auto w-full max-w-3xl">
+              {selectionWarning ? (
+                <p role="status" className="mb-2 text-label-12 text-amber-200/80">
+                  {selectionWarning}
+                </p>
+              ) : null}
+              <StreamStatus error={errorMessage} state={eventStreamState} />
+              {replayRecovering ? (
+                <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
+                  Recovering the active conversation…
+                </p>
+              ) : threadId && !threadReady ? (
+                <div className="mx-auto mb-3 w-full text-label-12">
+                  {conversationMissing ? (
+                    <p className="mb-2 text-zinc-400">
+                      This saved conversation is no longer available. Start a new conversation to continue in this
+                      workspace.
+                    </p>
+                  ) : null}
+                  <div className="flex items-center justify-center gap-3">
+                    <button
+                      type="button"
+                      className="rounded text-blue-400 outline-none hover:text-blue-300 focus-visible:ring-1 focus-visible:ring-blue-400"
+                      onClick={() => void recoverThreadState()}
+                    >
+                      Retry conversation recovery
+                    </button>
+                    {conversationMissing ? (
+                      <button
+                        type="button"
+                        disabled={!canChangeConversation}
+                        className="rounded-md border border-white/[0.08] px-2.5 py-1.5 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35"
+                        onClick={newConversation}
+                      >
+                        Start a new conversation
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              ) : null}
+              <form
+                aria-label="Message composer"
+                aria-busy={replayRecovering}
+                className="w-full rounded-2xl bg-zinc-900/60 transition-colors focus-within:bg-zinc-900/80 motion-reduce:transition-none"
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  void send()
+                }}
+              >
+                <div className="px-3 pt-3 pb-1">
+                  <textarea
+                    ref={promptRef}
+                    data-window-default-focus
+                    aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
+                    disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
+                    value={prompt}
+                    onChange={(event) => setPrompt(event.target.value)}
+                    onPaste={(event) => {
+                      const files = Array.from(event.clipboardData.items)
+                        .filter((item) => item.kind === 'file' && item.type.startsWith('image/'))
+                        .flatMap((item) => {
+                          const file = item.getAsFile()
+                          return file ? [file] : []
+                        })
+                      if (!files.length) return
+                      event.preventDefault()
+                      const text = event.clipboardData.getData('text/plain')
+                      if (text) {
+                        const start = event.currentTarget.selectionStart
+                        const end = event.currentTarget.selectionEnd
+                        setPrompt((current) => current.slice(0, start) + text + current.slice(end))
+                      }
+                      void pasteImages(files)
+                    }}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) {
+                        event.preventDefault()
+                        void send()
+                      }
+                    }}
+                    rows={1}
+                    placeholder={
+                      replayRecovering
+                        ? 'Recovering conversation…'
+                        : activeTurnId
+                          ? 'Steer the current turn…'
+                          : 'Message your agent…'
+                    }
+                    className="block max-h-40 min-h-12 w-full min-w-0 resize-none bg-transparent py-1 text-copy-14 text-zinc-100 outline-none placeholder:text-zinc-400 disabled:opacity-60"
+                  />
+                  {images.length ? (
+                    <ul aria-label="Image attachments" className="flex flex-wrap gap-2 pt-2 pb-1">
+                      {images.map((image) => (
+                        <li
+                          key={image.id}
+                          className="relative flex h-20 w-24 items-center justify-center overflow-hidden rounded-lg bg-white/[0.03] ring-1 ring-white/[0.08]"
+                        >
+                          {image.input ? (
+                            <img
+                              alt={image.name}
+                              src={codexImageUrl(image.input)}
+                              className="h-full w-full object-cover"
+                            />
+                          ) : (
+                            <LoaderCircle
+                              aria-label={`Reading ${image.name}`}
+                              className="size-4 animate-spin text-zinc-500 motion-reduce:animate-none"
+                            />
+                          )}
+                          <button
+                            type="button"
+                            aria-label={`Remove image ${image.name}`}
+                            disabled={submitting}
+                            onClick={() =>
+                              commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))
+                            }
+                            className="absolute top-1 right-1 grid size-6 place-items-center rounded-full bg-zinc-950/90 text-zinc-200 outline-none ring-1 ring-white/[0.08] transition-colors hover:bg-zinc-800 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                          >
+                            <X className="size-3" aria-hidden="true" />
+                          </button>
+                        </li>
+                      ))}
+                    </ul>
+                  ) : null}
+                </div>
+                <div className="flex items-end gap-2 px-2 pt-1 pb-2">
+                  <Select
+                    value={approvalMode}
+                    onValueChange={(value) => {
+                      const next = value === 'auto' ? 'auto' : 'ask'
+                      autoApprovalAttempts.current.clear()
+                      setApprovalMode(next)
+                      if (!writeApprovalMode(agentId, next))
+                        setSelectionWarning(
+                          'Browser storage is unavailable. Approval mode lasts until this tab closes.',
+                        )
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label="Approvals"
+                      title="Automatically approve command, file and connected-app actions while this chat is open. Questions still need your answer."
+                      className="h-8 w-auto shrink-0 border-transparent bg-transparent px-2 text-label-12 text-zinc-400"
+                    >
+                      <SelectValue>{approvalMode === 'auto' ? 'Auto approve' : 'Ask first'}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent side="top">
+                      <SelectItem value="ask">Ask first</SelectItem>
+                      <SelectItem value="auto">Auto approve</SelectItem>
+                    </SelectContent>
+                  </Select>
+                  <CodexModelPicker
+                    disabled={Boolean(activeTurnId) || submitting || replayRecovering}
+                    error={modelError}
+                    models={models}
+                    onChange={selectOptions}
+                    onRetry={() => setModelReload((version) => version + 1)}
+                    selection={selection}
+                  />
+                  <button
+                    type={showStopAction ? 'button' : 'submit'}
+                    aria-label={showStopAction ? 'Stop response' : activeTurnId ? 'Steer turn' : 'Send message'}
+                    disabled={
+                      (!showStopAction && !prompt.trim() && !images.length) ||
+                      readingImages ||
+                      submitting ||
+                      interrupting ||
+                      replayRecovering ||
+                      (!activeTurnId && !canStartTurn) ||
+                      Boolean(threadId && !threadReady)
+                    }
+                    onClick={showStopAction ? () => void interruptTurn() : undefined}
+                    className={cn(
+                      'mb-0.5 grid size-7 shrink-0 place-items-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:bg-zinc-800 disabled:text-zinc-500 motion-reduce:transition-none',
+                      showStopAction
+                        ? 'bg-zinc-100 text-zinc-900 hover:bg-white'
+                        : 'bg-zinc-100 text-zinc-900 hover:bg-white',
+                    )}
+                  >
+                    {submitting || interrupting ? (
+                      <LoaderCircle
+                        className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
+                        aria-hidden="true"
+                      />
+                    ) : showStopAction ? (
+                      <Square className="h-3 w-3 fill-current" aria-hidden="true" />
+                    ) : (
+                      <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
+                    )}
+                  </button>
+                </div>
+              </form>
+            </div>
+          </div>
+        </WorkspaceFileLinkProvider>
       </div>
     </div>
   )
@@ -1766,6 +1906,18 @@ function codexEventWrapperKey(event: TengriCodexEvent) {
 function titleFromTranscript(items: readonly CodexTranscriptItem[]) {
   const firstUser = items.find((item) => item.kind === 'user-message' && item.text.trim())
   return firstUser ? truncateConversationTitle(firstUser.text) : ''
+}
+
+function retryableReadFailure(cause: unknown) {
+  return (
+    cause instanceof CodexHistoryInterruptedError ||
+    cause instanceof TypeError ||
+    (cause instanceof DOMException && cause.name === 'AbortError') ||
+    (cause instanceof TengriRequestError &&
+      cause.code !== 'model_catalog_invalid' &&
+      cause.code !== 'conversation_history_invalid' &&
+      (cause.status === 408 || cause.status === 429 || cause.status >= 500))
+  )
 }
 
 function safeVerificationUrl(value: string) {

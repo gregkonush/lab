@@ -112,6 +112,12 @@ const submit = (broker: Broker, order: Intent) =>
 const run = <A, E>(program: Effect.Effect<A, E, Scope.Scope>) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(TestClock.layer())))
 
+test('an equity-only replay account leaves crypto eligibility unknown', async () => {
+  const account = await run(setup().pipe(Effect.flatMap((broker) => broker.read.account)))
+  expect(account.value.cryptoStatus).toBeNull()
+  expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
+})
+
 test('canceled IOC retains the actual arrival quote, modeled price and reason in its durable checkpoint', async () => {
   const checkpoint = await run(
     Effect.gen(function* () {
@@ -1326,6 +1332,9 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
             ),
         }
         const broker = yield* makeReplayBroker(frozen)
+        const openingAccount = (yield* broker.read.account).value
+        expect(openingAccount.cryptoStatus).toBe('ACTIVE')
+        expect(openingAccount.nonMarginableBuyingPowerMicros).toBe(config.openingCashMicros)
         yield* submit(
           broker,
           intent({
@@ -1341,6 +1350,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(held.state.orders[0]?.order.assetClass).toBe(AssetClass.Crypto)
         expect(held.state.fees[0]?.netAmountMicros).toBe('0')
         expect(held.state.fees[0]?.coinDebit?.quantityAtoms).toBe('82625')
+        expect((yield* broker.read.account).value.nonMarginableBuyingPowerMicros).toBe(held.state.ledger.cashMicros)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(held, frozen)).state.ledger).toEqual(held.state.ledger)
         const restored = yield* makeReplayBroker({
           ...frozen,
@@ -1367,6 +1377,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.GoodUntilCanceled)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.ledger).toEqual(flat.state.ledger)
         expect(flat.state.fees[1]?.cryptoCashFee).toBe(true)
+        expect((yield* restored.read.account).value.nonMarginableBuyingPowerMicros).toBe(flat.state.ledger.cashMicros)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.fees).toEqual(flat.state.fees)
         const { checkpointHash: _hash, ...material } = flat
         const oldMaterial = {

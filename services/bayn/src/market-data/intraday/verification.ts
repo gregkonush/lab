@@ -27,6 +27,8 @@ import type {
   IntradayTrade,
 } from './model'
 import {
+  IntradayBenchmarkEvidencePolicy,
+  usesCompletedBarBenchmark,
   IntradayCandidateEvidencePolicy,
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
@@ -103,6 +105,8 @@ const ReplaySnapshotEnvelopeSchema = Schema.Struct({
     symbols: Schema.Array(Schema.String),
     candidateSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
     candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
+    benchmarkEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayBenchmarkEvidencePolicy)),
+    benchmarkSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
     candidateExclusions: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
@@ -324,6 +328,25 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'candidate evidence policy requires an independent decision query'))
   }
+  if (
+    request.benchmarkEvidencePolicy !== undefined &&
+    (request.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
+      request.feed !== 'us' ||
+      request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+      request.purpose !== undefined)
+  )
+    return Result.fail(failure('request', 'completed-bar benchmarks require an independent crypto decision query'))
+  if (request.benchmarkSymbols !== undefined || request.benchmarkEvidencePolicy !== undefined) {
+    const benchmarks = request.benchmarkSymbols ?? []
+    const canonical = [...new Set(benchmarks)].sort()
+    if (
+      request.benchmarkEvidencePolicy === undefined ||
+      canonical.length === 0 ||
+      canonical.length !== benchmarks.length ||
+      canonical.some((symbol, index) => symbol !== benchmarks[index] || !requestedSymbols.includes(symbol))
+    )
+      return Result.fail(failure('request', 'completed-bar benchmarks require an explicit canonical symbol subset'))
+  }
   if (request.candidateSymbols !== undefined) {
     const canonicalCandidates = [...new Set(request.candidateSymbols)].sort()
     if (
@@ -375,6 +398,9 @@ export const verifyIntradaySnapshotQuery = (
       ...(verified.candidateSymbols === undefined
         ? {}
         : { candidateSymbols: Object.freeze([...verified.candidateSymbols]) }),
+      ...(verified.benchmarkSymbols === undefined
+        ? {}
+        : { benchmarkSymbols: Object.freeze([...verified.benchmarkSymbols]) }),
       sourceTopics: Object.freeze({ ...verified.sourceTopics }),
     }),
   )
@@ -473,6 +499,9 @@ export const verifyIntradaySnapshotRequest = (
       ...(request.candidateSymbols === undefined
         ? {}
         : { candidateSymbols: Object.freeze([...request.candidateSymbols]) }),
+      ...(request.benchmarkSymbols === undefined
+        ? {}
+        : { benchmarkSymbols: Object.freeze([...request.benchmarkSymbols]) }),
       sourceTopics: Object.freeze({ ...request.sourceTopics }),
       archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
     })
@@ -842,12 +871,20 @@ export const latestQuotes = (
   const minimumDelay = millisecondsAsNanos(expectedDelayMs) - BigInt(clockSkewMs) * 1_000_000n
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs + clockSkewMs)
   for (const symbol of intradaySnapshotSymbols(request)) {
+    if (usesCompletedBarBenchmark(request, symbol)) continue
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
+    const quoteAge = quote === undefined ? undefined : intradayAgeNanos(request.observedAt, quote.eventAt)
+    const freshPricingQuote =
+      request.purpose !== undefined &&
+      quoteAge !== undefined &&
+      quoteAge >= 0n &&
+      quoteAge <= millisecondsAsNanos(request.maximumQuoteAgeMs)
     if (
       quote === undefined ||
       (!usesWindowTradeEvidence(request, symbol) &&
-        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
+        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) &&
+        !freshPricingQuote)
     ) {
       return Result.fail(
         failure(
@@ -994,13 +1031,15 @@ export const candidateAvailability = (
       const symbolRequest = { ...request, symbols: [symbol] }
       const symbolQuotes = quotes.filter((quote) => quote.symbol === symbol)
       const symbolTrades = trades.filter((trade) => trade.symbol === symbol)
-      const available = Result.flatMap(
-        validateBarCoverage(
-          symbolRequest,
-          bars.filter((bar) => bar.symbol === symbol),
-          clockSkewMs,
-        ),
-        () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
+      const coverage = validateBarCoverage(
+        symbolRequest,
+        bars.filter((bar) => bar.symbol === symbol),
+        clockSkewMs,
+      )
+      if (request.benchmarkSymbols?.includes(symbol) === true && Result.isFailure(coverage))
+        return yield* Result.fail(coverage.failure)
+      const available = Result.flatMap(coverage, () =>
+        latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )
       if (Result.isSuccess(available)) {
         if (!candidates.has(symbol)) continue
@@ -1142,6 +1181,10 @@ export const verifyIntradaySnapshot = (
       ...(verifiedRequest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: verifiedRequest.candidateEvidencePolicy }),
+      ...(verifiedRequest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: verifiedRequest.benchmarkEvidencePolicy }),
+      ...(verifiedRequest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: verifiedRequest.benchmarkSymbols }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,
@@ -1318,6 +1361,10 @@ export const reverifyIntradayMarketSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
       archiveWatermarks: manifest.archiveWatermarks,
     }
     const verified = yield* verifyIntradaySnapshot(request, {
