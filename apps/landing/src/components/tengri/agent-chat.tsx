@@ -1460,13 +1460,23 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     <SelectTrigger
                       aria-label="Approvals"
                       title="Automatically approve command, file and connected-app actions while this chat is open. Questions still need your answer."
-                      className="h-8 w-auto shrink-0 border-transparent bg-transparent px-2 text-label-12 text-zinc-400"
+                      className={cn(composerSelectTriggerClass, 'mb-0.5 shrink-0')}
                     >
                       <SelectValue>{approvalMode === 'auto' ? 'Auto approve' : 'Ask first'}</SelectValue>
                     </SelectTrigger>
-                    <SelectContent side="top">
-                      <SelectItem value="ask">Ask first</SelectItem>
-                      <SelectItem value="auto">Auto approve</SelectItem>
+                    <SelectContent
+                      side="top"
+                      align="start"
+                      sideOffset={8}
+                      alignItemWithTrigger={false}
+                      className={cn(composerSelectMenuClass, 'w-48')}
+                    >
+                      <SelectItem value="ask" className={composerSelectItemClass}>
+                        Ask first
+                      </SelectItem>
+                      <SelectItem value="auto" className={composerSelectItemClass}>
+                        Auto approve
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <CodexModelPicker
@@ -1647,6 +1657,13 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
   )
 }
 
+const composerSelectTriggerClass =
+  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+const composerSelectMenuClass =
+  'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
+const composerSelectItemClass =
+  'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+
 function CodexModelPicker({
   disabled,
   error,
@@ -1664,18 +1681,7 @@ function CodexModelPicker({
 }) {
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
-  const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
-  const menuClass =
-    'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
-  const itemClass =
-    'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
-  const reasoningLabel =
-    selection.reasoningEffort === 'default'
-      ? model
-        ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})`
-        : 'Default'
-      : `${codexReasoningLabels[selection.reasoningEffort]}${model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? '' : ' (unavailable)'}`
+  const reasoningLabel = `${codexReasoningLabels[selection.reasoningEffort]}${model && !model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? ' (unavailable)' : ''}`
   return (
     <div className="min-w-0 flex-1 space-y-1">
       <div className="flex flex-wrap items-center justify-end gap-0.5 rounded-lg p-0.5">
@@ -1684,18 +1690,18 @@ function CodexModelPicker({
           onValueChange={(value) => {
             const next = models?.find((model) => model.model === value)
             if (!next) return
-            const reasoningEffort =
-              selection.reasoningEffort === 'default' ||
-              next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
-                ? selection.reasoningEffort
-                : 'default'
+            const reasoningEffort = next.supportedReasoningEfforts.some(
+              (effort) => effort.reasoningEffort === selection.reasoningEffort,
+            )
+              ? selection.reasoningEffort
+              : next.defaultReasoningEffort
             onChange({ model: next.model, reasoningEffort })
           }}
           value={selection.model}
         >
           <SelectTrigger
             aria-label="Model"
-            className={triggerClass}
+            className={composerSelectTriggerClass}
             title={
               disabled
                 ? 'Model settings are available when the response and conversation recovery finish.'
@@ -1707,11 +1713,22 @@ function CodexModelPicker({
                 (models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…')}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
+          <SelectContent
+            side="top"
+            align="end"
+            sideOffset={8}
+            alignItemWithTrigger={false}
+            className={composerSelectMenuClass}
+          >
             <SelectGroup>
               <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Model</SelectLabel>
               {models?.map((model) => (
-                <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
+                <SelectItem
+                  key={model.model}
+                  value={model.model}
+                  className={composerSelectItemClass}
+                  title={model.description}
+                >
                   {model.displayName}
                 </SelectItem>
               ))}
@@ -1727,7 +1744,7 @@ function CodexModelPicker({
         >
           <SelectTrigger
             aria-label="Reasoning effort"
-            className={triggerClass}
+            className={composerSelectTriggerClass}
             title={
               disabled
                 ? 'Reasoning settings are available when the response and conversation recovery finish.'
@@ -1741,18 +1758,15 @@ function CodexModelPicker({
             align="end"
             sideOffset={8}
             alignItemWithTrigger={false}
-            className={`${menuClass} w-60`}
+            className={`${composerSelectMenuClass} w-60`}
           >
             <SelectGroup>
               <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Reasoning effort</SelectLabel>
-              <SelectItem value="default" className={itemClass}>
-                {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
-              </SelectItem>
               {model?.supportedReasoningEfforts.map((effort) => (
                 <SelectItem
                   key={effort.reasoningEffort}
                   value={effort.reasoningEffort}
-                  className={itemClass}
+                  className={composerSelectItemClass}
                   title={effort.description}
                 >
                   {codexReasoningLabels[effort.reasoningEffort]}

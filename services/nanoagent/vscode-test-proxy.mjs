@@ -5,8 +5,8 @@ import { readFileSync } from 'node:fs'
 const [certificate, key] = process.argv.slice(2)
 const targetPort = (host) => {
   if (host === 'desktop.tengri.localhost:3443') return 3143
-  if (host === 'gateway.tengri.localhost:3443') return 33082
-  if (/^tengri-[a-z0-9]{24}\.tengri\.localhost:3443$/.test(host ?? '')) return 33083
+  if (host === 'gateway.tengri.localhost:3443') return 18082
+  if (/^tengri-[a-z0-9]{24}\.tengri\.localhost:3443$/.test(host ?? '')) return 18083
   return null
 }
 const options = (request, port) => ({

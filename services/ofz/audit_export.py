@@ -27,6 +27,7 @@ BUCKET = "ofz-audit"
 ENDPOINT = "nuc.ide-newton.ts.net:9444"
 MAX_BATCH_BYTES = 4 * 1024 * 1024
 RETENTION_DAYS = 90
+IDLE_HEARTBEAT_MS = 10_000
 EXPORT_LOCK = 726635522919
 PENDING_AUDIT_QUERY = """
     WITH candidates AS MATERIALIZED (
@@ -220,7 +221,8 @@ class Exporter:
         except Exception:
             try:
                 self.database.execute(
-                    "UPDATE ofz.archive_state SET acknowledged_at_ms=0"
+                    "UPDATE ofz.archive_state SET acknowledged_at_ms=0 "
+                    "WHERE acknowledged_at_ms<>0"
                 )
             except psycopg.Error as failure:
                 print(
@@ -253,8 +255,9 @@ class Exporter:
                 self.verify_object(Receipt.decode(previous["archive_receipt"]))
             self.database.execute(
                 "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms() "
-                "WHERE acknowledged_sequence=%s",
-                (state["acknowledged_sequence"],),
+                "WHERE acknowledged_sequence=%s AND "
+                "(acknowledged_at_ms<=ofz.now_ms()-%s OR acknowledged_at_ms>ofz.now_ms())",
+                (state["acknowledged_sequence"], IDLE_HEARTBEAT_MS),
             )
             return 0
         if any(not row.pop("has_outbox") for row in rows):

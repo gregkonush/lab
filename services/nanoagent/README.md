@@ -42,6 +42,10 @@ within one second. The shell and PTY survive in the snapshot; restore does not f
 Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
 a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
+The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
+backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
+failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -62,7 +66,13 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 5. API version 5
+requires canonical `/workspace` paths for file operations, file events, and terminal working directories. The BFF
+requires that version in the controller's existing authenticated audience response before signing a request. The signed
+target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
+directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
+are rejected. The request-signature contract remains version 4. Old guests fail the identity check before file
+operations and need a fenced cold replacement on their existing retained home. Guest control is
 gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
 HTTP discovery, negotiation, or fallback. Controller and guest artifacts must come from the same validated release.
 

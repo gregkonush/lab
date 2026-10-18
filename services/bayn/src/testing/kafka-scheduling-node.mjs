@@ -2,6 +2,9 @@ import assert from 'node:assert/strict'
 import { Cause, Effect, Exit, Logger, Redacted, Result } from 'effect'
 import { KafkaBootstrapTimestampPolicy } from '../market-data/streaming/bootstrap.ts'
 import { makeKafkaMarketProjection } from '../market-data/streaming/kafka.ts'
+import { decodeNativeArrivalChunk, nativeArrivalCaptureId } from '../market-data/streaming/native-arrival.ts'
+import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal.ts'
+import { sha256 } from '../hash.ts'
 
 const mode = process.argv[2]
 assert.ok(['drain', 'invalidate', 'interrupt'].includes(mode))
@@ -27,6 +30,17 @@ let closed = false
 let closeCount = 0
 let notifyInvalidation
 let immediate
+let retained = 0
+let retainedHash = null
+let captureEnd
+const captureBuild = {
+  sourceRevision: '1'.repeat(40),
+  imageRepository: 'example.test/bayn',
+  imageDigest: 'sha256:' + '2'.repeat(64),
+  strategyBehaviorHash: '3'.repeat(64),
+  strategyParameterHash: '4'.repeat(64),
+  verification: 'development-configured',
+}
 const nextTurn = () => {
   turns.push(consumed)
   if (mode === 'interrupt') abort.abort()
@@ -52,6 +66,19 @@ const transport = {
           if (consumed === 0) immediate = setImmediate(nextTurn)
           const offset = String(consumed++)
           const at = new Date(Date.parse('2026-09-24T14:00:00Z') + consumed).toISOString()
+          const value = JSON.stringify({
+            provider: 'alpaca',
+            feed: 'iex',
+            delayClass: 'real_time_exchange_only',
+            marketSession: 'regular',
+            channel: 'quotes',
+            symbol: 'AAPL',
+            eventTs: at,
+            ingestTs: at,
+            version: 2,
+            payload: { bp: 200, bs: 100, ap: 200.01, as: 100, t: at },
+          })
+          const rawValue = Buffer.from(value)
           return {
             done: false,
             value: {
@@ -60,18 +87,10 @@ const transport = {
               offset,
               timestampMs: Date.parse(at),
               leaderEpoch: 0,
-              value: JSON.stringify({
-                provider: 'alpaca',
-                feed: 'iex',
-                delayClass: 'real_time_exchange_only',
-                marketSession: 'regular',
-                channel: 'quotes',
-                symbol: 'AAPL',
-                eventTs: at,
-                ingestTs: at,
-                version: 2,
-                payload: { bp: 200, bs: 100, ap: 200.01, as: 100, t: at },
-              }),
+              value,
+              rawValue,
+              rawValueSha256: sha256(rawValue),
+              rawByteLength: rawValue.byteLength,
             },
           }
         },
@@ -101,6 +120,38 @@ const exit = await Effect.runPromiseExit(
         },
         [universe],
         () => transport,
+        undefined,
+        (bootstrap, sources) =>
+          makeNativeArrivalJournal(
+            {
+              schemaVersion: 'bayn.native-arrival-epoch.v1',
+              captureId: Result.getOrThrow(nativeArrivalCaptureId(captureBuild, bootstrap, sources)),
+              build: captureBuild,
+              bootstrap,
+              sources,
+            },
+            {
+              begin: () => Effect.void,
+              append: (chunks) =>
+                Effect.sleep('2 millis').pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      for (const chunk of chunks) {
+                        const records = Result.getOrThrow(decodeNativeArrivalChunk(chunk))
+                        assert.equal(chunk.header.previousHash, retainedHash)
+                        assert.equal(chunk.header.firstConsumerSequence, retained + 1)
+                        retained += records.length
+                        retainedHash = chunk.contentHash
+                      }
+                    }),
+                  ),
+                ),
+              end: (end) =>
+                Effect.sync(() => {
+                  captureEnd = end
+                }),
+            },
+          ),
       )
       yield* Effect.promise(() => done.promise)
       if (mode === 'interrupt') yield* Effect.never
@@ -113,6 +164,11 @@ const exit = await Effect.runPromiseExit(
   { signal: abort.signal },
 )
 assert.equal(closeCount, 1)
+assert.equal(captureEnd?.status, 'STOPPED')
+assert.equal(captureEnd?.durableConsumerSequence, retained)
+assert.equal(captureEnd?.observedConsumerSequence, retained)
+assert.equal(captureEnd?.lastChunkHash, retainedHash)
+assert.ok(retained > 0 && retained <= consumed)
 assert.ok(turns.length > 0, 'Node I/O never ran while draining the ready backlog')
 assert.ok(turns[0] < total, 'Node I/O was starved until the entire backlog drained')
 if (mode === 'interrupt') {
@@ -121,6 +177,7 @@ if (mode === 'interrupt') {
 } else {
   assert.ok(Exit.isSuccess(exit))
   assert.equal(consumed, total)
+  assert.equal(retained, total)
   if (mode === 'drain') {
     assert.ok(Result.isSuccess(exit.value.read))
     assert.equal(exit.value.read.success.projection.rejections.size, 0)

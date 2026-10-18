@@ -30,7 +30,7 @@ import { makeJevTradingSignalBatch, reproduceJevTradingSignalBatch } from './tra
 const fixture = (
   premiums: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   purpose = JevPurpose.Entry,
-  unavailableSource = false,
+  unavailableSource: boolean | 'missing-trade' = false,
 ) => {
   const base = nativeJevFixture(purpose)
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
@@ -39,11 +39,13 @@ const fixture = (
   const { snapshot } = streamingFixtureFromRaw(
     {
       ...raw,
-      quotes: unavailableSource
-        ? raw.quotes.map((quote) =>
-            quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
-          )
-        : raw.quotes,
+      quotes:
+        unavailableSource === true
+          ? raw.quotes.map((quote) =>
+              quote.symbol === 'AMD' ? { ...quote, eventAt: staleAt, ingestedAt: staleAt } : quote,
+            )
+          : raw.quotes,
+      trades: unavailableSource === 'missing-trade' ? raw.trades.filter((trade) => trade.symbol !== 'AMD') : raw.trades,
     },
     base.query,
   )
@@ -157,10 +159,23 @@ describe('momentum-first Jev admission', () => {
     expect(Result.isFailure(decideJevEntry({ ...common, decidedAt: f.plan.expiresAt }))).toBe(true)
   })
 
-  test.each([false, true])(
-    'zero-call runtime distinguishes verified non-signals from unavailable source: %s',
-    async (unavailableSource) => {
+  test.each([
+    [false, 0, null, 'valid'],
+    [true, 0, 'SNAPSHOT_STALE', 'valid'],
+    ['missing-trade', 0, 'SNAPSHOT_UNAVAILABLE', 'valid'],
+    [true, 10_000, 'INFERENCE_UNAVAILABLE', 'valid'],
+    [false, 10_000, 'INFERENCE_UNAVAILABLE', 'valid'],
+    [true, 0, 'INFERENCE_UNAVAILABLE', 'tampered'],
+    [true, 0, 'INFERENCE_UNAVAILABLE', 'future-completion'],
+  ] as const)(
+    'zero-call runtime classifies source=%s after %s ms as %s with %s evidence',
+    async (unavailableSource, persistenceDelayMs, expectedReadiness, evidenceKind) => {
       const f = fixture({}, JevPurpose.Entry, unavailableSource)
+      const result = nativeJevBatchResult(
+        f.plan,
+        evidenceKind === 'future-completion' ? new Date(Date.parse(f.at) + 1_000).toISOString() : f.at,
+      )
+      const savedResult = evidenceKind === 'tampered' ? { ...result, resultHash: '0'.repeat(64) } : result
       const unused = Effect.die('Excluded candidates must never call the provider or claim evaluations')
       let committed = 0
       const observed = await Effect.runPromise(
@@ -191,7 +206,7 @@ describe('momentum-first Jev admission', () => {
                 expect(plan.candidates.every(({ status }) => status === JevCandidatePlanStatus.Excluded)).toBe(true)
                 return { plan, result: null }
               }),
-            finish: () => Effect.succeed({ plan: f.plan, result: nativeJevBatchResult(f.plan, f.at) }),
+            finish: () => TestClock.adjust(persistenceDelayMs).pipe(Effect.as({ plan: f.plan, result: savedResult })),
           }),
           Effect.provideService(JevEvaluationStore, {
             read: () => unused,
@@ -205,13 +220,15 @@ describe('momentum-first Jev admission', () => {
         ),
       )
       expect(committed).toBe(1)
-      if (unavailableSource) {
+      if (expectedReadiness !== null) {
         expect(Result.isFailure(observed)).toBe(true)
         if (Result.isFailure(observed))
           expect(observed.failure).toMatchObject({
             _tag: 'JevAwaitingEvidence',
-            readiness: 'INFERENCE_UNAVAILABLE',
+            readiness: expectedReadiness,
           })
+        if (persistenceDelayMs === 0 && evidenceKind === 'valid' && Result.isFailure(observed))
+          expect(observed.failure).toMatchObject({ message: expect.stringContaining('AMD') })
       } else {
         expect(Result.getOrThrow(decideJevEntry(Result.getOrThrow(observed).evidence)).selectedSymbols).toEqual([])
       }
