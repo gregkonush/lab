@@ -26,6 +26,26 @@ Each consumer epoch uses a new group and explicit bootstrap offsets. It never re
 so it does not write OffsetCommit requests. An offset-coordinator write failure cannot discard a usable in-memory
 projection. Assignment, heartbeat and fetch failures still invalidate the epoch and require reconstruction.
 Durable decision snapshots retain their source cuts and PostgreSQL references independently of the ephemeral consumer.
+
+The native worker also retains the original consumer deliveries in PostgreSQL. `native_arrival_epochs` binds the
+embedded build, both market sources and the actual bootstrap bounds. `native_arrival_chunks` holds hash-linked gzip
+chunks of exact Kafka value bytes, transport timestamps, local availability times, consumer and projection sequences,
+and reducer dispositions. Repeated deliveries, rejected inputs, tombstones and invalidated assignments retain their
+own receipts. The global consumer sequence spans equities and crypto; filtering out another market cannot claim a
+complete original prefix.
+
+The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
+each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
+Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Database writes run in a scoped background fiber. Overflow or a failed write permanently marks the epoch incomplete;
+the warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
+delivery counts. Shutdown retries an interrupted chunk by exact content and records `native_arrival_ends` only after
+the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
+`readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
+These native records still require interval, source-cut and strategy qualification. They do not recover missing older
+study sessions or authorize an entry, and the current single-universe backtest manifest cannot label a filtered mixed
+market epoch as a complete original capture.
+
 The projection retains 61 bar minutes, 512
 quote/trade updates and 64 feature revisions per symbol, plus 256 rejections per partition. Discarded rejection cutoffs
 remain partition-specific: liquidation checks quote partitions, while entry and feature selection check all partitions.
