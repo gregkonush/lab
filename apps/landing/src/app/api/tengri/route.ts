@@ -1,6 +1,7 @@
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
 import { observeRequest } from '@/lib/observability/server'
 import {
+  answerCodexQuestions,
   createAgent,
   createCodexThread,
   createDirectory,
@@ -223,6 +224,10 @@ async function runAction(request: Request) {
         await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
         result = null
         break
+      case 'answer-questions':
+        await answerCodexQuestions(identity, action.agentId, action.approvalId, action.response)
+        result = null
+        break
       case 'resolve-approval':
         await resolveCodexApproval(identity, action.agentId, action.approvalId, action.decision)
         result = null
@@ -231,10 +236,10 @@ async function runAction(request: Request) {
         result = await issuePreviewSession(identity, action.agentId, action.port, action.path, action.fragment)
         break
       case 'editor-session':
-        result = await issueEditorSession(identity, action.agentId, action.windowId, request.signal)
+        result = await issueEditorSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'browser-session':
-        result = await issueBrowserSession(identity, action.agentId)
+        result = await issueBrowserSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'revoke-editor-sessions':
         await revokeDesktopPreviews(identity)

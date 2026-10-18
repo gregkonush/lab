@@ -79,7 +79,8 @@ The public browser surface uses strict action schemas rather than exposing arbit
 | `send-turn`          | `SendCodexInput`       | `turn/start`                        |
 | `steer-turn`         | `SteerCodexInput`      | `turn/steer`                        |
 | `interrupt-turn`     | `InterruptCodexTurn`   | `turn/interrupt`                    |
-| `resolve-approval`   | `ResolveCodexApproval` | pending server-request response     |
+| `resolve-approval`   | `ResolveCodexApproval` | pending action approval response    |
+| `answer-questions`   | `ResolveCodexApproval` | typed user-input/elicitation response |
 | event stream         | `WatchCodexEvents`     | replayable app-server notifications |
 
 Caller-supplied IDs and prompts are bounded and validated at the BFF and control-plane boundaries. The controller waits
@@ -102,8 +103,19 @@ for truthful guest readiness before forwarding an operation, so a sleeping agent
   Oversized confirmations retain bounded display and scope metadata and explicitly report omitted arguments.
   Approve once allows that call; advertised session approval remembers the tool in the current session. Deny declines
   the call, and Stop interrupts the turn and invalidates its pending controls. Read-only tools retain Codex's normal
-  approval behavior. Input forms and URL/access elicitation are not interpreted as tool approvals: the desktop reports
-  the unsupported request and cancels it without attributing a decision to the user.
+  approval behavior. **Approvals → Auto approve** in the composer automatically resolves advertised command, file,
+  permission and connected-app confirmations while this chat remains open. The browser remembers the choice per
+  workspace. It uses one-call approval where available and never invents a broader policy amendment. A failed
+  automatic response remains available for manual retry instead of looping. **Ask first** restores manual controls.
+- Native `item/tool/requestUserInput` questions, supported primitive MCP forms and HTTPS URL elicitations render as
+  question cards. Choices and free-text answers require an explicit submission; URL requests require an explicit
+  completion or cancellation. Secret native answers use password inputs. Auto-approval never answers these requests.
+  Questions retain their IDs and field types through the authenticated BFF, controller and signed guest RPC. Invalid
+  answers and transport failures preserve the form for retry. Explicit skipping returns an empty native answer map;
+  cancellation is not presented as a user answer. Unsupported or oversized schemas remain rejected with an explicit
+  integration error. Form support includes strings, booleans, numbers, integers, primitive enums and length/range bounds.
+  Question responses require the updated controller and guest together; an older peer rejects them rather than
+  treating them as action approvals.
 - A failed turn renders the app-server failure text as an error before clearing active-turn controls.
 - A missing saved conversation returns HTTP 404 with `code: conversation_not_found`, rather than a control-plane
   outage. The desktop keeps the saved thread ID during retries and offers **Start a new conversation** beside the

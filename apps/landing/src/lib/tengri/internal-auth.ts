@@ -5,6 +5,7 @@ import { RequestContextSchema, type RequestContext } from './generated/proompten
 const uuid = /^(?!00000000-0000-0000-0000-000000000000$)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 
 export type SignedTengriMetadata = {
+  audience: string
   context: Uint8Array
   recoveryGeneration: string
   nonce: string
@@ -15,9 +16,10 @@ export function signTengriMetadata(
   context: RequestContext,
   recoveryGeneration: bigint,
   key: string,
-  options: { rpcPath: string; body: Uint8Array; nonce?: string; nowUnixMs?: number },
+  options: { rpcPath: string; body: Uint8Array; audience: string; nonce?: string; nowUnixMs?: number },
 ): SignedTengriMetadata {
   if (!/^[a-f0-9]{64}$/.test(key)) throw new Error('Tengri signing key must be one lowercase hexadecimal key')
+  if (!uuid.test(options.audience)) throw new Error('Tengri request audience is invalid')
   const now = BigInt(options.nowUnixMs ?? Date.now())
   const origin = new URL(context.origin)
   if (
@@ -49,8 +51,9 @@ export function signTengriMetadata(
   }
   const bytes = toBinary(RequestContextSchema, context)
   if (bytes.length > 2048) throw new Error('Tengri request context exceeds its bound')
-  const payload = signingPayload(options.rpcPath, options.body, nonce, bytes, recoveryGeneration)
+  const payload = signingPayload(options.rpcPath, options.body, nonce, bytes, recoveryGeneration, options.audience)
   return {
+    audience: options.audience,
     context: bytes,
     recoveryGeneration: recoveryGeneration.toString(),
     nonce,
@@ -64,6 +67,7 @@ export function signingPayload(
   nonce: string,
   context: Uint8Array,
   recoveryGeneration: bigint,
+  audience: string,
 ) {
-  return `tengri.ofz.v1\n${rpcPath}\n${createHash('sha256').update(body).digest('hex')}\n${nonce}\n${Buffer.from(context).toString('base64url')}\n${recoveryGeneration}`
+  return `tengri.ofz.v2\n${audience}\n${rpcPath}\n${createHash('sha256').update(body).digest('hex')}\n${nonce}\n${Buffer.from(context).toString('base64url')}\n${recoveryGeneration}`
 }
