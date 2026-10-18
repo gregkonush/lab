@@ -17,7 +17,8 @@ export const readUnaccountedCashSettlementCount = (
         SELECT reporting.quantum_micros FROM account_cash_reporting reporting
         JOIN account_snapshots a ON a.event_id=reporting.account_event_id
         JOIN broker_events e ON e.event_id=a.event_id
-        WHERE a.account_id=${accountId} AND e.observed_at<=${reconciledAt ?? null}::timestamptz
+        WHERE e.account_id=${accountId} AND e.event_kind='ACCOUNT'
+          AND a.account_id=${accountId} AND e.observed_at<=${reconciledAt ?? null}::timestamptz
         ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1))<>0
       AND NOT EXISTS(SELECT 1 FROM broker_cash_settlements s WHERE s.transaction_id=t.transaction_id
         AND s.posted_at<=${reconciledAt ?? null}::timestamptz)
