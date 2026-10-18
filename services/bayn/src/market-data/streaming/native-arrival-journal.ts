@@ -176,39 +176,43 @@ export const makeNativeArrivalJournal = (
     )
     return {
       observe: (input) =>
-        buffer.withPermit(
-          Effect.gen(function* () {
-            const previousOrdinal = ordinal
-            const previousObservedSequence = observedSequence
-            observedSequence = input.consumerSequence
-            if (state !== 'RECORDING') return
-            if (
-              input.consumerSequence !== previousObservedSequence + 1 ||
-              (input.record.tombstone === true
-                ? input.record.rawValue !== null || input.record.rawValueSha256 !== null
-                : input.record.rawValue === undefined ||
-                  input.record.rawValue === null ||
-                  input.record.rawValueSha256 === undefined ||
-                  input.record.rawValueSha256 === null ||
-                  input.record.rawByteLength !== input.record.rawValue.byteLength)
-            )
-              return fail(
-                new NativeArrivalCaptureError({
-                  message: 'Native arrival transport bytes or consumer sequence are missing',
-                }),
+        Effect.suspend(() => {
+          const previousObservedSequence = observedSequence
+          observedSequence = input.consumerSequence
+          return buffer.withPermit(
+            Effect.gen(function* () {
+              const previousOrdinal = ordinal
+              if (state !== 'RECORDING') return
+              if (
+                input.consumerSequence !== previousObservedSequence + 1 ||
+                (input.record.tombstone === true
+                  ? input.record.rawValue !== null || input.record.rawValueSha256 !== null
+                  : input.record.rawValue === undefined ||
+                    input.record.rawValue === null ||
+                    input.record.rawValueSha256 === undefined ||
+                    input.record.rawValueSha256 === null ||
+                    input.record.rawByteLength !== input.record.rawValue.byteLength)
               )
-            const record = nativeArrival(epoch, input)
-            const bytes = Buffer.byteLength(JSON.stringify(record)) + 1
-            if (bytes > 4 * 1024 * 1024)
-              return fail(new NativeArrivalCaptureError({ message: 'Native arrival exceeds the bounded record size' }))
-            if (recordBytes + bytes > 4 * 1024 * 1024) yield* flush
-            if (state !== 'RECORDING') return
-            records.push(record)
-            recordBytes += bytes
-            if (recordBytes >= bounds.chunkBytes) yield* flush
-            if (ordinal !== previousOrdinal) yield* Effect.yieldNow
-          }),
-        ),
+                return fail(
+                  new NativeArrivalCaptureError({
+                    message: 'Native arrival transport bytes or consumer sequence are missing',
+                  }),
+                )
+              const record = nativeArrival(epoch, input)
+              const bytes = Buffer.byteLength(JSON.stringify(record)) + 1
+              if (bytes > 4 * 1024 * 1024)
+                return fail(
+                  new NativeArrivalCaptureError({ message: 'Native arrival exceeds the bounded record size' }),
+                )
+              if (recordBytes + bytes > 4 * 1024 * 1024) yield* flush
+              if (state !== 'RECORDING') return
+              records.push(record)
+              recordBytes += bytes
+              if (recordBytes >= bounds.chunkBytes) yield* flush
+              if (ordinal !== previousOrdinal) yield* Effect.yieldNow
+            }),
+          )
+        }),
       status: () => ({
         captureId: epoch.captureId,
         status: state,

@@ -1,6 +1,7 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
 import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
+import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
 import { canonicalHashV1OrThrow, sha256 } from '../../hash'
@@ -403,6 +404,67 @@ test('interruption before staging a large next delivery cannot seal a missing su
   expect(ends).toHaveLength(1)
   expect(ends[0]?.status).toBe('INCOMPLETE')
   expect(ends[0]?.observedConsumerSequence).toBeGreaterThan(ends[0]?.durableConsumerSequence ?? 0)
+})
+
+test('a delivery waiting behind the ticker remains observed when shutdown interrupts its permit wait', async () => {
+  const { chunks, ends, store } = memoryStore()
+  const firstInput = observation(1, 'x'.repeat(1_024))
+  const first = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, firstInput)]))
+  const second = Result.getOrThrow(
+    makeNativeArrivalChunk(epoch, 1, first.contentHash, [nativeArrival(epoch, observation(2))]),
+  )
+  let calls = 0
+  let delivered = 0
+  const exit = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const writing = yield* Deferred.make<void>()
+        const receiving = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: (batch) =>
+              Effect.suspend(() => {
+                calls++
+                return calls === 1
+                  ? Deferred.succeed(writing, undefined).pipe(Effect.andThen(Effect.never))
+                  : store.append(batch)
+              }),
+          },
+          {
+            chunkBytes: Buffer.byteLength(JSON.stringify(nativeArrival(epoch, firstInput))) + 1,
+            queueBytes: Math.max(first.compressed.byteLength, second.compressed.byteLength),
+          },
+        )
+        yield* capture.observe(firstInput)
+        yield* Deferred.await(writing)
+        yield* capture.observe(observation(2))
+        yield* TestClock.adjust('1 second')
+        yield* Deferred.succeed(receiving, undefined).pipe(
+          Effect.andThen(capture.observe(observation(3))),
+          Effect.forkScoped,
+        )
+        yield* Deferred.await(receiving)
+        for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+        delivered = capture.status().observedConsumerSequence
+        return yield* Effect.interrupt
+      }),
+    ).pipe(Effect.provide(TestClock.layer())),
+  )
+  expect(Exit.hasInterrupts(exit)).toBe(true)
+  expect(delivered).toBe(3)
+  expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual([
+    nativeArrival(epoch, firstInput),
+    nativeArrival(epoch, observation(2)),
+  ])
+  expect(ends).toHaveLength(1)
+  expect(ends[0]).toMatchObject({
+    status: 'INCOMPLETE',
+    observedConsumerSequence: 3,
+    durableConsumerSequence: 2,
+    consumerScopeCompleted: false,
+  })
 })
 
 test('missing raw bytes invalidate retention rather than fabricate an original arrival', async () => {
