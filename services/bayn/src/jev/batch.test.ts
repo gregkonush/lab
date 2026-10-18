@@ -47,7 +47,11 @@ const planMaterial = {
 }
 const plan = Result.getOrThrow(makeJevBatchPlan(planMaterial))
 const at = (ms: number) => new Date(ms).toISOString()
-const resultMaterial = (batch: JevBatchPlan = plan, completion = 400) => ({
+const resultMaterial = (
+  batch: JevBatchPlan = plan,
+  completion = 400,
+  inferenceAt: (index: number) => ReturnType<typeof inferenceFixture> = () => inferenceFixture(),
+) => ({
   schemaVersion: 'bayn.jev-batch-result.v1',
   batchId: batch.batchId,
   completedAt: at(completion),
@@ -60,7 +64,7 @@ const resultMaterial = (batch: JevBatchPlan = plan, completion = 400) => ({
         requestId: candidate.request.requestId,
         startedAt: at(0),
         completedAt: at((index + 1) * 100),
-        outcome: { status: JevOutcome.Received, inference: inferenceFixture() },
+        outcome: { status: JevOutcome.Received, inference: inferenceAt(index) },
       }),
     )
     return {
@@ -81,6 +85,29 @@ const resultMaterial = (batch: JevBatchPlan = plan, completion = 400) => ({
 })
 
 describe('complete Jev batch evidence', () => {
+  test('a machine-precision probability tie does not invalidate another candidate or rewrite evidence', () => {
+    const tied = inferenceFixture()
+    tied.response.answers.direction.probabilities = {
+      favorable: 0.45999999999999996,
+      unfavorable: 0.46,
+      unclear: 0.08,
+    }
+    tied.responseHash = canonicalHashV1(tied.response)
+    const result = Result.getOrThrow(
+      makeJevBatchResult(
+        plan,
+        resultMaterial(plan, 400, (index) => (index === 0 ? tied : inferenceFixture())),
+      ),
+    )
+    const retained = Result.getOrThrow(decodeJevBatchResult(plan, JSON.parse(JSON.stringify(result))))
+    const inferences = Result.getOrThrow(usableJevBatchInferences(plan, retained, 450))
+    expect(inferences.map((value) => value.symbol)).toEqual(['AAPL', 'AMZN'])
+    expect(inferences[0]?.inference.response).toEqual(tied.response)
+    expect(inferences[0]?.inference.responseHash).toBe(tied.responseHash)
+    expect(inferences[1]?.inference.response).toEqual(inferenceFixture().response)
+    expect(Result.isFailure(usableJevBatchInferences(plan, retained, Date.parse(plan.expiresAt)))).toBe(true)
+  })
+
   test('binds every candidate and reproduces every inference without a provider', () => {
     expect(Result.getOrThrow(decodeJevBatchPlan(JSON.parse(JSON.stringify(plan))))).toEqual(plan)
     const result = Result.getOrThrow(makeJevBatchResult(plan, resultMaterial()))

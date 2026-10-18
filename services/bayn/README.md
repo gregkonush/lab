@@ -434,6 +434,9 @@ The [TypeSafe SDK response contract](https://docs.typesafe.ai/sdk/python/api/typ
 describes approximately normalized probabilities. Bayn requires a normalized distribution to fit within 0.005 of
 each reported probability, so the total allowance scales with the number of choices. These are Bayn validation bounds, not a
 provider precision guarantee. Score answers must also fit the same distribution bounds and a 0.005 score allowance.
+Choice maxima allow only relative machine-precision roundoff, such as `0.45999999999999996` versus `0.46`.
+This numerical tie check is separate from the wider decimal-reporting allowance for probability totals and scores.
+It preserves the provider's selected label and numbers; a genuinely nonmaximum label still fails response validation.
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
 
