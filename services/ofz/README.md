@@ -55,6 +55,9 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+The server and initial audited clients allow thirty seconds for durable admission. Ofz still rechecks current
+authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
+bounded to two seconds. This processing budget does not extend the BFF's five-second signed assertion admission.
 
 Repeated controller runtime-state reads and guest health probes may reference their original durable observation
 receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
