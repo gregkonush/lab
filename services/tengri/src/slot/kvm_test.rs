@@ -245,8 +245,12 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
-    rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
-        .await?;
+    rpc.write_file(
+        "/workspace/continuity.txt",
+        b"private-home-continuity",
+        "missing",
+    )
+    .await?;
     stage("files");
     let terminal = rpc
         .create_terminal("fixture-terminal-continuity", "/", 80, 24)
@@ -264,7 +268,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     let (_, file, _) = tokio::try_join!(
         rpc.verify_identity("33333333-3333-4333-8333-333333333333"),
-        rpc.read_file("/continuity.txt"),
+        rpc.read_file("/workspace/continuity.txt"),
         rpc.codex_call("model/list", json!({})),
     )?;
     ensure!(
@@ -292,7 +296,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         );
     }
     rpc.write_file(
-        "/kvm-admin.sh",
+        "/workspace/kvm-admin.sh",
         &fs::read("/fixture/test-guest-admin.sh").await?,
         "missing",
     )
@@ -355,7 +359,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         rpc.verify_identity("33333333-3333-4333-8333-333333333333")
             .await?;
         ensure!(
-            rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
+            rpc.read_file("/workspace/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
         );
         stage("files");

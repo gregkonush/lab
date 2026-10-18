@@ -224,9 +224,9 @@ impl RpcClient {
                 message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
-        if info.protocol_version != tengri::guest_authorization::PROTOCOL_VERSION {
+        if info.protocol_version != tengri::GUEST_API_PROTOCOL_VERSION {
             return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
-                message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
+                message: "The agent requires a retained-home runtime upgrade before it can reconnect.".into() });
         }
         Ok(())
     }

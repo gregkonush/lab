@@ -165,6 +165,11 @@ Code keeps recoverable drafts scoped to the GitHub owner and agent creation iden
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
 and preserves the local draft.
 
+Finder, chat file links, image attachments, terminal working directories, and the Code bridge use canonical
+`/workspace` paths. The signed request retains that path until the guest validates it and resolves it inside the
+retained home. The controller requires guest API version 5 before forwarding operations. The older virtual file
+namespace is removed; upgrade retained guests with a fenced cold replacement before verifying this release.
+
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
 remains active until those edits are saved or discarded. Temporary copies cannot survive a browser restart, so

@@ -5,7 +5,6 @@ import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
-import { workspaceRequestPath } from '@/lib/tengri/workspace-path'
 import { runTengriAction } from './client'
 import { finderCanPreviewText } from './finder-model'
 import { parseWorkspaceFileLink } from './workspace-file-link-model'
@@ -158,7 +157,7 @@ function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTa
     setResult(null)
     setError('')
     void runTengriAction<{ content: string; contentType: string }>(
-      { action: 'read-file', agentId, path: workspaceRequestPath(file.path) },
+      { action: 'read-file', agentId, path: file.path },
       controller.signal,
     )
       .then((value) => {

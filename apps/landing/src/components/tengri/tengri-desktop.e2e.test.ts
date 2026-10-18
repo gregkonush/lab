@@ -37,15 +37,15 @@ const readyAgent = {
 const workspaceEntries = [
   {
     name: 'README.md',
-    path: '/README.md',
+    path: '/workspace/README.md',
     directory: false,
     size: 418,
     modifiedAt: '2026-08-26T12:02:00.000Z',
   },
-  { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
+  { name: 'src', path: '/workspace/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
   {
     name: 'package.json',
-    path: '/package.json',
+    path: '/workspace/package.json',
     directory: false,
     size: 221,
     modifiedAt: '2026-08-26T12:04:00.000Z',
@@ -55,7 +55,7 @@ const workspaceEntries = [
 const sourceEntries = [
   {
     name: 'main.ts',
-    path: '/src/main.ts',
+    path: '/workspace/src/main.ts',
     directory: false,
     size: 128,
     modifiedAt: '2026-08-26T12:05:00.000Z',
@@ -243,9 +243,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const terminalSockets: WebSocketRoute[] = []
   const terminalInput: string[] = []
   const contents = new Map<string, string>([
-    ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
-    ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
-    ['/src/main.ts', 'export const main = true\n'],
+    ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
+    ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
+    ['/workspace/src/main.ts', 'export const main = true\n'],
   ])
 
   page.on('pageerror', (error) => console.error(`[browser:pageerror] ${error.stack ?? error.message}`))
@@ -1048,7 +1048,7 @@ test('serializes slow Finder refreshes and reports bounded search results', asyn
 
 function parentPath(path: string) {
   const separator = path.lastIndexOf('/')
-  return separator <= 0 ? '/' : path.slice(0, separator)
+  return separator <= 0 ? '/workspace' : path.slice(0, separator)
 }
 
 function emitCodexEvent(page: Page, event: Record<string, unknown>) {
@@ -1190,15 +1190,15 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('readme')
   await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
   await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
-  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/')
+  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/workspace')
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(finder.getByRole('button', { name: /main\.ts/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/src'))
+    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/workspace/src'))
     .toBe(true)
-  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/src')).toBe(false)
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src')).toBe(false)
 
   const finderFrame = page.locator('section[aria-label="Finder window"]')
   const finderWatchBeforeMinimize = await page.evaluate(
@@ -1250,7 +1250,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-terminal').length).toBe(2)
   const terminalCreations = mock.actions.filter((action) => action.action === 'create-terminal')
   expect(new Set(terminalCreations.map((action) => action.creationId)).size).toBe(2)
-  expect(terminalCreations.every((action) => action.cwd === '/')).toBe(true)
+  expect(terminalCreations.every((action) => action.cwd === '/workspace')).toBe(true)
   const creationIdPattern = new RegExp(`^tengri-${readyAgent.id}-[0-9a-f]{32}-terminal-[0-9]+$`)
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
@@ -1887,7 +1887,7 @@ test('offers old-editor drafts for download without overwriting guest files or e
         [ownerId, 'Recovered local edits'],
         ['another-owner', 'Private other-owner draft'],
       ]) {
-        const path = '/README.md'
+        const path = '/workspace/README.md'
         const draft = {
           schemaVersion: 1,
           draftId: 'legacy-draft',
@@ -4966,7 +4966,7 @@ test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and fil
   await location.getByRole('textbox', { name: 'Folder location' }).fill('/../../outside')
   await location.getByRole('button', { name: 'Go', exact: true }).click()
   await expect(location.getByRole('alert')).toHaveText('Enter an absolute path inside the workspace')
-  await location.getByRole('textbox', { name: 'Folder location' }).fill('/')
+  await location.getByRole('textbox', { name: 'Folder location' }).fill('/workspace')
   await location.getByRole('textbox', { name: 'Folder location' }).press('Enter')
   await expect(location).toHaveCount(0)
   await expect(files).toHaveCount(3)
@@ -6866,7 +6866,8 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await page.route('**/api/tengri', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     const action = route.request().postDataJSON()
-    if (action.action !== 'read-file' || !['/README.md', '/notes.md'].includes(action.path)) return route.fallback()
+    if (action.action !== 'read-file' || !['/workspace/README.md', '/workspace/notes.md'].includes(action.path))
+      return route.fallback()
     reads.set(action.path, (reads.get(action.path) ?? 0) + 1)
     return route.fulfill({
       json: {
@@ -6906,8 +6907,8 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
   await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
   await expect(preview.getByRole('button', { name: 'Rendered', exact: true })).toBeVisible()
-  expect(reads.get('/README.md')).toBe(1)
-  await expect.poll(() => reads.get('/notes.md')).toBe(1)
+  expect(reads.get('/workspace/README.md')).toBe(1)
+  await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
   await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
   await tengri.getByRole('tab', { name: 'README.md', exact: true }).press('ArrowRight')
   await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')

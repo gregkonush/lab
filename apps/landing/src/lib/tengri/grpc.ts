@@ -53,7 +53,6 @@ import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import type { CodexHistoryPage } from './codex-history'
 import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
-import { workspaceRequestPath } from './workspace-path'
 
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
@@ -299,7 +298,7 @@ export async function readCodexAttachment(identity: TengriIdentity, agentId: str
 
 export async function readWorkspaceImage(identity: TengriIdentity, agentId: string, filePath: string) {
   if (!isWorkspaceImagePath(filePath)) throw new TengriUnavailableError('Invalid image path', 400)
-  const result = await readFileBytes(identity, agentId, workspaceRequestPath(filePath))
+  const result = await readFileBytes(identity, agentId, filePath)
   const lowerPath = filePath.toLowerCase()
   const mediaType = lowerPath.endsWith('.png') ? 'image/png' : lowerPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
   if (result.content.length > MAX_CODEX_IMAGE_BYTES || !codexImageMatchesMediaType(mediaType, result.content)) {

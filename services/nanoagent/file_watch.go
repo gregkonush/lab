@@ -164,7 +164,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 
 func (files *fileWatcher) publishResetLocked() {
 	files.sequence++
-	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: "/"}
+	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: workspacePath}
 	files.buffer = []fileEvent{reset}
 	for id, subscription := range files.subscriptions {
 		delivery := reset
@@ -364,7 +364,7 @@ func (files *fileWatcher) deferExpectedEventLocked(expected *expectedFileRename,
 		return
 	}
 	if len(expected.deferredEvents) >= fileRenameDeferredEventLimit {
-		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: "/"}}}
+		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: workspacePath}}}
 		return
 	}
 	expected.deferredEvents = append(expected.deferredEvents, deferred)
@@ -741,7 +741,7 @@ func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 }
 
 func pathMatchesWatchPrefix(prefix string, path string) bool {
-	return path != "" && (prefix == "/" || pathWithin(prefix, path))
+	return path != "" && pathWithin(prefix, path)
 }
 
 func parseBoundedInt(value string, minimum, maximum int) (int, error) {

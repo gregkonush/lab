@@ -1,14 +1,11 @@
 import { describe, expect, test } from 'bun:test'
 import { parseWorkspaceFileLink } from './workspace-file-link-model'
-import { workspaceRequestPath } from '../../lib/tengri/workspace-path'
 
 describe('workspace file links', () => {
-  test('maps the displayed guest path to the confined file API without duplicating the workspace root', () => {
+  test('preserves the canonical path used by signed file requests', () => {
     const file = parseWorkspaceFileLink('/workspace/lab/README.md:2')
     expect(file).not.toBeNull()
-    expect(workspaceRequestPath(file!.path)).toBe('/lab/README.md')
-    expect(workspaceRequestPath('/workspace/screenshots/proof.png')).toBe('/screenshots/proof.png')
-    expect(() => workspaceRequestPath('/etc/private.png')).toThrow()
+    expect(file!.path).toBe('/workspace/lab/README.md')
   })
 
   test('preserves absolute guest paths and preserves locations', () => {
