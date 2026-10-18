@@ -121,6 +121,11 @@ retires unused admissions and clamps the prior PAPER authority before native OBS
 same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
 
+Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
+controller handles without terminating its process. Reports retain typed operation and failure tags while redacting
+exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
+error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
+
 ## Profitability goal
 
 The [October 6, 2026 research review](../../docs/bayn/recent-strategy-research-2026-10-06.md) compares recent candidate papers, their data vintages, execution assumptions, and fit with Bayn. Its shortlist is research context and grants no qualification or capital authority.

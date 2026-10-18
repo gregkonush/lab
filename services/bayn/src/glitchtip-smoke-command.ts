@@ -1,12 +1,42 @@
 import * as Sentry from '@sentry/node'
+import { NodeRuntime } from '@effect/platform-node'
+import { Effect } from 'effect'
+import { CycleRunnerError } from './cycle/runner'
 import { flushErrorTracking, initializeErrorTracking } from './error-tracking'
+import { OperationalError } from './errors'
+import { observePass } from './observe-composition/decision-builder'
+import { currentUtcInstant } from './time'
 
 /** Manual deployment smoke only; not invoked by a trading process. */
 if (!initializeErrorTracking(process.env['BAYN_ERROR_TRACKING_SERVICE'] || 'bayn-smoke')) {
   throw new Error('GlitchTip smoke cannot run without a configured DSN')
 }
-Sentry.captureException(new Error('GlitchTip synthetic integration smoke'))
-if (!(await flushErrorTracking(5_000))) {
-  throw new Error('GlitchTip synthetic integration event did not flush')
-}
-console.log('Synthetic exception was sent by the Sentry SDK')
+Sentry.setTag('synthetic', 'true')
+let captured = false
+Sentry.addEventProcessor((event) => {
+  if (event.tags?.['stage'] === 'bayn.execution.cycle-pass' && event.tags?.['synthetic'] === 'true') captured = true
+  return event
+})
+NodeRuntime.runMain(
+  Effect.gen(function* () {
+    yield* observePass(() => Effect.void, {
+      outcome: 'FAILED',
+      observedAt: yield* currentUtcInstant,
+      error: new CycleRunnerError({
+        operation: 'run-cycle-pass',
+        failure: 'operational',
+        message: 'GlitchTip synthetic handled cycle pass smoke',
+      }),
+    })
+    const flushed = yield* Effect.promise(() => flushErrorTracking(5_000))
+    if (!captured || !flushed) {
+      return yield* new OperationalError({
+        component: 'http',
+        operation: 'glitchtip-smoke',
+        retryable: false,
+        message: 'GlitchTip synthetic integration event was not captured and flushed',
+      })
+    }
+    yield* Effect.logInfo('Synthetic failed cycle pass was captured and flushed; verify the server receipt')
+  }),
+)
