@@ -42,7 +42,8 @@ writer acknowledges space. The ticker and consumer share one buffer permit, so a
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
 A failed write, invalid delivery or individually oversized chunk permanently marks the epoch incomplete; the
 warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
-delivery counts. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
+delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
+interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
 chunk by exact content and records `native_arrival_ends` only after
 the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
 `readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.

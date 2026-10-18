@@ -2,6 +2,7 @@ import { Cause, Effect, Exit, Fiber, Queue, Result, Semaphore, type Scope } from
 
 import type { KafkaBootstrapEvidence } from './bootstrap'
 import type { MarketSources } from './raw-events'
+import { reportNativeArrivalFailure } from '../../error-tracking'
 import {
   makeNativeArrivalChunk,
   nativeArrival,
@@ -120,6 +121,7 @@ export const makeNativeArrivalJournal = (
         reportedFailure = true
       }).pipe(
         Effect.andThen(Effect.logError('Native market arrival retention is incomplete', cause)),
+        Effect.andThen(reportNativeArrivalFailure(cause)),
         Effect.annotateLogs({ captureId: epoch.captureId, consumerEpoch: epoch.bootstrap.epoch }),
       )
     const worker = yield* Effect.forever(
