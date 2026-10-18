@@ -124,7 +124,11 @@ export interface ReplayBrokerState {
   readonly orders: readonly ReplayBrokerOrder[]
   readonly fills: readonly FillActivity[]
   readonly fees: readonly FeeActivity[]
-  readonly sessionCloses: readonly { readonly sessionDate: string; readonly equityMicros: string }[]
+  readonly sessionCloses: readonly {
+    readonly sessionDate: string
+    readonly equityMicros: string
+    readonly valuationQualified: boolean
+  }[]
 }
 
 export interface ReplayValuationEvidence {
@@ -678,7 +682,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const session = calendar.providerSessions[0]
         if (session === undefined) return yield* new ReplayBrokerFailure({ message: 'Restored close has no session' })
         const equity = yield* closingEquity(restored.state, session.regularCloseAt)
-        if (equity.equityMicros !== close.equityMicros)
+        if (equity.equityMicros !== close.equityMicros || equity.valuationQualified !== close.valuationQualified)
           return yield* new ReplayBrokerFailure({
             message: 'Restored closing equity differs from retained quotes and fills',
           })
@@ -1137,17 +1141,15 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         )
           continue
         const closing = yield* closingEquity(current, session.closeAt)
-        if (!closing.valuationQualified) continue
-        const close = { sessionDate: session.date, equityMicros: closing.equityMicros }
+        const close = { sessionDate: session.date, ...closing }
         yield* updateCommittedState(observedAt, (value) =>
           value.sessionCloses.some((prior) => prior.sessionDate === session.date)
             ? value
             : { ...value, sessionCloses: [...value.sessionCloses, close] },
         )
         current = yield* readState
-        if (
-          current.sessionCloses.find((prior) => prior.sessionDate === session.date)?.equityMicros !== close.equityMicros
-        )
+        const retained = current.sessionCloses.find((prior) => prior.sessionDate === session.date)
+        if (retained?.equityMicros !== close.equityMicros || retained.valuationQualified !== close.valuationQualified)
           return yield* new ReplayBrokerFailure({ message: 'Broker reference equity changed after it was recorded' })
       }
     })
@@ -1166,7 +1168,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const openOrderCount = current.orders.filter(
           ({ order }) => order.submittedAt <= at && (isOpen(order) || order.updatedAt > at),
         ).length
-        return { at, ...closing, openOrderCount }
+        const referenceValuationQualified = (yield* readState).sessionCloses.every(
+          (close) =>
+            close.valuationQualified ||
+            !referenceSessions.some((session) => session.date === close.sessionDate && session.closeAt <= at),
+        )
+        return {
+          at,
+          ...closing,
+          valuationQualified: closing.valuationQualified && referenceValuationQualified,
+          openOrderCount,
+        }
       })
     const checkpoint = Effect.gen(function* () {
       const observedAt = yield* now

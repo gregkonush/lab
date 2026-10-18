@@ -1266,7 +1266,10 @@ test('checkpoint restoration recomputes closing equity instead of trusting a reh
       const { checkpointHash: _hash, ...material } = checkpoint
       const altered = {
         ...material,
-        state: { ...material.state, sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1' }] },
+        state: {
+          ...material.state,
+          sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1', valuationQualified: true }],
+        },
       }
       const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
       expect(
@@ -1867,3 +1870,86 @@ test('extended-hours reports preserve the regular-close broker equity reference'
   expect(result.regular.equityMicros).not.toBe(result.extended.equityMicros)
   expect(result.account.lastEquityMicros).toBe(result.regular.equityMicros)
 })
+
+test.each(['stale', 'no-bid-liquidity'])(
+  'an unqualified regular-close mark survives the next day and restart: %s',
+  async (mode) => {
+    const entryAt = Date.parse('2026-11-04T14:31:00.000Z')
+    const closeAt = Date.parse('2026-11-04T21:00:00.000Z')
+    const nextDay = Date.parse('2026-11-05T14:31:00.000Z')
+    const closeQuoteAt = closeAt - (mode === 'stale' ? 11_000 : 1)
+    const points = [
+      observedQuote(
+        { ...quote, eventAt: new Date(entryAt).toISOString(), ingestedAt: new Date(entryAt).toISOString() },
+        entryAt,
+      ),
+      observedQuote(
+        {
+          ...quote,
+          eventAt: new Date(closeQuoteAt).toISOString(),
+          ingestedAt: new Date(closeQuoteAt).toISOString(),
+          sourceOffset: '1',
+          bidPrice: 101,
+          askPrice: 101,
+          bidSize: mode === 'no-bid-liquidity' ? 0 : 100,
+        },
+        closeQuoteAt,
+      ),
+      observedQuote(
+        {
+          ...quote,
+          eventAt: new Date(nextDay).toISOString(),
+          ingestedAt: new Date(nextDay).toISOString(),
+          sourceOffset: '2',
+          bidPrice: 102,
+          askPrice: 102,
+        },
+        nextDay,
+      ),
+    ]
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(entryAt)
+        const frozen: ReplayBrokerConfig = {
+          ...config,
+          calendar: [
+            { session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' },
+          ],
+          quoteAt: (_symbol, atMs) => Effect.succeed(points.filter((point) => point.availableAtMs <= atMs).at(-1)),
+        }
+        let broker = yield* makeReplayBroker(frozen)
+        yield* submit(broker, intent({ createdAt: new Date(entryAt).toISOString() }))
+        yield* TestClock.setTime(closeAt)
+        const mark = yield* broker.valuationAt(new Date(closeAt).toISOString())
+        expect(mark.valuationQualified).toBe(false)
+        const checkpoint = yield* broker.checkpoint
+        expect(checkpoint.state.sessionCloses).toEqual([
+          { sessionDate: '2026-11-04', equityMicros: mark.equityMicros, valuationQualified: false },
+        ])
+        const { checkpointHash: _, ...material } = checkpoint
+        const forgedMaterial = {
+          ...material,
+          state: {
+            ...material.state,
+            sessionCloses: [{ sessionDate: '2026-11-04', equityMicros: mark.equityMicros, valuationQualified: true }],
+          },
+        }
+        const forged = { ...forgedMaterial, checkpointHash: Result.getOrThrow(canonicalHashV1Result(forgedMaterial)) }
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({ ...frozen, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+          ))._tag,
+        ).toBe('Failure')
+        broker = yield* makeReplayBroker({
+          ...frozen,
+          restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+        })
+        yield* TestClock.setTime(nextDay)
+        expect((yield* broker.read.account).value.lastEquityMicros).toBe(mark.equityMicros)
+        expect((yield* broker.valuationAt(new Date(nextDay).toISOString())).valuationQualified).toBe(false)
+        expect((yield* broker.valuationAt(new Date(entryAt + 1000).toISOString())).valuationQualified).toBe(true)
+        expect((yield* broker.snapshot).sessionCloses).toEqual(checkpoint.state.sessionCloses)
+      }),
+    )
+  },
+)

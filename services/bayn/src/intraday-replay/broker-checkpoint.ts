@@ -144,7 +144,13 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
       }),
     ),
     fees: Schema.Array(FeeActivitySchema),
-    sessionCloses: Schema.Array(Schema.Struct({ sessionDate: IsoDateSchema, equityMicros: UnsignedMicrosSchema })),
+    sessionCloses: Schema.Array(
+      Schema.Struct({
+        sessionDate: IsoDateSchema,
+        equityMicros: UnsignedMicrosSchema,
+        valuationQualified: Schema.Boolean,
+      }),
+    ),
   }),
   checkpointHash: Sha256Schema,
 })

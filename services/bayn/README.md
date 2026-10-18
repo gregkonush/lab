@@ -1450,6 +1450,10 @@ time, including separate quotes in the same millisecond. Replay cancellations us
 decoder and empty-response hash. Earlier replay checkpoint schemas cannot resume this contract. Missing
 original arrival receipts and PAPER's different liquidity assumptions still prevent claiming historical live-fill parity.
 
+Regular-close reference equity retains its valuation qualification through restart. A stale quote or empty bid
+still supplies the retained accounting mark for the next day's broker reference, but leaves economic qualification
+incomplete for that reporting cut and subsequent cuts. A later fresh quote cannot qualify the missing historical evidence.
+
 The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
 buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
 and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
