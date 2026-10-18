@@ -94,9 +94,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       expect(state.position.estimatedExitFeesUsd).toBeGreaterThan(25)
       const liquidationCash = (bid: bigint) => {
         const boundary = (bid * 9990n + 9999n) / 10000n
-        const notional = (boundary * 99_750_000_000n + 999_999_999n) / 1_000_000_000n
-        const limit = (notional * 1_000_000_000n + 99_750_000_000n - 1n) / 99_750_000_000n
-        const proceeds = (limit * 99_750_000_000n) / 1_000_000_000n
+        const proceeds = (boundary * 99_750_000_000n) / 1_000_000_000n
         return proceeds - ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
       }
       const observedBid = BigInt(Math.floor(state.candidate.quote.bid * 1_000_000))

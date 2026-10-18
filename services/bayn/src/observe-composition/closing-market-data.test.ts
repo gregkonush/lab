@@ -269,6 +269,42 @@ const fixture = async (source = native) => {
 }
 
 describe('closing market-data fallback boundaries', () => {
+  test('an equity-calendar recovery closes an external crypto holding with IOC', async () => {
+    const request = await fixture()
+    const observedAt = new Date(Date.parse(request.closeExpiresAt) - 60_000).toISOString()
+    const facts = factsAt(observedAt, true)
+    const state = {
+      ...facts.brokerState,
+      positions: facts.brokerState.positions.map((position) => ({ ...position, symbol: 'BTC/USD' })),
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(state))
+    const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareClosingExecutionCycleDecision({
+          ...request,
+          reconcile: Effect.succeed({
+            ...facts,
+            brokerState: { ...state, reconciliation },
+            report: { ...facts.report, reconciliation },
+          }),
+          input: {
+            ...request.input,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: () => Effect.die('An external holding uses reconciled position evidence'),
+            },
+          },
+        })
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(result.document.dispatchable).toBe(true)
+    expect(result.document.targetPlan.intentTargets).toMatchObject([
+      { symbol: 'BTC/USD', orderType: OrderType.Limit, timeInForce: TimeInForce.ImmediateOrCancel },
+    ])
+  })
+
   test('an expired equity cycle closes from fresh reconciled positions during verified broker extended hours', async () => {
     const day = Schema.decodeUnknownSync(IsoDateSchema)(native.query.sessionDate)
     const calendarSource = Result.getOrThrow(
@@ -564,9 +600,10 @@ describe('closing market-data fallback boundaries', () => {
             if (risk === undefined) throw new Error('missing fixture risk binding')
             const intent = yield* planExecutionIntent(
               {
-                schemaVersion: 'bayn.paper-intent-plan.v1',
+                schemaVersion: 'bayn.intent-plan.v2',
                 ...target,
                 notionalLimitMicros: risk.notionalLimitMicros,
+                limitPriceMicros: risk.limitPriceMicros,
                 ...(document.replanGenerationHash === undefined
                   ? {}
                   : { replanGenerationHash: document.replanGenerationHash }),

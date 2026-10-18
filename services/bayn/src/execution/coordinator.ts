@@ -220,10 +220,9 @@ const submitToBroker = (
   stored: StoredIntent,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
-  closeOnly: boolean,
 ) => {
   const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
-  return services.broker.submit(submittedIntent, closeOnly).pipe(
+  return services.broker.submit(submittedIntent).pipe(
     Effect.matchEffect({
       onFailure: (error) => persistSubmitDecision(services, started, decideSubmitFailure(started.requestHash, error)),
       onSuccess: (receipt) =>
@@ -240,7 +239,6 @@ const continueStartedSubmit = (
   services: MutationServices,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
-  closeOnly: boolean,
 ): Effect.Effect<
   MutationEvent,
   ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
@@ -253,7 +251,7 @@ const continueStartedSubmit = (
           (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
             const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
             if (Result.isSuccess(validation)) {
-              return submitToBroker(services, validation.success, started, request, closeOnly)
+              return submitToBroker(services, validation.success, started, request)
             }
             return validation.failure._tag === 'ExpiredRiskDecision'
               ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
@@ -289,7 +287,7 @@ const startSubmit = (
     ),
     Effect.flatMap((started) => {
       if (!started.started) return Effect.succeed(started.event)
-      return continueStartedSubmit(services, started.event, request, closeOnly)
+      return continueStartedSubmit(services, started.event, request)
     }),
   )
 

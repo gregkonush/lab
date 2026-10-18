@@ -984,7 +984,7 @@ describe('explicit historical delivery model', () => {
       observedAtMs: end + 3000,
       events: [...raw(), regenerated].map((record) => ({ record, availableAtMs: end + 3000 })),
     }
-    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
     expect(Result.getOrThrow(select(replay.projection)).feature.value.computedAtMs).toBe(recordedAtMs)
     expect(replay.regeneratedFeatures?.runId).toBe('c'.repeat(64))
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(replay.projection), query))).toBe(true)
@@ -992,7 +992,7 @@ describe('explicit historical delivery model', () => {
     expect(Result.isFailure(select(live))).toBe(true)
     const { regeneratedFeatures: _regenerated, ...undeclared } = input
     expect(
-      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, universe)).projection)),
+      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, [universe])).projection)),
     ).toBe(true)
   })
 
@@ -1011,10 +1011,10 @@ describe('explicit historical delivery model', () => {
         { record: featureRecord, availableAtMs: end + 5000 },
       ],
     }
-    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
     expect(before.evidenceMode).toBe('simulated-consumer-availability')
     expect(Result.isFailure(select(before.projection, end + 3000))).toBe(true)
-    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, universe))
+    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, [universe]))
     expect(Result.getOrThrow(select(after.projection, end + 5000)).feature.value.computedAtMs).toBe(
       feature.computedAtMs,
     )

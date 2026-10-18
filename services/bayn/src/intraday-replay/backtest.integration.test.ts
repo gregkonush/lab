@@ -140,7 +140,7 @@ durableTest(
           quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
-          schemaVersion: 'bayn.paper-intent.v3',
+          schemaVersion: 'bayn.execution-intent.v4',
           intentId: '1'.repeat(64),
           riskDecisionId: '2'.repeat(64),
           authorityGenerationHash: '3'.repeat(64),
@@ -156,6 +156,7 @@ durableTest(
           timeInForce: TimeInForce.Day,
           quantityAtoms: '10000000000',
           notionalLimitMicros: '1000000000',
+          limitPriceMicros: '100000000',
           state: IntentState.IoStarted,
           createdAt: new Date(startMs).toISOString(),
         })
@@ -182,7 +183,7 @@ durableTest(
         })
         yield* timing.run(Effect.void)
         const now = yield* Clock.currentTimeMillis
-        const close = yield* broker.completeSession('2026-09-04')
+        const close = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
         const state = yield* broker.snapshot
         const current = (yield* broker.read.account).value
         expect(now).toBeGreaterThan(closeMs + 50)
@@ -212,9 +213,9 @@ durableTest(
   30000,
 )
 
-durableTest(
-  'native backtest retains the opening boundary after measured bootstrap latency',
-  async () => {
+durableTest.each(['opening', 'UTC-midnight'] as const)(
+  'native backtest retains %s polling through measured bootstrap and cleanup latency',
+  async (boundary) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
       throw new Error('Missing isolated replay databases')
     const url = new URL(baynTestPostgresUrl)
@@ -225,14 +226,18 @@ durableTest(
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
     const retained = retainedReplayFixture()
-    const openMs = Date.parse('2026-09-04T13:30:00Z')
+    const openMs = Date.parse(boundary === 'opening' ? '2026-09-04T13:30:00Z' : '2026-09-04T23:59:30Z')
     const closeMs = openMs + 60_000
-    const source = { ...retained.manifest, coverageStartMs: openMs, coverageEndMs: Date.parse('2026-09-04T20:00:00Z') }
+    const source = {
+      ...retained.manifest,
+      coverageStartMs: Math.min(openMs, retained.manifest.coverageStartMs),
+      coverageEndMs: Math.max(closeMs, retained.manifest.coverageEndMs),
+    }
     const { verification: _verification, ...build } = config.build
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v3',
+          schemaVersion: 'bayn.backtest.v4',
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
@@ -241,12 +246,18 @@ durableTest(
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',
-          sessionDates: ['2026-09-04'],
+          interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
           source,
           openingCashMicros: '100000000000',
           fractionalTrading: false,
           calendar: [
-            { session_open: '0930', session_close: '0931', date: '2026-09-04', open: '09:30', close: '09:31' },
+            {
+              session_open: '0930',
+              session_close: boundary === 'opening' ? '0931' : '1600',
+              date: '2026-09-04',
+              open: '09:30',
+              close: boundary === 'opening' ? '09:31' : '16:00',
+            },
             { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
           assets: equityMarketProfile.universe.map((symbol, index) => ({
@@ -336,7 +347,17 @@ durableTest(
         expect(report.brokerState.ledger.openingCashMicros).toBe('100000000000')
         expect(report.brokerState.ledger.positions).toEqual([])
         expect(report.sessions[0]?.schedule.firstPollAtMs).toBe(openMs)
-        expect(report.sessions[0]?.schedule.lastPollAtMs).toBe(closeMs)
+        expect(report.sessions.at(-1)?.schedule.lastPollAtMs).toBe(closeMs)
+        expect(report.sessions).toHaveLength(boundary === 'opening' ? 1 : 2)
+        expect(report.schedule.failedPassCount).toBe(0)
+        expect(report.brokerState.createdAt).toBe(new Date(openMs - 60_000).toISOString())
+        if (boundary === 'UTC-midnight') {
+          const first = report.sessions[0]?.schedule
+          const second = report.sessions[1]?.schedule
+          if (first === undefined || second === undefined) throw new Error('Missing UTC reporting window')
+          expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.completedAtMs)
+          expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.nextPollAtMs)
+        }
         expect(report.processedRecords).toBe(source.recordCount)
         expect(report.inference.calls).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),

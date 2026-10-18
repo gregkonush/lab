@@ -14,7 +14,7 @@ import { canonicalHashV1 as hash, sha256 } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { config } from '../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis as iso } from '../time'
 import {
@@ -74,7 +74,7 @@ const fixture = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
+    const risk = yield* loadExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
     const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()
@@ -146,7 +146,7 @@ const fixture = (
       .sort()
       .map((topic) => ({ topic, partition: 0 }))
     const source: BacktestSourceManifest = {
-      schemaVersion: 'bayn.backtest-source.v1',
+      schemaVersion: 'bayn.backtest-source.v2',
       encoding: 'ndjson-gzip',
       transport: 'original-capture',
       dataSha256: sha256(body),
@@ -163,7 +163,7 @@ const fixture = (
         startOffset: '0',
         endOffsetExclusive: String(captured.events.filter((event) => event.record.topic === topic).length),
       })),
-      universe: captured.universe,
+      marketSources: [captured.universe] as const,
       deliveryModel: captured.source.deliveryModel,
     }
     const context = {
@@ -529,12 +529,12 @@ test.each(['cash', 'filled'] as const)(
         yield* fs.writeFile(arrivals, data.body)
         const { verification: _verification, ...build } = config.build
         const receiptText = JSON.stringify({
-          schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+          schemaVersion: 'bayn.original-capture-replay-receipt.v2',
           recordedAt: iso(data.source.coverageEndMs + 1),
           origin: data.source.origin,
           coverageStartMs: data.source.coverageStartMs,
           coverageEndMs: data.source.coverageEndMs,
-          universe: data.source.universe,
+          marketSources: data.source.marketSources,
           positions: data.source.positions,
           nativeVisiblePartitions: data.source.nativeVisiblePartitions,
           deliveryModel: data.source.deliveryModel,
@@ -550,7 +550,7 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v3',
+            schemaVersion: 'bayn.backtest.v4',
             source: data.source,
             openingCashMicros: '100000000000',
             fractionalTrading: false,
@@ -562,7 +562,10 @@ test.each(['cash', 'filled'] as const)(
             },
             allocatedDataCostPerSessionMicros: '1000000',
             replicate: 'SYNTHETIC ridge pair',
-            sessionDates: ['2026-09-04'],
+            interval: {
+              startAt: new Date(data.source.coverageStartMs).toISOString(),
+              endAt: new Date(data.source.coverageEndMs).toISOString(),
+            },
             calendar: fullCalendar.slice(1, 3),
             build,
             assumptions,

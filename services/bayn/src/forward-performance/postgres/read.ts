@@ -489,7 +489,7 @@ export const readForwardPerformancePostgresDataFirst = (
             JOIN autonomous_cycle_shadow_decisions AS decision
               ON decision.cycle_id = cycle.cycle_id
               AND decision.decision_hash = cycle.decision_hash
-            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')
+            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')
             UNION ALL
             SELECT
               cycle.cycle_id,
@@ -498,7 +498,7 @@ export const readForwardPerformancePostgresDataFirst = (
               (closure.document ->> 'createdAt')::timestamptz AS created_at
             FROM autonomous_cycles AS cycle
             JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
-            WHERE closure.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+            WHERE closure.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
             UNION ALL
             SELECT
               cycle.cycle_id,
@@ -507,7 +507,7 @@ export const readForwardPerformancePostgresDataFirst = (
               (replan.document ->> 'createdAt')::timestamptz AS created_at
             FROM autonomous_cycles AS cycle
             JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = cycle.cycle_id
-            WHERE replan.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+            WHERE replan.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
           ) AS decision_rows
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
           CROSS JOIN latest_reconciliation

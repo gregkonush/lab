@@ -92,7 +92,7 @@ const terminalizeUntouchedApproved = (sql: PgClient.PgClient, candidate: Blocked
               WHERE cycle.cycle_id = ${input.cycleId}
                 AND cycle.state = 'BLOCKED'
                 AND cycle.terminal_at <= ${input.observedAt}
-                AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+                AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
                 AND decision.document ->> 'mode' = 'PAPER'
                 AND decision.document #>> '{bindings,authorityGenerationHash}' = ${input.authorityGenerationHash}
               FOR UPDATE OF cycle
@@ -246,7 +246,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             )
             AND (
               (
-                decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+                decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
                 AND decision.document ->> 'mode' = 'PAPER'
                 AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
               )
@@ -308,7 +308,7 @@ const settleCurrentTerminalGeneration = (sql: PgClient.PgClient, candidate: Curr
             AND cycle.schema_version = 'bayn.autonomous-cycle.v4'
             AND cycle.state = 'NO_TRADE'
             AND cycle.terminal_at <= ${input.observedAt}::timestamptz
-            AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v1'
+            AND decision.document ->> 'schemaVersion' = 'bayn.paper-cycle-decision.v2'
             AND decision.document ->> 'mode' = 'PAPER'
             AND decision.document #>> '{bindings,authorityGenerationHash}' = generation.generation_hash
             AND decision.document #>> '{bindings,cycleId}' = cycle.cycle_id

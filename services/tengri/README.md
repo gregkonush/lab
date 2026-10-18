@@ -52,6 +52,9 @@ signature path. Regenerate the independent Rust/TypeScript vector with
 `node services/tengri/fixtures/generate-ofz-request-v2.mjs`.
 The SQL replay schema remains required for the BFF's shared OAuth and one-use capability state. Controller request
 authentication no longer adds a WAL commit before Ofz can evaluate the request.
+Only the five-minute OAuth attempt table is unlogged. It preserves shared atomic consumption without waiting for
+WAL or a synchronous standby. A database crash or failover drops unfinished attempts, which fail closed and require
+a new sign-in. Established sessions, replay nonces, tickets, previews, policies and audit records remain logged.
 Repeated metadata and observation requests reuse an already committed Ofz audit receipt for the exact actor,
 session, grant, origin, workspace/runtime, action, resource, target and recovery generation. Every request still calls
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process

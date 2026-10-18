@@ -133,22 +133,23 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       return yield* Result.fail(
         fail('Six-bar research requires its exact candidate, benchmark, window and timing contract'),
       )
+    const market = cursor.marketSources.find((value) => value.universeId === request.universeId)
     if (
+      market === undefined ||
+      (yield* canonicalHashV1Result(source.marketSources)) !== (yield* canonicalHashV1Result(cursor.marketSources)) ||
       source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       source.runId !== cursor.runId ||
       cursor.projection.availabilityMode !== 'simulated' ||
-      source.featureTopic !== cursor.universe.topics.features ||
-      source.technicalFeatureTopic !== cursor.universe.topics.technicalFeatures ||
       source.regeneratedFeaturesRecordedAtMs !== undefined ||
       source.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
-      cursor.universe.universeId !== request.universeId ||
-      cursor.universe.universeSymbolHash !== request.universeSymbolHash ||
-      cursor.universe.symbols.join(',') !== request.universe.join(',') ||
-      cursor.universe.topics.bars !== request.sourceTopics.bars ||
-      cursor.universe.topics.quotes !== request.sourceTopics.quotes ||
-      cursor.universe.topics.trades !== request.sourceTopics.trades ||
+      market.universeId !== request.universeId ||
+      market.universeSymbolHash !== request.universeSymbolHash ||
+      market.symbols.join(',') !== request.universe.join(',') ||
+      market.topics.bars !== request.sourceTopics.bars ||
+      market.topics.quotes !== request.sourceTopics.quotes ||
+      market.topics.trades !== request.sourceTopics.trades ||
       (cursor.lastArrival !== null &&
         (cursor.lastArrival.availableAtMs > observedAtMs ||
           cursor.lastArrival.receipt === undefined ||

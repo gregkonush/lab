@@ -225,7 +225,7 @@ const verifyDecisionBindingEvidence = (
     Effect.map(
       (references): CycleDecisionBindingEvidence => ({
         simulatedSnapshotReferences: references.filter(
-          (reference) => reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1',
+          (reference) => reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2',
         ),
         streamingSnapshotReferences: references.filter(
           (reference) => reference.schemaVersion === 'bayn.streaming-snapshot-reference.v1',
