@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Deferred, Effect, Exit, Layer, ManagedRuntime, Redacted, Result } from 'effect'
+import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
 import { canonicalHashV1OrThrow, canonicalJsonV1Result } from '../hash'
 import { makeNativeArrivalChunk, nativeArrival, type NativeArrivalChunk } from '../market-data/streaming/native-arrival'
@@ -82,6 +82,64 @@ describePostgres('PostgreSQL native arrival retention', () => {
         )
         expect(Exit.isFailure(yield* Effect.exit(store.append([changed])))).toBe(true)
         expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+      }),
+    )
+  })
+
+  test('a backpressured journal resumes into PostgreSQL with every original delivery exactly once', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = makeNativeArrivalStore(sql)
+        const paused = yield* Deferred.make<void>()
+        const writing = yield* Deferred.make<void>()
+        const capture = yield* Effect.scoped(
+          Effect.gen(function* () {
+            const capture = yield* makeNativeArrivalJournal(
+              epoch,
+              {
+                ...store,
+                append: (batch) =>
+                  Deferred.succeed(writing, undefined).pipe(
+                    Effect.andThen(Deferred.await(paused)),
+                    Effect.andThen(store.append(batch)),
+                  ),
+              },
+              { chunkBytes: 1, queueBytes: 1_500 },
+            )
+            const producer = yield* Effect.forEach(
+              Array.from({ length: 100 }, (_, index) => index + 1),
+              (sequence) => capture.observe(observation(sequence)),
+              { discard: true },
+            ).pipe(Effect.forkChild)
+            yield* Deferred.await(writing)
+            for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+            const pressured = capture.status()
+            yield* Deferred.succeed(paused, undefined)
+            yield* Fiber.join(producer)
+            expect(pressured.status).toBe('RECORDING')
+            expect(pressured.observedConsumerSequence).toBeLessThan(100)
+            expect(pressured.queuedCompressedBytes).toBeLessThanOrEqual(1_500)
+            return capture
+          }),
+        )
+        const retained: NativeArrivalChunk[] = []
+        while (retained.length < 100) {
+          const page = yield* readNativeArrivalChunks(sql, epoch.captureId, retained.length - 1)
+          expect(page.length).toBeGreaterThan(0)
+          retained.push(...page)
+        }
+        expect(retained).toHaveLength(100)
+        expect(retained.map((chunk) => chunk.header.firstConsumerSequence)).toEqual(
+          Array.from({ length: 100 }, (_, index) => index + 1),
+        )
+        expect(capture.status()).toMatchObject({
+          status: 'STOPPED',
+          observedConsumerSequence: 100,
+          durableConsumerSequence: 100,
+          queuedCompressedBytes: 0,
+        })
+        expect(yield* sql`SELECT count(*)::int AS count FROM native_arrival_chunks`).toEqual([{ count: 100 }])
       }),
     )
   })
