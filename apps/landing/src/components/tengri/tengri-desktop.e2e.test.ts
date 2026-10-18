@@ -1724,7 +1724,7 @@ test('recovers VS Code startup after a temporary control-plane failure using the
     const action = route.request().postDataJSON()
     if (action.action !== 'editor-session') return route.fallback()
     windowIds.push(action.windowId)
-    if (windowIds.length === 1) {
+    if (windowIds.length <= 3) {
       return route.fulfill({ status: 503, json: { error: 'Tengri control plane is unavailable' } })
     }
     await route.fulfill({
@@ -1750,7 +1750,7 @@ test('recovers VS Code startup after a temporary control-plane failure using the
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Code', exact: true }).click()
   const code = page.getByRole('region', { name: 'Code window' })
-  await expect.poll(() => windowIds.length, { timeout: 5_000 }).toBe(2)
+  await expect.poll(() => windowIds.length, { timeout: 12_000 }).toBe(4)
   expect(new Set(windowIds).size).toBe(1)
   await expect(code.frameLocator('iframe').getByText('Editor connected')).toBeVisible()
   await expect(code.getByRole('status')).toHaveCount(0)

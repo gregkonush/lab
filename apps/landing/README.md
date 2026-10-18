@@ -308,3 +308,7 @@ validation, stream limits and content-scrubbing checks.
 Chat file links display absolute `/workspace/...` guest paths and translate them to workspace-relative file API
 paths for text and image reads. Switching file tabs retains loaded contents and the Source/Rendered view without
 refetching; reopening an existing file preserves tab order. A failed inline image offers an explicit retry.
+
+Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
+with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
+reconnects its own transport without reloading the retained browser document.

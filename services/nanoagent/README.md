@@ -42,6 +42,10 @@ within one second. The shell and PTY survive in the snapshot; restore does not f
 Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
 a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
+The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
+backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
+failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
