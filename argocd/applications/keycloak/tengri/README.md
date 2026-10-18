@@ -13,7 +13,10 @@ the current complete policy with only the user-verification requirement changed.
 migrates the former PIN-required policy, rotates both secrets after passkey
 enrollment, rejects the old BFF secret and completes a fresh login using the rotated GitHub and BFF credentials.
 
-The dedicated `tengri` login theme extends Keycloak's built-in theme. Its registration module uses Keycloak 26.7.4's
+The dedicated `tengri` login theme extends Keycloak's built-in theme. Its shared layout covers passkey setup,
+verification and errors with the landing app's Geist font, pear mark, dark wallpaper, window and blue actions.
+Assets are served by Keycloak with no external font or image requests. The template retains Keycloak 26.7.4's
+session checking, import map and one-click link protection. Its registration module uses Keycloak 26.7.4's
 WebAuthn implementation and default authenticator label without calling `window.prompt()`, which embedded browsers
 reject after creating the credential. The real browser fixture disables prompts, enrolls passkeys, then disables user
 verification for subsequent authentication. It verifies that theme and PIN-policy migration preserve existing
@@ -25,6 +28,11 @@ password managers such as 1Password available. Unknown transports retain the bro
 do not restrict authenticators or change credential validation. The browser fixture records real WebAuthn requests
 and verifies fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
 These upstream assets retain their [Apache 2.0 license](theme/LICENSE.txt).
+The unchanged wallpaper is attributed in the [landing asset README](../../../../apps/landing/public/tengri/README.md).
+Geist retains its [SIL Open Font License](theme/login/resources/fonts/OFL.txt), and the pear retains the
+[Pictogrammers notice](theme/login/resources/img/pictogrammers-LICENSE.txt) under Apache 2.0.
+The browser fixture checks desktop and 320px setup, verification and error layouts, font loading, reduced motion,
+keyboard activation and WCAG A/AA rules. Set `TENGRI_IDENTITY_SCREENSHOTS` to a directory to retain its six screenshots.
 
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note
