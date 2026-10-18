@@ -37,15 +37,15 @@ const readyAgent = {
 const workspaceEntries = [
   {
     name: 'README.md',
-    path: '/README.md',
+    path: '/workspace/README.md',
     directory: false,
     size: 418,
     modifiedAt: '2026-08-26T12:02:00.000Z',
   },
-  { name: 'src', path: '/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
+  { name: 'src', path: '/workspace/src', directory: true, size: 0, modifiedAt: '2026-08-26T12:03:00.000Z' },
   {
     name: 'package.json',
-    path: '/package.json',
+    path: '/workspace/package.json',
     directory: false,
     size: 221,
     modifiedAt: '2026-08-26T12:04:00.000Z',
@@ -55,7 +55,7 @@ const workspaceEntries = [
 const sourceEntries = [
   {
     name: 'main.ts',
-    path: '/src/main.ts',
+    path: '/workspace/src/main.ts',
     directory: false,
     size: 128,
     modifiedAt: '2026-08-26T12:05:00.000Z',
@@ -243,9 +243,9 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   const terminalSockets: WebSocketRoute[] = []
   const terminalInput: string[] = []
   const contents = new Map<string, string>([
-    ['/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
-    ['/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
-    ['/src/main.ts', 'export const main = true\n'],
+    ['/workspace/README.md', '# Tengri\n\nA persistent Firecracker workspace.\n'],
+    ['/workspace/package.json', '{\n  "name": "tengri-workspace"\n}\n'],
+    ['/workspace/src/main.ts', 'export const main = true\n'],
   ])
 
   page.on('pageerror', (error) => console.error(`[browser:pageerror] ${error.stack ?? error.message}`))
@@ -1048,7 +1048,7 @@ test('serializes slow Finder refreshes and reports bounded search results', asyn
 
 function parentPath(path: string) {
   const separator = path.lastIndexOf('/')
-  return separator <= 0 ? '/' : path.slice(0, separator)
+  return separator <= 0 ? '/workspace' : path.slice(0, separator)
 }
 
 function emitCodexEvent(page: Page, event: Record<string, unknown>) {
@@ -1190,15 +1190,15 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await spotlight.getByRole('combobox').fill('readme')
   await expect(spotlight.getByRole('option', { name: /src/ })).toHaveCount(0, { timeout: 400 })
   await expect(spotlight.getByRole('option', { name: /README\.md/ })).toBeVisible()
-  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/')
+  expect(mock.actions.filter((action) => action.action === 'search-files').at(-1)?.path).toBe('/workspace')
   await spotlight.getByRole('combobox').fill('src')
   await expect(spotlight.getByRole('option', { name: /src/ })).toBeVisible()
   await page.keyboard.press('Enter')
   await expect(finder.getByRole('button', { name: /main\.ts/ })).toBeVisible()
   await expect
-    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/src'))
+    .poll(() => mock.actions.some((action) => action.action === 'list-files' && action.path === '/workspace/src'))
     .toBe(true)
-  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/src')).toBe(false)
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src')).toBe(false)
 
   const finderFrame = page.locator('section[aria-label="Finder window"]')
   const finderWatchBeforeMinimize = await page.evaluate(
@@ -1250,7 +1250,7 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-terminal').length).toBe(2)
   const terminalCreations = mock.actions.filter((action) => action.action === 'create-terminal')
   expect(new Set(terminalCreations.map((action) => action.creationId)).size).toBe(2)
-  expect(terminalCreations.every((action) => action.cwd === '/')).toBe(true)
+  expect(terminalCreations.every((action) => action.cwd === '/workspace')).toBe(true)
   const creationIdPattern = new RegExp(`^tengri-${readyAgent.id}-[0-9a-f]{32}-terminal-[0-9]+$`)
   expect(terminalCreations.every((action) => creationIdPattern.test(String(action.creationId)))).toBe(true)
   await page.getByRole('button', { name: 'Close Terminal' }).last().click()
@@ -1724,7 +1724,7 @@ test('recovers VS Code startup after a temporary control-plane failure using the
     const action = route.request().postDataJSON()
     if (action.action !== 'editor-session') return route.fallback()
     windowIds.push(action.windowId)
-    if (windowIds.length === 1) {
+    if (windowIds.length <= 3) {
       return route.fulfill({ status: 503, json: { error: 'Tengri control plane is unavailable' } })
     }
     await route.fulfill({
@@ -1750,7 +1750,7 @@ test('recovers VS Code startup after a temporary control-plane failure using the
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Code', exact: true }).click()
   const code = page.getByRole('region', { name: 'Code window' })
-  await expect.poll(() => windowIds.length, { timeout: 5_000 }).toBe(2)
+  await expect.poll(() => windowIds.length, { timeout: 12_000 }).toBe(4)
   expect(new Set(windowIds).size).toBe(1)
   await expect(code.frameLocator('iframe').getByText('Editor connected')).toBeVisible()
   await expect(code.getByRole('status')).toHaveCount(0)
@@ -1853,18 +1853,27 @@ test('stops VS Code startup recovery on denial and when the window closes', asyn
   expect(starts).toBe(3)
 })
 
-test('bounds VS Code startup recovery before offering manual retry', async ({ page }) => {
-  const mock = await mockTengri(page)
+test('keeps retrying temporary VS Code failures and cancels recovery on close', async ({ page }) => {
+  await mockTengri(page)
+  let starts = 0
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'editor-session')
+      return route.fallback()
+    starts++
+    return route.fulfill({ status: 503, json: { error: `Temporary preview failure ${starts}` } })
+  })
+  await page.clock.install()
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Code', exact: true }).click()
   const code = page.getByRole('region', { name: 'Code window' })
-  await expect(code.getByRole('alert')).toContainText('VS Code is unavailable')
-  const starts = () => mock.actions.filter((action) => action.action === 'editor-session').length
-  expect(starts()).toBe(3)
-  await page.clock.install()
+  await expect(code.getByRole('alert').locator('p')).toHaveText('Temporary preview failure 3')
+  expect(starts).toBe(3)
+  await expect(code.getByRole('alert').locator('p')).toHaveText('Temporary preview failure 4', { timeout: 6_000 })
+  expect(starts).toBe(4)
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  await expect(code).toHaveCount(0)
   await page.clock.runFor(60_000)
-  expect(starts()).toBe(3)
-  await expect(code.getByRole('button', { name: 'Retry VS Code', exact: true })).toBeVisible()
+  expect(starts).toBe(4)
 })
 
 test('offers old-editor drafts for download without overwriting guest files or exposing another owner', async ({
@@ -1930,6 +1939,23 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await page.goto('/')
   const model = page.getByRole('combobox', { name: 'Model', exact: true })
   await expect(model).toBeEnabled()
+  const triggerStyle = (control: Locator) =>
+    control.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        background: style.backgroundColor,
+        radius: style.borderRadius,
+        height: style.height,
+        padding: style.padding,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        lineHeight: style.lineHeight,
+        gap: style.columnGap,
+      }
+    })
+  const modelStyle = await triggerStyle(model)
+  expect(await triggerStyle(page.getByRole('combobox', { name: 'Approvals', exact: true }))).toEqual(modelStyle)
+  expect(await triggerStyle(page.getByRole('combobox', { name: 'Reasoning effort', exact: true }))).toEqual(modelStyle)
   await model.focus()
   await model.press('ArrowUp')
   const menu = page.getByRole('listbox')
@@ -1952,7 +1978,7 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-5.6 Luna')
   await expect(menu).toHaveCount(0)
   const reasoning = page.getByRole('combobox', { name: 'Reasoning effort' })
-  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await page.setViewportSize({ width: 390, height: 680 })
   await reasoning.click()
   await expect(menu).toBeVisible()
@@ -1997,7 +2023,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
   await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-6.1 Sol')
   await expect(model).toBeEnabled()
-  await selectCodexOption(page, reasoning, 'High')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('High')
   await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await tengri.getByRole('button', { name: 'Send message' }).click()
   await expect
@@ -2034,7 +2060,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
       reasoningEffort: 'high',
     })
   await selectCodexOption(page, model, 'GPT-5.6 Luna')
-  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await reasoning.click()
   await expect(page.getByRole('listbox')).toBeVisible()
   await expect(page.getByRole('option', { name: 'High', exact: true })).toHaveCount(0)
@@ -4940,7 +4966,7 @@ test('navigates Finder with sortable columns, breadcrumbs, Go to Folder, and fil
   await location.getByRole('textbox', { name: 'Folder location' }).fill('/../../outside')
   await location.getByRole('button', { name: 'Go', exact: true }).click()
   await expect(location.getByRole('alert')).toHaveText('Enter an absolute path inside the workspace')
-  await location.getByRole('textbox', { name: 'Folder location' }).fill('/')
+  await location.getByRole('textbox', { name: 'Folder location' }).fill('/workspace')
   await location.getByRole('textbox', { name: 'Folder location' }).press('Enter')
   await expect(location).toHaveCount(0)
   await expect(files).toHaveCount(3)
@@ -6836,10 +6862,13 @@ test('reopens terminally closed chat and Finder streams without reloading the de
 
 test('opens local file references as rendered agent tabs and preserves the chat draft', async ({ page }) => {
   const mock = await mockTengri(page)
+  const reads = new Map<string, number>()
   await page.route('**/api/tengri', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     const action = route.request().postDataJSON()
-    if (action.action !== 'read-file' || action.path !== '/workspace/README.md') return route.fallback()
+    if (action.action !== 'read-file' || !['/workspace/README.md', '/workspace/notes.md'].includes(action.path))
+      return route.fallback()
+    reads.set(action.path, (reads.get(action.path) ?? 0) + 1)
     return route.fulfill({
       json: {
         result: { path: action.path, content: '# Tengri\n\nA persistent workspace.\n', contentType: 'text/markdown' },
@@ -6860,7 +6889,7 @@ test('opens local file references as rendered agent tabs and preserves the chat 
     itemId: 'file-reference',
     approvalId: '',
     rawJson: '{}',
-    text: '[Project file](/workspace/README.md:2) and [Missing file](/workspace/missing.md)',
+    text: '[Project file](/workspace/README.md:2), [Notes](/workspace/notes.md), and [Missing file](/workspace/missing.md)',
   })
   await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
   await expect(tengri.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
@@ -6872,6 +6901,18 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await preview.getByRole('button', { name: 'Source', exact: true }).click()
   await expect(preview.locator('[data-selected="true"]')).toContainText('2')
   await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await expect(composer).toHaveValue('Keep this draft')
+  await tengri.getByRole('button', { name: 'Notes', exact: true }).click()
+  await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
+  await expect(preview.getByRole('button', { name: 'Rendered', exact: true })).toBeVisible()
+  expect(reads.get('/workspace/README.md')).toBe(1)
+  await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
+  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
+  await tengri.getByRole('tab', { name: 'README.md', exact: true }).press('ArrowRight')
+  await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await tengri.getByRole('tab', { name: 'notes.md', exact: true }).press('Home')
   await expect(composer).toHaveValue('Keep this draft')
   expect((await new AxeBuilder({ page }).include('[role="tablist"]').analyze()).violations).toEqual([])
   await tengri.getByRole('button', { name: 'Missing file', exact: true }).click()
@@ -6889,7 +6930,14 @@ test('renders workspace images sent by the agent inline and in file tabs', async
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
     'base64',
   )
-  await page.route('**/api/tengri/attachments?*', (route) => route.fulfill({ contentType: 'image/png', body: png }))
+  let failNextImage = true
+  await page.route('**/api/tengri/attachments?*', (route) => {
+    if (failNextImage) {
+      failNextImage = false
+      return route.fulfill({ status: 503, json: { error: 'Temporary image read failure' } })
+    }
+    return route.fulfill({ contentType: 'image/png', body: png })
+  })
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
@@ -6904,6 +6952,8 @@ test('renders workspace images sent by the agent inline and in file tabs', async
     rawJson: '{}',
     text: 'Here is your chart.\n\n![Generated chart](/workspace/chart.png)\n\n[Open chart](/workspace/chart.png)',
   })
+  await expect(tengri.getByRole('status').filter({ hasText: 'Image unavailable: Generated chart' })).toBeVisible()
+  await tengri.getByRole('button', { name: 'Retry image', exact: true }).click()
   const image = tengri.getByRole('img', { name: 'Generated chart', exact: true })
   await expect(image).toBeVisible()
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1)

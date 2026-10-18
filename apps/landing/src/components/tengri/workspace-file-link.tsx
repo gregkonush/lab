@@ -36,7 +36,11 @@ export function WorkspaceFileLinkProvider({
       document.getElementById(`${id}-file-${files.findIndex((file) => file.path === activePath)}`)?.focus()
   }, [activePath, files, id])
   const openFile = (file: FileTarget) => {
-    setFiles((current) => [...current.filter((item) => item.path !== file.path), file])
+    setFiles((current) =>
+      current.some((item) => item.path === file.path)
+        ? current.map((item) => (item.path === file.path ? file : item))
+        : [...current, file],
+    )
     setActivePath(file.path)
   }
   const closeFile = (path: string) => {
@@ -125,14 +129,12 @@ export function WorkspaceFileLinkProvider({
               hidden={activePath !== file.path}
               className={activePath === file.path ? 'min-h-0 flex-1' : 'hidden'}
             >
-              {activePath === file.path ? (
-                <FilePreview
-                  key={`${agentId}:${file.path}:${file.line}:${file.column}`}
-                  agentId={agentId}
-                  file={file}
-                  onClose={() => closeFile(file.path)}
-                />
-              ) : null}
+              <FilePreview
+                key={`${agentId}:${file.path}:${file.line}:${file.column}`}
+                agentId={agentId}
+                file={file}
+                onClose={() => closeFile(file.path)}
+              />
             </div>
           ))}
         </div>
@@ -294,9 +296,27 @@ export function WorkspaceImage({ src, alt, basePath }: { src?: string; alt?: str
   const agentId = useContext(WorkspaceAgentContext)
   const file = src ? parseWorkspaceFileLink(src, basePath) : null
   const [failedSource, setFailedSource] = useState<string | null>(null)
+  const [attempt, setAttempt] = useState(0)
   if (!agentId || !file || !isWorkspaceImagePath(file.path)) return <span>[Image{alt ? `: ${alt}` : ''}]</span>
-  const url = `/api/tengri/attachments?${new URLSearchParams({ agentId, path: file.path })}`
-  if (failedSource === url) return <span role="status">Image unavailable{alt ? `: ${alt}` : ''}</span>
+  const query = new URLSearchParams({ agentId, path: file.path })
+  if (attempt) query.set('attempt', String(attempt))
+  const url = `/api/tengri/attachments?${query}`
+  if (failedSource === url)
+    return (
+      <span role="status">
+        Image unavailable{alt ? `: ${alt}` : ''}{' '}
+        <button
+          type="button"
+          className="text-blue-300 underline underline-offset-4 focus-visible:outline focus-visible:outline-blue-400"
+          onClick={() => {
+            setFailedSource(null)
+            setAttempt((value) => value + 1)
+          }}
+        >
+          Retry image
+        </button>
+      </span>
+    )
   return (
     <img
       src={url}

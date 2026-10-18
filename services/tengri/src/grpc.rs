@@ -275,6 +275,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<proto::RequestAudience>, Status> {
         Ok(Response::new(proto::RequestAudience {
             audience: self.request_audience().into(),
+            guest_api_protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
         }))
     }
     async fn create_agent(
