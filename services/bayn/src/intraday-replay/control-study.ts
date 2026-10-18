@@ -1055,13 +1055,13 @@ export const runControlStudy = (
         message: 'Native Jev entry or management requires exactly one measured provider binding',
       })
     const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
-    const firstDate = prepared.input.sessionDates[0]
+    const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)
       return yield* new ControlStudyFailure({ message: 'Control calendar has no boundary sessions' })
     const calendar = yield* Effect.fromResult(
       normalizeMarketCalendarResult(prepared.input.calendar, {
-        start: firstDate,
+        start: yield* Effect.fromResult(Schema.decodeUnknownResult(IsoDateSchema)(firstDate)),
         end: lastDate,
       }),
     )
@@ -1071,7 +1071,7 @@ export const runControlStudy = (
             prepareBoundRidge(input.ridge, {
               source: prepared.input.source,
               calendar,
-              sessions: prepared.sessions,
+              sessions: prepared.brokerSessions,
               protocol: prepared.protocol,
               risk,
               pollIntervalMs: prepared.input.cadence.pollIntervalMs,
@@ -1150,7 +1150,7 @@ export const runControlStudy = (
           peakNetEquityMicros: prepared.input.openingCashMicros,
           accruedExternalCostMicros: '0',
         }
-        for (const session of prepared.sessions) {
+        for (const session of prepared.brokerSessions) {
           const result = yield* runControlSession({
             policy,
             protocol: prepared.protocol,
@@ -1204,7 +1204,7 @@ export const runControlStudy = (
             ...(policy === ControlPolicy.JevEntry && binding !== null ? { entry: binding } : {}),
           })
           results.push(result)
-          if (result.ledger.positions.length !== 0 && session !== prepared.sessions.at(-1))
+          if (result.ledger.positions.length !== 0 && session !== prepared.brokerSessions.at(-1))
             return yield* new ControlStudyFailure({
               message: 'Cannot reset an unresolved control position between sessions',
             })

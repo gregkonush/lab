@@ -105,7 +105,7 @@ test.each(['bid', 'ask', 'both'] as const)('preserves absent %s prices as reject
   expect(Result.isFailure(decoded)).toBe(true)
   if (Result.isFailure(decoded)) expect(decoded.failure.message).toBe('invalid raw quote row')
   const cursor = Result.getOrThrow(
-    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), universe)), event),
+    advanceHistoricalMarketCursor(Result.getOrThrow(createHistoricalMarketCursor('5'.repeat(64), [universe])), event),
   )
   expect(cursor.processedRecords).toBe(1)
   expect(cursor.projection.quoteHistory.size).toBe(0)

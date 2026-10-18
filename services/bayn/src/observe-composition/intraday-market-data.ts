@@ -49,7 +49,7 @@ export const executionMarketDataBinding = (
     decodeExecutionMarketDataBinding({
       ...material,
       schemaVersion:
-        schemaVersion === 'bayn.simulated-market-snapshot.v1'
+        schemaVersion === 'bayn.simulated-market-snapshot.v2'
           ? 'bayn.execution-market-data-binding.v4'
           : 'bayn.execution-market-data-binding.v3',
       snapshotSchemaVersion: schemaVersion,

@@ -96,7 +96,7 @@ export const StrategySnapshotManifestSchema = Schema.Union([
   }),
   Schema.Struct({
     ...SnapshotManifestFields,
-    schemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    schemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v2'),
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
     streaming: SimulatedSnapshotEvidenceSchema,
   }),

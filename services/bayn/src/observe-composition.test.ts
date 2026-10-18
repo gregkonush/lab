@@ -27,7 +27,7 @@ import {
   runRestateAdvanceWithinTimeout,
 } from './observe-composition/recovery-driver'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
-import { boundedReconciliationPass } from './observe-composition/decision-builder'
+import { boundedReconciliationPass, decisionBuildError } from './observe-composition/decision-builder'
 import { runRecoveryFirstCyclePass } from './observe-composition/execution-cycle'
 import {
   AccountStatus as BrokerAccountStatus,
@@ -6655,3 +6655,41 @@ test.each([
     expect(counts).toEqual([1, 2, 3])
   },
 )
+
+test('entry expiry during reconciliation remains a non-dispatchable lifecycle result', async () => {
+  const fixture = await executionLifecycleFixture()
+  const cutoff = cycle.window.submissionCutoffAt
+  let snapshots = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(cutoff) - 1)
+      return yield* Effect.result(
+        buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixture.preparation.executionModel,
+          policy: fixture.policy,
+          strategy: fixtureRuntime,
+          reconcile: TestClock.setTime(Date.parse(cutoff)).pipe(Effect.as(reconciliationResultAt(cutoff))),
+          intradayMarketData: {
+            ...fixture.input.intradayMarketData,
+            loadSnapshot: () =>
+              Effect.sync(() => {
+                snapshots += 1
+              }).pipe(Effect.andThen(Effect.die('An expired entry must not read strategy inputs'))),
+          },
+        }).pipe(Effect.mapError(decisionBuildError)),
+      )
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({
+      failure: 'not-ready',
+      readiness: { reason: DecisionReadinessReason.NoEligibleCandidate },
+    })
+  expect(snapshots).toBe(0)
+})

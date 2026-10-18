@@ -774,7 +774,7 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v3',
+      schemaVersion: 'bayn.backtest.v4',
       inference: {
         mode: 'measured-provider',
         model: jevModel,
@@ -783,7 +783,7 @@ const frozenControlFixture = () => {
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',
-      sessionDates: ['2026-09-04', '2026-09-08'],
+      interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-08T20:00:00.000Z' },
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
@@ -913,12 +913,12 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       ).toBeTrue()
       const inputText = JSON.stringify(input)
       const receiptText = JSON.stringify({
-        schemaVersion: 'bayn.replay-source-capture.v1',
+        schemaVersion: 'bayn.replay-source-capture.v2',
         capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
         origin: 'Independently frozen deterministic capture fixture',
         coverageStartMs: source.coverageStartMs,
         coverageEndMs: source.coverageEndMs,
-        universe: source.universe,
+        marketSources: source.marketSources,
         positions: source.positions,
       })
       yield* fs.writeFileString(`${directory}/input.json`, inputText)
@@ -992,12 +992,12 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         expect(preflight.reportHash).toBe((yield* runControlPreflight(input, arrivals, receipt)).reportHash)
         const inputText = JSON.stringify(input)
         const receiptText = JSON.stringify({
-          schemaVersion: 'bayn.replay-source-capture.v1',
+          schemaVersion: 'bayn.replay-source-capture.v2',
           capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
           origin: 'Independently frozen deterministic capture fixture',
           coverageStartMs: source.coverageStartMs,
           coverageEndMs: source.coverageEndMs,
-          universe: source.universe,
+          marketSources: source.marketSources,
           positions: source.positions,
         })
         yield* fs.writeFileString(`${directory}/input.json`, inputText)
