@@ -108,8 +108,9 @@ const order = (
   ...(known ? { intentId: hash('9') } : {}),
   symbol,
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
+  limitPriceMicros: '50000000',
   quantityAtoms: '1000000000',
   filledQuantityAtoms: status === OrderStatus.Filled ? '1000000000' : '0',
   status,
@@ -540,8 +541,8 @@ describe('causal target planner', () => {
       ...input,
       precision: { ...input.precision, quantityIncrementAtoms: '1000' },
       executionTerms: {
-        executionPurpose: 'fractional-close',
-        orderType: OrderType.Market,
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
         priceReference: 'verified-adverse-quote-boundary',
         snapshotId: input.executionTerms.snapshotId,
@@ -554,8 +555,8 @@ describe('causal target planner', () => {
     expect(result).toMatchObject({
       status: TargetPlanStatus.Planned,
       executionTerms: {
-        executionPurpose: 'fractional-close',
-        orderType: OrderType.Market,
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
         priceReference: 'verified-adverse-quote-boundary',
       },
@@ -564,7 +565,7 @@ describe('causal target planner', () => {
         {
           symbol: 'AMD',
           side: OrderSide.Sell,
-          orderType: OrderType.Market,
+          orderType: OrderType.Limit,
           timeInForce: TimeInForce.Day,
           quantityAtoms: '500000000',
         },
@@ -588,7 +589,7 @@ describe('causal target planner', () => {
       ...material,
       intentTargets: planned.intentTargets.map((intent) => ({
         ...intent,
-        orderType: OrderType.Market,
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
       })),
     }
@@ -825,7 +826,7 @@ describe('causal target planner', () => {
     expect(replay).toEqual(first)
     expect(reordered).toEqual(first)
     expect(first.inputHash).toBe('edc1cbc540f7d2b2d7a3e7fac81a94f665a39adfc2ea0506351272c98d9e5c0d')
-    expect(first.outputHash).toBe('8bd29a84d7cafa238e3ac4163eab729402c2bf6d74f58c602d5fd631baa17b81')
+    expect(first.outputHash).toBe('76739e0ea016490ce5b0e798ed5e38083b14513a2f4471c058c62c46331dae85')
     expect(changedDecision.inputHash).not.toBe(first.inputHash)
     expect(changedDecision.outputHash).not.toBe(first.outputHash)
     expect(changedDecision.intentTargets.every((intent) => intent.decisionHash === hash('4'))).toBe(true)

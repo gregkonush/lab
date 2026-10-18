@@ -77,7 +77,7 @@ const config: ReplayBrokerConfig = {
   quoteAt: () => Effect.succeed(observedQuote(quote)),
 }
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v4',
   intentId: '1'.repeat(64),
   riskDecisionId: '6'.repeat(64),
   authorityGenerationHash: '2'.repeat(64),
@@ -93,6 +93,7 @@ const intent = (overrides: Partial<Intent> = {}): Intent => ({
   timeInForce: TimeInForce.Day,
   quantityAtoms: '5000000000',
   notionalLimitMicros: '505000000',
+  limitPriceMicros: '101000000',
   state: IntentState.IoStarted,
   createdAt: observedAt,
   ...overrides,
@@ -122,7 +123,13 @@ test('an equity DAY order remains open when its first arrival cannot fill', asyn
   const result = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
-      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      const submitted = yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       return { submitted, open: (yield* broker.read.orders({ status: OrderCollection.Open })).value }
     }),
   )
@@ -135,7 +142,13 @@ test('a DAY order captures a later brief crossing before the next account poll',
   const state = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
-      yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       for (const [delay, price, offset] of [
         [1_000, 99, '2'],
         [1_100, 101, '3'],
@@ -231,7 +244,14 @@ test('DAY recovery retains distinct fills from quotes available in the same mill
       const quoteAt: ReplayBrokerConfig['quoteAt'] = (symbol, atMs, source) =>
         Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source))
       const broker = yield* setup({ quoteAt })
-      yield* submit(broker, intent({ quantityAtoms: '3000000000', notionalLimitMicros: '303000000' }))
+      yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('303000000') * 1000000000n) / BigInt('3000000000')).toString(),
+          quantityAtoms: '3000000000',
+          notionalLimitMicros: '303000000',
+        }),
+      )
       const atMs = startMs + 1_000
       yield* TestClock.setTime(atMs)
       for (const [index, price] of [99, 100].entries()) {
@@ -278,7 +298,13 @@ test('canceling a resting DAY order prevents execution on subsequent quotes', as
   const state = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
-      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      const submitted = yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       const canceled = yield* broker.mutation.cancel(submitted.order.brokerOrderId)
       expect(canceled.evidence.status).toBe(204)
       expect(canceled.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(null)))
@@ -321,7 +347,13 @@ test('an extended-hours DAY order expires at the broker session end, including w
           },
         ],
       })
-      const submitted = yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      const submitted = yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       yield* TestClock.setTime(Date.parse('2026-09-04T21:00:00.000Z'))
       const afterData = yield* broker.read.orderById(submitted.order.brokerOrderId)
       yield* TestClock.setTime(Date.parse('2026-09-05T00:00:00.000Z'))
@@ -339,7 +371,13 @@ test('an unfilled DAY evaluation retains the actual arrival quote, modeled price
   const checkpoint = await run(
     Effect.gen(function* () {
       const broker = yield* setup({ assumptions: { ...config.assumptions, slippageBps: 1 } })
-      yield* submit(broker, intent({ notionalLimitMicros: '500000000' }))
+      yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       return yield* broker.checkpoint
     }),
   )
@@ -356,6 +394,31 @@ test('an unfilled DAY evaluation retains the actual arrival quote, modeled price
     outcome: { status: 'unfilled', reason: 'adverse-price-exceeds-limit', adversePriceMicros: '100010000' },
   })
   expect(checkpoint.state.orders[0]?.order.filledQuantityAtoms).toBe('0')
+})
+
+test('checkpoint restore rejects a rehashed change to native duration or extended hours', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup()
+      yield* submit(broker, intent())
+      const checkpoint = yield* broker.checkpoint
+      const { checkpointHash: _, ...material } = checkpoint
+      for (const changed of [{ timeInForce: BrokerTimeInForce.ImmediateOrCancel }, { extendedHours: false }]) {
+        const forgedMaterial = {
+          ...material,
+          state: {
+            ...material.state,
+            orders: material.state.orders.map((value) => ({
+              ...value,
+              order: { ...value.order, ...changed },
+            })),
+          },
+        }
+        const forged = { ...forgedMaterial, checkpointHash: Result.getOrThrow(canonicalHashV1Result(forgedMaterial)) }
+        expect(Result.isFailure(restoreReplayBrokerCheckpoint(forged, config))).toBe(true)
+      }
+    }),
+  )
 })
 
 test('historical arrival scheduler advances data before delivery without a wall-time polling loop', async () => {
@@ -483,7 +546,14 @@ test('arrival quote drives partial DAY fill and the remainder stays active', asy
       })
       const filled = yield* submit(broker, intent())
       const duplicate = yield* broker.mutation.submit(intent())
-      const conflict = yield* Effect.result(broker.mutation.submit(intent({ notionalLimitMicros: '510000000' })))
+      const conflict = yield* Effect.result(
+        broker.mutation.submit(
+          intent({
+            limitPriceMicros: ((BigInt('510000000') * 1000000000n) / BigInt('5000000000')).toString(),
+            notionalLimitMicros: '510000000',
+          }),
+        ),
+      )
       return {
         filled,
         duplicate,
@@ -525,10 +595,21 @@ test.each([
         const thinQuote = observedQuote({ ...quote, askSize })
         const assumptions = { ...config.assumptions, availableLiquidityPpm: liquidityPpm }
         const broker = yield* setup({ quoteAt: () => Effect.succeed(thinQuote), assumptions })
-        yield* submit(broker, intent({ quantityAtoms: first }))
+        yield* submit(
+          broker,
+          intent({
+            limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt(first)).toString(),
+            quantityAtoms: first,
+          }),
+        )
         const later = yield* submit(
           broker,
-          intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityAtoms: second }),
+          intent({
+            limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt(second)).toString(),
+            intentId: '7'.repeat(64),
+            clientOrderId: 'replay-buy-2',
+            quantityAtoms: second,
+          }),
         )
         const checkpoint = yield* broker.checkpoint
         const restored = yield* makeReplayBroker({
@@ -554,14 +635,30 @@ test('a later quote and the opposite side each have their own displayed-liquidit
         quoteAt: (_symbol, atMs) =>
           Effect.succeed(observedQuote(atMs >= startMs + 200 ? { ...thinQuote, sourceOffset: '2' } : thinQuote)),
       })
-      yield* submit(broker, intent({ quantityAtoms: '2000000000' }))
+      yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt('2000000000')).toString(),
+          quantityAtoms: '2000000000',
+        }),
+      )
       const laterBuy = yield* submit(
         broker,
-        intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityAtoms: '1000000000' }),
+        intent({
+          limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt('1000000000')).toString(),
+          intentId: '7'.repeat(64),
+          clientOrderId: 'replay-buy-2',
+          quantityAtoms: '1000000000',
+        }),
       )
       const sell = yield* submit(
         broker,
         intent({
+          limitPriceMicros: (
+            (BigInt('200000000') * 1000000000n + BigInt('2000000000') - 1n) /
+            BigInt('2000000000')
+          ).toString(),
+
           intentId: '8'.repeat(64),
           clientOrderId: 'replay-sell-1',
           side: OrderSide.Sell,
@@ -582,10 +679,22 @@ test('simultaneous deliveries cannot spend the same quote budget twice', async (
     Effect.gen(function* () {
       const broker = yield* setup({ quoteAt: () => Effect.succeed(observedQuote({ ...quote, askSize: 2 })) })
       const first = yield* broker.mutation
-        .submit(intent({ quantityAtoms: '2000000000' }))
+        .submit(
+          intent({
+            limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt('2000000000')).toString(),
+            quantityAtoms: '2000000000',
+          }),
+        )
         .pipe(Effect.forkChild({ startImmediately: true }))
       const second = yield* broker.mutation
-        .submit(intent({ intentId: '7'.repeat(64), clientOrderId: 'replay-buy-2', quantityAtoms: '2000000000' }))
+        .submit(
+          intent({
+            limitPriceMicros: ((BigInt('505000000') * 1000000000n) / BigInt('2000000000')).toString(),
+            intentId: '7'.repeat(64),
+            clientOrderId: 'replay-buy-2',
+            quantityAtoms: '2000000000',
+          }),
+        )
         .pipe(Effect.forkChild({ startImmediately: true }))
       yield* TestClock.adjust(100)
       yield* Effect.all([Fiber.join(first), Fiber.join(second)])
@@ -612,7 +721,15 @@ test('round trip cash includes execution fees and broker activities agree with f
       yield* submit(broker, intent())
       yield* submit(
         broker,
-        intent({ clientOrderId: 'replay-sell-1', side: OrderSide.Sell, notionalLimitMicros: '500000000' }),
+        intent({
+          limitPriceMicros: (
+            (BigInt('500000000') * 1000000000n + BigInt('5000000000') - 1n) /
+            BigInt('5000000000')
+          ).toString(),
+          clientOrderId: 'replay-sell-1',
+          side: OrderSide.Sell,
+          notionalLimitMicros: '500000000',
+        }),
       )
       return {
         state: yield* broker.snapshot,
@@ -717,6 +834,8 @@ test.each(['oversell', 'cash'] as const)('%s rejection is terminal and recoverab
     Effect.gen(function* () {
       const broker = yield* setup({ openingCashMicros: kind === 'cash' ? '1000000' : config.openingCashMicros })
       const order = intent({
+        limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+
         side: kind === 'oversell' ? OrderSide.Sell : OrderSide.Buy,
         notionalLimitMicros: '500000000',
       })
@@ -1433,7 +1552,7 @@ test('delivery failures retain terminal evidence and prevent session acceptance'
   )
 })
 
-test('production MARKET/DAY close liquidates at the adverse arrival price and survives restore', async () => {
+test('bounded LIMIT/DAY close liquidates at the adverse arrival price and survives restore', async () => {
   await run(
     Effect.gen(function* () {
       const broker = yield* setup({
@@ -1442,16 +1561,17 @@ test('production MARKET/DAY close liquidates at the adverse arrival price and su
       })
       yield* broker.mutation.submit(intent())
       const close = intent({
-        clientOrderId: 'market-close',
+        clientOrderId: 'bounded-close',
         side: OrderSide.Sell,
-        orderType: OrderType.Market,
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
-        notionalLimitMicros: '1',
+        limitPriceMicros: '99990000',
+        notionalLimitMicros: '499950000',
       })
-      const result = yield* broker.mutation.submit(close, true)
-      expect(result.order.orderType).toBe(BrokerOrderType.Market)
+      const result = yield* broker.mutation.submit(close)
+      expect(result.order.orderType).toBe(BrokerOrderType.Limit)
       expect(result.order.timeInForce).toBe(BrokerTimeInForce.Day)
-      expect(result.order.limitPriceMicros).toBeUndefined()
+      expect(result.order.limitPriceMicros).toBe('99990000')
       expect(result.order.status).toBe(OrderStatus.Filled)
       expect(result.order.filledAveragePriceMicros).toBe('99990000')
       expect((yield* broker.snapshot).ledger.positions).toEqual([])
@@ -1466,7 +1586,7 @@ test('production MARKET/DAY close liquidates at the adverse arrival price and su
   )
 })
 
-test('fractional market closes preserve residual inventory, fees, and restart evidence', async () => {
+test('fractional LIMIT closes preserve residual inventory, fees, and restart evidence', async () => {
   await run(
     Effect.gen(function* () {
       const broker = yield* setup({ fractionalTrading: true, advanceToArrival: (at) => TestClock.setTime(at) })
@@ -1476,12 +1596,12 @@ test('fractional market closes preserve residual inventory, fees, and restart ev
           intent({
             clientOrderId: `fractional-close-${index}`,
             side: OrderSide.Sell,
-            orderType: OrderType.Market,
+            orderType: OrderType.Limit,
             timeInForce: TimeInForce.Day,
             quantityAtoms,
-            notionalLimitMicros: '1',
+            limitPriceMicros: '100000000',
+            notionalLimitMicros: ((BigInt(quantityAtoms) * 100000000n) / 1000000000n).toString(),
           }),
-          true,
         )
         expect(closed.order.filledQuantityAtoms).toBe(quantityAtoms)
         const checkpoint = yield* broker.checkpoint
@@ -1502,7 +1622,7 @@ test('fractional market closes preserve residual inventory, fees, and restart ev
 })
 
 for (const scenario of ['missing', 'stale', 'future', 'thin', 'zero'] as const) {
-  test(`market close with ${scenario} arrival evidence fails the simulation without fabricated fills`, async () => {
+  test(`LIMIT close with ${scenario} arrival evidence retains the actual partial or resting state`, async () => {
     await run(
       Effect.gen(function* () {
         let closing = false
@@ -1532,30 +1652,27 @@ for (const scenario of ['missing', 'stale', 'future', 'thin', 'zero'] as const) 
         })
         yield* broker.mutation.submit(intent())
         closing = true
-        const rejected = yield* Effect.exit(
-          broker.mutation.submit(
-            intent({
-              clientOrderId: 'failed-market-close',
-              side: OrderSide.Sell,
-              orderType: OrderType.Market,
-              timeInForce: TimeInForce.Day,
-            }),
-            true,
-          ),
+        const receipt = yield* broker.mutation.submit(
+          intent({
+            clientOrderId: 'bounded-pending-close',
+            side: OrderSide.Sell,
+            limitPriceMicros: '100000000',
+            notionalLimitMicros: '500000000',
+          }),
         )
-        expect(rejected._tag).toBe('Failure')
         const state = yield* broker.snapshot
-        expect(state.fills).toHaveLength(1)
-        expect(state.ledger.positions[0]?.quantityAtoms).toBe('5000000000')
-        expect(state.orders[1]?.deliveryFailure).toBeDefined()
-        yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
-        expect((yield* Effect.exit(broker.valuationAt('2026-09-04T20:00:00.000Z')))._tag).toBe('Failure')
+        expect(receipt.order.status).toBe(scenario === 'thin' ? OrderStatus.PartiallyFilled : OrderStatus.New)
+        expect(state.fills).toHaveLength(scenario === 'thin' ? 2 : 1)
+        expect(state.ledger.positions[0]?.quantityAtoms).toBe(scenario === 'thin' ? '3000000000' : '5000000000')
+        expect(state.orders[1]?.deliveryFailure).toBeUndefined()
+        const checkpoint = yield* broker.checkpoint
+        expect(Result.isSuccess(restoreReplayBrokerCheckpoint(checkpoint, { ...config }))).toBe(true)
       }),
     )
   })
 }
 
-test('fractional market close requires the captured account fractional-trading setting', async () => {
+test('fractional LIMIT close requires the captured account fractional-trading setting', async () => {
   await run(
     Effect.gen(function* () {
       const broker = yield* setup({ fractionalTrading: false, advanceToArrival: (at) => TestClock.setTime(at) })
@@ -1563,11 +1680,13 @@ test('fractional market close requires the captured account fractional-trading s
       const close = intent({
         clientOrderId: 'disabled-fractional-close',
         side: OrderSide.Sell,
-        orderType: OrderType.Market,
+        orderType: OrderType.Limit,
         timeInForce: TimeInForce.Day,
         quantityAtoms: '500000000',
+        limitPriceMicros: '100000000',
+        notionalLimitMicros: '50000000',
       })
-      expect((yield* Effect.exit(broker.mutation.submit(close, true)))._tag).toBe('Failure')
+      expect((yield* Effect.exit(broker.mutation.submit(close)))._tag).toBe('Failure')
       expect((yield* broker.snapshot).orders).toHaveLength(1)
     }),
   )
@@ -1636,7 +1755,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     expect(state.ledger.fills).toHaveLength(1)
     expect(state.ledger.fills[0]?.quantityAtoms).toBe('2000000000')
   })
-  test(`${symbol} settles and restores the shared broker across Sunday midnight with coin fees and a GTC close`, async () => {
+  test(`${symbol} settles and restores the shared broker across Sunday midnight with coin fees and an IOC close`, async () => {
     const start = Date.parse('2026-10-11T23:59:59.850Z')
     const asset = cryptoAsset(symbol, new Date(start).toISOString())
     await run(
@@ -1670,6 +1789,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         yield* submit(
           broker,
           intent({
+            limitPriceMicros: ((BigInt('3338050') * 1000000000n) / BigInt('33050000')).toString(),
+
             symbol,
             timeInForce: TimeInForce.ImmediateOrCancel,
             quantityAtoms: '33050000',
@@ -1695,24 +1816,26 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         expect(mark.valuationQualified).toBe(true)
         expect(yield* restored.snapshot).toEqual(held.state)
         const close = intent({
+          limitPriceMicros: '100000000',
+
           symbol,
           side: OrderSide.Sell,
-          orderType: OrderType.Market,
-          timeInForce: TimeInForce.GoodUntilCanceled,
+          orderType: OrderType.Limit,
+          timeInForce: TimeInForce.ImmediateOrCancel,
           quantityAtoms: '32967375',
-          notionalLimitMicros: '3296738',
+          notionalLimitMicros: '3296737',
           clientOrderId: 'replay-sell-1',
           createdAt: new Date(start + 100).toISOString(),
         })
-        const pending = yield* restored.mutation.submit(close, true).pipe(Effect.forkChild({ startImmediately: true }))
+        const pending = yield* restored.mutation.submit(close).pipe(Effect.forkChild({ startImmediately: true }))
         yield* TestClock.adjust(100)
         yield* Fiber.join(pending)
-        yield* restored.mutation.submit(close, true)
+        yield* restored.mutation.submit(close)
         const flat = yield* restored.checkpoint
         expect(flat.state.orders).toHaveLength(2)
         expect(flat.state.ledger.positions).toEqual([])
         expect(flat.state.ledger.fills).toHaveLength(2)
-        expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.GoodUntilCanceled)
+        expect(flat.state.orders[1]?.order.timeInForce).toBe(BrokerTimeInForce.ImmediateOrCancel)
         expect(Result.getOrThrow(restoreReplayBrokerCheckpoint(flat, frozen)).state.ledger).toEqual(flat.state.ledger)
         expect(flat.state.fees[1]?.cryptoCashFee).toBe(true)
         expect((yield* restored.read.account).value.nonMarginableBuyingPowerMicros).toBe(flat.state.ledger.cashMicros)
@@ -1789,7 +1912,11 @@ test('a resting equity DAY order survives a winter UTC report and expires at the
       })
       const submitted = yield* submit(
         broker,
-        intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }),
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          createdAt: new Date(entryAt).toISOString(),
+          notionalLimitMicros: '500000000',
+        }),
       )
       expect(submitted.order.status).toBe(OrderStatus.New)
       yield* TestClock.setTime(midnight)
@@ -1852,7 +1979,14 @@ test('extended-hours reports preserve the regular-close broker equity reference'
         quoteAt: (_symbol, atMs) => Effect.succeed(points.filter((q) => q.availableAtMs <= atMs).at(-1)),
       }
       let broker = yield* makeReplayBroker(frozen)
-      yield* submit(broker, intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }))
+      yield* submit(
+        broker,
+        intent({
+          limitPriceMicros: ((BigInt('500000000') * 1000000000n) / BigInt('5000000000')).toString(),
+          createdAt: new Date(entryAt).toISOString(),
+          notionalLimitMicros: '500000000',
+        }),
+      )
       yield* TestClock.setTime(regularClose)
       const regular = yield* broker.valuationAt(new Date(regularClose).toISOString())
       const checkpoint = yield* broker.checkpoint

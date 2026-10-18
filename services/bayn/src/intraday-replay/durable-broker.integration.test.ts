@@ -10,7 +10,7 @@ import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
-import { Authority, IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
+import { Authority, IntentState, OrderSide, OrderType, type Intent } from '../execution/contracts'
 import { makeExecutionPersistence } from '../db/execution-store/postgres'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -234,7 +234,7 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
         }).pipe(Effect.provide(stores()), Effect.provide(NodeServices.layer))
         yield* TestClock.setTime(entryMs)
         const order = (side: OrderSide): Intent => ({
-          schemaVersion: 'bayn.paper-intent.v3',
+          schemaVersion: 'bayn.execution-intent.v4',
           intentId: (side === OrderSide.Buy ? '1' : '2').repeat(64),
           authorityGenerationHash,
           riskDecisionId: '3'.repeat(64),
@@ -250,6 +250,7 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
           timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms: '3000000000',
           notionalLimitMicros: '300000000',
+          limitPriceMicros: '100000000',
           state: IntentState.IoStarted,
           createdAt: new Date(entryMs).toISOString(),
         })
@@ -259,8 +260,7 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
               {
                 ...order(OrderSide.Sell),
                 quantityAtoms: '2992500000',
-                orderType: OrderType.Market,
-                timeInForce: TimeInForce.GoodUntilCanceled,
+                notionalLimitMicros: '299250000',
               },
             ]
           : scenario === 'day' || scenario === 'day-partial'
@@ -271,13 +271,12 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
                   ...order(OrderSide.Sell),
                   clientOrderId: `fractional-${index}`,
                   quantityAtoms,
-                  orderType: OrderType.Market,
-                  timeInForce: TimeInForce.Day,
+                  notionalLimitMicros: ((BigInt(quantityAtoms) * 100000000n) / 1000000000n).toString(),
                 })),
               ]
         for (const requestIntent of orders) {
           const request = yield* broker.mutation
-            .submit(requestIntent, requestIntent.side === OrderSide.Sell)
+            .submit(requestIntent)
             .pipe(Effect.forkChild({ startImmediately: true }))
           yield* TestClock.adjust(100)
           yield* Fiber.join(request)

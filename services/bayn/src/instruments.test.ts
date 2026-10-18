@@ -87,9 +87,27 @@ test('the shared instrument guard enforces minimums, steps, prices and continuou
     Result.isFailure(validateInstrumentOrder(instrument, order, { ...terms, limitPriceAtoms: 100_000_000_011n })),
   ).toBe(true)
   expect(
-    Result.isSuccess(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'GTC' }, terms)),
+    Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'GTC' }, terms)),
   ).toBe(true)
   expect(
     Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'DAY' }, terms)),
   ).toBe(true)
+})
+
+test('fractional equities use LIMIT/DAY while retaining the asset capability and price guards', () => {
+  const instrument = Result.getOrThrow(
+    decodeInstrument({
+      symbol: 'AAPL',
+      assetClass: 'us_equity',
+      minimumOrderSize: null,
+      quantityIncrement: null,
+      priceIncrement: null,
+    }),
+  )
+  const order = { symbol: 'AAPL', quantityAtoms: '500000000', orderType: 'LIMIT', timeInForce: 'DAY' }
+  const terms = { closeOnly: true, fractionable: true, limitPriceAtoms: 100000000000n }
+  expect(Result.isSuccess(validateInstrumentOrder(instrument, order, terms))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, order, { ...terms, fractionable: false }))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, { ...order, timeInForce: 'IOC' }, terms))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET' }, terms))).toBe(true)
 })

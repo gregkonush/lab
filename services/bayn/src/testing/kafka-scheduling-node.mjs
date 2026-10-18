@@ -22,6 +22,7 @@ const positions = (end) =>
     offset: topic === 'quotes' && end ? String(total) : '0',
   }))
 const done = Promise.withResolvers()
+const transportClosed = Promise.withResolvers()
 const abort = new AbortController()
 const turns = []
 let consumed = 0
@@ -33,6 +34,7 @@ let immediate
 let retained = 0
 let retainedHash = null
 let captureEnd
+let assignmentRevoked = false
 const captureBuild = {
   sourceRevision: '1'.repeat(40),
   imageRepository: 'example.test/bayn',
@@ -44,7 +46,11 @@ const captureBuild = {
 const nextTurn = () => {
   turns.push(consumed)
   if (mode === 'interrupt') abort.abort()
-  else if (mode === 'invalidate') notifyInvalidation(new Error('assignment revoked'))
+  else if (mode === 'invalidate') {
+    assignmentRevoked = true
+    notifyInvalidation(new Error('assignment revoked'))
+    return
+  }
   if (!closed && consumed < total) immediate = setImmediate(nextTurn)
 }
 const transport = {
@@ -57,6 +63,10 @@ const transport = {
       [Symbol.asyncIterator]: () => ({
         next: async () => {
           if (closed) return { done: true, value: undefined }
+          if (mode === 'invalidate' && assignmentRevoked)
+            return new Promise((resolve) => {
+              pending = resolve
+            })
           if (consumed === total) {
             done.resolve()
             return new Promise((resolve) => {
@@ -103,6 +113,7 @@ const transport = {
     closed = true
     clearImmediate(immediate)
     pending?.({ done: true, value: undefined })
+    transportClosed.resolve()
   },
 }
 const exit = await Effect.runPromiseExit(
@@ -153,7 +164,7 @@ const exit = await Effect.runPromiseExit(
             },
           ),
       )
-      yield* Effect.promise(() => done.promise)
+      yield* Effect.promise(() => (mode === 'invalidate' ? transportClosed.promise : done.promise))
       if (mode === 'interrupt') yield* Effect.never
       const status = yield* projection.status
       if (mode === 'drain') yield* Effect.sleep('1100 millis')
@@ -176,9 +187,9 @@ if (mode === 'interrupt') {
   assert.ok(consumed < total, 'scope cancellation waited for the entire backlog')
 } else {
   assert.ok(Exit.isSuccess(exit))
-  assert.equal(consumed, total)
-  assert.equal(retained, total)
   if (mode === 'drain') {
+    assert.equal(consumed, total)
+    assert.equal(retained, total)
     assert.ok(Result.isSuccess(exit.value.read))
     assert.equal(exit.value.read.success.projection.rejections.size, 0)
     assert.equal(exit.value.read.success.projection.sequence, total)
@@ -187,6 +198,7 @@ if (mode === 'interrupt') {
     const checkpoints = [0, ...turns, total]
     assert.ok(checkpoints.every((value, index) => index === 0 || value - checkpoints[index - 1] <= 4096))
   } else {
+    assert.ok(consumed < total, 'revocation must close a transport that cannot drain')
     assert.ok(exit.value.status.sequence <= turns[0], 'revoked records were incorporated after invalidation')
     assert.equal(exit.value.status.ready, false)
     assert.ok(Result.isFailure(exit.value.read))

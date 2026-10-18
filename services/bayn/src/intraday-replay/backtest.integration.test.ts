@@ -140,7 +140,7 @@ durableTest(
           quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
-          schemaVersion: 'bayn.paper-intent.v3',
+          schemaVersion: 'bayn.execution-intent.v4',
           intentId: '1'.repeat(64),
           riskDecisionId: '2'.repeat(64),
           authorityGenerationHash: '3'.repeat(64),
@@ -156,6 +156,7 @@ durableTest(
           timeInForce: TimeInForce.Day,
           quantityAtoms: '10000000000',
           notionalLimitMicros: '1000000000',
+          limitPriceMicros: '100000000',
           state: IntentState.IoStarted,
           createdAt: new Date(startMs).toISOString(),
         })

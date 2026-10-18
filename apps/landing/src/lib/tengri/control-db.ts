@@ -44,8 +44,8 @@ export function controlDatabase(): Promise<Pool> {
     max: 8,
     connectionTimeoutMillis: 500,
     idleTimeoutMillis: 30_000,
-    query_timeout: 6000,
-    statement_timeout: 5000,
+    query_timeout: 2000,
+    statement_timeout: 2000,
     lock_timeout: 1000,
     idle_in_transaction_session_timeout: 5000,
     application_name: 'tengri-bff',
@@ -70,6 +70,7 @@ export function controlDatabase(): Promise<Pool> {
     '0004_leadership_window.sql',
     '0005_capability_slots.sql',
     '0006_preview_lease_identity.sql',
+    '0007_ephemeral_oauth.sql',
   ].map((file) =>
     createHash('sha256')
       .update(readFileSync(path.join(migrationDirectory, file)))

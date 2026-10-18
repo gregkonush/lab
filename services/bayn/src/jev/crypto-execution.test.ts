@@ -18,10 +18,7 @@ import { bindCycleExecutionSession } from '../execution-session'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce, RiskOutcome } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { BrokerMode, decodeState } from '../risk'
-import {
-  buildClosingExecutionCycleDecision,
-  loadQuoteBoundExecutionRiskPolicy,
-} from '../observe-composition/decision-builder'
+import { buildClosingExecutionCycleDecision, loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { accountTradingDate } from '../time'
 import { IsoDateSchema } from '../schemas'
@@ -55,9 +52,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const { protocol, portfolio, observedAt } = native
     const broker = portfolio.brokerState
     const { unknownOrderCount: _unknownOrderCount, ...riskBroker } = broker
-    const policy = await Effect.runPromise(
-      loadQuoteBoundExecutionRiskPolicy(broker.account.accountId, protocol.universe),
-    )
+    const policy = await Effect.runPromise(loadExecutionRiskPolicy(broker.account.accountId, protocol.universe))
     const executionPolicy = Result.getOrThrow(makeCycleExecutionPolicyFromModel(protocol.executionModel))
     if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
       throw new Error('Expected current policy')
@@ -285,13 +280,13 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
               timeInForce: target.timeInForce,
               quantityAtoms: BigInt(target.quantityAtoms),
               referencePriceMicros: BigInt(planned.referencePriceMicros),
-              executionModel: protocol.executionModel,
               limitSlippageBps: 10n,
             }),
           )
           return {
             symbol,
             notionalLimitMicros: pricing.notionalLimitMicros.toString(),
+            limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
             state: yield* decodeState({
               schemaVersion: 'bayn.paper-risk-state.v2',
               brokerMode: BrokerMode.Execution,
@@ -343,8 +338,13 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const targetNotional = BigInt(broker.account.equityMicros) / 5n
     expect(entryNotional).toBeGreaterThanOrEqual((targetNotional * 999n) / 1000n)
     expect(entryNotional).toBeLessThanOrEqual(targetNotional)
-    expect(document.deltaRisk[0]?.evaluation.metrics.orderNotionalMicros).not.toBe(
-      document.deltaRisk[0]?.notionalLimitMicros,
+    const entryRisk = document.deltaRisk[0]
+    const entryTarget = document.targetPlan.intentTargets[0]
+    if (entryRisk?.facts === undefined || entryTarget === undefined) throw new Error('missing native entry terms')
+    expect(entryRisk.limitPriceMicros).toBe(entryRisk.facts.state.expectedExecutionPriceMicros)
+    expect(entryRisk.evaluation.metrics.orderNotionalMicros).toBe(entryRisk.notionalLimitMicros)
+    expect(entryRisk.notionalLimitMicros).toBe(
+      ((BigInt(entryTarget.quantityAtoms) * BigInt(entryRisk.limitPriceMicros) + 999999999n) / 1000000000n).toString(),
     )
     expect(document.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
     expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
@@ -438,8 +438,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         symbol,
         side: OrderSide.Sell,
         quantityAtoms: heldQuantity,
-        orderType: OrderType.Market,
-        timeInForce: TimeInForce.GoodUntilCanceled,
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
       },
     ])
     expect(close.deltaRisk[0]?.evaluation.decision.outcome).toBe(RiskOutcome.Approved)
