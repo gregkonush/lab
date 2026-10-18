@@ -139,6 +139,64 @@ func TestFileWatcherRetainsInFlightRenameEchoSuppressionAcrossKernelQueueOverflo
 	}
 }
 
+func TestFileWatcherDiscardsStaleEventsAfterDeferredRenameOverflow(t *testing.T) {
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer workspace.close()
+	files := &fileWatcher{
+		workspace:        workspace,
+		subscriptions:    make(map[uint64]fileSubscription),
+		watched:          make(map[string]uint32),
+		renameFence:      time.Second,
+		expectedRenames:  make(map[string]expectedFileRename),
+		completedRenames: make(map[uint64]completedFileRename),
+	}
+	id, events, err := files.subscribe(0, workspacePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.unsubscribe(id)
+	files.publish(fileEvent{Kind: "modified", Path: "/workspace/obsolete.txt"})
+	<-events
+	source := filepath.Join(workspace.realRoot, "source.txt")
+	destination := filepath.Join(workspace.realRoot, "destination.txt")
+	generation, err := files.beginPairedRename(source, destination)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	for range fileRenameDeferredEventLimit + 2 {
+		files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Write})
+	}
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if renamed := <-events; renamed.Kind != "renamed" {
+		t.Fatalf("missing authoritative rename: %#v", renamed)
+	}
+	if reset := <-events; reset.Kind != "reset" || reset.Path != workspacePath {
+		t.Fatalf("missing canonical reset: %#v", reset)
+	}
+	select {
+	case stale := <-events:
+		t.Fatalf("deferred event escaped after the reconciliation reset: %#v", stale)
+	default:
+	}
+	replayID, replay, err := files.subscribe(0, workspacePath, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer files.unsubscribe(replayID)
+	if reset := <-replay; reset.Kind != "reset" || reset.Path != workspacePath {
+		t.Fatalf("obsolete history survived the reset: %#v", reset)
+	}
+	select {
+	case stale := <-replay:
+		t.Fatalf("obsolete event remained in replay history: %#v", stale)
+	default:
+	}
+}
+
 func TestFileWatcherDiscardsDeferredEventsAfterKernelQueueOverflow(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()

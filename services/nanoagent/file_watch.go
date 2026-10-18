@@ -360,7 +360,7 @@ func (files *fileWatcher) suppressRawEvent(event fileEvent, absolutePath string)
 func (files *fileWatcher) deferExpectedEventLocked(expected *expectedFileRename, deferred deferredFileEvent) {
 	if len(expected.deferredEvents) == 1 &&
 		expected.deferredEvents[0].event.Kind == "reset" &&
-		expected.deferredEvents[0].event.Path == "/" {
+		expected.deferredEvents[0].event.Path == workspacePath {
 		return
 	}
 	if len(expected.deferredEvents) >= fileRenameDeferredEventLimit {
@@ -496,7 +496,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 		files.invalidateDirectoryLocked(expected.rawSource)
 		for _, deferred := range expected.deferredEvents {
 			if deferred.event.Kind == "reset" {
-				if deferred.event.Path == "/" {
+				if deferred.event.Path == workspacePath {
 					files.publishResetLocked()
 				} else {
 					files.publishScopedResetLocked(deferred.event.Path)
@@ -730,7 +730,7 @@ func (files *fileWatcher) invalidateDirectoryLocked(directory string) {
 
 func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 	if event.Kind == "reset" {
-		return event.Path == "/" || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
+		return event.Path == workspacePath || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
 	}
 	if pathMatchesWatchPrefix(prefix, event.Path) || pathMatchesWatchPrefix(prefix, event.routingPath) {
 		return true
