@@ -1,3 +1,4 @@
+import { codexInputResponseSchema } from './codex-input'
 import { z } from 'zod'
 import { codexModelIdSchema, codexReasoningEffortSchema } from './codex-models'
 import {
@@ -183,6 +184,12 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
   z.strictObject({ action: z.literal('interrupt-turn'), agentId, threadId: codexId, turnId: codexId }),
   z.strictObject({
+    action: z.literal('answer-questions'),
+    agentId,
+    approvalId: codexId,
+    response: codexInputResponseSchema,
+  }),
+  z.strictObject({
     action: z.literal('resolve-approval'),
     agentId,
     approvalId: codexId,
@@ -205,9 +212,15 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('editor-session'),
     agentId,
     windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
   }),
   z.strictObject({ action: z.literal('revoke-editor-sessions') }),
-  z.strictObject({ action: z.literal('browser-session'), agentId }),
+  z.strictObject({
+    action: z.literal('browser-session'),
+    agentId,
+    windowId: z.string().regex(/^[a-zA-Z0-9_-]{16,128}$/),
+    renewal: z.boolean(),
+  }),
   z.strictObject({
     action: z.literal('revoke-preview-session'),
     agentId,

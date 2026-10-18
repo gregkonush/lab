@@ -4,6 +4,20 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
+preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
+enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
+[October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
+reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
+
+A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
+accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
+account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
+no intents or active cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE
+before the approved PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
+Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
+required by normal cycle recovery.
+
 The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
@@ -29,6 +43,9 @@ and at most one open position. Crypto uses cash buying power, quantity-based LIM
 MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
+Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
+constructing a decision that the durable contract must reject.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
@@ -65,6 +82,9 @@ execution from fresh exact reconciled broker positions. Recovery does not author
 hours, extend an unresolved order's immutable lease, or submit after the broker session closes.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Observed bar references, ranges, completed closes and trade signals can carry more than nine decimal places.
+Jev rounds these non-executable signal values to micros with decimal half-up rounding while preserving the original values and source hashes in
+its observation and model input. Executable bid/ask conversion retains nine-decimal validation and adverse rounding.
 Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
 up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
 fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
@@ -103,6 +123,11 @@ the recorded enter probability ranks simultaneous eligible enter actions, with s
 retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
 same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
+
+Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
+controller handles without terminating its process. Reports retain typed operation and failure tags while redacting
+exception messages and account data. Ordinary broker waits and successful no-trade passes do not create issues;
+error-reporting failures cannot replace the pass result. The manual GlitchTip smoke exercises this same boundary.
 
 ## Profitability goal
 
@@ -1390,6 +1415,10 @@ Production execution and simulation use `makeTradingEngine`. The engine construc
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
 or accounting coordinator.
+
+The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
+buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
+and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
 
 `backtest-command.js` runs one or more consecutive exchange-calendar sessions through that engine. One simulated
 broker, account, portfolio, PostgreSQL database, and TigerBeetle ledger span the entire run. Cash, positions, fees,
