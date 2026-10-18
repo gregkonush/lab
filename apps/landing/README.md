@@ -167,7 +167,9 @@ and preserves the local draft.
 
 Finder, chat file links, image attachments, terminal working directories, and the Code bridge use canonical
 `/workspace` paths. The signed request retains that path until the guest validates it and resolves it inside the
-retained home. The controller requires guest API version 5 before forwarding operations. The older virtual file
+retained home. The BFF requires guest API version 5 in the controller's authenticated audience response before
+signing a request. The controller verifies that version in the guest's identity response before forwarding operations.
+Mixed release versions fail closed. The older virtual file
 namespace is removed; upgrade retained guests with a fenced cold replacement before verifying this release.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri

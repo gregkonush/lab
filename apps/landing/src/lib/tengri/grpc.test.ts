@@ -91,6 +91,8 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
+let receiverGuestApiProtocolVersion = 5
+let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let editorRequestStarted: (() => void) | null = null
@@ -225,7 +227,7 @@ beforeAll(async () => {
       _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
-      callback(null, { audience: receiverAudience })
+      callback(null, { audience: receiverAudience, guestApiProtocolVersion: receiverGuestApiProtocolVersion })
     },
     issueEditorSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -558,6 +560,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      fileWriteCalls += 1
       receivedRequest = call.request
       receivedMetadata = call.metadata
       if (call.request.expectedRevision === '0'.repeat(64)) {
@@ -729,6 +732,24 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
+  test('refuses incompatible controllers before sending canonical file writes', async () => {
+    const { writeFile } = await import('./grpc')
+    const before = fileWriteCalls
+    try {
+      for (const version of [0, 4, 6]) {
+        receiverGuestApiProtocolVersion = version
+        expect(
+          await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
+        ).toMatchObject({ status: 503 })
+        expect(fileWriteCalls).toBe(before)
+      }
+    } finally {
+      receiverGuestApiProtocolVersion = 5
+    }
+    await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
+    expect(fileWriteCalls).toBe(before + 1)
+  })
+
   test('renews the client certificate while an existing signed stream stays open', async () => {
     const { listCodexModels, watchFiles } = await import('./grpc')
     const watch = await watchFiles(identity, 'agent-test', '/workspace/renewal')
