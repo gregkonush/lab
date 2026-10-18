@@ -973,6 +973,9 @@ durableTest.each(
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,
+              remainingOpenOrderCount: state.orders.filter(({ order }) =>
+                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+              ).length,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
                 metrics: reconciliation.report.metrics,
@@ -1011,6 +1014,9 @@ durableTest.each(
             ...schedule,
             valuationFailureCount: 0,
             remainingPositionCount: state.ledger.positions.length,
+            remainingOpenOrderCount: state.orders.filter(({ order }) =>
+              [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+            ).length,
             reconciliation: {
               status: reconciliation.report.reconciliation.status,
               metrics: reconciliation.report.metrics,
@@ -1584,6 +1590,9 @@ durableTest.each(
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,
+              remainingOpenOrderCount: state.orders.filter(({ order }) =>
+                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+              ).length,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
                 metrics: reconciliation.report.metrics,

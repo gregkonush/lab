@@ -1758,3 +1758,112 @@ test('a new weekend account uses its opening capital before its first broker ref
   expect(value.state.createdAt).toBe(new Date(sunday).toISOString())
   expect(value.state.sessionCloses).toEqual([])
 })
+
+test('a resting equity DAY order survives a winter UTC report and expires at the broker close', async () => {
+  const entryAt = Date.parse('2026-11-04T21:59:00.000Z')
+  const midnight = Date.parse('2026-11-05T00:00:00.000Z')
+  const closingAt = Date.parse('2026-11-05T01:00:00.000Z')
+  await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(entryAt)
+      const broker = yield* makeReplayBroker({
+        ...config,
+        calendar: [{ session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' }],
+        quoteAt: () =>
+          Effect.succeed(
+            observedQuote(
+              {
+                ...quote,
+                eventAt: new Date(entryAt).toISOString(),
+                ingestedAt: new Date(entryAt).toISOString(),
+                marketSession: 'post',
+                bidPrice: 100,
+                askPrice: 100.01,
+              },
+              entryAt,
+            ),
+          ),
+      })
+      const submitted = yield* submit(
+        broker,
+        intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }),
+      )
+      expect(submitted.order.status).toBe(OrderStatus.New)
+      yield* TestClock.setTime(midnight)
+      const before = yield* broker.snapshot
+      const mark = yield* broker.valuationAt(new Date(midnight).toISOString())
+      expect(mark).toMatchObject({
+        equityMicros: config.openingCashMicros,
+        openOrderCount: 1,
+        valuationQualified: true,
+      })
+      expect(yield* broker.snapshot).toEqual(before)
+      yield* TestClock.setTime(closingAt)
+      expect((yield* broker.read.orderById(submitted.order.brokerOrderId)).value.status).toBe(OrderStatus.Expired)
+      expect((yield* broker.valuationAt(new Date(midnight).toISOString())).openOrderCount).toBe(1)
+      expect((yield* broker.valuationAt(new Date(closingAt).toISOString())).openOrderCount).toBe(0)
+      expect((yield* broker.snapshot).ledger.positions).toEqual([])
+    }),
+  )
+})
+
+test('extended-hours reports preserve the regular-close broker equity reference', async () => {
+  const entryAt = Date.parse('2026-11-04T14:31:00.000Z')
+  const regularClose = Date.parse('2026-11-04T21:00:00.000Z')
+  const dataClose = Date.parse('2026-11-04T22:00:00.000Z')
+  const points = [
+    observedQuote(
+      { ...quote, eventAt: new Date(entryAt).toISOString(), ingestedAt: new Date(entryAt).toISOString() },
+      entryAt,
+    ),
+    observedQuote(
+      {
+        ...quote,
+        eventAt: new Date(regularClose - 1).toISOString(),
+        ingestedAt: new Date(regularClose - 1).toISOString(),
+        sourceOffset: '1',
+        bidPrice: 101,
+        askPrice: 101,
+      },
+      regularClose - 1,
+    ),
+    observedQuote(
+      {
+        ...quote,
+        eventAt: new Date(dataClose - 1).toISOString(),
+        ingestedAt: new Date(dataClose - 1).toISOString(),
+        sourceOffset: '2',
+        marketSession: 'post',
+        bidPrice: 102,
+        askPrice: 102,
+      },
+      dataClose - 1,
+    ),
+  ]
+  const result = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(entryAt)
+      const frozen: ReplayBrokerConfig = {
+        ...config,
+        calendar: [{ session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' }],
+        quoteAt: (_symbol, atMs) => Effect.succeed(points.filter((q) => q.availableAtMs <= atMs).at(-1)),
+      }
+      let broker = yield* makeReplayBroker(frozen)
+      yield* submit(broker, intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }))
+      yield* TestClock.setTime(regularClose)
+      const regular = yield* broker.valuationAt(new Date(regularClose).toISOString())
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.sessionCloses).toHaveLength(1)
+      broker = yield* makeReplayBroker({
+        ...frozen,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      yield* TestClock.setTime(dataClose)
+      const extended = yield* broker.valuationAt(new Date(dataClose).toISOString())
+      yield* TestClock.setTime(Date.parse('2026-11-05T14:31:00.000Z'))
+      return { regular, extended, account: (yield* broker.read.account).value }
+    }),
+  )
+  expect(result.regular.equityMicros).not.toBe(result.extended.equityMicros)
+  expect(result.account.lastEquityMicros).toBe(result.regular.equityMicros)
+})

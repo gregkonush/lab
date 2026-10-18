@@ -3,7 +3,7 @@ import { Clock, Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
-import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
+import { AssetClass, AssetExchange, AssetStatus, OrderStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -127,6 +127,14 @@ test('property: DAY partial fills conserve the account across quote retries, can
               retained.push(incoming)
               yield* broker.observeMarket(now, incoming)
               const beforeRetry = yield* broker.snapshot
+              const mark = yield* broker.valuationAt(utcInstantFromEpochMillis(now))
+              expect(mark.openOrderCount).toBe(
+                beforeRetry.orders.filter(({ order }) =>
+                  [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+                ).length,
+              )
+              expect(mark.equityMicros).toBe((yield* broker.read.account).value.equityMicros)
+              expect(yield* broker.snapshot).toEqual(beforeRetry)
               yield* broker.observeMarket(now, incoming)
               expect(yield* broker.snapshot).toEqual(beforeRetry)
               if (index === Math.floor(input.quotes.length / 2)) {

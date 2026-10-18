@@ -370,8 +370,12 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         config.calendar.filter((session) => session.date === close.sessionDate),
         { start: close.sessionDate, end: close.sessionDate },
       )
-      const session = calendar.sessions[0]
-      if (session === undefined || session.closeAt > decoded.observedAt || session.closeAt < state.createdAt)
+      const session = calendar.providerSessions[0]
+      if (
+        session === undefined ||
+        session.regularCloseAt > decoded.observedAt ||
+        session.regularCloseAt < state.createdAt
+      )
         return yield* fail('Broker checkpoint records a close before market close')
     }
     return decoded

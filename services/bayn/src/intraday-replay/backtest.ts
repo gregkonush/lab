@@ -64,6 +64,7 @@ export enum BacktestIssue {
   InexactAccounting = 'inexact-accounting',
   UnresolvedMutation = 'unresolved-mutation',
   UnclosedPosition = 'unclosed-position',
+  UnclosedOrder = 'unclosed-order',
   MissingValuation = 'missing-valuation',
   MissingDecisionData = 'missing-decision-data',
   UnresolvedModelCost = 'unresolved-model-cost',
@@ -82,6 +83,7 @@ export const assessBacktestSession = (input: {
     readonly unknownMutationCount: number
   }
   readonly remainingPositionCount: number
+  readonly remainingOpenOrderCount: number
 }) => {
   const issues: BacktestIssue[] = []
   const { status, metrics, unknownOrderCount, unknownMutationCount } = input.reconciliation
@@ -99,6 +101,7 @@ export const assessBacktestSession = (input: {
     issues.push(BacktestIssue.InexactAccounting)
   if (unknownOrderCount !== 0 || unknownMutationCount !== 0) issues.push(BacktestIssue.UnresolvedMutation)
   if (input.finalWindow && input.remainingPositionCount > 0) issues.push(BacktestIssue.UnclosedPosition)
+  if (input.finalWindow && input.remainingOpenOrderCount > 0) issues.push(BacktestIssue.UnclosedOrder)
   return { completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const), issues }
 }
 
@@ -512,6 +515,7 @@ export const runBacktest = (
               unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
             },
             remainingPositionCount: state.ledger.positions.length,
+            remainingOpenOrderCount: closingEquity.openOrderCount,
           })
           const issues =
             modelCosts.unresolvedCallCount === 0

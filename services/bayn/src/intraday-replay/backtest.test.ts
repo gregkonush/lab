@@ -407,6 +407,7 @@ test('a completed schedule only qualifies economics with exact accounting and no
     unavailableDecisionPassCount: 0,
     valuationFailureCount: 0,
     remainingPositionCount: 0,
+    remainingOpenOrderCount: 0,
     reconciliation: {
       status: ReconciliationStatus.Exact,
       unknownOrderCount: 0,
@@ -423,6 +424,14 @@ test('a completed schedule only qualifies economics with exact accounting and no
     },
   }
   expect(assessBacktestSession(exact)).toEqual({ completion: 'COMPLETE', issues: [] })
+  expect(assessBacktestSession({ ...exact, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.UnclosedOrder],
+  })
+  expect(assessBacktestSession({ ...exact, finalWindow: false, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'COMPLETE',
+    issues: [],
+  })
   expect(assessBacktestSession({ ...exact, unavailableDecisionPassCount: 1 })).toEqual({
     completion: 'INCOMPLETE',
     issues: [BacktestIssue.MissingDecisionData],

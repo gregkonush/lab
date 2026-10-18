@@ -107,7 +107,7 @@ export interface ReplayBrokerFill extends EconomicReplayFill {
   readonly quoteSource: ObservedQuoteSource
 }
 
-type ReplayOrder = Order & { readonly quantityAtoms: string; readonly submittedAt: string }
+type ReplayOrder = Order & { readonly quantityAtoms: string; readonly submittedAt: string; readonly updatedAt: string }
 
 export interface ReplayBrokerOrder {
   readonly executions: readonly ReplayOrderExecution[]
@@ -279,7 +279,13 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     )
     const sessions = normalizedCalendars.map((calendar) => calendar.providerSessions[0])
     const referenceSessions = normalizedCalendars
-      .flatMap((calendar) => calendar.sessions)
+      .flatMap((calendar) =>
+        calendar.providerSessions.map((session) => ({
+          date: session.date,
+          openAt: session.regularOpenAt,
+          closeAt: session.regularCloseAt,
+        })),
+      )
       .toSorted((a, b) => a.date.localeCompare(b.date))
     const sessionFor = (order: ReplayOrder) =>
       sessions.find((session) => session?.date === newYorkDate.format(Date.parse(order.submittedAt)))
@@ -669,9 +675,9 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             { start: close.sessionDate, end: close.sessionDate },
           ),
         )
-        const session = calendar.sessions[0]
+        const session = calendar.providerSessions[0]
         if (session === undefined) return yield* new ReplayBrokerFailure({ message: 'Restored close has no session' })
-        const equity = yield* closingEquity(restored.state, session.closeAt)
+        const equity = yield* closingEquity(restored.state, session.regularCloseAt)
         if (equity.equityMicros !== close.equityMicros)
           return yield* new ReplayBrokerFailure({
             message: 'Restored closing equity differs from retained quotes and fills',
@@ -1155,13 +1161,12 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const current = yield* readState
         if (current.orders.some((record) => record.deliveryFailure !== undefined))
           return yield* new ReplayBrokerFailure({ message: 'Cannot value simulation after a broker delivery failure' })
-        if (current.orders.some((record) => isOpen(record.order)))
-          return yield* new ReplayBrokerFailure({
-            message: 'Cannot value a reporting boundary with unresolved broker orders',
-          })
         const closing = yield* closingEquity(current, at)
         yield* synchronizeReferenceEquities
-        return { at, ...closing }
+        const openOrderCount = current.orders.filter(
+          ({ order }) => order.submittedAt <= at && (isOpen(order) || order.updatedAt > at),
+        ).length
+        return { at, ...closing, openOrderCount }
       })
     const checkpoint = Effect.gen(function* () {
       const observedAt = yield* now
