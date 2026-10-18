@@ -790,6 +790,7 @@ const executeBoundExecutionCycle = (
     }
     const closeWindow = yield* Effect.fromResult(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: cycle.window.executionCalendarSchemaVersion,
         recoveryExpiresAt:
           document.executionSession === undefined
             ? null

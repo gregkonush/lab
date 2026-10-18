@@ -52,7 +52,14 @@ const OrderFields = {
   filledQuantityAtoms: UnsignedMicrosSchema,
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
   orderClass: Schema.Literal(OrderClass.Simple),
-  status: Schema.Literals([OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Rejected]),
+  status: Schema.Literals([
+    OrderStatus.New,
+    OrderStatus.PartiallyFilled,
+    OrderStatus.Filled,
+    OrderStatus.Canceled,
+    OrderStatus.Expired,
+    OrderStatus.Rejected,
+  ]),
   extendedHours: Schema.Boolean,
   observedAt: UtcInstantSchema,
 }
@@ -72,6 +79,7 @@ const OrderSchema = Schema.Union([
   }),
 ])
 const EconomicFillSchema = Schema.Struct({
+  executionIndex: NonNegativeIntegerSchema,
   symbol: InstrumentSymbolSchema,
   side: Schema.Enum(OrderSide),
   observedAt: UtcInstantSchema,
@@ -88,12 +96,12 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v3'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v4'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v1'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v2'),
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
     ledger: Schema.Struct({
@@ -115,7 +123,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         requestHash: Sha256Schema,
         order: OrderSchema,
         deliveryFailure: Schema.optionalKey(Schema.Record(Schema.String, Schema.String)),
-        execution: Schema.optionalKey(ReplayOrderExecutionSchema),
+        executions: Schema.Array(ReplayOrderExecutionSchema),
       }),
     ),
     fills: Schema.Array(
@@ -223,10 +231,10 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
       if (
         requestHash !== (yield* canonicalHashV1Result(body)) ||
         (order.status === OrderStatus.Filled && order.filledQuantityAtoms !== order.quantityAtoms) ||
-        (order.status === OrderStatus.Rejected &&
-          (order.filledQuantityAtoms !== '0' || order.failedAt === undefined)) ||
-        (order.status === OrderStatus.Canceled &&
-          (order.canceledAt === undefined || order.filledQuantityAtoms === order.quantityAtoms)) ||
+        (order.status === OrderStatus.Rejected && order.failedAt === undefined) ||
+        ([OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) &&
+          ((order.status === OrderStatus.Canceled && order.canceledAt === undefined) ||
+            order.filledQuantityAtoms === order.quantityAtoms)) ||
         [order.updatedAt, order.submittedAt, order.filledAt, order.canceledAt, order.failedAt].some(
           (at) => at !== undefined && (at < order.createdAt || at > decoded.observedAt),
         )
@@ -238,29 +246,40 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
     let ledger = yield* createReplayLedger<ReplayBrokerFill>(config.openingCashMicros)
     const expectedFills: (typeof state.fills)[number][] = []
     const expectedFees: (typeof state.fees)[number][] = []
-    const filledIds = new Set<string>()
+    const filledOrders = new Map<
+      string,
+      { quantity: bigint; notional: bigint; lastFillAt: string; indices: Set<number> }
+    >()
     let previousFillAt = ''
     for (const fill of state.ledger.fills) {
-      const order = state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)?.order
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === fill.brokerOrderId)
+      const order = record?.order
+      const prior = filledOrders.get(fill.brokerOrderId)
+      const execution = record?.executions[fill.executionIndex - 1]
       if (
         order === undefined ||
-        filledIds.has(fill.brokerOrderId) ||
+        fill.executionIndex <= 0 ||
+        prior?.indices.has(fill.executionIndex) === true ||
+        execution?.outcome.status !== 'filled' ||
+        execution.outcome.filledQuantityAtoms !== fill.quantityAtoms ||
+        execution.outcome.fillPriceMicros !== fill.priceMicros ||
+        execution.outcome.fillNotionalMicros !== fill.notionalMicros ||
+        execution.arrivedAt !== fill.observedAt ||
         fill.clientOrderId !== order.clientOrderId ||
         fill.symbol !== order.symbol ||
         fill.side !== order.side ||
-        fill.quantityAtoms !== order.filledQuantityAtoms ||
-        fill.priceMicros !== order.filledAveragePriceMicros ||
-        fill.observedAt !== order.filledAt ||
         fill.observedAt < order.createdAt ||
         fill.observedAt < previousFillAt ||
         fill.observedAt > decoded.observedAt ||
         fill.quoteSource.availableAtMs > Date.parse(fill.observedAt)
       )
-        return yield* fail('Broker checkpoint fill is not bound to its order and arrival')
+        return yield* fail('Broker checkpoint fill is not bound to its order and quote evaluation')
+      const totalQuantity = (prior?.quantity ?? 0n) + BigInt(fill.quantityAtoms)
+      const totalNotional = (prior?.notional ?? 0n) + BigInt(fill.notionalMicros)
       const next = yield* applyReplayFill(
         ledger,
         fill,
-        order.quantityAtoms,
+        (BigInt(order.quantityAtoms) - (prior?.quantity ?? 0n)).toString(),
         config.protocol.executionModel,
         config.assumptions.feeMultiplierPpm,
       )
@@ -272,26 +291,57 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         config.assumptions.feeMultiplierPpm,
       )
       if (fee !== null) expectedFees.push({ ...fee, date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fee.date) })
+      const complete = totalQuantity === BigInt(order.quantityAtoms)
       expectedFills.push({
         accountId: state.accountId,
-        activityId: `fill::${fill.brokerOrderId}`,
-        cumulativeQuantityAtoms: fill.quantityAtoms,
-        leavesQuantityAtoms: (BigInt(order.quantityAtoms) - BigInt(fill.quantityAtoms)).toString(),
+        activityId: `fill::${fill.brokerOrderId}::${fill.executionIndex}`,
+        cumulativeQuantityAtoms: totalQuantity.toString(),
+        leavesQuantityAtoms: (BigInt(order.quantityAtoms) - totalQuantity).toString(),
         priceAtoms: (BigInt(fill.priceMicros) * 1000n).toString(),
         quantityAtoms: fill.quantityAtoms,
         side: fill.side,
         symbol: fill.symbol,
         transactionTime: fill.observedAt,
         brokerOrderId: fill.brokerOrderId,
-        type: order.status === OrderStatus.Filled ? TradeActivityType.Fill : TradeActivityType.PartialFill,
-        orderStatus: order.status,
+        type: complete ? TradeActivityType.Fill : TradeActivityType.PartialFill,
+        orderStatus: complete
+          ? OrderStatus.Filled
+          : order.timeInForce === TimeInForce.Day && order.orderType === OrderType.Limit
+            ? OrderStatus.PartiallyFilled
+            : OrderStatus.Canceled,
       })
-      filledIds.add(fill.brokerOrderId)
+      filledOrders.set(fill.brokerOrderId, {
+        quantity: totalQuantity,
+        notional: totalNotional,
+        lastFillAt: fill.observedAt,
+        indices: new Set([...(prior?.indices ?? []), fill.executionIndex]),
+      })
       previousFillAt = fill.observedAt
       ledger = next
     }
+    for (const { order, executions } of state.orders) {
+      const fills = filledOrders.get(order.brokerOrderId)
+      if (
+        BigInt(order.filledQuantityAtoms) !== (fills?.quantity ?? 0n) ||
+        (fills !== undefined &&
+          (order.filledAt !== fills.lastFillAt ||
+            order.filledAveragePriceMicros !==
+              ((fills.notional * 1_000_000_000n + fills.quantity / 2n) / fills.quantity).toString())) ||
+        (order.status === OrderStatus.New && (order.filledQuantityAtoms !== '0' || executions.length === 0)) ||
+        (order.status === OrderStatus.PartiallyFilled &&
+          (fills === undefined || fills.quantity >= BigInt(order.quantityAtoms))) ||
+        executions.some(
+          (execution, index) =>
+            execution.submittedAt !== order.submittedAt ||
+            execution.arrivedAt < order.submittedAt ||
+            execution.arrivedAt > order.updatedAt ||
+            (index > 0 && execution.arrivedAt < (executions[index - 1]?.arrivedAt ?? '')) ||
+            (execution.outcome.status === 'filled' && fills?.indices.has(index + 1) !== true),
+        )
+      )
+        return yield* fail('Broker checkpoint order status or execution history does not reconstruct exactly')
+    }
     if (
-      state.orders.some(({ order }) => BigInt(order.filledQuantityAtoms) > 0n !== filledIds.has(order.brokerOrderId)) ||
       (yield* canonicalHashV1Result(ledger)) !== (yield* canonicalHashV1Result(state.ledger)) ||
       (yield* canonicalHashV1Result(expectedFills)) !== (yield* canonicalHashV1Result(state.fills)) ||
       (yield* canonicalHashV1Result(expectedFees)) !== (yield* canonicalHashV1Result(state.fees))
@@ -325,7 +375,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v3' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v4' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

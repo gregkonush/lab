@@ -97,6 +97,21 @@ const plan = Result.getOrThrow(
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
+const excludedFixture = nativeJevFixture(
+  JevPurpose.Entry,
+  undefined,
+  'jev-native-test',
+  defaultJevProtocolDocument,
+  'a'.repeat(64),
+  Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, -0.02])),
+)
+const excludedPlan = Result.getOrThrow(
+  makeJevTradingSignalBatch({
+    observation: excludedFixture.observation.payload,
+    expiresAt: plan.expiresAt,
+    planVersion: JevBatchPlanVersion.V4,
+  }),
+)
 const first = requested[0]
 if (first === undefined) throw new Error('Jev batch fixture requires a candidate')
 const successful: typeof JevClient.Service = {
@@ -215,6 +230,171 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         }),
         atObservation,
       ),
+    )
+  })
+
+  test('all-excluded admission commits a complete batch before returning and replays without finalization', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        expect(excludedPlan.candidates.length).toBeGreaterThan(0)
+        expect(excludedPlan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(
+          true,
+        )
+        const saved = yield* batches.begin(excludedPlan)
+        expect(saved.result).not.toBeNull()
+        expect(saved.result?.completedAt).toBe(excludedPlan.observedAt)
+        expect(saved.result?.candidates).toEqual(
+          excludedPlan.candidates.map(({ symbol }) => ({ symbol, status: JevCandidateResultStatus.Excluded })),
+        )
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([{ batch_id: excludedPlan.batchId }])
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
+        const transactions = yield* sql`
+          SELECT plan.xmin::text AS plan_transaction, result.xmin::text AS result_transaction
+          FROM jev_batch_plans AS plan JOIN jev_batch_results AS result USING (batch_id)
+          WHERE plan.batch_id = ${excludedPlan.batchId}
+        `
+        expect(transactions).toHaveLength(1)
+        expect(transactions[0]?.['plan_transaction']).toBe(transactions[0]?.['result_transaction'])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(yield* batches.pending(excludedPlan.cycleId)).toEqual([])
+        yield* TestClock.adjust('1 minute')
+        expect(yield* batches.begin(excludedPlan)).toEqual(saved)
+        expect(
+          yield* evaluateJevBatch(excludedPlan).pipe(
+            Effect.provideService(JevBatchStore, {
+              ...batches,
+              finish: () => Effect.die('A complete admission must not open another finalization'),
+            }),
+          ),
+        ).toEqual(saved)
+      }).pipe(
+        Effect.provideService(JevClient, { evaluate: () => Effect.die('Excluded candidates must not call inference') }),
+        atObservation,
+      ),
+    )
+  })
+
+  test('all-excluded result failure rolls back its new plan and permits an atomic retry', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        // Only the disposable local _test database is modified by this fault injection.
+        yield* sql`CREATE FUNCTION fail_excluded_batch_result() RETURNS trigger LANGUAGE plpgsql AS $$
+          BEGIN RAISE EXCEPTION 'injected excluded batch result failure'; END
+        $$`
+        yield* sql`CREATE TRIGGER fail_excluded_batch_result BEFORE INSERT ON jev_batch_results
+          FOR EACH ROW EXECUTE FUNCTION fail_excluded_batch_result()`
+        const failed = yield* batches.begin(excludedPlan).pipe(Effect.result)
+        expect(Result.isFailure(failed)).toBe(true)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+        expect(
+          yield* sql`SELECT content_hash FROM intraday_candidate_observations
+            WHERE content_hash = ${excludedPlan.observationHash}`,
+        ).toEqual([{ content_hash: excludedPlan.observationHash }])
+        yield* sql`DROP TRIGGER fail_excluded_batch_result ON jev_batch_results`
+        const saved = yield* batches.begin(excludedPlan)
+        expect(saved.result).not.toBeNull()
+        expect(yield* batches.read(excludedPlan.batchId)).toEqual(saved)
+        expect(yield* batches.pending(excludedPlan.cycleId)).toEqual([])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('all-excluded concurrent admission preserves one immutable result', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        const [firstSaved, secondSaved] = yield* Effect.all(
+          [batches.begin(excludedPlan), batches.begin(excludedPlan)],
+          { concurrency: 2 },
+        )
+        expect(firstSaved.result).not.toBeNull()
+        expect(secondSaved).toEqual(firstSaved)
+        yield* TestClock.adjust('1 minute')
+        expect(yield* batches.begin(excludedPlan)).toEqual(firstSaved)
+        expect(yield* recoverJevBatch(excludedPlan.batchId)).toEqual(firstSaved)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('all-excluded lost admission acknowledgement recovers the complete commit after expiry', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        const lostAcknowledgement = operationalError({
+          component: 'database',
+          operation: 'test',
+          message: 'lost excluded batch acknowledgement',
+        })
+        expect(
+          Result.isFailure(
+            yield* batches.begin(excludedPlan).pipe(Effect.andThen(Effect.fail(lostAcknowledgement)), Effect.result),
+          ),
+        ).toBe(true)
+        const saved = yield* batches.read(excludedPlan.batchId)
+        if (saved === null || saved.result === null)
+          throw new Error('Lost acknowledgement did not retain a complete batch')
+        yield* TestClock.adjust('1 minute')
+        expect(yield* batches.begin(excludedPlan)).toEqual(saved)
+        expect(yield* recoverJevBatch(excludedPlan.batchId)).toEqual(saved)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('all-excluded plans retained by an earlier worker remain finalizable after expiry', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        yield* sql`INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+          VALUES (${excludedPlan.batchId}, ${excludedPlan.cycleId}, ${excludedPlan.authorityGenerationHash},
+            ${excludedPlan.observationHash}, ${sql.json(excludedPlan)})`
+        yield* TestClock.adjust('1 minute')
+        expect(yield* batches.begin(excludedPlan)).toEqual({ plan: excludedPlan, result: null })
+        expect(yield* batches.pending(excludedPlan.cycleId)).toEqual([excludedPlan.batchId])
+        const saved = yield* recoverJevBatch(excludedPlan.batchId)
+        expect(saved.result).not.toBeNull()
+        expect(
+          saved.result?.candidates.every((candidate) => candidate.status === JevCandidateResultStatus.Excluded),
+        ).toBe(true)
+        expect(yield* batches.begin(excludedPlan)).toEqual(saved)
+        expect(yield* batches.pending(excludedPlan.cycleId)).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('all-excluded admission still rejects a regressed clock and an uncommitted expired plan', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        for (const now of [observed - 1, Date.parse(excludedPlan.expiresAt)]) {
+          yield* TestClock.setTime(now)
+          const failed = yield* batches.begin(excludedPlan).pipe(Effect.result)
+          expect(Result.isFailure(failed)).toBe(true)
+          if (Result.isFailure(failed))
+            expect(failed.failure._tag).toBe(now < observed ? 'OperationalError' : 'JevBatchExpired')
+        }
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }).pipe(atObservation),
     )
   })
 

@@ -1,13 +1,47 @@
-import { continuousMarketHours, executionCloseRecoveryExpiry } from '../market-hours'
+import {
+  continuousMarketHours,
+  continuousExecutionPolicy,
+  executionCloseRecoveryExpiry,
+  tradingWindow,
+} from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { boundExecutionCycleCloseWindow, resolveExecutionCycleCloseWindow } from './execution-window'
 
 describe('execution-cycle close windows', () => {
+  test.each(['2026-10-18T06:00:00.000Z', '2026-10-18T23:59:50.000Z'])(
+    'continuous leases keep the full admitted holding horizon at %s',
+    (observedAt) => {
+      const lease = Result.getOrThrow(
+        tradingWindow(continuousMarketHours, observedAt, {
+          ...continuousExecutionPolicy,
+          sessionEntryCutoffMs: 0,
+        }),
+      )
+      if (lease === null) throw new Error('Expected a continuous lease')
+      const close = Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: continuousMarketHours.schemaVersion,
+          observedAt,
+          executionCloseAt: lease.closeAt,
+          recoveryExpiresAt: null,
+          sessionCloseStartLeadMs: 5 * 60_000,
+          sessionCloseSubmitLeadMs: 0,
+        }),
+      )
+      expect(close.startAt).toBe(
+        new Date(Date.parse(lease.entryCutoffAt) + continuousExecutionPolicy.maximumHoldingMs).toISOString(),
+      )
+      expect(close.submitCutoffAt).toBe(lease.closeAt)
+      expect(Date.parse(close.expiresAt) - Date.parse(close.startAt)).toBe(continuousExecutionPolicy.closeRecoveryMs)
+    },
+  )
+
   test('renews a bounded close lease after IEX ends while the verified broker session remains open', () => {
     const window = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
         observedAt: '2026-10-16T21:20:00.000Z',
         executionCloseAt: '2026-10-16T21:00:00.000Z',
         recoveryExpiresAt: '2026-10-16T21:23:00.000Z',
@@ -17,35 +51,22 @@ describe('execution-cycle close windows', () => {
     )
     expect(window.expiresAt).toBe('2026-10-16T21:23:00.000Z')
   })
-  test('derives a bounded close window from every trading session', () => {
+  test('uses the equity strategy close leads for a future session', () => {
     expect(
       Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: '2026-09-04T20:00:00.000Z',
+          sessionCloseStartLeadMs: 5 * 60_000,
+          sessionCloseSubmitLeadMs: 0,
         }),
       ),
     ).toEqual({
-      startAt: '2026-09-04T19:00:00.000Z',
-      submitCutoffAt: '2026-09-04T19:45:00.000Z',
+      startAt: '2026-09-04T19:55:00.000Z',
+      submitCutoffAt: '2026-09-04T20:00:00.000Z',
       expiresAt: '2026-09-04T20:00:00.000Z',
-    })
-  })
-
-  test('closes an intraday cycle one hour before its session ends', () => {
-    expect(
-      Result.getOrThrow(
-        resolveExecutionCycleCloseWindow({
-          recoveryExpiresAt: null,
-          observedAt: '2026-08-19T19:00:00.000Z',
-          executionCloseAt: '2026-08-19T20:00:00.000Z',
-        }),
-      ),
-    ).toEqual({
-      startAt: '2026-08-19T19:00:00.000Z',
-      submitCutoffAt: '2026-08-19T19:45:00.000Z',
-      expiresAt: '2026-08-19T20:00:00.000Z',
     })
   })
 
@@ -53,6 +74,7 @@ describe('execution-cycle close windows', () => {
     expect(
       Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: '2026-08-19T20:00:00.000Z',
@@ -71,6 +93,7 @@ describe('execution-cycle close windows', () => {
     for (const closeAt of ['2026-08-19T20:00:00.000Z', '2026-11-27T18:00:00.000Z']) {
       const window = Result.getOrThrow(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: closeAt,
@@ -85,6 +108,7 @@ describe('execution-cycle close windows', () => {
     expect(
       Result.isFailure(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: '2026-08-19T20:00:00.000Z',
@@ -97,6 +121,7 @@ describe('execution-cycle close windows', () => {
 
   test('continuous recovery renews only the bounded close lease after an outage', () => {
     const facts = {
+      executionCalendarSchemaVersion: continuousMarketHours.schemaVersion,
       recoveryExpiresAt: executionCloseRecoveryExpiry(continuousMarketHours, '2026-10-14T23:56:58.612Z'),
       observedAt: '2026-10-14T23:56:58.612Z',
       executionCloseAt: '2026-10-14T21:54:35.260Z',
@@ -120,6 +145,7 @@ describe('execution-cycle close windows', () => {
 
   test('an unresolved close retains its immutable lease while a settled residual may receive a new one', () => {
     const facts = {
+      executionCalendarSchemaVersion: continuousMarketHours.schemaVersion,
       recoveryExpiresAt: executionCloseRecoveryExpiry(continuousMarketHours, '2026-10-14T23:56:58.612Z'),
       observedAt: '2026-10-14T23:56:58.612Z',
       executionCloseAt: '2026-10-14T21:54:35.260Z',
@@ -146,15 +172,19 @@ describe('execution-cycle close windows', () => {
     expect(
       Result.isFailure(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: 'invalid',
+          sessionCloseStartLeadMs: 5 * 60_000,
+          sessionCloseSubmitLeadMs: 0,
         }),
       ),
     ).toBe(true)
     expect(
       Result.isFailure(
         resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
           recoveryExpiresAt: null,
           observedAt: '2026-08-19T19:00:00.000Z',
           executionCloseAt: '2026-08-19T20:00:00.000Z',

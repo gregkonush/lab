@@ -1,13 +1,14 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Clock, Effect, FileSystem } from 'effect'
+import { Clock, Deferred, Effect, Fiber, FileSystem } from 'effect'
 import { TestClock } from 'effect/testing'
 import { makeReplayTimeline } from './session'
 import { canonicalHashV1, sha256 } from '../hash'
 import { retainedReplayFixture as fixture } from '../testing/retained-replay-fixture'
 import {
   openBacktestSource,
+  ReplaySourceFailure,
   validateBacktestSourceCuts,
   validateBacktestSourceManifest,
   validateBacktestSourceReceipt,
@@ -151,6 +152,68 @@ test('retained source preflights its bytes and advances only available records a
   )
 })
 
+test('the retained source delivers each accepted quote to one scoped broker in availability order', async () => {
+  const data = fixture()
+  const quotes: { at: number; offset: string; topic: string }[] = []
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const path = yield* fs.makeTempFileScoped()
+      yield* fs.writeFile(path, gzipSync(data.body))
+      const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+      yield* Effect.scoped(source.observeBroker(() => Effect.void))
+      yield* source.observeBroker((at, quote) =>
+        Effect.sync(() => {
+          if (quote !== null) {
+            expect(quote.availableAtMs).toBe(at)
+            quotes.push({ at, offset: quote.value.sourceOffset, topic: quote.value.sourceTopic })
+          }
+        }),
+      )
+      expect((yield* Effect.exit(source.observeBroker(() => Effect.void)))._tag).toBe('Failure')
+      yield* source.advanceTo(data.manifest.lastAvailableAtMs)
+      expect(quotes).toEqual(
+        data.events
+          .filter((event) => event.record.topic === data.manifest.universe.topics.quotes)
+          .map((event) => ({ at: event.availableAtMs, offset: event.record.offset, topic: event.record.topic })),
+      )
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})
+
+test.each(['failure', 'defect', 'interruption'] as const)(
+  'a broker %s prevents further source advancement',
+  async (kind) => {
+    const data = fixture()
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const path = yield* fs.makeTempFileScoped()
+        yield* fs.writeFile(path, gzipSync(data.body))
+        const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
+        const entered = yield* Deferred.make<void>()
+        yield* source.observeBroker(() =>
+          kind === 'failure'
+            ? Effect.fail(new ReplaySourceFailure({ message: 'synthetic settlement failure' }))
+            : kind === 'defect'
+              ? Effect.die(new Error('synthetic settlement defect'))
+              : Deferred.succeed(entered, undefined).pipe(Effect.andThen(Effect.never)),
+        )
+        if (kind === 'interruption') {
+          const pending = yield* source
+            .advanceTo(data.manifest.lastAvailableAtMs)
+            .pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(entered)
+          yield* Fiber.interrupt(pending)
+        } else expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
+        const failed = yield* source.cursor
+        expect((yield* Effect.exit(source.advanceTo(data.manifest.lastAvailableAtMs + 1)))._tag).toBe('Failure')
+        expect(yield* source.cursor).toEqual(failed)
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+)
+
 test('a delayed source tail is consumed after trading stops without advancing execution or database time', async () => {
   const data = fixture()
   const closeMs = data.manifest.lastAvailableAtMs - 35
@@ -162,6 +225,12 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
       yield* TestClock.setTime(closeMs - 1)
+      const brokerTimes: number[] = []
+      yield* source.observeBroker((at) =>
+        Effect.sync(() => {
+          brokerTimes.push(at)
+        }),
+      )
       const { advanceTo: advance } = yield* makeReplayTimeline(
         source,
         {
@@ -175,10 +244,12 @@ test('a delayed source tail is consumed after trading stops without advancing ex
       yield* advance(closeMs + 1)
       expect((yield* source.cursor).processedRecords).toBeLessThan(data.events.length)
       const beforeTail = [...sqlTimes]
+      const brokerBeforeTail = [...brokerTimes]
       yield* source.finish
       expect((yield* source.cursor).processedRecords).toBe(data.events.length)
       expect(yield* Clock.currentTimeMillis).toBe(closeMs + 1)
       expect(sqlTimes).toEqual(beforeTail)
+      expect(brokerTimes).toEqual(brokerBeforeTail)
       expect((yield* Effect.exit(advance(data.manifest.lastAvailableAtMs)))._tag).toBe('Failure')
     }).pipe(Effect.scoped, Effect.provide(TestClock.layer()), Effect.provide(NodeServices.layer)),
   )
