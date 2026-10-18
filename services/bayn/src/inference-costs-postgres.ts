@@ -49,7 +49,7 @@ export const readInferenceExpenseSnapshot = (
                 LEFT JOIN jev_evaluation_resolutions AS resolution ON resolution.request_id = request.request_id
                 WHERE cycle.account_id = ${scope.accountId}
                   AND cycle.execution_session_date = ${scope.sessionDate}::date
-                ORDER BY request.request_id COLLATE "C" LIMIT ${maximumRequests + 1}
+                LIMIT ${maximumRequests + 1}
               ) AS item), '[]'::jsonb) AS requests,
               COALESCE((SELECT jsonb_agg(item) FROM (
                 SELECT quote_hash AS "quoteHash", payload,
@@ -73,7 +73,15 @@ export const readInferenceExpenseSnapshot = (
             requests,
           })
           const quotes = yield* decodeInferenceExpenseSessionRows(cut.quotes, scope.sessionDate)
-          return { evidence, quotes }
+          return {
+            evidence: {
+              ...evidence,
+              requests: evidence.requests.toSorted((left, right) =>
+                left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
+              ),
+            },
+            quotes,
+          }
         }),
       )
       .pipe(
