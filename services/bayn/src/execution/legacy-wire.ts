@@ -32,7 +32,6 @@ export const legacyResearchGrantProofSchemaVersion = 'bayn.research-paper-grant-
 export const legacyAuthorityGenerationV2SchemaVersion = 'bayn.paper-authority-generation.v2' as const
 export const legacyAuthorityGenerationV3SchemaVersion = 'bayn.paper-authority-generation.v3' as const
 export const legacyAuthorityStateSchemaVersion = 'bayn.paper-authority.v1' as const
-export const legacyCycleDecisionSchemaVersion = 'bayn.paper-cycle-decision.v1' as const
 export const legacyMutationIdentitySchemaVersion = 'bayn.paper-mutation.v1' as const
 export const legacyMutationEventSchemaVersion = 'bayn.paper-mutation-event.v1' as const
 export const legacyCycleClosureSchemaVersion = 'bayn.paper-cycle-closure.v1' as const

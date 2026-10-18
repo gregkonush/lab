@@ -9,7 +9,11 @@ import { cashSpotLimitTimeInForce } from './execution/order-terms'
 
 import { makeBoundExecutionCalendar } from './cycle/construction'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { isSnapshotExecutionMarketDataBinding } from './shadow-decision-contract'
+import {
+  executionCycleDecisionSchemaVersion,
+  observeShadowDecisionSchemaVersion,
+  isSnapshotExecutionMarketDataBinding,
+} from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
 import {
@@ -43,7 +47,7 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import { legacyCycleDecisionSchemaVersion, legacyExecutionAuthorityToken } from './execution/legacy-wire'
+import { legacyExecutionAuthorityToken } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
@@ -935,7 +939,7 @@ const assembleShadowDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   const document = Result.mapError(
     makeObserveShadowDecisionDocument({
-      schemaVersion: 'bayn.observe-shadow-decision.v1',
+      schemaVersion: observeShadowDecisionSchemaVersion,
       mode: 'OBSERVE',
       dispatchable: false,
       bindings: {
@@ -1011,7 +1015,7 @@ const assembleExecutionDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   return Result.mapError(
     makeExecutionDecisionDocument({
-      schemaVersion: legacyCycleDecisionSchemaVersion,
+      schemaVersion: executionCycleDecisionSchemaVersion,
       mode: legacyExecutionAuthorityToken,
       dispatchable: reduction.riskBlock === undefined,
       bindings: {

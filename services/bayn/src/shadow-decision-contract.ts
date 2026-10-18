@@ -56,11 +56,7 @@ import {
   type Position,
 } from './execution/contracts'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
-import {
-  legacyCycleDecisionSchemaVersion,
-  legacyExecutionAuthorityToken,
-  legacyObserveAuthorityToken,
-} from './execution/legacy-wire'
+import { legacyExecutionAuthorityToken, legacyObserveAuthorityToken } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { EvaluationSchema, PolicySchema, Reason, StateSchema, evaluate, isAuthorityNotGrantedReason } from './risk'
 import {
@@ -95,6 +91,9 @@ import {
   intradayMomentumSnapshotSymbols,
 } from './strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from './time'
+
+export const executionCycleDecisionSchemaVersion = 'bayn.paper-cycle-decision.v2' as const
+export const observeShadowDecisionSchemaVersion = 'bayn.observe-shadow-decision.v2' as const
 
 const ExecutionMarketDataBindingBase = Schema.Union([
   Schema.Struct({
@@ -375,7 +374,7 @@ const DeltaRiskEvaluationSchema = Schema.Struct({
 export type DeltaRiskEvaluation = typeof DeltaRiskEvaluationSchema.Type
 
 const ObserveShadowDecisionMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.observe-shadow-decision.v1'),
+  schemaVersion: Schema.Literal(observeShadowDecisionSchemaVersion),
   mode: Schema.Literal(legacyObserveAuthorityToken),
   dispatchable: Schema.Literal(false),
   bindings: ShadowDecisionBindingsSchema,
@@ -516,7 +515,7 @@ const PersistedIntradaySnapshotRowsSchema = Schema.Struct({
 })
 
 const ExecutionDecisionMaterialSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyCycleDecisionSchemaVersion),
+  schemaVersion: Schema.Literal(executionCycleDecisionSchemaVersion),
   mode: Schema.Literal(legacyExecutionAuthorityToken),
   dispatchable: Schema.Boolean,
   bindings: ExecutionDecisionBindingsSchema,

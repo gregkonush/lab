@@ -44,9 +44,13 @@ Crypto uses cash buying power; shorting and margin remain disabled.
 Current `bayn.execution-intent.v4` intents store an explicit `limitPriceMicros`. That price binds the deterministic
 intent identity, immutable SQL row, request, recovery checks and replay checkpoint. Buy spending rounds up to a micro;
 sell proceeds round down. Risk caps and turnover use the conservative ceiling on either side. The adapter preserves
-the explicit price rather than reconstructing it from rounded notional. Migration 121 refuses nonterminal intents,
-unfinished bound cycles or unresolved mutations before installing the new write constraints. Historical terminal rows retain their original bytes
-and cannot enter the current intent codec. There is no MARKET or GTC submission path.
+the explicit price rather than reconstructing it from rounded notional. Migrations 121 and 122 refuse nonterminal intents,
+unfinished bound cycles or unresolved mutations before installing the new write constraints. Decision documents use
+`bayn.observe-shadow-decision.v2` and `bayn.paper-cycle-decision.v2`; SQL lifecycle and completion guards require this
+same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
+reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
+Recovery derives duration from the held instruments and processes one market per pass. There is no MARKET or GTC
+submission path.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.

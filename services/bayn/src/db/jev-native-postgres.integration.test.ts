@@ -206,7 +206,7 @@ const seedManagedPosition = (
       options.entryDocument?.createdAt ??
       new Date(Date.parse(portfolio.entryFills[0]?.occurredAt ?? '') - 60_000).toISOString()
     const document = options.entryDocument ?? {
-      schemaVersion: 'bayn.paper-cycle-decision.v1',
+      schemaVersion: 'bayn.paper-cycle-decision.v2',
       mode: 'PAPER',
       dispatchable: true,
       contentHash: portfolio.entryDecisionHash,

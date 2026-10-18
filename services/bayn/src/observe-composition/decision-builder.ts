@@ -1,6 +1,6 @@
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
-import { MarketKind } from '../instruments'
+import { MarketKind, instrumentMarket } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { BrokerEnvironment } from '../broker/identity'
@@ -1516,9 +1516,13 @@ export const selectClosingSymbolPass = (
   const externalSymbols = activePositions
     .filter(({ symbol }) => !allowedSymbols.has(symbol))
     .map(({ symbol }) => symbol)
-  if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
-
-  return { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
+  const symbols = externalSymbols.length > 0 ? externalSymbols : activePositions.map(({ symbol }) => symbol)
+  const first = symbols[0]
+  return {
+    kind: externalSymbols.length > 0 ? 'broker-position' : 'quote-bound',
+    symbols:
+      first === undefined ? [] : symbols.filter((symbol) => instrumentMarket(symbol) === instrumentMarket(first)),
+  }
 }
 
 export interface BuildClosingExecutionCycleDecisionInput<R = ReconciliationRuntime> {
@@ -1630,6 +1634,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       persistedUniverse ?? intradayParameters.universe,
     )
     const symbols = closingPass.symbols
+    const closingSymbol = symbols[0]
     const closeDecision = yield* Effect.fromResult(
       request.exitTarget === undefined
         ? makeClosingDecisionPlan(cycle.identity, symbols)
@@ -1825,9 +1830,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
         executionPurpose: 'forced-close',
         orderType: OrderType.Limit,
         timeInForce: cashSpotLimitTimeInForce(
-          cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-            ? MarketKind.Crypto
-            : MarketKind.Equity,
+          closingSymbol === undefined ? MarketKind.Equity : instrumentMarket(closingSymbol),
         ),
         priceReference: reconciledPositionClose ? 'reconciled-broker-position-mark' : 'verified-adverse-quote-boundary',
         snapshotId: closeExecutionMarketData.binding.snapshotId,

@@ -534,8 +534,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         yield* sql.withTransaction(
           Effect.gen(function* () {
             yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,schema_version,document,created_at)
-  VALUES (${fixture.cycle.identity.cycleId},'bayn.paper-cycle-decision.v1',${sql.json({
-    schemaVersion: 'bayn.paper-cycle-decision.v1',
+  VALUES (${fixture.cycle.identity.cycleId},'bayn.paper-cycle-decision.v2',${sql.json({
+    schemaVersion: 'bayn.paper-cycle-decision.v2',
     mode: 'PAPER',
     dispatchable: true,
     bindings: {
@@ -627,7 +627,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               SELECT md5(n::text) || md5('cycle-' || n::text),
                 md5('decision-' || n::text) || md5(n::text),
                 jsonb_build_object(
-                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'schemaVersion', 'bayn.paper-cycle-decision.v2', 'mode', 'PAPER',
                   'bindings', jsonb_build_object('authorityGenerationHash', md5(n::text) || md5(n::text)),
                   'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 2048) AS k)
                 )
@@ -766,8 +766,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* sql`INSERT INTO autonomous_cycle_shadow_decisions(cycle_id,schema_version,document,created_at)
-            VALUES (${cycleId},'bayn.paper-cycle-decision.v1',${sql.json({
-              schemaVersion: 'bayn.paper-cycle-decision.v1',
+            VALUES (${cycleId},'bayn.paper-cycle-decision.v2',${sql.json({
+              schemaVersion: 'bayn.paper-cycle-decision.v2',
               mode: 'PAPER',
               dispatchable: true,
               bindings: {
@@ -1612,7 +1612,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
     ${expiryFixture.cycleId}, ${expiryFixture.decisionHash},
     ${sql.json({
-      schemaVersion: 'bayn.paper-cycle-decision.v1',
+      schemaVersion: 'bayn.paper-cycle-decision.v2',
       mode: 'PAPER',
       bindings: { authorityGenerationHash: expiryFixture.generationHash },
     })}

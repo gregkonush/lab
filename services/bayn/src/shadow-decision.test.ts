@@ -1388,6 +1388,7 @@ describe('intraday shadow decision', () => {
     expect(input.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
     expect(first).toEqual(second)
     expect(first).toMatchObject({
+      schemaVersion: 'bayn.observe-shadow-decision.v2',
       mode: 'OBSERVE',
       dispatchable: false,
       bindings: {
@@ -1600,6 +1601,36 @@ describe('intraday shadow decision', () => {
       ),
     ).toBeTrue()
     expect(Result.isFailure(makeExecutionDecisionDocument(legacyV2Material))).toBeTrue()
+  })
+
+  test('explicit-price decisions use a new document version and reject a rehashed retired version', async () => {
+    const input = fixture()
+    const observation = await Effect.runPromise(buildObserveShadowDecision(input))
+    const { contentHash: _observeHash, ...observeMaterial } = observation
+    const retiredObservation = { ...observeMaterial, schemaVersion: 'bayn.observe-shadow-decision.v1' }
+    expect(observation.schemaVersion).toBe('bayn.observe-shadow-decision.v2')
+    expect(
+      Result.isFailure(
+        decodeObserveShadowDecisionDocument({
+          ...retiredObservation,
+          contentHash: canonicalHashV1(retiredObservation),
+        }),
+      ),
+    ).toBe(true)
+    const current = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(current.schemaVersion).toBe('bayn.paper-cycle-decision.v2')
+    const { contentHash: _, ...material } = current
+    const retired = { ...material, schemaVersion: 'bayn.paper-cycle-decision.v1' }
+    expect(
+      Result.isFailure(decodeExecutionDecisionDocument({ ...retired, contentHash: canonicalHashV1(retired) })),
+    ).toBe(true)
   })
 
   test('binds durable execution material to the exact snapshot and complete target universe', async () => {

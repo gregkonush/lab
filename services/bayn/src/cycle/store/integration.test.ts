@@ -422,7 +422,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               SELECT md5(n::text) || md5('cycle-' || n::text),
                 md5('decision-' || n::text) || md5(n::text),
                 jsonb_build_object(
-                  'schemaVersion', 'bayn.paper-cycle-decision.v1', 'mode', 'PAPER',
+                  'schemaVersion', 'bayn.paper-cycle-decision.v2', 'mode', 'PAPER',
                   'targetPlan', jsonb_build_object('status', 'PLANNED'),
                   'retainedEvidence', (SELECT jsonb_agg(md5(k::text)) FROM generate_series(1, 512) AS k)
                 )
@@ -1034,7 +1034,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )`
             yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
               'cycle', 'document', ${sql.json({
-                schemaVersion: 'bayn.paper-cycle-decision.v1',
+                schemaVersion: 'bayn.paper-cycle-decision.v2',
                 mode: 'PAPER',
                 createdAt: '2026-09-08T17:00:00.000Z',
                 dispatchable: true,

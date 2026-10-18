@@ -1741,6 +1741,26 @@ describe('OBSERVE runtime composition', () => {
     ).toEqual({ kind: 'quote-bound', symbols: ['AAPL'] })
   })
 
+  test('each recovery pass selects one instrument market before advancing to the remaining holdings', () => {
+    const positions = ['TSLA', 'ETH/USD', 'BTC/USD', 'AAPL'].map((symbol) => ({
+      symbol,
+      quantityAtoms: '1000000000',
+    }))
+    expect(selectClosingSymbolPass(positions, ['AAPL'])).toEqual({
+      kind: 'broker-position',
+      symbols: ['BTC/USD', 'ETH/USD'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => !symbol.includes('/')),
+        ['AAPL'],
+      ),
+    ).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+  })
+
   test('uses the fractional pass only after external holdings are flat', () => {
     const positions = [
       { symbol: 'AAPL', quantityAtoms: '500000000' },
