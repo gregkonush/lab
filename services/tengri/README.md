@@ -79,6 +79,11 @@ openings bind the actual verb, escaped path/query and body; preview proof and cl
 the application. Scoped content remains denied until bounded observer handlers exist.
 Preview WebSockets send protocol keepalives on both proxy hops every twenty seconds so idle connections remain open.
 Control frames do not record user activity or postpone automatic sleep; runtime and policy revocation still close the stream.
+Desktop previews renew their 30-minute SQL lease and HttpOnly cookie through fresh authenticated tickets on the same
+window origin. Token rotation rejects new handshakes using the old credential. Established sockets retain their
+actor/session/grant, workspace/runtime, permission, origin, recovery generation and port binding. They check the
+current unexpired lease and fresh Ofz policy every second, with the existing two-second deadline. Renewal preserves
+both application documents and sockets; deletion, expiry or policy denial still closes them within three seconds.
 
 The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
 supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected

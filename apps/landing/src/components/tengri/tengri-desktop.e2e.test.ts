@@ -1672,6 +1672,74 @@ test('recovers VS Code startup after a temporary control-plane failure using the
   await expect(code.getByRole('alert')).toHaveCount(0)
 })
 
+for (const clockSkewMs of [-300_000, 300_000]) {
+  test(`closing Code during renewal revokes both leases despite a ${clockSkewMs}ms client clock skew`, async ({
+    page,
+  }) => {
+    await mockTengri(page)
+    let issued = 0
+    const revoked: string[] = []
+    const sessionId = 'e'.repeat(24)
+    const previewOrigin = `https://tengri-${sessionId}.proompteng.ai`
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      const action = route.request().postDataJSON()
+      if (action.action === 'revoke-preview-session') {
+        revoked.push(action.revocationToken)
+        return route.fulfill({ json: { result: null } })
+      }
+      if (action.action !== 'editor-session') return route.fallback()
+      issued++
+      expect(action.renewal).toBe(issued > 1)
+      await route.fulfill({
+        json: {
+          result: {
+            id: sessionId,
+            previewOrigin,
+            launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${previewTicket(issued)}`,
+            expiresAt: new Date(Date.now() + 30_000).toISOString(),
+          },
+        },
+      })
+    })
+    await page.route('https://tengri.proompteng.ai/v1/preview/open*', (route) => {
+      const renewal = new URL(route.request().url()).searchParams.get('__tengri_renew')
+      return route.fulfill({
+        contentType: 'text/html',
+        body: `<script>location.replace('${previewOrigin}/?renewal=${Boolean(renewal)}')</script>`,
+      })
+    })
+    await page.route(`${previewOrigin}/**`, (route) => {
+      const renewal = new URL(route.request().url()).searchParams.get('renewal') === 'true'
+      return route.fulfill({
+        contentType: 'text/html',
+        body: `<!doctype html><p>Editor connected</p><script>
+      const send = (message) => parent.postMessage({sessionId:'${sessionId}', ...message}, '${desktopOrigin}');
+      send({channel:'tengri-preview-lease-v1', type:'renewed', leaseId:'dddddddd-dddd-4ddd-8ddd-dddddddddddd', nonce:'${renewal ? 'wrong-nonce' : ''}', expiresAt:'${new Date(Date.now() + 60_000).toISOString()}', expiresInMs:60000});
+      send({channel:'tengri-vscode-v1', type:'state', dirty:false});
+      addEventListener('message', (event) => {
+        if (event.data.channel !== 'tengri-vscode-v1') return;
+        send({channel:'tengri-vscode-v1', type:event.data.id ? 'result' : 'state', id:event.data.id, dirty:false});
+      });
+    </script>`,
+      })
+    })
+    await page.goto('/')
+    await page.clock.install({ time: new Date(Date.now() + clockSkewMs) })
+    await page.getByRole('button', { name: 'Open Code', exact: true }).click()
+    const code = page.getByRole('region', { name: 'Code window' })
+    await expect(code.getByRole('status')).toHaveCount(0)
+    await page.clock.runFor(31_000)
+    await expect.poll(() => issued).toBe(2)
+    await expect(code.getByTitle('Renew workspace connection')).toHaveCount(1)
+    await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+    await expect(code).toHaveCount(0)
+    await expect.poll(() => [...new Set(revoked)].sort()).toEqual([previewTicket(1), previewTicket(2)].sort())
+    await page.clock.runFor(60_000)
+    expect(issued).toBe(2)
+  })
+}
+
 test('stops VS Code startup recovery on denial and when the window closes', async ({ page }) => {
   await mockTengri(page)
   let starts = 0

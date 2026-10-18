@@ -128,6 +128,7 @@ pub struct TicketRecord {
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PreviewSessionRecord {
+    pub lease_id: Uuid,
     pub incarnation: String,
     pub id: String,
     // Plaintext exists only in the response or the currently presented credential.
@@ -145,6 +146,8 @@ pub struct PreviewSessionRecord {
 pub struct TicketStore {
     public_url: Arc<str>,
     database: Arc<Database>,
+    #[cfg(test)]
+    preview_lifetime_ms: i64,
 }
 
 #[derive(Debug)]
@@ -168,7 +171,16 @@ impl TicketStore {
         Ok(Self {
             public_url: public_url.to_owned().into(),
             database,
+            #[cfg(test)]
+            preview_lifetime_ms: PREVIEW_LIFETIME_MS,
         })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_preview_lifetime(mut self, lifetime_ms: i64) -> Self {
+        assert!((1..=PREVIEW_LIFETIME_MS).contains(&lifetime_ms));
+        self.preview_lifetime_ms = lifetime_ms;
+        self
     }
 
     pub async fn issue_terminal(
@@ -232,7 +244,33 @@ impl TicketStore {
             agent_id,
             dns_id(identity.as_bytes()),
             EDITOR_PORT,
-            "/_tengri/editor/open",
+            "/",
+            "",
+        )
+        .await
+    }
+
+    pub async fn issue_browser(
+        &self,
+        principal: &Principal,
+        agent_id: &str,
+        window_id: &str,
+    ) -> Result<IssuedTicket, Status> {
+        let context = &principal.context;
+        let identity = format!(
+            "browser\0{}\0{}\0{}\0{}\0{}\0{window_id}",
+            principal.owner_hash,
+            context.session_id,
+            context.workspace_uid,
+            context.runtime_epoch,
+            context.origin,
+        );
+        self.preview(
+            principal,
+            agent_id,
+            dns_id(identity.as_bytes()),
+            BROWSER_PORT,
+            "/",
             "",
         )
         .await
@@ -357,17 +395,34 @@ impl TicketStore {
         else {
             return Err(Status::permission_denied("preview capability required"));
         };
-        let existing = tx.query_opt("SELECT capacity_slot,workspace_slot FROM tengri.previews WHERE id=$1 AND workspace_uid=$2 FOR UPDATE", &[&id, &uid]).await.map_err(sql_error)?;
-        let (capacity_slot, workspace_slot) = match existing {
-            Some(row) => (row.get::<_, i16>(0), row.get::<_, i16>(1)),
-            None => CapabilityTable::Previews.allocate(&tx, uid).await?,
+        let existing = tx.query_opt("SELECT capacity_slot,workspace_slot,payload,expires_at_ms>tengri.now_ms() FROM tengri.previews WHERE id=$1 AND workspace_uid=$2 FOR UPDATE", &[&id, &uid]).await.map_err(sql_error)?;
+        let (capacity_slot, workspace_slot, lease_id) = match existing {
+            Some(row) => {
+                let previous: PreviewSessionRecord = decode(row.get(2))?;
+                let lease_id = if row.get::<_, bool>(3) {
+                    previous.lease_id
+                } else {
+                    Uuid::new_v4()
+                };
+                (row.get::<_, i16>(0), row.get::<_, i16>(1), lease_id)
+            }
+            None => {
+                let (capacity_slot, workspace_slot) =
+                    CapabilityTable::Previews.allocate(&tx, uid).await?;
+                (capacity_slot, workspace_slot, Uuid::new_v4())
+            }
         };
+        #[cfg(not(test))]
+        let lifetime = PREVIEW_LIFETIME_MS;
+        #[cfg(test)]
+        let lifetime = self.preview_lifetime_ms;
         let expiry: i64 = tx
-            .query_one("SELECT tengri.now_ms()+$1", &[&PREVIEW_LIFETIME_MS])
+            .query_one("SELECT tengri.now_ms()+$1", &[&lifetime])
             .await
             .map_err(sql_error)?
             .get(0);
         let mut session = PreviewSessionRecord {
+            lease_id,
             incarnation,
             id,
             token: random_token(),
@@ -407,6 +462,46 @@ impl TicketStore {
             ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
         session.token = token.into();
         Ok(session)
+    }
+
+    #[tracing::instrument(name = "db.previews.lease", skip_all)]
+    pub async fn require_preview_lease(
+        &self,
+        expected: &PreviewSessionRecord,
+    ) -> Result<(), Status> {
+        bindings(&expected.principal)?;
+        let client = self.database.connection().await?;
+        let row = client
+            .query_opt(
+                "SELECT payload FROM tengri.previews WHERE id=$1 AND expires_at_ms>tengri.now_ms()",
+                &[&expected.id],
+            )
+            .await
+            .map_err(sql_error)?
+            .ok_or_else(invalid_capability)?;
+        let mut current: PreviewSessionRecord = decode(row.get(0))?;
+        bindings(&current.principal)?;
+        // Credentials admit new handshakes. Established streams require the current lease with
+        // the same authority; only the per-request trace and admission deadline may change.
+        current
+            .principal
+            .context
+            .trace_id
+            .clone_from(&expected.principal.context.trace_id);
+        current.principal.context.deadline_unix_ms = expected.principal.context.deadline_unix_ms;
+        if current.lease_id != expected.lease_id
+            || current.id != expected.id
+            || current.incarnation != expected.incarnation
+            || current.agent_id != expected.agent_id
+            || current.port != expected.port
+            || current.principal.owner_hash != expected.principal.owner_hash
+            || current.principal.recovery_generation != expected.principal.recovery_generation
+            || current.principal.action != expected.principal.action
+            || current.principal.context != expected.principal.context
+        {
+            return Err(invalid_capability());
+        }
+        Ok(())
     }
 
     pub async fn revoke_preview_lease(
@@ -554,6 +649,133 @@ fn validate_public_url(public_url: &str) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_browser_renewal_keeps_origin_but_rotates_and_fences_credentials()
+    {
+        let database = Arc::new(Database::shared_fixture().await);
+        let store = TicketStore::new("https://gateway.proompteng.ai".into(), database).unwrap();
+        let owner = Principal::fixture(
+            &"a".repeat(64),
+            &Uuid::new_v4().to_string(),
+            Action::BrowserControl,
+        );
+        let first = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let original = store.consume_preview(&first.token).await.unwrap();
+        let next = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let renewed = store.consume_preview(&next.token).await.unwrap();
+        assert_eq!(original.id, renewed.id);
+        assert_eq!(renewed.port, BROWSER_PORT);
+        assert_ne!(original.token, renewed.token);
+        assert_eq!(original.lease_id, renewed.lease_id);
+        store.require_preview_lease(&original).await.unwrap();
+        for field in [
+            "session",
+            "grant",
+            "workspace",
+            "runtime",
+            "origin",
+            "permission",
+            "recovery",
+            "port",
+            "owner",
+            "actor",
+        ] {
+            let mut foreign = original.clone();
+            match field {
+                "session" => foreign.principal.context.session_id = Uuid::new_v4().to_string(),
+                "grant" => foreign.principal.context.grant_id = Uuid::new_v4().to_string(),
+                "workspace" => foreign.principal.context.workspace_uid = Uuid::new_v4().to_string(),
+                "runtime" => foreign.principal.context.runtime_epoch = Uuid::new_v4().to_string(),
+                "origin" => foreign.principal.context.origin = "https://other.example".into(),
+                "permission" => foreign.principal.action = Action::EditorOpen,
+                "recovery" => foreign.principal.recovery_generation += 1,
+                "port" => foreign.port += 1,
+                "owner" => foreign.principal.owner_hash = "b".repeat(64),
+                "actor" => {
+                    foreign.principal.context.actor.as_mut().unwrap().identity =
+                        Some(ofz::proto::actor::Identity::HumanId("b".repeat(64)))
+                }
+                _ => unreachable!(),
+            }
+            assert!(
+                store.require_preview_lease(&foreign).await.is_err(),
+                "changed {field} must fence a connection"
+            );
+        }
+        assert!(
+            store
+                .preview_session(&original.id, &original.token)
+                .await
+                .is_err()
+        );
+        assert!(
+            store
+                .preview_session(&renewed.id, &renewed.token)
+                .await
+                .is_ok()
+        );
+        store
+            .revoke_preview_lease(&owner, "agent", &renewed.id, &first.token)
+            .await
+            .unwrap();
+        assert!(
+            store
+                .preview_session(&renewed.id, &renewed.token)
+                .await
+                .is_ok()
+        );
+        let mut editor_owner = owner.clone();
+        editor_owner.action = Action::EditorOpen;
+        let editor = store
+            .issue_editor(&editor_owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let other_window = store
+            .issue_browser(&owner, "agent", "desktop-window-02")
+            .await
+            .unwrap();
+        let mut other_session = owner.clone();
+        other_session.context.session_id = Uuid::new_v4().to_string();
+        let other_login = store
+            .issue_browser(&other_session, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        assert_ne!(renewed.id, editor.id);
+        assert_ne!(renewed.id, other_window.id);
+        assert_ne!(renewed.id, other_login.id);
+        store
+            .revoke_preview_lease(&owner, "agent", &renewed.id, &next.token)
+            .await
+            .unwrap();
+        assert!(store.require_preview_lease(&original).await.is_err());
+        let reopened = store
+            .issue_browser(&owner, "agent", "desktop-window-01")
+            .await
+            .unwrap();
+        let reopened = store.consume_preview(&reopened.token).await.unwrap();
+        assert_eq!(reopened.id, original.id);
+        assert_ne!(reopened.lease_id, original.lease_id);
+        assert!(
+            store.require_preview_lease(&original).await.is_err(),
+            "reopening a revoked lease must not revive its old connection"
+        );
+        store.require_preview_lease(&reopened).await.unwrap();
+
+        assert!(
+            store
+                .preview_session(&renewed.id, &renewed.token)
+                .await
+                .is_err()
+        );
+    }
 
     #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
