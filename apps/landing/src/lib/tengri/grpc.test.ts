@@ -56,6 +56,9 @@ function runtimeAgent(id: unknown) {
 }
 let ofzServer: grpc.Server
 let receivedCommandDeadline = 0
+let receivedCreateDeadline = 0
+const receivedTerminalDeadlines = new Map<string, number>()
+let ofzDatabaseClockOffsetMs = 0
 const lifecycleReceipts = new Map<string, Record<string, unknown>>()
 const lifecycleHashes = new Map<string, Buffer>()
 let lifecycleVersion = 10
@@ -155,6 +158,11 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedCommandDeadline = Number(call.getDeadline())
+      const context = call.request.context as { deadlineUnixMs: string }
+      if (Number(context.deadlineUnixMs) > Date.now() - ofzDatabaseClockOffsetMs + 30_000) {
+        callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'invalid command deadline'), null)
+        return
+      }
       const id = String(call.request.operationId)
       if (call.request.reserveWorkspace && reservationFailure) {
         reservationFailure.operationIds.push(id)
@@ -276,6 +284,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      receivedCreateDeadline = Number(call.getDeadline())
       receivedMetadata = call.metadata
       receivedRequest = call.request
       if (call.request.displayName === 'Expired reservation') {
@@ -343,6 +352,48 @@ beforeAll(async () => {
       if (id === 'internal-failure')
         callback(serviceError(grpc.status.INTERNAL, 'pod 10.244.1.42 failed at an internal URL'), null)
       else callback(null, runtimeAgent(id))
+    },
+    terminateTerminal(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('termination', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, {})
+    },
+    issueTerminalTicket(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('ticket', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, {
+        websocketUrl: 'wss://tengri.example/v1/terminal/ws',
+        ticket: 'fixture-ticket',
+        expiresAt: '2026-10-18T12:00:00Z',
+      })
     },
     createTerminal(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -724,6 +775,7 @@ describe('Tengri gRPC BFF transport', () => {
     })
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', cursor: 'models-2' })
     expect(metadataContext().actor?.identity).toEqual({ case: 'humanId', value: identity.session.humanId })
+    expect(metadataContext().deadlineUnixMs).toBeLessThanOrEqual(BigInt(Date.now() - 250 + 5000))
     expect(await rejection(listCodexModels(identity, 'broken-catalog'))).toMatchObject({
       message: 'The guest returned an invalid Codex model catalog',
     })
@@ -922,11 +974,73 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('keeps compound terminal calls within the shared guest-operation budget', async () => {
+    const { terminateTerminal, issueTerminalTicket } = await import('./grpc')
+    const started = Date.now()
+    await terminateTerminal(identity, 'agent-test', 'terminal-test')
+    const ticket = await issueTerminalTicket(identity, 'agent-test', 'terminal-test')
+    expect(ticket.ticket).toBe('fixture-ticket')
+    for (const method of ['termination', 'ticket']) {
+      expect(receivedTerminalDeadlines.get(method)).toBeGreaterThanOrEqual(started + 2 * 30_000)
+      expect(receivedTerminalDeadlines.get(method)).toBeLessThanOrEqual(Date.now() + 130_000)
+    }
+  })
+
+  test.each(['terminateTerminal', 'issueTerminalTicket'] as const)(
+    'cancels compound terminal RPC %s when its HTTP request aborts',
+    async (method) => {
+      const client = await import('./grpc')
+      const started = new Promise<void>((resolve) => {
+        terminalRequestStarted = resolve
+      })
+      const cancelled = new Promise<void>((resolve) => {
+        terminalRequestCancelled = resolve
+      })
+      const controller = new AbortController()
+      const pending = client[method](identity, 'agent-test', 'terminal-compound-cancel', controller.signal).catch(
+        (error: unknown) => error,
+      )
+      try {
+        await started
+        controller.abort()
+        const result = await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal cancellation timed out')), 300),
+          ),
+        ])
+        expect(result).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+        await Promise.race([
+          cancelled,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal RPC was not cancelled')), 1_000),
+          ),
+        ])
+      } finally {
+        terminalRequestStarted = null
+        terminalRequestCancelled = null
+      }
+    },
+  )
+
+  test('creates a workspace when the Ofz database clock trails the BFF by one second', async () => {
+    const { createAgent } = await import('./grpc')
+    ofzDatabaseClockOffsetMs = 1000
+    try {
+      expect(await createAgent(identity, 'Tengri', randomUUID())).toMatchObject({ id: 'agent-test', phase: 'ready' })
+    } finally {
+      ofzDatabaseClockOffsetMs = 0
+    }
+  })
+
   test('reserves capacity before creation and starts the enrolled UID with a durable Ofz command', async () => {
     const { createAgent } = await import('./grpc')
     const before = lifecycleReceipts.size
     const operationId = randomUUID()
+    const started = Date.now()
     const agent = await createAgent(identity, 'Tengri', operationId)
+    expect(receivedCreateDeadline).toBeGreaterThanOrEqual(started + 4 * 30_000)
+    expect(receivedCreateDeadline).toBeLessThanOrEqual(Date.now() + 130_000)
     expect(receivedRequest).toEqual({ displayName: 'Tengri', reservationId: operationId })
     expect(agent).toMatchObject({ id: 'agent-test', uid: workspaceUid, phase: 'ready', displayName: 'Tengri' })
     expect(agent.runtimeEpoch).toMatch(/^[0-9a-f-]{36}$/)
@@ -1017,7 +1131,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { resumeAgent } = await import('./grpc')
     const started = Date.now()
     expect((await resumeAgent(identity, 'agent-test', workspaceUid, randomUUID())).id).toBe('agent-test')
-    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 5000)
+    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 30_000)
     expect(receivedCommandDeadline).toBeGreaterThan(started)
   })
 

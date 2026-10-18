@@ -57,6 +57,23 @@ session, grant, origin, workspace/runtime, action, resource, target and recovery
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
 cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
 Control submissions retain their separate durable audits and session activity updates.
+Initial audit admission uses a 25-second context within Ofz's existing thirty-second validation ceiling and transport
+budget. The five-second difference leaves headroom for clock skew between clients and the database. BFF assertions
+are issued for four seconds within the controller's unchanged five-second validation ceiling.
+After verifying the signature and consuming its nonce, the controller records that admission only in memory. Each
+policy submission from that admitted RPC gets its own 25-second context after Kubernetes lookups. Stored capabilities
+do not retain that admission marker and must pass their current capability lifetime and fresh policy checks. Newly
+submitted expired assertions remain rejected.
+The BFF assertion is still admitted within five seconds; after verifying it, the controller requests a fresh Ofz
+decision with that separate audit budget. Ofz rechecks the current session, policy and runtime after the durable
+commit and returns a decision valid for at most two seconds. Receipt revalidation retains its two-second timeout.
+A slow commit therefore does not automatically trigger a new admission every five seconds, and waiting for an audit
+does not lengthen a signed assertion or authorize access from a stale policy decision. Ordinary BFF unary operations
+use the existing 130-second guest-operation budget so parent, probe and exact-operation admissions can finish
+sequentially. Terminal callers share that budget with the BFF, and ticket and termination requests propagate browser
+cancellation through HTTP to gRPC. Streaming operations retain their cancellation. Creation uses
+that same budget for its thirty-second enrollment polling window, three admission transports and remaining request
+work. Its reservation ID still recovers an uncertain outcome.
 Conversation history, Codex events and file streams share their workspace admission with the guest connection, so one
 stream submission does not create a second parent audit. Guest sub-operations retain their separate control audits;
 stream disclosure and revocation still check current Ofz policy using the original admission's receipt.
@@ -409,23 +426,18 @@ shellcheck services/tengri/network.sh services/tengri/test-kvm*.sh
 ```
 
 The ignored Linux KVM test requires explicitly authorized device grants and native paired boot/test images.
-The AMD64 PR image jobs retain `tengri-kvm-fixture-tengri-amd64` and
-`tengri-kvm-fixture-nanoagent-amd64` artifacts. Download both from the same workflow run and merge their contents into
-one directory. Check both `*-SHA256SUMS` files there, then load both `*-images.tar.gz` archives with `docker load`.
-The JSON receipts record the PR head, checked-out build revision, image reference, and saved image configuration digest.
-Verify that both receipts match the requested PR head and build revision, and that the loaded configurations match
-`configDigest`. Docker's containerd image store can report an image index as its image ID; the configuration digest
-remains the same after loading the archive into a classic image store.
-CI builds these artifacts without executing the KVM fixture. It requires no SSH devbox. Device execution still
-requires the scoped approval below.
-Frontend-only PRs do not run this image workflow. Runtime PR fixture builds import the same main-only registry caches
-as the native images, including the KVM harness cache, to reuse the release compilation.
-Native image builds for same-repository PRs also import and export `cache-pr-<number>-<architecture>` per service.
-Later edits reuse that PR's compiled layers. Main builds import and export only their existing main cache; fork PRs
-export no registry cache. These cache tags remain outside Kargo image discovery.
+Pull requests run source, authorization, database, browser, and editor validation. The Ofz, Tengri, Nanoagent,
+and Proompteng release images build only from `main`. PRs do not build unused native image archives or export
+PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
+and the KVM lifecycle gates before exposing either image to Kargo.
+Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
+native qualification. Guest test binaries stay local to that job. Native qualification does not import or export a
+separate registry cache or wait for the other architecture. Publication still requires both architectures and the full
+controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
-`bash services/tengri/test-kvm.sh`. The retained Tengri fixture includes the native `runner-seccomp.json` profile.
+`bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
+Omni configuration.
 The guest receives a separate resolver file. Docker's network resolver at `127.0.0.11` stays in the fixture container
 for shared SQL discovery; copying it into the VM would send DNS requests to the guest's own loopback.
 Routine main publication runs
@@ -451,12 +463,14 @@ codes so shell echo cannot satisfy the probe. The one-second screen limit and al
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
-retains the exact native test binary in its build stage. The `kvm-test` target copies that binary from the same stage;
-the production runtime excludes fixture binaries. Native validation imports the runtime's main-only registry cache,
-so it does not compile Tengri again when the cache is available. Cache exports are best effort;
+and fixture builds share the Dockerfile's real-source release compilation. A pinned `cargo-chef` recipe caches Rust
+dependencies independently of application source. The image build runs the controller binary's release unit tests and
+retains the exact native test binary in its build stage. The source validation job owns all-target tests, generated CRD
+checks, database integration, and RPC interoperability. The `kvm-test` target copies the native binary from the same stage;
+the production runtime excludes fixture binaries. Native validation reuses the runtime's local compilation and the
+same source-revision build argument. Cache exports are best effort;
 BuildKit reports export errors without canceling required image publication
-or native validation. Fixture cache and test-binary tags are excluded from Kargo discovery.
+or native validation.
 
 The fixture uses a private Docker
 network/PID namespace, the production four-CPU quota, 9 GiB memory, only KVM/TUN and startup NET_ADMIN/SETUID/SETGID, and no host data mounts. It verifies and records the cgroup CPU quota before booting the guest.

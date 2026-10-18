@@ -944,6 +944,56 @@ test('aborts cold browser startup on close so guest lifecycle actions can procee
   await expect.poll(() => mock.actions.some((action) => action.action === 'sleep-agent')).toBe(true)
 })
 
+test('keeps an initialized Chrome viewer interactive after a clipboard failure', async ({ page }) => {
+  await mockTengri(page)
+  const sessionId = '7'.repeat(24)
+  const previewOrigin = `https://tengri-${sessionId}.proompteng.ai`
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'browser-session')
+      return route.fallback()
+    return route.fulfill({
+      json: {
+        result: {
+          id: sessionId,
+          launchUrl: `https://tengri.proompteng.ai/v1/preview/open#${previewTicket(1)}`,
+          previewOrigin,
+          expiresAt: new Date(Date.now() + 30 * 60_000).toISOString(),
+        },
+      },
+    })
+  })
+  await page.route('https://tengri.proompteng.ai/v1/preview/open**', (route) =>
+    route.fulfill({ contentType: 'text/html', body: `<script>location.replace('${previewOrigin}')</script>` }),
+  )
+  await page.route(`${previewOrigin}/**`, (route) =>
+    route.fulfill({
+      contentType: 'text/html',
+      body: `<!doctype html><body style="padding:96px 24px">
+        <label>Retained browser text <input></label>
+        <button id="fail">Report clipboard failure</button>
+        <button id="continue">Continue using Chrome</button><output role="status"></output>
+        <script>
+          const notify = (type, error) => parent.postMessage({channel:'tengri-browser-v1', sessionId:'${sessionId}', type, error}, ${JSON.stringify(desktopOrigin)});
+          document.querySelector('#fail').onclick = () => notify('error', 'Could not paste into Chrome');
+          document.querySelector('#continue').onclick = () => document.querySelector('output').textContent = 'Browser input still works';
+          parent.postMessage({channel:'tengri-preview-lease-v1', sessionId:'${sessionId}', type:'renewed', nonce:'', leaseId:'77777777-7777-4777-8777-777777777777', expiresInMs:1800000}, ${JSON.stringify(desktopOrigin)});
+          notify('ready');
+        </script>`,
+    }),
+  )
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Chrome', exact: true }).click()
+  const chrome = page.getByRole('region', { name: 'Chrome window', exact: true })
+  const viewer = chrome.frameLocator('iframe[title="Chrome browser"]')
+  await viewer.getByRole('textbox', { name: 'Retained browser text' }).fill('Keep this browser document')
+  await viewer.getByRole('button', { name: 'Report clipboard failure', exact: true }).click()
+  await expect(chrome.getByRole('alert')).toHaveText('Could not paste into Chrome')
+  await viewer.getByRole('button', { name: 'Continue using Chrome', exact: true }).click({ timeout: 1500 })
+  await expect(viewer.getByRole('status')).toHaveText('Browser input still works')
+  await expect(viewer.getByRole('textbox', { name: 'Retained browser text' })).toHaveValue('Keep this browser document')
+  await expect(chrome.getByRole('alert')).toHaveText('Could not paste into Chrome')
+})
+
 test('resets the previous agent-in-Chrome layout without starting a browser or losing the conversation', async ({
   page,
 }) => {
@@ -1207,6 +1257,41 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   await expect(page.getByRole('region', { name: 'Terminal window' })).toHaveCount(1)
   await expect.poll(() => mock.actions.some((action) => action.action === 'terminate-terminal')).toBe(true)
   expect(terminalDisposeFailures).toEqual([])
+})
+
+test('waits for compound terminal admission beyond thirty seconds', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  let releaseTicket = () => {}
+  const ticketGate = new Promise<void>((resolve) => {
+    releaseTicket = resolve
+  })
+  let attempts = 0
+  await page.route('**/api/tengri', async (route) => {
+    const request = route.request()
+    if (request.method() === 'POST' && request.postDataJSON().action === 'terminal-ticket') {
+      attempts += 1
+      await ticketGate
+    }
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  try {
+    await expect.poll(() => attempts).toBe(1)
+    await page.clock.fastForward(31_000)
+    await page.clock.runFor(1_000)
+    expect(attempts).toBe(1)
+    await expect(terminal.locator('[data-connection-state="connecting"]')).toBeAttached()
+    await expect(terminal.locator('.xterm-helper-textarea')).toHaveJSProperty('readOnly', true)
+  } finally {
+    releaseTicket()
+  }
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).focus()
+  await page.keyboard.type('after-admission')
+  await expect.poll(() => mock.terminalInput.join('')).toBe('after-admission')
 })
 
 test('disables terminal input while connecting and reconnecting without replaying blocked keystrokes', async ({

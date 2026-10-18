@@ -179,6 +179,23 @@ describe('streaming raw and rolling feature projection', () => {
 
             const history = state.quoteHistory.get('AAPL')
             if (history === undefined) throw new Error('missing accepted quote history')
+            const first = history[0]
+            if (first === undefined) throw new Error('missing first retained quote')
+            const source = {
+              topic: first.value.sourceTopic,
+              partition: first.value.sourcePartition,
+              offset: first.value.sourceOffset,
+              availableAtMs: first.availableAtMs,
+            }
+            expect(observedQuoteAt(state, 'AAPL', end + 5000, source)).toEqual(first)
+            expect(observedQuoteAt(state, 'AAPL', first.availableAtMs - 1, source)).toBeUndefined()
+            for (const mismatched of [
+              { ...source, topic: 'other.quote.topic' },
+              { ...source, partition: source.partition + 1 },
+              { ...source, offset: String(BigInt(source.offset) + 1_000_000n) },
+              { ...source, availableAtMs: source.availableAtMs + 1 },
+            ])
+              expect(observedQuoteAt(state, 'AAPL', end + 5000, mismatched)).toBeUndefined()
             Object.freeze(history)
             const duplicate = incorporateMarketRecord(state, latestRecord, universe, end + 4000)
             expect(duplicate).toBe(state)

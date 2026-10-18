@@ -61,7 +61,6 @@ export function ChromeApp({
         setError('')
       } else if (message.type === 'focus') focus.current()
       else if (message.type === 'error') {
-        setReady(false)
         setError('error' in message && typeof message.error === 'string' ? message.error : 'Chrome disconnected')
       }
     }
@@ -92,7 +91,13 @@ export function ChromeApp({
       ) : null}
       {preview.renewalFrame}
       {!ready || connectionError ? (
-        <div className="absolute inset-0 z-10 grid place-content-center gap-3 bg-[#202124] p-8 text-center text-sm text-zinc-400">
+        <div
+          className={
+            ready && !preview.error
+              ? 'absolute inset-x-3 top-3 z-10 flex items-center justify-between gap-3 rounded-xl border border-zinc-700 bg-zinc-900/95 p-3 text-sm text-zinc-200'
+              : 'absolute inset-0 z-10 grid place-content-center gap-3 bg-[#202124] p-8 text-center text-sm text-zinc-400'
+          }
+        >
           {connectionError ? (
             <>
               <p role="alert">{connectionError}</p>

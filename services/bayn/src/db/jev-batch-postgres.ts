@@ -129,11 +129,35 @@ export const makeJevBatchStore = Effect.gen(function* () {
         })
       }
       yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
-      yield* sql`
+      if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {
+        const result = yield* Effect.fromResult(
+          makeJevBatchResult(plan, {
+            schemaVersion: 'bayn.jev-batch-result.v1',
+            batchId: plan.batchId,
+            completedAt: checkedAt,
+            candidates: plan.candidates.map(({ symbol }) => ({ symbol, status: JevCandidateResultStatus.Excluded })),
+          }),
+        )
+        // With no inference claims to wait for, admission can commit the plan and
+        // final result together. RETURNING keeps a racing retry from rewriting an
+        // existing plan or result, including unfinished plans from older workers.
+        yield* sql`
+          WITH admitted AS (
+            INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+            VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
+            ON CONFLICT (batch_id) DO NOTHING
+            RETURNING batch_id
+          )
+          INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+          SELECT admitted.batch_id, ${result.resultHash}, ${sql.json(result)} FROM admitted
+        `
+      } else {
+        yield* sql`
         INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
         VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
         ON CONFLICT (batch_id) DO NOTHING
       `
+      }
       const saved = yield* read(plan.batchId)
       if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
       return saved
@@ -146,8 +170,8 @@ export const makeJevBatchStore = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireAutocommit
       const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
-      // A single-request receipt may have committed its final batch atomically. Its
-      // immutable, decoded result needs no new transaction or durability wait.
+      // An all-excluded admission or single-request receipt may have committed the
+      // final batch atomically. Its immutable result needs no new durability wait.
       const committed = yield* read(batchId)
       if (committed !== null && committed.result !== null) return committed
       return yield* sql.withTransaction(
