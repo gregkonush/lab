@@ -30,8 +30,8 @@ use tonic::{
 pub const CONTROLLER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri";
 pub const OFZ_ID: &str = "spiffe://proompteng.ai/ns/ofz/sa/ofz-api";
 const DECISION_TIMEOUT: Duration = Duration::from_secs(2);
-pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 30_000;
-const DURABLE_TIMEOUT: Duration = Duration::from_millis(AUDITED_REQUEST_BUDGET_MS);
+pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 25_000;
+const DURABLE_TIMEOUT: Duration = Duration::from_secs(30);
 mod receipts;
 
 #[derive(Clone)]

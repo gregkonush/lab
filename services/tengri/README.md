@@ -57,7 +57,9 @@ session, grant, origin, workspace/runtime, action, resource, target and recovery
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
 cache holds receipt IDs, never authorization decisions, and expires them before Ofz's eight-hour receipt limit.
 Control submissions retain their separate durable audits and session activity updates.
-Initial audit admission has a thirty-second processing budget, matching Ofz's existing request-context bound.
+Initial audit admission uses a 25-second context within Ofz's existing thirty-second validation ceiling and transport
+budget. The five-second difference leaves headroom for clock skew between clients and the database. BFF assertions
+are issued for four seconds within the controller's unchanged five-second validation ceiling.
 The BFF assertion is still admitted within five seconds; after verifying it, the controller requests a fresh Ofz
 decision with that separate audit budget. Ofz rechecks the current session, policy and runtime after the durable
 commit and returns a decision valid for at most two seconds. Receipt revalidation retains its two-second timeout.

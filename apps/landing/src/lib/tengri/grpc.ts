@@ -902,7 +902,7 @@ async function metadata(
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
-  context.deadlineUnixMs = BigInt(Date.now() + 5000)
+  context.deadlineUnixMs = BigInt(Date.now() + 4000)
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {

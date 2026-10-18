@@ -55,8 +55,9 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
-The server and initial audited clients allow thirty seconds for durable admission. Ofz still rechecks current
-authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
+The server and initial audited transports allow thirty seconds for durable admission. Clients issue 25-second request
+contexts, leaving five seconds of headroom below the server's unchanged thirty-second validation ceiling.
+Ofz still rechecks current authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
 bounded to two seconds. This processing budget does not extend the BFF's five-second signed assertion admission.
 Ofz, Tengri and the BFF export traces in the background with a ten-second network budget. Diagnostic flush failures
 retain their trace and event IDs for collector readback. An unsuccessful flush remains a failed verification.

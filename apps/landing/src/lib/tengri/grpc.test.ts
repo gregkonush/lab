@@ -57,6 +57,7 @@ function runtimeAgent(id: unknown) {
 let ofzServer: grpc.Server
 let receivedCommandDeadline = 0
 let receivedCreateDeadline = 0
+let ofzDatabaseClockOffsetMs = 0
 const lifecycleReceipts = new Map<string, Record<string, unknown>>()
 const lifecycleHashes = new Map<string, Buffer>()
 let lifecycleVersion = 10
@@ -156,6 +157,11 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedCommandDeadline = Number(call.getDeadline())
+      const context = call.request.context as { deadlineUnixMs: string }
+      if (Number(context.deadlineUnixMs) > Date.now() - ofzDatabaseClockOffsetMs + 30_000) {
+        callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'invalid command deadline'), null)
+        return
+      }
       const id = String(call.request.operationId)
       if (call.request.reserveWorkspace && reservationFailure) {
         reservationFailure.operationIds.push(id)
@@ -711,6 +717,7 @@ describe('Tengri gRPC BFF transport', () => {
     })
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', cursor: 'models-2' })
     expect(metadataContext().actor?.identity).toEqual({ case: 'humanId', value: identity.session.humanId })
+    expect(metadataContext().deadlineUnixMs).toBeLessThanOrEqual(BigInt(Date.now() - 250 + 5000))
     expect(await rejection(listCodexModels(identity, 'broken-catalog'))).toMatchObject({
       message: 'The guest returned an invalid Codex model catalog',
     })
@@ -906,6 +913,16 @@ describe('Tengri gRPC BFF transport', () => {
     } finally {
       editorRequestStarted = null
       editorRequestCancelled = null
+    }
+  })
+
+  test('creates a workspace when the Ofz database clock trails the BFF by one second', async () => {
+    const { createAgent } = await import('./grpc')
+    ofzDatabaseClockOffsetMs = 1000
+    try {
+      expect(await createAgent(identity, 'Tengri', randomUUID())).toMatchObject({ id: 'agent-test', phase: 'ready' })
+    } finally {
+      ofzDatabaseClockOffsetMs = 0
     }
   })
 

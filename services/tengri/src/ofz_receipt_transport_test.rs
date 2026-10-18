@@ -13,6 +13,7 @@ struct CheckService {
     allowed: Arc<AtomicBool>,
     concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
     delay_ms: Arc<AtomicU64>,
+    database_clock_offset_ms: Arc<AtomicU64>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -24,6 +25,10 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
         let service = self.clone();
         Box::pin(async move {
             let request = request.into_inner();
+            let database_now = now_ms()? - service.database_clock_offset_ms.load(Ordering::SeqCst);
+            if request.context.as_ref().unwrap().deadline_unix_ms > database_now + 30_000 {
+                return Err(Status::deadline_exceeded("invalid authorization deadline"));
+            }
             let receipt = if request.stream_receipt_id.is_empty() {
                 uuid::Uuid::new_v4().to_string()
             } else {
@@ -60,6 +65,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         allowed: Arc::new(AtomicBool::new(true)),
         concurrent: Arc::new(Mutex::new(None)),
         delay_ms: Arc::new(AtomicU64::new(0)),
+        database_clock_offset_ms: Arc::new(AtomicU64::new(0)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -241,6 +247,10 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         "an expired queued request must never reach Ofz"
     );
     drop(guard);
+
+    service
+        .database_clock_offset_ms
+        .store(1000, Ordering::SeqCst);
 
     // The BFF assertion is checked on controller admission; a durable Ofz audit is
     // followed by a fresh policy decision, rather than extending that assertion.
