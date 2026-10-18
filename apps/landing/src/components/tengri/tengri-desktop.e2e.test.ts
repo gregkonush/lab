@@ -1952,7 +1952,7 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-5.6 Luna')
   await expect(menu).toHaveCount(0)
   const reasoning = page.getByRole('combobox', { name: 'Reasoning effort' })
-  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await page.setViewportSize({ width: 390, height: 680 })
   await reasoning.click()
   await expect(menu).toBeVisible()
@@ -1997,7 +1997,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
   const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
   await expect(model.locator('[data-slot="select-value"]')).toHaveText('GPT-6.1 Sol')
   await expect(model).toBeEnabled()
-  await selectCodexOption(page, reasoning, 'High')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('High')
   await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Read the workspace')
   await tengri.getByRole('button', { name: 'Send message' }).click()
   await expect
@@ -2034,7 +2034,7 @@ test('selects and persists Codex models and reasoning for subsequent turns', asy
       reasoningEffort: 'high',
     })
   await selectCodexOption(page, model, 'GPT-5.6 Luna')
-  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Default (Low)')
+  await expect(reasoning.locator('[data-slot="select-value"]')).toHaveText('Low')
   await reasoning.click()
   await expect(page.getByRole('listbox')).toBeVisible()
   await expect(page.getByRole('option', { name: 'High', exact: true })).toHaveCount(0)
@@ -6836,10 +6836,12 @@ test('reopens terminally closed chat and Finder streams without reloading the de
 
 test('opens local file references as rendered agent tabs and preserves the chat draft', async ({ page }) => {
   const mock = await mockTengri(page)
+  const reads = new Map<string, number>()
   await page.route('**/api/tengri', async (route) => {
     if (route.request().method() !== 'POST') return route.fallback()
     const action = route.request().postDataJSON()
-    if (action.action !== 'read-file' || action.path !== '/workspace/README.md') return route.fallback()
+    if (action.action !== 'read-file' || !['/README.md', '/notes.md'].includes(action.path)) return route.fallback()
+    reads.set(action.path, (reads.get(action.path) ?? 0) + 1)
     return route.fulfill({
       json: {
         result: { path: action.path, content: '# Tengri\n\nA persistent workspace.\n', contentType: 'text/markdown' },
@@ -6860,7 +6862,7 @@ test('opens local file references as rendered agent tabs and preserves the chat 
     itemId: 'file-reference',
     approvalId: '',
     rawJson: '{}',
-    text: '[Project file](/workspace/README.md:2) and [Missing file](/workspace/missing.md)',
+    text: '[Project file](/workspace/README.md:2), [Notes](/workspace/notes.md), and [Missing file](/workspace/missing.md)',
   })
   await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
   await expect(tengri.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
@@ -6872,6 +6874,18 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await preview.getByRole('button', { name: 'Source', exact: true }).click()
   await expect(preview.locator('[data-selected="true"]')).toContainText('2')
   await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await expect(composer).toHaveValue('Keep this draft')
+  await tengri.getByRole('button', { name: 'Notes', exact: true }).click()
+  await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
+  await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
+  await expect(preview.getByRole('button', { name: 'Rendered', exact: true })).toBeVisible()
+  expect(reads.get('/README.md')).toBe(1)
+  await expect.poll(() => reads.get('/notes.md')).toBe(1)
+  await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
+  await tengri.getByRole('tab', { name: 'README.md', exact: true }).press('ArrowRight')
+  await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+  await tengri.getByRole('tab', { name: 'notes.md', exact: true }).press('Home')
   await expect(composer).toHaveValue('Keep this draft')
   expect((await new AxeBuilder({ page }).include('[role="tablist"]').analyze()).violations).toEqual([])
   await tengri.getByRole('button', { name: 'Missing file', exact: true }).click()
@@ -6889,7 +6903,14 @@ test('renders workspace images sent by the agent inline and in file tabs', async
     'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=',
     'base64',
   )
-  await page.route('**/api/tengri/attachments?*', (route) => route.fulfill({ contentType: 'image/png', body: png }))
+  let failNextImage = true
+  await page.route('**/api/tengri/attachments?*', (route) => {
+    if (failNextImage) {
+      failNextImage = false
+      return route.fulfill({ status: 503, json: { error: 'Temporary image read failure' } })
+    }
+    return route.fulfill({ contentType: 'image/png', body: png })
+  })
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
@@ -6904,6 +6925,8 @@ test('renders workspace images sent by the agent inline and in file tabs', async
     rawJson: '{}',
     text: 'Here is your chart.\n\n![Generated chart](/workspace/chart.png)\n\n[Open chart](/workspace/chart.png)',
   })
+  await expect(tengri.getByRole('status').filter({ hasText: 'Image unavailable: Generated chart' })).toBeVisible()
+  await tengri.getByRole('button', { name: 'Retry image', exact: true }).click()
   const image = tengri.getByRole('img', { name: 'Generated chart', exact: true })
   await expect(image).toBeVisible()
   await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(1)

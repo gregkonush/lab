@@ -511,10 +511,8 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
-      if (
-        String(call.request.path).startsWith('/workspace/.tengri-attachments/') ||
-        call.request.path === '/workspace/chart.png'
-      ) {
+      receivedRequest = call.request
+      if (String(call.request.path).startsWith('/.tengri-attachments/') || call.request.path === '/chart.png') {
         const content = String(call.request.path).endsWith('.png')
           ? Buffer.from([137, 80, 78, 71, 13, 10, 26, 10])
           : Buffer.from('not an image')
@@ -1298,8 +1296,10 @@ describe('Tengri gRPC BFF transport', () => {
     const { readCodexAttachment, readWorkspaceImage } = await import('./grpc')
     const prefix = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111'
     const image = await readCodexAttachment(identity, 'agent-test', `${prefix}.png`)
+    expect(receivedRequest).toMatchObject({ path: '/.tengri-attachments/11111111-1111-4111-8111-111111111111.png' })
     expect(image.mediaType).toBe('image/png')
     expect((await readWorkspaceImage(identity, 'agent-test', '/workspace/chart.png')).mediaType).toBe('image/png')
+    expect(receivedRequest).toMatchObject({ path: '/chart.png' })
     expect(await rejection(readWorkspaceImage(identity, 'agent-test', '/etc/private.png'))).toMatchObject({
       status: 400,
     })

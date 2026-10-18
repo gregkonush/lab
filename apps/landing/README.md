@@ -111,7 +111,9 @@ from this tab or another tab with a newer timestamp;
 ordinary selection preserves row order. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
-send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
+send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
+New selections use GPT-6.1 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
+supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
 starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
 use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
@@ -302,3 +304,7 @@ configuration contains only the ingest DSN and immutable release. See the
 [Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
 network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
 validation, stream limits and content-scrubbing checks.
+
+Chat file links display absolute `/workspace/...` guest paths and translate them to workspace-relative file API
+paths for text and image reads. Switching file tabs retains loaded contents and the Source/Rendered view without
+refetching; reopening an existing file preserves tab order. A failed inline image offers an explicit retry.
