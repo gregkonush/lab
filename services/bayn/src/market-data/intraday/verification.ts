@@ -874,10 +874,17 @@ export const latestQuotes = (
     if (usesCompletedBarBenchmark(request, symbol)) continue
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
+    const quoteAge = quote === undefined ? undefined : intradayAgeNanos(request.observedAt, quote.eventAt)
+    const freshPricingQuote =
+      request.purpose !== undefined &&
+      quoteAge !== undefined &&
+      quoteAge >= 0n &&
+      quoteAge <= millisecondsAsNanos(request.maximumQuoteAgeMs)
     if (
       quote === undefined ||
       (!usesWindowTradeEvidence(request, symbol) &&
-        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
+        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) &&
+        !freshPricingQuote)
     ) {
       return Result.fail(
         failure(
