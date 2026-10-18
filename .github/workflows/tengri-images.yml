@@ -16,6 +16,7 @@ on:
       - 'services/nanoagent/**'
       - 'devices/galactic/omni/tengri-runner-*.json'
       - '.github/workflows/tengri-images.yml'
+      - '.github/workflows/tengri-native.yml'
       - 'nix/tengri-schema-hash.py'
       - 'argocd/applications/tengri/**'
       - 'argocd/applications/tengri/crd.yaml'
@@ -30,6 +31,7 @@ on:
       - '.github/workflows/ofz.yaml'
       - '.github/workflows/product-nix-images.yml'
       - '.github/workflows/tengri-images.yml'
+      - '.github/workflows/tengri-native.yml'
       - 'apps/landing/**'
       - 'apps/landing/package.json'
       - 'apps/landing/src/app/api/auth/**'
@@ -205,63 +207,7 @@ jobs:
 
   build:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    name: Build ${{ matrix.service }} (${{ matrix.architecture }})
-    timeout-minutes: 75
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - service: tengri
-            architecture: amd64
-            runner: arc-amd64
-            context: services/tengri
-            image: registry.ide-newton.ts.net/lab/tengri
-          - service: tengri
-            architecture: arm64
-            runner: arc-arm64
-            context: services/tengri
-            image: registry.ide-newton.ts.net/lab/tengri
-          - service: nanoagent
-            architecture: amd64
-            runner: arc-amd64
-            context: services/nanoagent
-            image: registry.ide-newton.ts.net/lab/nanoagent
-          - service: nanoagent
-            architecture: arm64
-            runner: arc-arm64
-            context: services/nanoagent
-            image: registry.ide-newton.ts.net/lab/nanoagent
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
-
-      - name: Build native image
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          build-args: SOURCE_REVISION=${{ github.sha }}
-          build-contexts: |
-            ofz-proto=proto
-            ofz-catalog=services/ofz
-          platforms: linux/${{ matrix.architecture }}
-          push: true
-          tags: ${{ matrix.image }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          cache-from: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true
-          provenance: mode=max
-          sbom: true
-
-  validate-kvm:
-    name: Validate KVM slot (${{ matrix.architecture }})
-    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
-    needs: build
-    timeout-minutes: 90
+    name: Native (${{ matrix.architecture }})
     strategy:
       fail-fast: false
       matrix:
@@ -270,84 +216,11 @@ jobs:
             runner: arc-amd64
           - architecture: arm64
             runner: arc-arm64
-    runs-on: ${{ matrix.runner }}
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v6
-
-      - name: Set up Rust for the owning Ofz migrator
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.90.0
-
-      - name: Install execution network and fixture build tools
-        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends iproute2 build-essential protobuf-compiler openssl
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-        with:
-          driver-opts: network=host
-
-      - name: Build guest test binaries
-        uses: docker/build-push-action@v6
-        with:
-          context: services/nanoagent
-          platforms: linux/${{ matrix.architecture }}
-          target: kvm-tests
-          push: true
-          tags: ${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: type=registry,ref=${{ env.NANOAGENT_IMAGE }}:cache-${{ matrix.architecture }}
-
-      - name: Pull and verify paired boot artifacts
-        env:
-          ARCHITECTURE: ${{ matrix.architecture }}
-        run: |
-          set -euo pipefail
-          guest="${NANOAGENT_IMAGE}:sha-${GITHUB_SHA}-${ARCHITECTURE}"
-          docker pull "$guest"
-          docker run --rm --read-only --cap-drop ALL \
-            --entrypoint /usr/bin/sha256sum "$guest" --check /guest/SHA256SUMS
-
-      - name: Build native KVM test harness
-        uses: docker/build-push-action@v6
-        with:
-          context: services/tengri
-          file: services/tengri/Dockerfile
-          target: kvm-test
-          platforms: linux/${{ matrix.architecture }}
-          load: true
-          tags: tengri-kvm-test:validation
-          build-contexts: |
-            ofz-proto=proto
-            ofz-catalog=services/ofz
-            nanoagent-tests=docker-image://${{ env.NANOAGENT_IMAGE }}:kvm-tests-${{ github.sha }}-${{ matrix.architecture }}-${{ github.run_id }}-${{ github.run_attempt }}
-          cache-from: |
-            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
-            type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }}
-          cache-to: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-kvm-${{ matrix.architecture }},mode=max,ignore-error=true
-
-      - name: Verify real guest administration and snapshot lifecycle
-        env:
-          TENGRI_KVM_TEST_IMAGE: tengri-kvm-test:validation
-          TENGRI_KVM_GUEST_IMAGE: ${{ env.NANOAGENT_IMAGE }}:sha-${{ github.sha }}-${{ matrix.architecture }}
-          TENGRI_KVM_OUTPUT: ${{ github.workspace }}/.artifacts/kvm
-          TENGRI_KVM_SAMPLES: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
-          TENGRI_KVM_SECCOMP: ${{ github.workspace }}/.artifacts/runner-seccomp.json
-        run: |
-          mkdir -p .artifacts
-          jq -e '.machine.seccompProfiles[] | select(.name == "tengri-runner.json") | .value' \
-            devices/galactic/omni/tengri-runner-${{ matrix.architecture }}.json > "$TENGRI_KVM_SECCOMP"
-          bash services/ofz/test-control.sh kvm
-
-      - name: Retain KVM diagnostics
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
-          path: .artifacts/kvm/
-          include-hidden-files: true
-          if-no-files-found: error
-          retention-days: 7
+    uses: ./.github/workflows/tengri-native.yml
+    with:
+      architecture: ${{ matrix.architecture }}
+      runner: ${{ matrix.runner }}
+      kvm_samples: ${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}
 
   publish:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
@@ -355,7 +228,6 @@ jobs:
       - build
       - validate-tengri
       - validate-nanoagent
-      - validate-kvm
     runs-on: arc-arm64
     timeout-minutes: 30
     permissions:

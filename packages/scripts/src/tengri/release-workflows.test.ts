@@ -7,6 +7,7 @@ import YAML from 'yaml'
 
 const repositoryRoot = resolve(import.meta.dir, '../../../..')
 const imagesPath = resolve(repositoryRoot, '.github/workflows/tengri-images.yml')
+const nativeImagesPath = resolve(repositoryRoot, '.github/workflows/tengri-native.yml')
 const nanoagentDockerfilePath = resolve(repositoryRoot, 'services/nanoagent/Dockerfile')
 const tengriDockerfilePath = resolve(repositoryRoot, 'services/tengri/Dockerfile')
 
@@ -29,20 +30,23 @@ describe('Tengri image workflow', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       on: { workflow_dispatch: { inputs: { kvm_samples: { options: string[]; default: string } } } }
       jobs: {
-        'validate-kvm': { steps: Array<{ name?: string; env?: Record<string, string> }> }
+        build: { with: { kvm_samples: string } }
         publish: { needs: string[] }
       }
     }
     const input = workflow.on.workflow_dispatch.inputs.kvm_samples
     expect(input.options).toEqual(['3', '50'])
     expect(input.default).toBe('3')
-    const test = workflow.jobs['validate-kvm'].steps.find(
-      (step) => step.name === 'Verify real guest administration and snapshot lifecycle',
+    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
+    const test = native.jobs['validate-kvm'].steps.find(
+      (step: { name: string }) => step.name === 'Verify real guest administration and snapshot lifecycle',
     )
-    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe(
+    expect(workflow.jobs.build.with.kvm_samples).toBe(
       "${{ github.event_name == 'workflow_dispatch' && inputs.kvm_samples || '3' }}",
     )
-    expect(workflow.jobs.publish.needs).toContain('validate-kvm')
+    expect(test?.env?.TENGRI_KVM_SAMPLES).toBe('${{ inputs.kvm_samples }}')
+    expect(workflow.jobs.publish.needs).toContain('build')
+    expect(native.jobs['validate-kvm'].needs).toBe('build')
   })
 
   it('builds cohort images only on main and reuses the native harness cache', () => {
@@ -51,36 +55,60 @@ describe('Tengri image workflow', () => {
         string,
         {
           if?: string
+          uses?: string
+          strategy?: { matrix: { include: Array<{ architecture: string; runner: string }> } }
           steps: Array<{ name?: string; run?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }>
         }
       >
     }
-    const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
+    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
+    const runtime = native.jobs.build?.steps.find((step: { name: string }) => step.name === 'Build native image')
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     expect(workflow.jobs.build?.if).toBe(releaseOnly)
-    expect(workflow.jobs['validate-kvm']?.if).toBe(releaseOnly)
+    expect(workflow.jobs.build?.uses).toBe('./.github/workflows/tengri-native.yml')
+    expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
+      { architecture: 'amd64', runner: 'arc-amd64' },
+      { architecture: 'arm64', runner: 'arc-arm64' },
+    ])
+    expect(native.jobs['validate-kvm']?.needs).toBe('build')
+    expect(native.jobs.build.strategy.matrix.include.map((entry: { service: string }) => entry.service)).toEqual([
+      'tengri',
+      'nanoagent',
+    ])
+    expect(native.jobs.build['runs-on']).toBe('${{ inputs.runner }}')
+    expect(native.jobs['validate-kvm']['runs-on']).toBe('${{ inputs.runner }}')
+    const migratorCache = native.jobs['validate-kvm'].steps.find(
+      (step: { name: string }) => step.name === 'Cache Ofz migrator dependencies',
+    )
+    expect(migratorCache?.uses).toBe('Swatinem/rust-cache@v2')
+    expect(migratorCache?.with?.workspaces).toBe('services/ofz -> target')
+    expect(migratorCache?.with?.['shared-key']).toBe('ofz-native-migrator-${{ inputs.architecture }}')
     expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
     expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
     expect(runtime?.with?.push).toBe(true)
     expect(runtime?.with?.load).toBeUndefined()
-    expect(runtime?.with?.['cache-from']).toBe('type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}')
+    expect(runtime?.with?.['cache-from']).toBe('type=registry,ref=${{ matrix.image }}:cache-${{ inputs.architecture }}')
     expect(runtime?.with?.['cache-to']).toBe(
-      'type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true',
+      'type=registry,ref=${{ matrix.image }}:cache-${{ inputs.architecture }},mode=max,ignore-error=true',
     )
     expect(readFileSync(imagesPath, 'utf8')).not.toContain('tengri-kvm-fixture-')
-    expect(workflow.jobs.build?.steps.map((step) => step.name)).not.toContain('Build isolated KVM test image')
+    expect(native.jobs.build?.steps.map((step: { name: string }) => step.name)).not.toContain(
+      'Build isolated KVM test image',
+    )
     expect(runtime?.with?.['cache-to']).toContain('mode=max')
     expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
     expect(runtime?.['continue-on-error']).not.toBe(true)
-    const harness = workflow.jobs['validate-kvm']?.steps.find((step) => step.name === 'Build native KVM test harness')
+    const harness = native.jobs['validate-kvm']?.steps.find(
+      (step: { name: string }) => step.name === 'Build native KVM test harness',
+    )
     expect(harness?.with?.['cache-from']).toContain(':cache-kvm-')
     expect(harness?.with?.['cache-to']).toContain(':cache-kvm-')
     expect(harness?.with?.['cache-to']).toContain('ignore-error=true')
     expect(harness?.['continue-on-error']).not.toBe(true)
     expect(harness?.with?.load).toBe(true)
     expect(harness?.with?.push).not.toBe(true)
-    const pairedBoot = workflow.jobs['validate-kvm']?.steps.find(
-      (step) => step.name === 'Pull and verify paired boot artifacts',
+    const pairedBoot = native.jobs['validate-kvm']?.steps.find(
+      (step: { name: string }) => step.name === 'Pull and verify paired boot artifacts',
     )
     expect(pairedBoot?.run).toContain('docker pull "$guest"')
     expect(pairedBoot?.run).toContain('--check /guest/SHA256SUMS')
@@ -93,16 +121,27 @@ describe('Tengri image workflow', () => {
       readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
     )
     expect(products.jobs['build-proompteng'].if).toBe(`${releaseOnly} && needs.changes.outputs.proompteng == 'true'`)
+    for (const service of ['app', 'synthesis', 'docs']) {
+      expect(products.jobs[`build-${service}`].if).toBe(`${releaseOnly} && needs.changes.outputs.${service} == 'true'`)
+      expect(products.jobs[`build-${service}`].with.pr_number).toBeUndefined()
+    }
+    expect(products.jobs['verify-app-dependency-closure'].if).toBe("needs.changes.outputs.app == 'true'")
   })
 
   it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
+    const workflow = YAML.parse(readFileSync(nativeImagesPath, 'utf8')) as {
       jobs: Record<string, { steps: Array<{ name?: string; run?: string; with?: Record<string, unknown> }> }>
     }
     const dockerfile = readFileSync(tengriDockerfilePath, 'utf8')
     const runtime = dockerfile.split(' AS runtime\n')[1]?.split('\nFROM runtime AS kvm-test')[0]
     const fixture = dockerfile.split('\nFROM runtime AS kvm-test\n')[1]?.split('\nFROM runtime AS release')[0]
-    expect(dockerfile).toContain('cargo test --locked --release --all-targets')
+    expect(dockerfile).toContain('cargo test --locked --release --bin tengri')
+    expect(dockerfile).not.toContain('cargo test --locked --release --all-targets')
+    const dependencies = dockerfile.split('FROM chef AS build\n')[1]?.split('COPY Cargo.toml Cargo.lock build.rs ./')[0]
+    expect(dependencies).toContain('COPY --from=planner /src/recipe.json recipe.json')
+    expect(dependencies).toContain('cargo chef cook --locked --release --bin tengri --recipe-path recipe.json')
+    expect(dependencies).toContain('cargo chef cook --locked --release --bin tengri --tests --recipe-path recipe.json')
+    expect(dependencies).not.toContain('COPY src')
     expect(dockerfile).toContain('/out-kvm-test --list --ignored | grep -Fx')
     expect(runtime).toContain('COPY --from=build /out-tengri /usr/local/bin/tengri')
     expect(runtime).not.toContain('/out-kvm-test')
@@ -113,7 +152,7 @@ describe('Tengri image workflow', () => {
     expect(harness?.with?.file).toBe('services/tengri/Dockerfile')
     expect(harness?.with?.target).toBe('kvm-test')
     expect(harness?.with?.['cache-from']).toContain(
-      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
+      'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ inputs.architecture }}',
     )
   })
 
@@ -251,8 +290,11 @@ exit 0
 
     expect(YAML.parse(source).name).toBe('Tengri images')
     expect(source).not.toContain('tengri-release.yml')
-    expect(source).toContain('service: tengri')
-    expect(source).toContain('service: nanoagent')
+    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
+    expect(native.jobs.build.strategy.matrix.include.map((entry: { service: string }) => entry.service)).toEqual([
+      'tengri',
+      'nanoagent',
+    ])
     expect(source).toContain('architecture: amd64')
     expect(source).toContain('architecture: arm64')
     expect(source).toContain('cosign sign --yes')
@@ -276,7 +318,8 @@ exit 0
     expect(source).not.toContain('latest_digest')
     expect(source).not.toContain('sha256sum "${index_path}"')
     expect(source).not.toContain('release-contract.json')
-    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent', 'validate-kvm'])
+    expect(workflow.jobs?.publish?.needs).toEqual(['build', 'validate-tengri', 'validate-nanoagent'])
+    expect(native.jobs['validate-kvm'].needs).toBe('build')
     expect(existsSync(resolve(repositoryRoot, 'argocd/applications/kargo'))).toBe(true)
   })
 
@@ -300,7 +343,9 @@ exit 0
     expect(guestValidation).toContain('bash validate-rootfs.test.sh')
     expect(images.jobs?.publish?.needs).toContain('validate-tengri')
     expect(images.jobs?.publish?.needs).toContain('validate-nanoagent')
-    expect(images.jobs?.publish?.needs).toContain('validate-kvm')
+    expect(images.jobs?.publish?.needs).toContain('build')
+    const native = YAML.parse(readFileSync(nativeImagesPath, 'utf8'))
+    expect(native.jobs['validate-kvm'].needs).toBe('build')
   })
 
   it('withholds Kargo aliases until both images and their retained indexes succeed', () => {

@@ -430,6 +430,9 @@ Pull requests run source, authorization, database, browser, and editor validatio
 and Proompteng release images build only from `main`. PRs do not build unused native image archives or export
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
+Each architecture builds its controller and guest in `tengri-native.yml`, then runs its native tests as soon as those
+two images succeed. AMD64 qualification does not wait for ARM64 builds. Publication still requires both architectures
+and the full controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
@@ -459,8 +462,10 @@ codes so shell echo cannot satisfy the probe. The one-second screen limit and al
 
 For deliberate performance qualification, dispatch **Tengri images** with `kvm_samples=50`, or set
 `TENGRI_KVM_SAMPLES=50` when running the isolated fixture. This retains the p95 below one second benchmark. Runtime
-and fixture builds share the Dockerfile's real-source release compilation. The runtime runs all release unit tests and
-retains the exact native test binary in its build stage. The `kvm-test` target copies that binary from the same stage;
+and fixture builds share the Dockerfile's real-source release compilation. A pinned `cargo-chef` recipe caches Rust
+dependencies independently of application source. The image build runs the controller binary's release unit tests and
+retains the exact native test binary in its build stage. The source validation job owns all-target tests, generated CRD
+checks, database integration, and RPC interoperability. The `kvm-test` target copies the native binary from the same stage;
 the production runtime excludes fixture binaries. Native validation imports the runtime's main-only registry cache,
 so it does not compile Tengri again when the cache is available. Cache exports are best effort;
 BuildKit reports export errors without canceling required image publication
