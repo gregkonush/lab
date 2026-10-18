@@ -1853,18 +1853,34 @@ test('stops VS Code startup recovery on denial and when the window closes', asyn
   expect(starts).toBe(3)
 })
 
-test('bounds VS Code startup recovery before offering manual retry', async ({ page }) => {
-  const mock = await mockTengri(page)
+test('backs off persistent VS Code startup failures and cancels retries on close', async ({ page }) => {
+  await mockTengri(page)
+  let starts = 0
+  await page.route('**/api/tengri', (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'editor-session')
+      return route.fallback()
+    starts++
+    return route.fulfill({ status: 503, json: { error: `Temporary preview failure ${starts}` } })
+  })
   await page.goto('/')
   await page.getByRole('button', { name: 'Open Code', exact: true }).click()
   const code = page.getByRole('region', { name: 'Code window' })
-  await expect(code.getByRole('alert')).toContainText('VS Code is unavailable')
-  const starts = () => mock.actions.filter((action) => action.action === 'editor-session').length
-  expect(starts()).toBe(3)
+  await expect(code.getByRole('alert')).toHaveText('Temporary preview failure 3')
+  expect(starts).toBe(3)
   await page.clock.install()
+  await page.clock.runFor(4_000)
+  await expect(code.getByRole('alert')).toHaveText('Temporary preview failure 4')
+  for (const [index, delay] of [8_000, 16_000, 30_000, 30_000].entries()) {
+    await page.clock.runFor(delay - 1)
+    expect(starts).toBe(4 + index)
+    await page.clock.runFor(1)
+    await expect(code.getByRole('alert')).toHaveText(`Temporary preview failure ${5 + index}`)
+  }
+  expect(starts).toBe(8)
+  await code.getByRole('button', { name: 'Close Code', exact: true }).click()
+  await expect(code).toHaveCount(0)
   await page.clock.runFor(60_000)
-  expect(starts()).toBe(3)
-  await expect(code.getByRole('button', { name: 'Retry VS Code', exact: true })).toBeVisible()
+  expect(starts).toBe(8)
 })
 
 test('offers old-editor drafts for download without overwriting guest files or exposing another owner', async ({
