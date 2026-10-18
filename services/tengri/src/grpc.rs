@@ -1016,6 +1016,26 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResolveCodexApproval").await?;
         let request = request.into_inner();
         validate_codex_id(&request.approval_id)?;
+        if !request.response_json.is_empty() {
+            if request.decision != CodexApprovalDecision::Unspecified as i32
+                || request.response_json.len() > 32768
+            {
+                return Err(Status::invalid_argument("invalid question response"));
+            }
+            let response: Value = serde_json::from_slice(&request.response_json)
+                .map_err(|_| Status::invalid_argument("invalid question response JSON"))?;
+            if !response.is_object() {
+                return Err(Status::invalid_argument(
+                    "question response must be an object",
+                ));
+            }
+            self.guest(&principal, &request.agent_id, "")
+                .await?
+                .answer_codex_input(&request.approval_id, request.response_json)
+                .await
+                .map_err(map_guest_error)?;
+            return Ok(Response::new(Empty {}));
+        }
         let decision = match CodexApprovalDecision::try_from(request.decision)
             .unwrap_or(CodexApprovalDecision::Unspecified)
         {

@@ -1,6 +1,7 @@
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
 import { observeRequest } from '@/lib/observability/server'
 import {
+  answerCodexQuestions,
   createAgent,
   createCodexThread,
   createDirectory,
@@ -221,6 +222,10 @@ async function runAction(request: Request) {
         break
       case 'interrupt-turn':
         await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
+        result = null
+        break
+      case 'answer-questions':
+        await answerCodexQuestions(identity, action.agentId, action.approvalId, action.response)
         result = null
         break
       case 'resolve-approval':

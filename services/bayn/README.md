@@ -82,6 +82,9 @@ execution from fresh exact reconciled broker positions. Recovery does not author
 hours, extend an unresolved order's immutable lease, or submit after the broker session closes.
 
 Current quantities and fill prices use nine-decimal atoms; USD accounting uses six-decimal micros.
+Observed bar references, ranges, completed closes and trade signals can carry more than nine decimal places.
+Jev rounds these non-executable signal values to micros with decimal half-up rounding while preserving the original values and source hashes in
+its observation and model input. Executable bid/ask conversion retains nine-decimal validation and adverse rounding.
 Broker equity marks may carry finer decimal precision. Current equity rounds down and previous-close equity rounds
 up to micros, including signed values, so the daily-loss comparison is conservative. Cash, buying power, fills and
 fee accounting retain their exact precision checks. Original response hashes bind the unrounded provider evidence.
