@@ -64,6 +64,8 @@ coin-denominated buy fees and the existing rounded transaction-fee schedule. Sel
 action and a `supported` net-economics assessment; adverse or uncertain economics abstain. The model assessment
 remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
 above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
+Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
+within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
 Protocol v9 and trading-signal input v8 replace their executable predecessors. Migration 118 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
