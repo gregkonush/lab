@@ -42,7 +42,13 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     expect(bought.executionFeesMicros).toBe('200392')
     expect(bought.positions[0]?.costBasisMicros).toBe(String(notional - 200_392n))
     expect(
-      replayFeeActivity('paper', { ...fill, brokerOrderId: 'buy' }, '0', bought.executionFeesMicros, 1_000_000),
+      replayFeeActivity(
+        'paper',
+        { ...fill, brokerOrderId: 'buy', executionIndex: 1 },
+        '0',
+        bought.executionFeesMicros,
+        1_000_000,
+      ),
     ).toMatchObject({
       netAmountMicros: '0',
       coinDebit: { symbol, quantityAtoms: '82625', priceAtoms: '2425310000000' },
