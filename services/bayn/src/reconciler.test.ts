@@ -497,6 +497,7 @@ describe('execution reconciliation loop', () => {
       ...emptyRead(),
       orders: (query = {}) => {
         requests.push(query)
+        const pageObservedAt = utcInstantFromEpochMillis(Date.parse(cut) + requests.length * 100)
         const value =
           query.after === newest.submittedAt
             ? [{ ...newest, submittedAt: '2026-10-18T21:27:20.865652Z' }]
@@ -505,7 +506,10 @@ describe('execution reconciliation loop', () => {
               : query.direction === SortDirection.Descending
                 ? allOrders.toReversed()
                 : allOrders
-        return Effect.succeed({ value, evidence: evidence(`precision-page-${requests.length}`) })
+        return Effect.succeed({
+          value: value.map((row) => ({ ...row, observedAt: pageObservedAt })),
+          evidence: { ...evidence(`precision-page-${requests.length}`), observedAt: pageObservedAt },
+        })
       },
     }
 
@@ -513,6 +517,13 @@ describe('execution reconciliation loop', () => {
 
     expect(snapshot.history.orders.rows.map(({ value }) => value.brokerOrderId).toSorted()).toEqual(
       allOrders.map((value) => value.brokerOrderId).toSorted(),
+    )
+    expect(snapshot.history.orders.observedAt).toBe(utcInstantFromEpochMillis(Date.parse(cut) + 300))
+    expect(snapshot.history.orders.observedAt).toBe(
+      snapshot.history.orders.rows.reduce(
+        (latest, row) => (row.value.observedAt > latest ? row.value.observedAt : latest),
+        '',
+      ),
     )
     expect(requests).toHaveLength(4)
     expect(requests.every((query) => query.direction === SortDirection.Descending && query.after === undefined)).toBe(

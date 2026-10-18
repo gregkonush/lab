@@ -83,7 +83,7 @@ const decideOrderPageDataFirst = (
     return Result.fail(paginationFailure('OrderPageTooLarge', 'Alpaca returned more orders than requested'))
   }
   if (page.value.length === 0) {
-    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt } })
+    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt: state.observedAt ?? observedAt } })
   }
   const pageResult = page.value.reduce<Result.Result<OrderPageAccumulator, ReconciliationError>>(
     (result, order) => {
