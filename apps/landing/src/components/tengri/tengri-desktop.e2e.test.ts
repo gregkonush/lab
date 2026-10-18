@@ -6963,7 +6963,24 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await page.screenshot({ path: 'test-results/agent-file-tab.png' })
   await expect(preview).toContainText('A persistent workspace.')
   expect(mock.actions.some((action) => action.action === 'editor-session')).toBe(false)
+  const markdownView = preview.getByRole('group', { name: 'Markdown view' })
+  await expect(markdownView.getByRole('button', { name: 'Preview', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
+  await expect(markdownView.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
   await preview.getByRole('button', { name: 'Source', exact: true }).click()
+  await expect(markdownView.getByRole('button', { name: 'Preview', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'false',
+  )
+  await expect(markdownView.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
   await expect(preview.locator('[data-selected="true"]')).toContainText('2')
   await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
   await expect(composer).toHaveValue('Keep this draft')
@@ -6971,7 +6988,10 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
   await tengri.getByRole('tab', { name: 'Chat', exact: true }).click()
   await tengri.getByRole('button', { name: 'Project file', exact: true }).click()
-  await expect(preview.getByRole('button', { name: 'Rendered', exact: true })).toBeVisible()
+  await expect(markdownView.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute(
+    'aria-pressed',
+    'true',
+  )
   expect(reads.get('/workspace/README.md')).toBe(1)
   await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
   await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
@@ -6981,9 +7001,9 @@ test('opens local file references as rendered agent tabs and preserves the chat 
     .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width))
   for (const width of tabWidths) expect(width).toBeCloseTo(tabWidths[0], 0)
   const readmeTab = tabs.getByRole('tab', { name: 'README.md', exact: true })
-  const closeReadme = tabs.getByTitle('Close /workspace/README.md', { exact: true })
+  const closeReadme = tengri.getByRole('button', { name: 'Close /workspace/README.md', exact: true })
   await expect(readmeTab).toHaveAccessibleDescription('Press Delete to close this tab.')
-  await preview.getByRole('button', { name: 'Rendered', exact: true }).focus()
+  await preview.getByRole('button', { name: 'Source', exact: true }).focus()
   await page.mouse.move(0, 0)
   await expect(closeReadme).toHaveCSS('opacity', '0')
   await readmeTab.hover()
@@ -6991,6 +7011,8 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await page.mouse.move(0, 0)
   await readmeTab.focus()
   await expect(closeReadme).toHaveCSS('opacity', '1')
+  await readmeTab.press('Tab')
+  await expect(closeReadme).toBeFocused()
   await tengri.screenshot({ path: 'test-results/agent-file-tabs-hover.png' })
   await page.setViewportSize({ width: 390, height: 844 })
   await expect(async () => {
@@ -7005,11 +7027,11 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
   await tengri.getByRole('tab', { name: 'notes.md', exact: true }).press('Home')
   await expect(composer).toHaveValue('Keep this draft')
-  expect((await new AxeBuilder({ page }).include('[role="tablist"]').analyze()).violations).toEqual([])
+  expect((await new AxeBuilder({ page }).include('[aria-label="Tengri window"]').analyze()).violations).toEqual([])
   await tengri.getByRole('button', { name: 'Missing file', exact: true }).click()
   await expect(tengri.getByRole('alert')).toContainText('File not found')
   await expect(tengri.getByRole('button', { name: 'Retry file preview' })).toBeVisible()
-  await tengri.getByTitle('Close /workspace/missing.md', { exact: true }).click()
+  await tengri.getByRole('button', { name: 'Close /workspace/missing.md', exact: true }).click()
   await expect(composer).toHaveValue('Keep this draft')
   await readmeTab.click()
   await readmeTab.press('Delete')
@@ -7018,6 +7040,63 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await expect(composer).toHaveValue('Keep this draft')
   expect(new URL(page.url()).pathname).toBe('/')
   expect(page.context().pages()).toHaveLength(1)
+})
+
+test.describe('touch file previews', () => {
+  test.use({ hasTouch: true, isMobile: true, viewport: { width: 390, height: 844 } })
+
+  test('exposes accessible close buttons and clearly selected Markdown views on touch', async ({ page }) => {
+    await mockTengri(page)
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      if (route.request().postDataJSON().action !== 'read-file') return route.fallback()
+      return route.fulfill({
+        json: {
+          result: {
+            path: '/workspace/README.md',
+            content: '# Project\n\nA formatted preview.',
+            contentType: 'text/markdown',
+          },
+        },
+      })
+    })
+    await page.goto('/')
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    const composer = tengri.getByRole('textbox', { name: 'Message your agent', exact: true })
+    await expect(composer).toBeEnabled()
+    await composer.fill('Keep this touch draft')
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'assistant-text',
+      method: 'item/completed',
+      threadId: '',
+      turnId: '',
+      itemId: 'touch-file',
+      approvalId: '',
+      rawJson: '{}',
+      text: '[Project file](/workspace/README.md)',
+    })
+    await tengri.getByRole('button', { name: 'Project file', exact: true }).tap()
+    const preview = tengri.getByRole('region', { name: 'File preview' })
+    const view = preview.getByRole('group', { name: 'Markdown view' })
+    await expect(view.getByRole('button', { name: 'Preview', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(preview.getByRole('heading', { name: 'Project', exact: true })).toBeVisible()
+    await view.getByRole('button', { name: 'Source', exact: true }).tap()
+    await expect(view.getByRole('button', { name: 'Source', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(preview.locator('pre')).toContainText('# Project')
+    await view.getByRole('button', { name: 'Preview', exact: true }).tap()
+    await expect(view.getByRole('button', { name: 'Preview', exact: true })).toHaveAttribute('aria-pressed', 'true')
+    await expect(preview.locator('pre')).toHaveCount(0)
+    const close = tengri.getByRole('button', { name: 'Close /workspace/README.md', exact: true })
+    expect(await page.evaluate(() => matchMedia('(hover: none)').matches)).toBe(true)
+    await expect(close).toHaveCSS('opacity', '1')
+    expect((await new AxeBuilder({ page }).include('[aria-label="Tengri window"]').analyze()).violations).toEqual([])
+    await tengri.screenshot({ path: 'test-results/agent-file-tabs-touch.png' })
+    await close.tap()
+    await expect(tengri.getByRole('tab', { name: 'README.md', exact: true })).toHaveCount(0)
+    await expect(tengri.getByRole('tab', { name: 'Chat', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(composer).toHaveValue('Keep this touch draft')
+  })
 })
 
 test('renders workspace images sent by the agent inline and in file tabs', async ({ page }) => {
