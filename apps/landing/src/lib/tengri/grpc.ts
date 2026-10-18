@@ -48,6 +48,7 @@ import { codexHistoryResponse } from './codex-history-stream'
 import type { CodexHistoryPage } from './codex-history'
 
 const DEFAULT_GRPC_DEADLINE_MS = 35_000
+const CREATE_AGENT_GRPC_DEADLINE_MS = 95_000
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
@@ -152,7 +153,12 @@ export async function createAgent(identity: TengriIdentity, displayName: string,
     throw error
   }
   const agent = normalizeAgent(
-    await unary<RawAgent>('createAgent', { displayName, reservationId: operationId }, identity, 35_000),
+    await unary<RawAgent>(
+      'createAgent',
+      { displayName, reservationId: operationId },
+      identity,
+      CREATE_AGENT_GRPC_DEADLINE_MS,
+    ),
   )
   return setRuntime(identity, agent.id, agent.uid, intent, true)
 }

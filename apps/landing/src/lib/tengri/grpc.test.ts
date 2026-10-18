@@ -56,6 +56,7 @@ function runtimeAgent(id: unknown) {
 }
 let ofzServer: grpc.Server
 let receivedCommandDeadline = 0
+let receivedCreateDeadline = 0
 const lifecycleReceipts = new Map<string, Record<string, unknown>>()
 const lifecycleHashes = new Map<string, Buffer>()
 let lifecycleVersion = 10
@@ -276,6 +277,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      receivedCreateDeadline = Number(call.getDeadline())
       receivedMetadata = call.metadata
       receivedRequest = call.request
       if (call.request.displayName === 'Expired reservation') {
@@ -911,7 +913,10 @@ describe('Tengri gRPC BFF transport', () => {
     const { createAgent } = await import('./grpc')
     const before = lifecycleReceipts.size
     const operationId = randomUUID()
+    const started = Date.now()
     const agent = await createAgent(identity, 'Tengri', operationId)
+    expect(receivedCreateDeadline).toBeGreaterThanOrEqual(started + 3 * 30_000)
+    expect(receivedCreateDeadline).toBeLessThanOrEqual(Date.now() + 95_000)
     expect(receivedRequest).toEqual({ displayName: 'Tengri', reservationId: operationId })
     expect(agent).toMatchObject({ id: 'agent-test', uid: workspaceUid, phase: 'ready', displayName: 'Tengri' })
     expect(agent.runtimeEpoch).toMatch(/^[0-9a-f-]{36}$/)

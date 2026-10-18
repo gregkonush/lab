@@ -64,6 +64,8 @@ commit and returns a decision valid for at most two seconds. Receipt revalidatio
 A slow commit therefore does not automatically trigger a new admission every five seconds, and waiting for an audit
 does not lengthen a signed assertion or authorize access from a stale policy decision. BFF unary operations allow
 thirty-five seconds for audit admission and the subsequent guest call; streaming operations retain their cancellation.
+Workspace creation allows ninety-five seconds for its three sequential thirty-second admissions: reservation validation,
+runtime-state admission and final workspace metadata authorization. Its reservation ID still recovers an uncertain outcome.
 Conversation history, Codex events and file streams share their workspace admission with the guest connection, so one
 stream submission does not create a second parent audit. Guest sub-operations retain their separate control audits;
 stream disclosure and revocation still check current Ofz policy using the original admission's receipt.
