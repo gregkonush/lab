@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use std::{env, sync::Arc, time::Duration};
 
 use opentelemetry::{
@@ -78,17 +79,23 @@ pub struct Telemetry {
     _traces: Option<SdkTracerProvider>,
 }
 
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn trace_exporter(endpoint: String) -> anyhow::Result<opentelemetry_otlp::SpanExporter> {
+    Ok(opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .with_timeout(EXPORT_TIMEOUT)
+        .build()?)
+}
+
 pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let release = env::var("APP_SOURCE_REVISION").unwrap_or_else(|_| "development".into());
     let traces = env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
         .ok()
         .map(|endpoint| {
-            let exporter = opentelemetry_otlp::SpanExporter::builder()
-                .with_http()
-                .with_endpoint(endpoint)
-                .with_timeout(Duration::from_secs(3))
-                .build()?;
+            let exporter = trace_exporter(endpoint)?;
             Ok::<_, anyhow::Error>(
                 SdkTracerProvider::builder()
                     .with_batch_exporter(SanitizedExporter(exporter))
@@ -328,10 +335,12 @@ impl Telemetry {
             trace_id != "00000000000000000000000000000000",
             "trace context is not initialized"
         );
-        provider.force_flush()?;
+        provider.force_flush().with_context(|| {
+            format!("OTLP flush failed for trace {trace_id} and event {event_id}")
+        })?;
         anyhow::ensure!(
-            client.flush(Some(Duration::from_secs(3))),
-            "GlitchTip export did not flush"
+            client.flush(Some(EXPORT_TIMEOUT)),
+            "GlitchTip export did not flush for event {event_id} and trace {trace_id}"
         );
         Ok(
             serde_json::json!({"eventId": event_id, "traceId": trace_id, "release": env::var("APP_SOURCE_REVISION").unwrap_or_default()}),
@@ -343,6 +352,66 @@ impl Telemetry {
 mod tests {
     use super::*;
     use tower_http::trace::MakeSpan;
+
+    #[test]
+    fn background_export_waits_for_a_delayed_collector_response() {
+        use std::io::{BufRead, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let collector = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "export never reached the collector"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("collector accept: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(&mut stream);
+            let mut length = None;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+            let length = length
+                .filter(|length| *length > 0 && *length < 65536)
+                .expect("bounded OTLP payload");
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            std::thread::sleep(Duration::from_millis(3100));
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        });
+        let provider = SdkTracerProvider::builder()
+            .with_batch_exporter(SanitizedExporter(
+                trace_exporter(format!("http://{address}/v1/traces")).unwrap(),
+            ))
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
+        tracing::subscriber::with_default(subscriber, || {
+            drop(tracing::info_span!("delayed.collector"));
+        });
+        let result = provider.force_flush();
+        collector.join().unwrap();
+        result.expect("a slow collector must not lose a queued trace after three seconds");
+        provider.shutdown().unwrap();
+    }
 
     #[test]
     fn trace_exports_remove_dynamic_fields_and_unknown_rpc_paths() {

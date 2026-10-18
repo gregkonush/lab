@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'bun:test'
-import { createHash } from 'node:crypto'
 import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
@@ -46,21 +45,30 @@ describe('Tengri image workflow', () => {
     expect(workflow.jobs.publish.needs).toContain('validate-kvm')
   })
 
-  it('separates main and same-repository PR caches and reuses the native harness cache', () => {
+  it('builds cohort images only on main and reuses the native harness cache', () => {
     const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
       jobs: Record<
         string,
-        { steps: Array<{ name?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }> }
+        {
+          if?: string
+          steps: Array<{ name?: string; run?: string; with?: Record<string, unknown>; 'continue-on-error'?: boolean }>
+        }
       >
     }
     const runtime = workflow.jobs.build?.steps.find((step) => step.name === 'Build native image')
-    expect(runtime?.with?.['cache-to']).toContain("github.event_name != 'pull_request'")
-    for (const setting of ['cache-from', 'cache-to']) {
-      expect(runtime?.with?.[setting]).toContain(
-        "github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository",
-      )
-      expect(runtime?.with?.[setting]).toContain(':cache-pr-{1}-{2}')
-    }
+    const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
+    expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    expect(workflow.jobs['validate-kvm']?.if).toBe(releaseOnly)
+    expect(workflow.jobs['validate-tengri']?.if).not.toContain("github.event_name != 'pull_request'")
+    expect(workflow.jobs['validate-nanoagent']?.if).not.toContain("github.event_name != 'pull_request'")
+    expect(runtime?.with?.push).toBe(true)
+    expect(runtime?.with?.load).toBeUndefined()
+    expect(runtime?.with?.['cache-from']).toBe('type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }}')
+    expect(runtime?.with?.['cache-to']).toBe(
+      'type=registry,ref=${{ matrix.image }}:cache-${{ matrix.architecture }},mode=max,ignore-error=true',
+    )
+    expect(readFileSync(imagesPath, 'utf8')).not.toContain('tengri-kvm-fixture-')
+    expect(workflow.jobs.build?.steps.map((step) => step.name)).not.toContain('Build isolated KVM test image')
     expect(runtime?.with?.['cache-to']).toContain('mode=max')
     expect(runtime?.with?.['cache-to']).toContain('ignore-error=true')
     expect(runtime?.['continue-on-error']).not.toBe(true)
@@ -71,6 +79,20 @@ describe('Tengri image workflow', () => {
     expect(harness?.['continue-on-error']).not.toBe(true)
     expect(harness?.with?.load).toBe(true)
     expect(harness?.with?.push).not.toBe(true)
+    const pairedBoot = workflow.jobs['validate-kvm']?.steps.find(
+      (step) => step.name === 'Pull and verify paired boot artifacts',
+    )
+    expect(pairedBoot?.run).toContain('docker pull "$guest"')
+    expect(pairedBoot?.run).toContain('--check /guest/SHA256SUMS')
+
+    const ofz = YAML.parse(readFileSync(resolve(repositoryRoot, '.github/workflows/ofz.yaml'), 'utf8'))
+    expect(ofz.jobs['build-ofz'].if).toBe(releaseOnly)
+    expect(ofz.jobs['build-ofz'].needs).toBe('validate')
+    expect(ofz.jobs.validate.if).toBeUndefined()
+    const products = YAML.parse(
+      readFileSync(resolve(repositoryRoot, '.github/workflows/product-nix-images.yml'), 'utf8'),
+    )
+    expect(products.jobs['build-proompteng'].if).toBe(`${releaseOnly} && needs.changes.outputs.proompteng == 'true'`)
   })
 
   it('reuses the runtime release compilation for the native fixture without shipping test binaries', () => {
@@ -93,12 +115,6 @@ describe('Tengri image workflow', () => {
     expect(harness?.with?.['cache-from']).toContain(
       'type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}',
     )
-    const prFixture = workflow.jobs.build.steps.find((step) => step.name === 'Build isolated KVM test image')
-    expect(prFixture?.run).toContain('docker buildx build --load')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${NANOAGENT_IMAGE}:cache-amd64"')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-amd64"')
-    expect(prFixture?.run).toContain('--cache-from "type=registry,ref=${TENGRI_IMAGE}:cache-kvm-amd64"')
-    expect(prFixture?.run).not.toContain('--builder default')
   })
 
   it.each(['0', '1', '2', 'invalid'])(
@@ -422,78 +438,6 @@ exit 0
     expect(validation).toContain('cargo run --locked --quiet --bin crdgen')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml crd.yaml')
     expect(validation).toContain('diff -u /tmp/tengri-crd.yaml ../../argocd/applications/tengri/crd.yaml')
-  })
-
-  it.each(['save', 'config', 'portable'])('verifies the saved configuration for fixture %s', (scenario) => {
-    const workflow = YAML.parse(readFileSync(imagesPath, 'utf8')) as {
-      jobs: { build: { steps: Array<{ name?: string; if?: string; run?: string }> } }
-    }
-    const steps = workflow.jobs.build.steps
-    const exported = steps.find((step) => step.name === 'Export native KVM fixture image')
-    const retained = steps.find((step) => step.name === 'Retain native KVM fixture image')
-    expect(exported?.if).toBe("${{ github.event_name == 'pull_request' && matrix.architecture == 'amd64' }}")
-    expect(retained?.if).toBe(exported?.if)
-    expect(exported?.run).not.toMatch(/--device|--cap-add|bash services\/tengri\/test-kvm.sh/)
-
-    const fixture = mkdtempSync(resolve(tmpdir(), 'tengri-fixture-export-failure-'))
-    try {
-      const image = `registry.example.test/nanoagent:sha-${'1'.repeat(40)}-amd64`
-      const config = JSON.stringify({ architecture: 'amd64', os: 'linux', rootfs: { type: 'layers', diff_ids: [] } })
-      const digest = createHash('sha256').update(config).digest('hex')
-      const configPath = `blobs/sha256/${digest}`
-      mkdirSync(resolve(fixture, 'blobs/sha256'), { recursive: true })
-      writeFileSync(
-        resolve(fixture, 'manifest.json'),
-        JSON.stringify([{ Config: configPath, RepoTags: [image], Layers: [] }]),
-      )
-      const archive = resolve(fixture, 'image.tar')
-      const archiveFiles = ['manifest.json']
-      if (scenario !== 'config') {
-        writeFileSync(resolve(fixture, configPath), config)
-        archiveFiles.push(configPath)
-      }
-      const saved = Bun.spawnSync(['tar', '-cf', archive, '-C', fixture, ...archiveFiles])
-      expect(saved.exitCode).toBe(0)
-      writeFileSync(
-        resolve(fixture, 'docker'),
-        '#!/bin/sh\nif [ "$1" = save ]; then cat "$FIXTURE_ARCHIVE"; exit "$SAVE_EXIT"; fi\nprintf "sha256:%s\\n" "$MANIFEST_DIGEST"\n',
-        { mode: 0o755 },
-      )
-      const result = Bun.spawnSync(['bash', '-c', exported?.run ?? ''], {
-        cwd: fixture,
-        env: {
-          ...process.env,
-          PATH: `${fixture}:${process.env.PATH}`,
-          SERVICE: 'nanoagent',
-          IMAGE_REPOSITORY: 'registry.example.test/nanoagent',
-          GITHUB_SHA: '1'.repeat(40),
-          PR_HEAD_REVISION: '2'.repeat(40),
-          FIXTURE_ARCHIVE: archive,
-          SAVE_EXIT: scenario === 'save' ? '42' : '0',
-          MANIFEST_DIGEST: 'f'.repeat(64),
-        },
-      })
-      const receiptPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent.json')
-      const checksumsPath = resolve(fixture, '.artifacts/kvm-fixture/nanoagent-SHA256SUMS')
-      if (scenario === 'portable') {
-        expect(result.exitCode).toBe(0)
-        const receipt: unknown = JSON.parse(readFileSync(receiptPath, 'utf8'))
-        expect(receipt).toEqual({
-          sourceRevision: '1'.repeat(40),
-          prHeadRevision: '2'.repeat(40),
-          image,
-          configDigest: `sha256:${digest}`,
-        })
-        expect(existsSync(checksumsPath)).toBe(true)
-      } else {
-        if (scenario === 'save') expect(result.exitCode).toBe(42)
-        else expect(result.exitCode).not.toBe(0)
-        expect(existsSync(receiptPath)).toBe(false)
-        expect(existsSync(checksumsPath)).toBe(false)
-      }
-    } finally {
-      rmSync(fixture, { recursive: true, force: true })
-    }
   })
 
   it('uses the repository mirror instead of anonymous Docker Hub base pulls', () => {

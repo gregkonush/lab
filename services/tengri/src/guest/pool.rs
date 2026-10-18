@@ -447,10 +447,8 @@ mod tests {
             matches!(record.scope, TicketScope::Terminal { terminal_id } if terminal_id == "terminal-current")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let codex_principal = Principal {
-            action: Action::CodexControl,
-            ..principal.clone()
-        };
+        let mut codex_principal = principal.clone();
+        codex_principal.action = Action::CodexControl;
         let codex_access = authorization
             .agent_access(&codex_principal, &agent, "thread-current")
             .unwrap();
