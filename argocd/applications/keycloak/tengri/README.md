@@ -18,7 +18,13 @@ WebAuthn implementation and default authenticator label without calling `window.
 reject after creating the credential. The real browser fixture disables prompts, enrolls passkeys, then disables user
 verification for subsequent authentication. It verifies that theme and PIN-policy migration preserve existing
 credentials while other security drift still fails.
-The upstream module retains its [Apache 2.0 license](theme/LICENSE.txt).
+The authentication template and module also follow Keycloak 26.7.4. They pass the enrolled authenticators' transport
+metadata to WebAuthn UI hints. Hardware-only credentials prefer `security-key`, so Chrome prioritizes the YubiKey
+prompt over the phone/QR flow. An internal authenticator prefers `client-device` followed by `security-key`, keeping
+password managers such as 1Password available. Unknown transports retain the browser's default chooser. These hints
+do not restrict authenticators or change credential validation. The browser fixture records real WebAuthn requests
+and verifies fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
+These upstream assets retain their [Apache 2.0 license](theme/LICENSE.txt).
 
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note

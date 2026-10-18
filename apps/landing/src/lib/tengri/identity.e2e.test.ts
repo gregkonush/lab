@@ -831,11 +831,28 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
-    await context.addInitScript(() => {
+    const webAuthnRequests: unknown[] = []
+    await context.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      webAuthnRequests.push(options)
+    })
+    const observeWebAuthn = () => {
       window.prompt = () => {
         throw new Error('prompt() is not supported.')
       }
-    })
+      const get = navigator.credentials.get.bind(navigator.credentials)
+      navigator.credentials.get = async (options) => {
+        if (options?.publicKey) {
+          const record: unknown = Reflect.get(window, 'recordWebAuthnOptions')
+          if (typeof record !== 'function') throw new Error('Fixture WebAuthn observer is unavailable')
+          await record({
+            hints: Reflect.get(options.publicKey, 'hints'),
+            userVerification: options.publicKey.userVerification,
+          })
+        }
+        return get(options)
+      }
+    }
+    await context.addInitScript(observeWebAuthn)
     const page = await context.newPage()
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
@@ -1378,23 +1395,23 @@ identityTest(
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
+    const platformWebAuthnRequests: unknown[] = []
+    await secondContext.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      platformWebAuthnRequests.push(options)
+    })
+    await secondContext.addInitScript(observeWebAuthn)
     const secondPage = await secondContext.newPage()
     const secondCdp = await secondContext.newCDPSession(secondPage)
     await secondCdp.send('WebAuthn.enable')
     await secondCdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
-        transport: 'usb',
+        transport: 'internal',
         hasResidentKey: true,
         hasUserVerification: true,
         isUserVerified: true,
         automaticPresenceSimulation: true,
       },
-    })
-    await secondContext.addInitScript(() => {
-      window.prompt = () => {
-        throw new Error('prompt() is not supported.')
-      }
     })
     const enroll = async (id: string) => {
       await secondPage.goto(base)
@@ -1438,6 +1455,18 @@ identityTest(
     )
     expect(distinct.rowCount).toBe(2)
     expect(new Set(distinct.rows.map((row) => row.identity_subject)).size).toBe(2)
+    await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
+    await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+    await secondPage.getByRole('link', { name: 'GitHub fixture 2', exact: true }).click()
+    await browserExpect(secondPage.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await secondPage.waitForLoadState('domcontentloaded')
+    await secondPage.locator('#authenticateWebAuthnButton').click()
+    await secondPage.waitForURL(base + '/')
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+    expect(platformWebAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of platformWebAuthnRequests)
+      expect(request).toEqual({ hints: ['client-device', 'security-key'], userVerification: 'discouraged' })
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     // The nonmember is a separate upstream identity, with no existing Keycloak SSO cookie.
@@ -1508,7 +1537,7 @@ identityTest(
         ])
       ).rows[0]?.reason,
     ).toBe('verified passkey assurance required')
-    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('4')
+    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('5')
     const mappers = z
       .array(z.object({ id: z.string(), name: z.string() }))
       .parse(await (await adminCall(`/clients/${client.id}/protocol-mappers/models`)).json())
@@ -1581,7 +1610,10 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('4')
+    ).toBe('5')
+    expect(webAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of webAuthnRequests)
+      expect(request).toEqual({ hints: ['security-key'], userVerification: 'discouraged' })
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )
