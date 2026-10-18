@@ -14,6 +14,7 @@ import {
   OrderStatus as BrokerOrderStatus,
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
+  SortDirection,
   TradeActivityType,
   BrokerRead,
   BrokerReadError,
@@ -338,6 +339,33 @@ describe('reconciliation pure decisions', () => {
     )
   })
 
+  test('rejects duplicate, reversed and nonadvancing order pages', () => {
+    const state = {
+      rows: [],
+      ids: HashSet.empty<string>(),
+      cursor: undefined,
+      previousSubmittedAt: undefined,
+      observedAt: undefined,
+    }
+    const first = order(1)
+    const last = order(0)
+    const pageEvidence = evidence('descending-order-page')
+    expect(decideOrderPage(state, 2, { value: [first, first], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Pagination', reason: 'DuplicateOrder' } },
+    })
+    expect(decideOrderPage(state, 2, { value: [last, first], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Pagination', reason: 'OrderHistoryNotDescending' } },
+    })
+    const next = Result.getOrThrow(decideOrderPage(state, 2, { value: [first, last], evidence: pageEvidence }))
+    if (next._tag !== 'Continue') throw new Error('Full order page must retain its exclusive cursor')
+    expect(decideOrderPage(next.state, 2, { value: [last], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Pagination', reason: 'OrderTimestampCursorDidNotAdvance' } },
+    })
+  })
+
   test('classifies stable history, missing baselines, and containment without effects', () => {
     const emptyHistory = {
       orders: { rows: [], observedAt },
@@ -451,7 +479,55 @@ describe('execution reconciliation loop', () => {
     expect(control.restrictions).toEqual([])
   })
 
+  test('captures a complete 500-order history when the newest order has different cache and database precision', async () => {
+    const cut = '2026-10-18T21:33:41.010Z'
+    const newest = {
+      ...order(499),
+      submittedAt: '2026-10-18T21:27:20.865651915Z',
+      status: BrokerOrderStatus.Canceled,
+      filledQuantityAtoms: '0',
+    }
+    const allOrders = Array.from({ length: 499 }, (_, index) => ({
+      ...order(index),
+      status: BrokerOrderStatus.Canceled,
+      filledQuantityAtoms: '0',
+    })).concat(newest)
+    const requests: Array<{ readonly after?: string; readonly until?: string; readonly direction?: string }> = []
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: (query = {}) => {
+        requests.push(query)
+        const value =
+          query.after === newest.submittedAt
+            ? [{ ...newest, submittedAt: '2026-10-18T21:27:20.865652Z' }]
+            : query.until === allOrders[0]?.submittedAt
+              ? []
+              : query.direction === SortDirection.Descending
+                ? allOrders.toReversed()
+                : allOrders
+        return Effect.succeed({ value, evidence: evidence(`precision-page-${requests.length}`) })
+      },
+    }
+
+    const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(cut)))
+
+    expect(snapshot.history.orders.rows.map(({ value }) => value.brokerOrderId).toSorted()).toEqual(
+      allOrders.map((value) => value.brokerOrderId).toSorted(),
+    )
+    expect(requests).toHaveLength(4)
+    expect(requests.every((query) => query.direction === SortDirection.Descending && query.after === undefined)).toBe(
+      true,
+    )
+    expect(requests.map((query) => query.until)).toEqual([
+      cut,
+      allOrders[0]?.submittedAt,
+      cut,
+      allOrders[0]?.submittedAt,
+    ])
+  })
+
   test('reads every broker page before persisting and binds fills to their orders', async () => {
+    const cut = utcInstantFromEpochMillis(1_000)
     const allOrders = Array.from({ length: 501 }, (_, index) =>
       index < 101 ? order(index) : { ...order(index), status: BrokerOrderStatus.New, filledQuantityAtoms: '0' },
     )
@@ -461,9 +537,9 @@ describe('execution reconciliation loop', () => {
     const read: BrokerReadShape = {
       ...emptyRead(),
       orders: (query = {}) => {
-        orderCursors.push(query.after)
+        orderCursors.push(query.until)
         return Effect.succeed({
-          value: query.after === undefined ? allOrders.slice(0, 500) : allOrders.slice(500),
+          value: query.until === cut ? allOrders.toReversed().slice(0, 500) : allOrders.toReversed().slice(500),
           evidence: evidence(`orders-${orderCursors.length}`),
         })
       },
@@ -481,14 +557,16 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    const result = await Effect.runPromise(provide(read, makeStore(control)))
+    const result = await Effect.runPromise(
+      provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
+    )
 
-    expect(orderCursors).toEqual([undefined, allOrders[499].submittedAt, undefined, allOrders[499].submittedAt])
+    expect(orderCursors).toEqual([cut, allOrders[1].submittedAt, cut, allOrders[1].submittedAt])
     expect(fillCursors).toEqual([undefined, allFills[99].activityId, undefined, allFills[99].activityId])
     expect(control.reconciliations).toHaveLength(1)
     expect(control.reconciliations[0].orders).toHaveLength(501)
     expect(control.reconciliations[0].fills).toHaveLength(101)
-    expect(control.reconciliations[0].orders[0].intentId).toBe(hash('intent'))
+    expect(control.reconciliations[0].orders.filter((value) => value.intentId === hash('intent'))).toHaveLength(1)
     expect(control.reconciliations[0].fills[0].intentId).toBe(hash('intent'))
     expect(result.brokerState.orders.map((candidate) => candidate.brokerOrderId)).toEqual(
       allOrders.map((candidate) => candidate.brokerOrderId).sort(),
@@ -661,7 +739,7 @@ describe('execution reconciliation loop', () => {
     const duplicateClient = { ...order(1), clientOrderId: first.clientOrderId }
     const read: BrokerReadShape = {
       ...emptyRead(),
-      orders: () => Effect.succeed({ value: [first, duplicateClient], evidence: evidence('orders') }),
+      orders: () => Effect.succeed({ value: [duplicateClient, first], evidence: evidence('orders') }),
       fillActivities: () =>
         Effect.succeed({ value: { items: [fill(0, first), fill(1, duplicateClient)] }, evidence: evidence('fills') }),
     }
@@ -703,7 +781,7 @@ describe('execution reconciliation loop', () => {
     }
     const read: BrokerReadShape = {
       ...emptyRead(),
-      orders: () => Effect.succeed({ value: [earlierOrder, laterOrder], evidence: evidence('orders') }),
+      orders: () => Effect.succeed({ value: [laterOrder, earlierOrder], evidence: evidence('orders') }),
       fillActivities: () => Effect.succeed({ value: { items: [laterFill, earlierFill] }, evidence: evidence('fills') }),
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
