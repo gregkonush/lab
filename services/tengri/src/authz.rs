@@ -99,7 +99,7 @@ impl WorkspaceAuthorization {
         epoch: &str,
         target: &str,
     ) -> Result<WorkspaceAccess, Status> {
-        let mut context = principal.context.clone();
+        let mut context = principal.policy_context()?;
         if context.workspace_uid.is_empty() && principal.action == Action::WorkspaceMetadataRead {
             context.workspace_uid = uid.into();
         }

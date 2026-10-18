@@ -275,7 +275,41 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         calls,
         "an expired initial submission must not start a durable audit"
     );
-    let principal = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    let submission = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    let auth = crate::auth::Authenticator::fixture("https://proompteng.ai".into());
+    let path = "/proompteng.runtime.v1.MicroVMControlPlane/ListFiles";
+    let request = crate::auth::signed_fixture_request(
+        crate::grpc::proto::ListFilesRequest {
+            agent_id: "agent-test".into(),
+            path: "/workspace/slow-audit".into(),
+        },
+        &submission,
+        path,
+        auth.audience(),
+    );
+    let principal = auth.authorize(&request, path).await.unwrap();
+    let captured: crate::auth::Principal =
+        serde_json::from_value(serde_json::to_value(&principal).unwrap()).unwrap();
+    tokio::time::sleep(Duration::from_millis(5100)).await;
+    assert!(submission.context.deadline_unix_ms < now_ms().unwrap());
+    assert_eq!(
+        auth.authorize(&request, path).await.unwrap_err().code(),
+        tonic::Code::Unauthenticated,
+        "the original assertion cannot be admitted again after it expires"
+    );
+    let captured_access = crate::authz::WorkspaceAuthorization::new(client.clone())
+        .access(
+            &captured,
+            uid,
+            &captured.context.runtime_epoch,
+            "/workspace/captured-audit",
+        )
+        .unwrap();
+    assert_eq!(
+        captured_access.require().await.unwrap_err().code(),
+        tonic::Code::DeadlineExceeded,
+        "serialized capabilities must not inherit verified RPC admission"
+    );
     let access = crate::authz::WorkspaceAuthorization::new(client)
         .access(
             &principal,

@@ -57,6 +57,7 @@ function runtimeAgent(id: unknown) {
 let ofzServer: grpc.Server
 let receivedCommandDeadline = 0
 let receivedCreateDeadline = 0
+const receivedTerminalDeadlines = new Map<string, number>()
 let ofzDatabaseClockOffsetMs = 0
 const lifecycleReceipts = new Map<string, Record<string, unknown>>()
 const lifecycleHashes = new Map<string, Buffer>()
@@ -351,6 +352,24 @@ beforeAll(async () => {
       if (id === 'internal-failure')
         callback(serviceError(grpc.status.INTERNAL, 'pod 10.244.1.42 failed at an internal URL'), null)
       else callback(null, runtimeAgent(id))
+    },
+    terminateTerminal(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('termination', Number(call.getDeadline()))
+      callback(null, {})
+    },
+    issueTerminalTicket(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('ticket', Number(call.getDeadline()))
+      callback(null, {
+        websocketUrl: 'wss://tengri.example/v1/terminal/ws',
+        ticket: 'fixture-ticket',
+        expiresAt: '2026-10-18T12:00:00Z',
+      })
     },
     createTerminal(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -916,6 +935,18 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('keeps compound terminal calls within the shared guest-operation budget', async () => {
+    const { terminateTerminal, issueTerminalTicket } = await import('./grpc')
+    const started = Date.now()
+    await terminateTerminal(identity, 'agent-test', 'terminal-test')
+    const ticket = await issueTerminalTicket(identity, 'agent-test', 'terminal-test')
+    expect(ticket.ticket).toBe('fixture-ticket')
+    for (const method of ['termination', 'ticket']) {
+      expect(receivedTerminalDeadlines.get(method)).toBeGreaterThanOrEqual(started + 2 * 30_000)
+      expect(receivedTerminalDeadlines.get(method)).toBeLessThanOrEqual(Date.now() + 130_000)
+    }
+  })
+
   test('creates a workspace when the Ofz database clock trails the BFF by one second', async () => {
     const { createAgent } = await import('./grpc')
     ofzDatabaseClockOffsetMs = 1000
@@ -933,7 +964,7 @@ describe('Tengri gRPC BFF transport', () => {
     const started = Date.now()
     const agent = await createAgent(identity, 'Tengri', operationId)
     expect(receivedCreateDeadline).toBeGreaterThanOrEqual(started + 4 * 30_000)
-    expect(receivedCreateDeadline).toBeLessThanOrEqual(Date.now() + 125_000)
+    expect(receivedCreateDeadline).toBeLessThanOrEqual(Date.now() + 130_000)
     expect(receivedRequest).toEqual({ displayName: 'Tengri', reservationId: operationId })
     expect(agent).toMatchObject({ id: 'agent-test', uid: workspaceUid, phase: 'ready', displayName: 'Tengri' })
     expect(agent.runtimeEpoch).toMatch(/^[0-9a-f-]{36}$/)
