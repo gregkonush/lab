@@ -87,7 +87,7 @@ const makeCycleBindingProgramsDataFirst = (
     Effect.gen(function* () {
       const manifest = reference.manifest
       const table =
-        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1'
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2'
           ? 'simulated_snapshot_references'
           : 'streaming_snapshot_references'
       yield* sql`

@@ -759,7 +759,7 @@ test('delayed session close rejects quotes first available after the closing bou
       })
       yield* submit(broker, intent())
       yield* TestClock.setTime(closingMs + 350)
-      const result = yield* broker.completeSession('2026-09-04').pipe(Effect.result)
+      const result = yield* broker.valuationAt('2026-09-04T20:00:00.000Z').pipe(Effect.result)
       expect(result).toMatchObject({
         _tag: 'Failure',
         failure: { message: 'Session close has no retained valuation quote' },
@@ -799,10 +799,10 @@ test.each([0, 350])(
           },
         })
         yield* submit(broker, intent())
-        const earlyClose = yield* Effect.result(broker.completeSession('2026-09-04'))
+        const earlyClose = yield* Effect.result(broker.valuationAt('2026-09-04T20:00:00.000Z'))
         yield* TestClock.setTime(closingMs + elapsedMs)
-        const close = yield* broker.completeSession('2026-09-04')
-        const repeatedClose = yield* broker.completeSession('2026-09-04')
+        const close = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
+        const repeatedClose = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
         yield* TestClock.setTime(nextOpenMs)
         return {
           earlyClose,
@@ -862,7 +862,7 @@ test('delayed close selects the retained projection quote available at close', a
       expect(projection.quotes.get('AAPL')?.value.bidPrice).toBe(102)
       expect(projection.quoteHistory.get('AAPL')).toHaveLength(3)
       yield* TestClock.setTime(closingMs + 350)
-      const close = yield* broker.completeSession('2026-09-04')
+      const close = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
       const state = yield* broker.snapshot
       expect(close.equityMicros).toBe((BigInt(state.ledger.cashMicros) + 505_000_000n).toString())
       expect(state.ledger.positions[0]?.quantityAtoms).toBe('5000000000')
@@ -871,15 +871,73 @@ test('delayed close selects the retained projection quote available at close', a
   )
 })
 
-test('missing session close prevents a fabricated next-day equity baseline', async () => {
+test('restart retains account inception when reconstructing an unreported regular close', async () => {
+  await run(
+    Effect.gen(function* () {
+      const settings: ReplayBrokerConfig = {
+        ...config,
+        calendar: [
+          ...config.calendar,
+          { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        ],
+      }
+      const broker = yield* setup(settings)
+      yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00.350Z'))
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.sessionCloses).toEqual([])
+      const { checkpointHash: _hash, ...material } = checkpoint
+      const future = { ...material, state: { ...material.state, createdAt: '2026-09-04T20:00:00.351Z' } }
+      expect(
+        Result.isFailure(
+          restoreReplayBrokerCheckpoint(
+            { ...future, checkpointHash: Result.getOrThrow(canonicalHashV1Result(future)) },
+            settings,
+          ),
+        ),
+      ).toBe(true)
+      const { createdAt: _createdAt, ...retiredState } = material.state
+      const retired = {
+        ...material,
+        schemaVersion: 'bayn.simulated-broker-checkpoint.v4',
+        state: { ...retiredState, schemaVersion: 'bayn.simulated-broker-state.v2' },
+      }
+      expect(
+        Result.isFailure(
+          restoreReplayBrokerCheckpoint(
+            { ...retired, checkpointHash: Result.getOrThrow(canonicalHashV1Result(retired)) },
+            settings,
+          ),
+        ),
+      ).toBe(true)
+      const recovered = yield* makeReplayBroker({
+        ...settings,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      yield* TestClock.setTime(Date.parse('2026-09-08T13:30:00.000Z'))
+      expect((yield* recovered.read.account).value.lastEquityMicros).toBe(config.openingCashMicros)
+    }),
+  )
+})
+
+test('missing retained close pricing prevents a fabricated next-day equity baseline', async () => {
   const result = await run(
     Effect.gen(function* () {
       const broker = yield* setup({
+        quoteAt: (_symbol, at) =>
+          Effect.succeed(
+            at === Date.parse('2026-09-04T20:00:00.000Z')
+              ? undefined
+              : observedQuote(
+                  { ...quote, eventAt: new Date(at).toISOString(), ingestedAt: new Date(at).toISOString() },
+                  at,
+                ),
+          ),
         calendar: [
           ...config.calendar,
           { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
         ],
       })
+      yield* submit(broker, intent())
       yield* TestClock.setTime(Date.parse('2026-09-08T13:30:00.000Z'))
       return yield* Effect.result(broker.read.account)
     }),
@@ -915,7 +973,7 @@ test.each([
       })
       yield* submit(broker, intent())
       yield* TestClock.setTime(closeMs)
-      return yield* broker.completeSession('2026-09-04')
+      return yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
     }),
   )
   expect(closing.valuationQualified).toBe(expected)
@@ -1048,7 +1106,7 @@ test.each([0, 60_000])(
         })
         yield* TestClock.setTime(latencyMs === 0 ? close : close - 30_000)
         const receipt = yield* broker.mutation.submit(intent())
-        const closing = yield* broker.completeSession('2026-09-04')
+        const closing = yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
         const duplicate = yield* broker.mutation.submit(intent())
         return { receipt, duplicate, closing, atMs: yield* Clock.currentTimeMillis, state: yield* broker.snapshot }
       }),
@@ -1203,12 +1261,15 @@ test('checkpoint restoration recomputes closing equity instead of trusting a reh
     Effect.gen(function* () {
       const broker = yield* setup()
       yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
-      yield* broker.completeSession('2026-09-04')
+      yield* broker.valuationAt('2026-09-04T20:00:00.000Z')
       const checkpoint = yield* broker.checkpoint
       const { checkpointHash: _hash, ...material } = checkpoint
       const altered = {
         ...material,
-        state: { ...material.state, sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1' }] },
+        state: {
+          ...material.state,
+          sessionCloses: [{ sessionDate: '2026-09-04', equityMicros: '1', valuationQualified: true }],
+        },
       }
       const forged = { ...altered, checkpointHash: Result.getOrThrow(canonicalHashV1Result(altered)) }
       expect(
@@ -1366,7 +1427,7 @@ test('delivery failures retain terminal evidence and prevent session acceptance'
       expect(retained.at(-1)?.state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
       expect(retained.at(-1)?.state.orders[0]?.deliveryFailure).toBeDefined()
       yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
-      expect((yield* Effect.exit(broker.completeSession('2026-09-04')))._tag).toBe('Failure')
+      expect((yield* Effect.exit(broker.valuationAt('2026-09-04T20:00:00.000Z')))._tag).toBe('Failure')
       expect((yield* broker.snapshot).sessionCloses).toEqual([])
     }),
   )
@@ -1488,7 +1549,7 @@ for (const scenario of ['missing', 'stale', 'future', 'thin', 'zero'] as const) 
         expect(state.ledger.positions[0]?.quantityAtoms).toBe('5000000000')
         expect(state.orders[1]?.deliveryFailure).toBeDefined()
         yield* TestClock.setTime(Date.parse('2026-09-04T20:00:00Z'))
-        expect((yield* Effect.exit(broker.completeSession('2026-09-04')))._tag).toBe('Failure')
+        expect((yield* Effect.exit(broker.valuationAt('2026-09-04T20:00:00.000Z')))._tag).toBe('Failure')
       }),
     )
   })
@@ -1576,7 +1637,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     expect(state.ledger.fills[0]?.quantityAtoms).toBe('2000000000')
   })
   test(`${symbol} settles and restores the shared broker across Sunday midnight with coin fees and a GTC close`, async () => {
-    const start = Date.parse('2026-10-11T23:59:59.950Z')
+    const start = Date.parse('2026-10-11T23:59:59.850Z')
     const asset = cryptoAsset(symbol, new Date(start).toISOString())
     await run(
       Effect.gen(function* () {
@@ -1627,6 +1688,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
           ...frozen,
           restoreCheckpoint: { value: held, expectedHash: held.checkpointHash },
         })
+        const midnight = Date.parse('2026-10-12T00:00:00.000Z')
+        yield* TestClock.setTime(midnight)
+        const mark = yield* restored.valuationAt(new Date(midnight).toISOString())
+        expect(mark.at).toBe('2026-10-12T00:00:00.000Z')
+        expect(mark.valuationQualified).toBe(true)
+        expect(yield* restored.snapshot).toEqual(held.state)
         const close = intent({
           symbol,
           side: OrderSide.Sell,
@@ -1665,3 +1732,224 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     )
   })
 }
+
+test('a new weekend account uses its opening capital before its first broker reference close', async () => {
+  const sunday = Date.parse('2026-10-18T23:59:00.000Z')
+  const calendar: ReplayBrokerConfig['calendar'] = [
+    { session_open: '0930', session_close: '1600', date: '2026-10-16', open: '09:30', close: '16:00' },
+    { session_open: '0930', session_close: '1600', date: '2026-10-19', open: '09:30', close: '16:00' },
+  ]
+  const quoteAt: ReplayBrokerConfig['quoteAt'] = () => Effect.die('A new flat account must not invent a price')
+  const value = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(sunday)
+      const broker = yield* makeReplayBroker({ ...config, calendar, quoteAt })
+      const account = yield* broker.read.account
+      yield* TestClock.setTime(sunday + 120_000)
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        calendar,
+        quoteAt,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      return { account: account.value, restored: (yield* restored.read.account).value, state: yield* restored.snapshot }
+    }),
+  )
+  expect(value.account.lastEquityMicros).toBe(config.openingCashMicros)
+  expect(value.restored.lastEquityMicros).toBe(config.openingCashMicros)
+  expect(value.state.createdAt).toBe(new Date(sunday).toISOString())
+  expect(value.state.sessionCloses).toEqual([])
+})
+
+test('a resting equity DAY order survives a winter UTC report and expires at the broker close', async () => {
+  const entryAt = Date.parse('2026-11-04T21:59:00.000Z')
+  const midnight = Date.parse('2026-11-05T00:00:00.000Z')
+  const closingAt = Date.parse('2026-11-05T01:00:00.000Z')
+  await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(entryAt)
+      const broker = yield* makeReplayBroker({
+        ...config,
+        calendar: [{ session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' }],
+        quoteAt: () =>
+          Effect.succeed(
+            observedQuote(
+              {
+                ...quote,
+                eventAt: new Date(entryAt).toISOString(),
+                ingestedAt: new Date(entryAt).toISOString(),
+                marketSession: 'post',
+                bidPrice: 100,
+                askPrice: 100.01,
+              },
+              entryAt,
+            ),
+          ),
+      })
+      const submitted = yield* submit(
+        broker,
+        intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }),
+      )
+      expect(submitted.order.status).toBe(OrderStatus.New)
+      yield* TestClock.setTime(midnight)
+      const before = yield* broker.snapshot
+      const mark = yield* broker.valuationAt(new Date(midnight).toISOString())
+      expect(mark).toMatchObject({
+        equityMicros: config.openingCashMicros,
+        openOrderCount: 1,
+        valuationQualified: true,
+      })
+      expect(yield* broker.snapshot).toEqual(before)
+      yield* TestClock.setTime(closingAt)
+      expect((yield* broker.read.orderById(submitted.order.brokerOrderId)).value.status).toBe(OrderStatus.Expired)
+      expect((yield* broker.valuationAt(new Date(midnight).toISOString())).openOrderCount).toBe(1)
+      expect((yield* broker.valuationAt(new Date(closingAt).toISOString())).openOrderCount).toBe(0)
+      expect((yield* broker.snapshot).ledger.positions).toEqual([])
+    }),
+  )
+})
+
+test('extended-hours reports preserve the regular-close broker equity reference', async () => {
+  const entryAt = Date.parse('2026-11-04T14:31:00.000Z')
+  const regularClose = Date.parse('2026-11-04T21:00:00.000Z')
+  const dataClose = Date.parse('2026-11-04T22:00:00.000Z')
+  const points = [
+    observedQuote(
+      { ...quote, eventAt: new Date(entryAt).toISOString(), ingestedAt: new Date(entryAt).toISOString() },
+      entryAt,
+    ),
+    observedQuote(
+      {
+        ...quote,
+        eventAt: new Date(regularClose - 1).toISOString(),
+        ingestedAt: new Date(regularClose - 1).toISOString(),
+        sourceOffset: '1',
+        bidPrice: 101,
+        askPrice: 101,
+      },
+      regularClose - 1,
+    ),
+    observedQuote(
+      {
+        ...quote,
+        eventAt: new Date(dataClose - 1).toISOString(),
+        ingestedAt: new Date(dataClose - 1).toISOString(),
+        sourceOffset: '2',
+        marketSession: 'post',
+        bidPrice: 102,
+        askPrice: 102,
+      },
+      dataClose - 1,
+    ),
+  ]
+  const result = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(entryAt)
+      const frozen: ReplayBrokerConfig = {
+        ...config,
+        calendar: [{ session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' }],
+        quoteAt: (_symbol, atMs) => Effect.succeed(points.filter((q) => q.availableAtMs <= atMs).at(-1)),
+      }
+      let broker = yield* makeReplayBroker(frozen)
+      yield* submit(broker, intent({ createdAt: new Date(entryAt).toISOString(), notionalLimitMicros: '500000000' }))
+      yield* TestClock.setTime(regularClose)
+      const regular = yield* broker.valuationAt(new Date(regularClose).toISOString())
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.sessionCloses).toHaveLength(1)
+      broker = yield* makeReplayBroker({
+        ...frozen,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      yield* TestClock.setTime(dataClose)
+      const extended = yield* broker.valuationAt(new Date(dataClose).toISOString())
+      yield* TestClock.setTime(Date.parse('2026-11-05T14:31:00.000Z'))
+      return { regular, extended, account: (yield* broker.read.account).value }
+    }),
+  )
+  expect(result.regular.equityMicros).not.toBe(result.extended.equityMicros)
+  expect(result.account.lastEquityMicros).toBe(result.regular.equityMicros)
+})
+
+test.each(['stale', 'no-bid-liquidity'])(
+  'an unqualified regular-close mark survives the next day and restart: %s',
+  async (mode) => {
+    const entryAt = Date.parse('2026-11-04T14:31:00.000Z')
+    const closeAt = Date.parse('2026-11-04T21:00:00.000Z')
+    const nextDay = Date.parse('2026-11-05T14:31:00.000Z')
+    const closeQuoteAt = closeAt - (mode === 'stale' ? 11_000 : 1)
+    const points = [
+      observedQuote(
+        { ...quote, eventAt: new Date(entryAt).toISOString(), ingestedAt: new Date(entryAt).toISOString() },
+        entryAt,
+      ),
+      observedQuote(
+        {
+          ...quote,
+          eventAt: new Date(closeQuoteAt).toISOString(),
+          ingestedAt: new Date(closeQuoteAt).toISOString(),
+          sourceOffset: '1',
+          bidPrice: 101,
+          askPrice: 101,
+          bidSize: mode === 'no-bid-liquidity' ? 0 : 100,
+        },
+        closeQuoteAt,
+      ),
+      observedQuote(
+        {
+          ...quote,
+          eventAt: new Date(nextDay).toISOString(),
+          ingestedAt: new Date(nextDay).toISOString(),
+          sourceOffset: '2',
+          bidPrice: 102,
+          askPrice: 102,
+        },
+        nextDay,
+      ),
+    ]
+    await run(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(entryAt)
+        const frozen: ReplayBrokerConfig = {
+          ...config,
+          calendar: [
+            { session_open: '0400', session_close: '2000', date: '2026-11-04', open: '09:30', close: '16:00' },
+          ],
+          quoteAt: (_symbol, atMs) => Effect.succeed(points.filter((point) => point.availableAtMs <= atMs).at(-1)),
+        }
+        let broker = yield* makeReplayBroker(frozen)
+        yield* submit(broker, intent({ createdAt: new Date(entryAt).toISOString() }))
+        yield* TestClock.setTime(closeAt)
+        const mark = yield* broker.valuationAt(new Date(closeAt).toISOString())
+        expect(mark.valuationQualified).toBe(false)
+        const checkpoint = yield* broker.checkpoint
+        expect(checkpoint.state.sessionCloses).toEqual([
+          { sessionDate: '2026-11-04', equityMicros: mark.equityMicros, valuationQualified: false },
+        ])
+        const { checkpointHash: _, ...material } = checkpoint
+        const forgedMaterial = {
+          ...material,
+          state: {
+            ...material.state,
+            sessionCloses: [{ sessionDate: '2026-11-04', equityMicros: mark.equityMicros, valuationQualified: true }],
+          },
+        }
+        const forged = { ...forgedMaterial, checkpointHash: Result.getOrThrow(canonicalHashV1Result(forgedMaterial)) }
+        expect(
+          (yield* Effect.exit(
+            makeReplayBroker({ ...frozen, restoreCheckpoint: { value: forged, expectedHash: forged.checkpointHash } }),
+          ))._tag,
+        ).toBe('Failure')
+        broker = yield* makeReplayBroker({
+          ...frozen,
+          restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+        })
+        yield* TestClock.setTime(nextDay)
+        expect((yield* broker.read.account).value.lastEquityMicros).toBe(mark.equityMicros)
+        expect((yield* broker.valuationAt(new Date(nextDay).toISOString())).valuationQualified).toBe(false)
+        expect((yield* broker.valuationAt(new Date(entryAt + 1000).toISOString())).valuationQualified).toBe(true)
+        expect((yield* broker.snapshot).sessionCloses).toEqual(checkpoint.state.sessionCloses)
+      }),
+    )
+  },
+)

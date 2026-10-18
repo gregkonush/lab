@@ -41,6 +41,12 @@ The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
+
+The BFF's SQL pool serves only OAuth attempt creation and consumption. These durable writes have a five-second
+server deadline and a six-second client deadline so synchronous replication can acknowledge the transaction before
+the client times out. Attempt expiry, single-use consumption, TLS verification, and authorization deadlines retain
+their existing limits.
+
 `/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets

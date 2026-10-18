@@ -144,7 +144,7 @@ export const replayCapitalSources = (
   }[],
 ) =>
   Effect.gen(function* () {
-    const symbols = datasets.flatMap((context) => context.manifest.universe.symbols)
+    const symbols = datasets.flatMap((context) => context.manifest.marketSources.flatMap((source) => source.symbols))
     if (new Set(symbols).size !== symbols.length)
       return yield* new SignalStudyFailure({
         message: 'Capital source universes must be disjoint; duplicated records cannot fund two portfolios',
@@ -174,7 +174,10 @@ export const replayCapitalSources = (
           const manifest = dataset.manifest
           if (event.atMs < manifest.coverageStartMs || event.atMs > manifest.coverageEndMs) return null
           yield* dataset.source.advanceTo(event.atMs)
-          return { symbols: manifest.universe.symbols, projection: (yield* dataset.source.cursor).projection }
+          return {
+            symbols: manifest.marketSources.flatMap((source) => source.symbols),
+            projection: (yield* dataset.source.cursor).projection,
+          }
         }),
       )
       const quoteAt = (symbol: string | null | undefined) => {
