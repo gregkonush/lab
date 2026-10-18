@@ -301,7 +301,14 @@ const fixture = (
     const source = {
       runId,
       sourceManifestHash: hash('c'),
-      featureTopic: protocol.streamingInput.featureTopic,
+      marketSources: [
+        {
+          universeId: protocol.universeId,
+          universeSymbolHash: protocol.universeSymbolHash,
+          symbols: protocol.universe,
+          topics: { ...protocol.sourceTopics, features: protocol.streamingInput.featureTopic },
+        },
+      ],
       deliveryModel: {
         schemaVersion: 'bayn.supplied-arrival-times.v1',
         description: 'Deterministic fixture arrivals',
@@ -313,12 +320,7 @@ const fixture = (
         {
           runId,
           source,
-          universe: {
-            universeId: protocol.universeId,
-            universeSymbolHash: protocol.universeSymbolHash,
-            symbols: protocol.universe,
-            topics: { ...protocol.sourceTopics, features: protocol.streamingInput.featureTopic },
-          },
+          marketSources: source.marketSources,
           projection: { ...cut.projection, epoch: `historical-${runId}`, availabilityMode: 'simulated' },
           processedRecords: cut.projection.sequence,
           suppliedOffsets: cut.projection.offsets,

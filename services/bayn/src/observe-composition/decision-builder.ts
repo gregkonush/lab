@@ -784,7 +784,10 @@ export const requireMutationAuthorityGeneration = (
 const prepareExecutionSessionBinding = <R>(
   input: ObserveDecisionInput<R>,
   facts: ObserveDecisionFacts,
-): Result.Result<ExecutionSessionBinding, ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure> => {
+): Result.Result<
+  ExecutionSessionBinding,
+  ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal
+> => {
   if (
     facts.reconciliation.riskContext.tradingDate !==
     (input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -796,6 +799,19 @@ const prepareExecutionSessionBinding = <R>(
         'cycle-binding',
         'same-pass reconciliation risk context is not from the execution session date',
       ),
+    )
+  }
+  if (Date.parse(facts.evaluatedAt) >= unusedEntryExpiresAt(input.cycle)) {
+    return Result.fail(
+      new ObserveDecisionAwaitingSignal({
+        message: 'Entry admission expired during reconciliation',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'The unused entry lease has expired',
+        },
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      }),
     )
   }
   const stateHash = reconciledStateHash(facts.reconciliation.brokerState)

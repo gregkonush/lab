@@ -3,19 +3,12 @@ import { Data, Result, Schema } from 'effect'
 
 import { EmbeddedBuildMetadataSchema } from '../../build'
 import { canonicalHashV1Result, sha256 } from '../../hash'
-import {
-  ImageDigestSchema,
-  NonNegativeIntegerSchema,
-  Sha256Schema,
-  StrictNonEmptyStringSchema,
-  SymbolSchema,
-  strictParseOptions,
-} from '../../schemas'
+import { ImageDigestSchema, NonNegativeIntegerSchema, Sha256Schema, strictParseOptions } from '../../schemas'
 import type { KafkaBootstrapEvidence } from './bootstrap'
 import { StreamingSnapshotEvidenceSchema } from './evidence-schema'
 import { HistoricalMarketArrivalSchema, type HistoricalMarketArrival } from './historical'
 import type { KafkaConsumedRecord } from './kafka'
-import type { MarketSources } from './raw-events'
+import { MarketSourcesSchema, type MarketSources } from './raw-events'
 import { captureKafkaTransport, CaptureDisposition } from './transport-evidence'
 
 export class NativeArrivalCaptureError extends Data.TaggedError('NativeArrivalCaptureError')<{
@@ -32,20 +25,7 @@ export const NativeArrivalEpochSchema = Schema.Struct({
     verification: Schema.Literals(['embedded', 'development-configured']),
   }),
   bootstrap: StreamingSnapshotEvidenceSchema.fields.bootstrap,
-  sources: Schema.NonEmptyArray(
-    Schema.Struct({
-      universeId: StrictNonEmptyStringSchema,
-      universeSymbolHash: Sha256Schema,
-      symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1)),
-      topics: Schema.Struct({
-        bars: StrictNonEmptyStringSchema,
-        quotes: StrictNonEmptyStringSchema,
-        trades: StrictNonEmptyStringSchema,
-        features: StrictNonEmptyStringSchema,
-        technicalFeatures: Schema.optionalKey(StrictNonEmptyStringSchema),
-      }),
-    }),
-  ),
+  sources: MarketSourcesSchema,
 })
 export type NativeArrivalEpoch = typeof NativeArrivalEpochSchema.Type
 
