@@ -75,9 +75,7 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
         const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
         const net = (bid: bigint) => {
           const boundary = (bid * 9990n + 9999n) / 10000n
-          const notional = (boundary * received + 999_999_999n) / 1_000_000_000n
-          const exitLimit = (notional * 1_000_000_000n + received - 1n) / received
-          const proceeds = (exitLimit * received) / 1_000_000_000n
+          const proceeds = (boundary * received) / 1_000_000_000n
           const fee = ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
           return proceeds - fee
         }

@@ -23,7 +23,7 @@ import {
   type StrategyMarketSnapshot,
   type VerifiedStrategyMarketSnapshot,
 } from '../market-data/streaming/snapshot'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import type { Policy } from '../risk'
 import { IsoDateSchema, NonNegativeIntegerSchema, PositiveIntegerSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
@@ -1054,7 +1054,7 @@ export const runControlStudy = (
       return yield* new ControlStudyFailure({
         message: 'Native Jev entry or management requires exactly one measured provider binding',
       })
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
     const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)

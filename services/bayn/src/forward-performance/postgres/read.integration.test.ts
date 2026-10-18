@@ -128,8 +128,11 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 for (const [index, prepared] of fixture.accounting.entries()) {
                   const t = prepared.transaction
                   if (t.intentId === undefined) throw new Error('Missing synthetic source intent')
-                  yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
-                    VALUES(${t.intentId},'bayn.paper-intent.v3',${accountId},${`client-${index}`},${t.symbol},${t.side},'LIMIT','IOC',${t.quantityAtoms},${t.notionalMicros},'PLANNED',${t.occurredAt},${t.occurredAt},${draft.identity.cycleId},'jev',${hash(index === 0 ? '9' : '7')},${hash('8')},${hash('e')})`
+                  const price = BigInt(t.priceAtoms) / 1000n
+                  const intentNotional =
+                    (BigInt(t.quantityAtoms) * price + (t.side === 'BUY' ? 999999999n : 0n)) / 1000000000n
+                  yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,limit_price_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+                    VALUES(${t.intentId},'bayn.execution-intent.v4',${accountId},${`client-${index}`},${t.symbol},${t.side},'LIMIT','IOC',${t.quantityAtoms},${intentNotional.toString()},${price.toString()},'PLANNED',${t.occurredAt},${t.occurredAt},${draft.identity.cycleId},'jev',${hash(index === 0 ? '9' : '7')},${hash('8')},${hash('e')})`
                   yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
             source_event_id,source_sequence,occurred_at,observed_at)
             VALUES(${t.brokerEventId},'bayn.paper-broker-event.v1',${t.brokerEventId},'FILL','ALPACA',${accountId},

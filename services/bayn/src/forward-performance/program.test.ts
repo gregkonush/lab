@@ -772,7 +772,7 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some((statement) =>
         statement.includes(
-          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')",
+          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')",
         ),
       ),
     ).toBe(true)
@@ -1094,7 +1094,9 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some(
         (statement) =>
-          statement.includes("scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'") &&
+          statement.includes(
+            "scoped_decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')",
+          ) &&
           statement.includes("scoped_decision.document #>> '{bindings,authorityGenerationHash}'") &&
           statement.includes('scoped_intent.authority_generation_hash = scope_generation.generation_hash'),
       ),

@@ -35,7 +35,6 @@ describe('execution intent pricing', () => {
           quantityAtoms: 46000000000n,
           referencePriceMicros: reference,
           limitSlippageBps: 10n,
-          executionModel: intradayMomentumExecutionModel,
         }),
       )
       expect(pricing.expectedExecutionPriceMicros).toBe(expectedLimit)
@@ -133,11 +132,12 @@ describe('execution intent pricing', () => {
     })
   })
 
-  test('preserves the legacy adverse MARKET/DAY execution model', () => {
+  test('rejects retired MARKET/DAY pricing', () => {
     expect(deriveExecutionIntentPricing(input)).toEqual(
-      Result.succeed({
-        expectedExecutionPriceMicros: 100_050_000n,
-        notionalLimitMicros: 200_100_000n,
+      Result.fail({
+        _tag: 'UnsupportedExecutionTerms',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
       }),
     )
   })
@@ -159,7 +159,7 @@ describe('execution intent pricing', () => {
     )
   })
 
-  test('rejects fractional LIMIT/IOC quantities and every unsupported term pair', () => {
+  test('allows fractional LIMIT/DAY quantities and rejects unsupported term pairs', () => {
     for (const limitSlippageBps of [-1n, 10_000n]) {
       expect(
         deriveExecutionIntentPricing({
@@ -177,7 +177,7 @@ describe('execution intent pricing', () => {
         timeInForce: TimeInForce.Day,
         quantityAtoms: 1500000000n,
       }),
-    ).toMatchObject(Result.fail({ _tag: 'InvalidQuoteBoundIntent', reason: 'fractional-quantity' }))
+    ).toMatchObject(Result.succeed({ expectedExecutionPriceMicros: 100_000_000n, notionalLimitMicros: 150_000_000n }))
     expect(
       deriveExecutionIntentPricing({
         ...input,
@@ -207,7 +207,6 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
           timeInForce: TimeInForce.ImmediateOrCancel,
           quantityAtoms: 31_234_567n,
           referencePriceMicros: reference,
-          executionModel: intradayMomentumExecutionModel,
           limitSlippageBps: 10n,
         }),
       )
@@ -219,6 +218,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         clientOrderId: 'b1_' + 'A'.repeat(43),
         quantityAtoms: '31234567',
         notionalLimitMicros: terms.notionalLimitMicros.toString(),
+        limitPriceMicros: terms.expectedExecutionPriceMicros.toString(),
       }
       const body = Result.getOrThrow(orderRequestBody(intent))
       expect(body).toMatchObject({ symbol, qty: '0.031234567', type: 'limit', time_in_force: 'ioc' })
@@ -235,7 +235,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         ...input,
         symbol,
         side: OrderSide.Sell,
-        timeInForce: TimeInForce.GoodUntilCanceled,
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
         quantityAtoms: 31_234_567n,
       }),
     )
