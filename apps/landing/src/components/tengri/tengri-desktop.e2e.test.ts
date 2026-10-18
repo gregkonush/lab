@@ -1887,7 +1887,7 @@ test('offers old-editor drafts for download without overwriting guest files or e
         [ownerId, 'Recovered local edits'],
         ['another-owner', 'Private other-owner draft'],
       ]) {
-        const path = '/workspace/README.md'
+        const path = '/README.md'
         const draft = {
           schemaVersion: 1,
           draftId: 'legacy-draft',
