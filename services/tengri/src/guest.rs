@@ -393,6 +393,15 @@ impl GuestClient {
             event_sequence: response.event_sequence,
         })
     }
+    pub async fn answer_codex_input(
+        &self,
+        approval_id: &str,
+        response_json: Vec<u8>,
+    ) -> Result<(), GuestError> {
+        self.rpc
+            .answer_codex_input(approval_id, response_json)
+            .await
+    }
     pub async fn resolve_codex_approval(
         &self,
         approval_id: &str,

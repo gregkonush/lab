@@ -271,14 +271,14 @@ class Exporter:
                 "archive_receipt=coalesce(archive_receipt,%s) WHERE audit_sequence=ANY(%s)",
                 (receipt.encode(), sequences),
             ).rowcount
-            checkpoint = self.database.execute(
+            self.database.execute(
                 "UPDATE ofz.archive_state SET acknowledged_sequence=greatest(acknowledged_sequence,%s),"
                 "acknowledged_at_ms=ofz.now_ms(),batch_hash=%s "
                 "WHERE NOT EXISTS(SELECT 1 FROM ofz.audit a LEFT JOIN ofz.audit_outbox o "
                 "ON o.audit_sequence=a.sequence WHERE a.sequence<=%s AND o.acknowledged_at_ms IS NULL)",
                 (sequences[-1], receipt.sha256, sequences[-1]),
-            ).rowcount
-            if acknowledged != len(sequences) or checkpoint != 1:
+            )
+            if acknowledged != len(sequences):
                 raise ArchiveError("audit acknowledgement changed")
         return len(sequences)
 

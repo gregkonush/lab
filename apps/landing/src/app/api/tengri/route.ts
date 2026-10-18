@@ -1,6 +1,7 @@
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
 import { observeRequest } from '@/lib/observability/server'
 import {
+  answerCodexQuestions,
   createAgent,
   createCodexThread,
   createDirectory,
@@ -161,11 +162,11 @@ async function runAction(request: Request) {
         )
         break
       case 'terminate-terminal':
-        await terminateTerminal(identity, action.agentId, action.terminalId)
+        await terminateTerminal(identity, action.agentId, action.terminalId, request.signal)
         result = null
         break
       case 'terminal-ticket':
-        result = await issueTerminalTicket(identity, action.agentId, action.terminalId)
+        result = await issueTerminalTicket(identity, action.agentId, action.terminalId, request.signal)
         break
       case 'codex-account':
         result = await getCodexAccount(identity, action.agentId, request.signal)
@@ -221,6 +222,10 @@ async function runAction(request: Request) {
         break
       case 'interrupt-turn':
         await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
+        result = null
+        break
+      case 'answer-questions':
+        await answerCodexQuestions(identity, action.agentId, action.approvalId, action.response)
         result = null
         break
       case 'resolve-approval':
