@@ -491,7 +491,13 @@ impl WorkspaceAccess {
             WorkspaceAuthorization::Ofz(client) => {
                 let mut receipt = self.receipt.lock().await;
                 let mut context = self.context.clone();
-                let decision_deadline = ofz::now_ms()?
+                let now = ofz::now_ms()?;
+                if receipt.is_empty() && context.deadline_unix_ms <= now {
+                    return Err(Status::deadline_exceeded(
+                        "workspace authorization submission expired",
+                    ));
+                }
+                let decision_deadline = now
                     + if receipt.is_empty() {
                         ofz::AUDITED_REQUEST_BUDGET_MS
                     } else {

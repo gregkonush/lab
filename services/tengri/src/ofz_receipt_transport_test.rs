@@ -244,6 +244,27 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
 
     // The BFF assertion is checked on controller admission; a durable Ofz audit is
     // followed by a fresh policy decision, rather than extending that assertion.
+    let mut expired_principal =
+        crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    expired_principal.context.deadline_unix_ms = now_ms().unwrap() - 1;
+    let expired = crate::authz::WorkspaceAuthorization::new(client.clone())
+        .access(
+            &expired_principal,
+            uid,
+            &expired_principal.context.runtime_epoch,
+            "/workspace/expired-audit",
+        )
+        .unwrap();
+    let calls = service.calls.lock().await.len();
+    assert_eq!(
+        expired.require().await.unwrap_err().code(),
+        tonic::Code::DeadlineExceeded
+    );
+    assert_eq!(
+        service.calls.lock().await.len(),
+        calls,
+        "an expired initial submission must not start a durable audit"
+    );
     let principal = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
     let access = crate::authz::WorkspaceAuthorization::new(client)
         .access(
