@@ -45,7 +45,7 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all four migrations through `0004_leadership_window.sql`; they cannot
+checksum. The BFF, controller and supervisor require all six migrations through `0006_preview_lease_identity.sql`; they cannot
 initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.

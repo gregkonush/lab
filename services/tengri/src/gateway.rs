@@ -48,56 +48,8 @@ type UpstreamWebSocket = WebSocketStream<MaybeTlsStream<TcpStream>>;
 
 mod terminal_rpc;
 
-const PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
-  const token = decodeURIComponent(window.location.hash.slice(1));
-  const target = window.location.pathname === '/_tengri/editor/open' ? '/' : window.location.pathname + window.location.search;
-  history.replaceState(null, '', target);
-  if (!token) {
-    document.body.textContent = 'Preview session is missing or expired.';
-    return;
-  }
-  fetch('/_tengri/bootstrap', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token }),
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error('preview session rejected');
-      const payload = await response.json();
-      if (typeof payload.fragment !== 'string') throw new Error('preview fragment missing');
-      history.replaceState(null, '', `${target}${payload.fragment}`);
-      window.location.reload();
-    })
-    .catch(() => {
-      document.body.textContent = 'Preview session is missing or expired.';
-    });
-})();
-"#;
-const OPEN_PREVIEW_BOOTSTRAP_SCRIPT: &str = r#"(() => {
-  const token = decodeURIComponent(window.location.hash.slice(1));
-  history.replaceState(null, '', '/v1/preview/open');
-  if (!token) {
-    document.body.textContent = 'Preview ticket is missing or expired.';
-    return;
-  }
-  fetch('/v1/preview/open', {
-    method: 'POST',
-    credentials: 'same-origin',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ token }),
-  })
-    .then(async (response) => {
-      if (!response.ok) throw new Error('preview ticket rejected');
-      const payload = await response.json();
-      if (typeof payload.location !== 'string') throw new Error('preview location missing');
-      window.location.replace(payload.location);
-    })
-    .catch(() => {
-      document.body.textContent = 'Preview ticket is missing or expired.';
-    });
-})();
-"#;
+const PREVIEW_BOOTSTRAP_SCRIPT: &str = include_str!("preview_bootstrap.js");
+const OPEN_PREVIEW_BOOTSTRAP_SCRIPT: &str = include_str!("open_preview_bootstrap.js");
 const PREVIEW_DESKTOP_ORIGIN_MARKER: &str = "__TENGRI_DESKTOP_ORIGIN_JSON__";
 const PREVIEW_BRIDGE_SCRIPT_TEMPLATE: &str = r#"(() => {
   const channel = 'tengri-preview-v1';
@@ -209,7 +161,7 @@ impl GatewayState {
             interval.tick().await;
             let valid = async {
                 tokio::try_join!(
-                    self.tickets.preview_session(&session.id, &session.token),
+                    self.tickets.require_preview_lease(session),
                     access.require(),
                 )
             };
@@ -342,7 +294,7 @@ pub fn preview_router(state: GatewayState) -> Router {
         .route("/_tengri/bootstrap.js", get(serve_preview_bootstrap_script))
         .route("/_tengri/bridge.js", get(serve_preview_bridge_script))
         .route("/_tengri/vscode.js", get(serve_vscode_bridge_script))
-        .route("/_tengri/editor/open", get(open_editor_bootstrap))
+        .route("/_tengri/preview/open", get(open_preview_session_bootstrap))
         .fallback(preview_host_proxy)
         .with_state(state)
         .layer(axum::middleware::from_fn(
@@ -485,12 +437,7 @@ async fn open_preview(
     if let Err(error) = state.preview_access(&session, "").await {
         return status_response(error.code(), error.message());
     }
-    let location = preview_launch_location(
-        &state.preview_origin,
-        &session.id,
-        &session.token,
-        &session.initial_path,
-    );
+    let location = preview_launch_location(&state.preview_origin, &session.id, &session.token);
     (
         StatusCode::OK,
         [
@@ -560,8 +507,12 @@ async fn preview_bootstrap(
     if let Err(error) = state.preview_access(&session, "").await {
         return status_response(error.code(), error.message());
     }
-    state.activity.touch(&session.agent_id);
-    let lifetime = 1800;
+    let remaining = session
+        .expires_at
+        .duration_since(std::time::SystemTime::now())
+        .unwrap_or_default()
+        .min(Duration::from_secs(30 * 60));
+    let lifetime = remaining.as_secs();
     let cookie = format!(
         "{PREVIEW_COOKIE}={}; Path=/; HttpOnly; Secure; SameSite=Lax; Max-Age={lifetime}",
         session.token,
@@ -577,7 +528,14 @@ async fn preview_bootstrap(
                 "no-referrer".to_owned(),
             ),
         ],
-        serde_json::json!({"fragment": session.initial_fragment}).to_string(),
+        serde_json::json!({
+            "leaseId": session.lease_id,
+            "path": session.initial_path,
+            "fragment": session.initial_fragment,
+            "expiresAt": chrono::DateTime::<chrono::Utc>::from(session.expires_at).to_rfc3339(),
+            "expiresInMs": remaining.as_millis(),
+        })
+        .to_string(),
     )
         .into_response()
 }
@@ -592,7 +550,13 @@ async fn serve_preview_bootstrap_script(
     if state.preview_origin.session_id(&authority).is_none() {
         return StatusCode::NOT_FOUND.into_response();
     }
-    script_response(PREVIEW_BOOTSTRAP_SCRIPT)
+    script_response(
+        PREVIEW_BOOTSTRAP_SCRIPT.replace(
+            PREVIEW_DESKTOP_ORIGIN_MARKER,
+            &serde_json::to_string(state.preview_origin.desktop_origin.as_ref())
+                .expect("desktop origin JSON"),
+        ),
+    )
 }
 
 async fn serve_preview_bridge_script(
@@ -608,7 +572,7 @@ async fn serve_preview_bridge_script(
     script_response(preview_bridge_script(&state.preview_origin.desktop_origin))
 }
 
-async fn open_editor_bootstrap(
+async fn open_preview_session_bootstrap(
     State(state): State<GatewayState>,
     request: Request<Body>,
 ) -> axum::response::Response {
@@ -830,10 +794,9 @@ fn preview_launch_location(
     preview_origin: &PreviewOrigin,
     session_id: &str,
     token: &str,
-    initial_path: &str,
 ) -> String {
     format!(
-        "{}{initial_path}#{token}",
+        "{}/_tengri/preview/open#{token}",
         preview_origin.origin(session_id)
     )
 }
@@ -1494,6 +1457,66 @@ mod tests {
         )
     }
 
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_preview_renewal_preserves_streams_but_not_revoked_authority() {
+        for revocation in ["lease", "policy", "expiry"] {
+            let (service, _handle) =
+                tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+            let mut state = shared_gateway_state(Client::new(service, "tengri")).await;
+            if revocation == "expiry" {
+                state.tickets = state.tickets.with_preview_lifetime(3_000);
+            }
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            state.authorization = fixture.authorization;
+            let mut owner = preview_principal();
+            owner.action = crate::ofz::proto::Action::BrowserControl;
+            let first = state
+                .tickets
+                .issue_browser(&owner, "agent", "desktop-connection-01")
+                .await
+                .unwrap();
+            let session = state.tickets.consume_preview(&first.token).await.unwrap();
+            let access = state.preview_access(&session, "").await.unwrap();
+            let next = state
+                .tickets
+                .issue_browser(&owner, "agent", "desktop-connection-01")
+                .await
+                .unwrap();
+            state.tickets.consume_preview(&next.token).await.unwrap();
+            assert!(
+                state
+                    .tickets
+                    .preview_session(&session.id, &session.token)
+                    .await
+                    .is_err()
+            );
+            let mut watch = Box::pin(state.wait_for_preview_revocation(&session, &access));
+            assert!(
+                tokio::time::timeout(Duration::from_millis(1_200), &mut watch)
+                    .await
+                    .is_err()
+            );
+            if revocation == "policy" {
+                fixture.mode.store(1, std::sync::atomic::Ordering::SeqCst);
+            } else if revocation == "lease" {
+                state
+                    .tickets
+                    .revoke_preview_lease(&owner, "agent", &session.id, &next.token)
+                    .await
+                    .unwrap();
+            }
+            tokio::time::timeout(Duration::from_secs(3), watch)
+                .await
+                .expect("revoked authority must close an established connection");
+            state
+                .tickets
+                .revoke_preview_lease(&owner, "agent", &session.id, &next.token)
+                .await
+                .unwrap();
+        }
+    }
+
     async fn router_response(router: Router, path: &str, host: &str) -> Response<Body> {
         router
             .oneshot(
@@ -1625,18 +1648,24 @@ mod tests {
         let body = to_bytes(response.into_body(), 1_024)
             .await
             .expect("preview bootstrap body");
+        let mut payload =
+            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON");
+        let remaining = payload
+            .as_object_mut()
+            .expect("bootstrap object")
+            .remove("expiresInMs")
+            .expect("relative lease lifetime")
+            .as_u64()
+            .expect("integer lifetime");
+        assert!((1..=30 * 60_000).contains(&remaining));
         assert_eq!(
-            serde_json::from_slice::<serde_json::Value>(&body).expect("preview bootstrap JSON"),
-            serde_json::json!({"fragment": "#editor"}),
+            payload,
+            serde_json::json!({
+                "leaseId": session.lease_id,
+                "path": "/app?mode=dev", "fragment": "#editor",
+                "expiresAt": chrono::DateTime::<chrono::Utc>::from(session.expires_at).to_rfc3339(),
+            }),
         );
-        let final_location = "history.replaceState(null, '', `${target}${payload.fragment}`)";
-        let final_location_offset = PREVIEW_BOOTSTRAP_SCRIPT
-            .find(final_location)
-            .expect("preview bootstrap writes the final fragment into history");
-        let reload_offset = PREVIEW_BOOTSTRAP_SCRIPT
-            .find("window.location.reload()")
-            .expect("preview bootstrap forces a guest document load");
-        assert!(final_location_offset < reload_offset);
     }
 
     async fn readiness_for_kubernetes_response(agent_response: (StatusCode, &str)) -> StatusCode {
@@ -1767,7 +1796,7 @@ mod tests {
         let response = preview_router(state)
             .oneshot(
                 Request::builder()
-                    .uri("/_tengri/editor/open")
+                    .uri("/_tengri/preview/open")
                     .header(
                         header::HOST,
                         format!("tengri-{}.proompteng.ai", "a".repeat(24)),
@@ -1966,15 +1995,14 @@ mod tests {
             origin.session_id(&format!("tengri-{session_id}.proompteng.ai:443")),
             Some(session_id.to_owned())
         );
-        let launch =
-            preview_launch_location(&origin, session_id, "secret.ticket", "/dashboard?mode=dev");
+        let launch = preview_launch_location(&origin, session_id, "secret.ticket");
         let parsed = reqwest::Url::parse(&launch).expect("launch URL");
         assert_eq!(
             parsed.origin().ascii_serialization(),
             origin.origin(session_id)
         );
-        assert_eq!(parsed.path(), "/dashboard");
-        assert_eq!(parsed.query(), Some("mode=dev"));
+        assert_eq!(parsed.path(), "/_tengri/preview/open");
+        assert_eq!(parsed.query(), None);
         assert_eq!(parsed.fragment(), Some("secret.ticket"));
     }
 

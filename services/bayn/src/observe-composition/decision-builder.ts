@@ -28,6 +28,7 @@ import type { AutonomousCycleStartup } from '../app'
 import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type MarketCalendarQuery } from '../broker/alpaca'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
+import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import {
   CycleDecisionBuildError,
@@ -938,6 +939,12 @@ const compileObserveStrategyDecision = <R>(
         ),
       ),
     )
+    const admissionExpiresAt = unusedEntryExpiresAt(input.cycle)
+    if (Date.parse(evidence.decidedAt) >= admissionExpiresAt)
+      return yield* new JevAwaitingEvidence({
+        message: 'Jev entry admission expired before its model evidence completed',
+        readiness: DecisionReadinessReason.NoEligibleCandidate,
+      })
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
       decision.selectedSymbols.length === 0 &&
@@ -974,12 +981,12 @@ const compileObserveStrategyDecision = <R>(
       })
     const pricingAt = yield* currentUtcInstant
     if (
-      pricingAt >= evidence.batchPlan.expiresAt ||
+      Date.parse(pricingAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt) ||
       (pricingReconciliation?.freshUntil !== undefined &&
         Date.parse(pricingAt) + protocol.maximumQuoteAgeMs >= pricingReconciliation.freshUntil)
     )
       return yield* new JevAwaitingEvidence({
-        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const pricingQuery =
@@ -1002,9 +1009,9 @@ const compileObserveStrategyDecision = <R>(
             ),
           )
     const evaluatedAt = yield* currentUtcInstant
-    if (evaluatedAt >= evidence.batchPlan.expiresAt)
+    if (Date.parse(evaluatedAt) >= Math.min(Date.parse(evidence.batchPlan.expiresAt), admissionExpiresAt))
       return yield* new JevAwaitingEvidence({
-        message: 'Jev evidence expired before fresh reconciliation and pricing completed',
+        message: 'Jev evidence or entry admission expired before fresh reconciliation and pricing completed',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))

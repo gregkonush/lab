@@ -79,6 +79,11 @@ openings bind the actual verb, escaped path/query and body; preview proof and cl
 the application. Scoped content remains denied until bounded observer handlers exist.
 Preview WebSockets send protocol keepalives on both proxy hops every twenty seconds so idle connections remain open.
 Control frames do not record user activity or postpone automatic sleep; runtime and policy revocation still close the stream.
+Desktop previews renew their 30-minute SQL lease and HttpOnly cookie through fresh authenticated tickets on the same
+window origin. Token rotation rejects new handshakes using the old credential. Established sockets retain their
+actor/session/grant, workspace/runtime, permission, origin, recovery generation and port binding. They check the
+current unexpired lease and fresh Ofz policy every second, with the existing two-second deadline. Renewal preserves
+both application documents and sockets; deletion, expiry or policy denial still closes them within three seconds.
 
 The controller requires `TENGRI_GUEST_SIGNING_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`. The runner and
 supervisor require `TENGRI_GUEST_VERIFICATION_KEY_FILE` and `TENGRI_GUEST_RECOVERY_GENERATION_FILE`; their projected
@@ -310,7 +315,11 @@ Replay admission hashes each nonce into one of 64 buckets with 128 fixed slots. 
 `FOR UPDATE SKIP LOCKED`; unrelated nonces can proceed even in the same bucket. Duplicate rejection remains atomic
 across replicas, the table remains bounded at 8,192 entries, and the signed expiry has no grace period.
 Migration `0003_replay_slots.sql` preserves accepted nonces while replacing the earlier bucket locks. Migration
-`0004_leadership_window.sql` installs the 60-second ownership window. Ofz must apply all four checksum-bound migrations
+`0004_leadership_window.sql` installs the 60-second ownership window. Migration `0005_capability_slots.sql` preserves
+existing capabilities and assigns unique capacity slots. Ticket and preview writers skip slots reserved by in-flight
+transactions and skip locked expired rows instead of taking one global lock through commit. Database constraints
+retain the limits of 128 tickets, 96 previews, and 16 of each per workspace. Reissuing an existing preview retains
+its slots and replaces its token atomically. Ofz must apply all five checksum-bound migrations
 before the new BFF, controller and supervisor start; no older schema is accepted.
 For claimed slots, the elected controller reconciles the supervisor container's image in place using the Pod UID,
 resource version and current MicroVM ownership. Kubernetes restarts that proxy while retaining the same runner,

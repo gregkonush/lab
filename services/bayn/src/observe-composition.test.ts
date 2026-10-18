@@ -4650,6 +4650,10 @@ describe('OBSERVE runtime composition', () => {
       readonly initialAgeMs?: number
       readonly pricingReadDelayMs?: number
       readonly brokerMaximumAgeMs?: number
+      readonly admissionRemainingMs?: number
+      readonly entryAction?: 'enter' | 'wait'
+      readonly postInferenceReconcileMs?: number
+      readonly decisionFinalizationHeadroomMs?: number
       readonly transform?: (result: ReconciliationPassResult) => ReconciliationPassResult
     } = {},
   ) => {
@@ -4662,12 +4666,15 @@ describe('OBSERVE runtime composition', () => {
     const snapshotRequests: IntradaySnapshotRequest[] = []
     let refreshes = 0
     let refreshed: ReconciliationPassResult | undefined
-    const initial = reconciliationResultAt(
-      utcInstantFromEpochMillis(Date.parse(evaluatedAt) - (options.initialAgeMs ?? 30_000)),
-    )
+    let reconciliationReads = 0
+    const testStartedAt =
+      options.admissionRemainingMs === undefined
+        ? Date.parse(evaluatedAt)
+        : Date.parse(cycle.window.submissionCutoffAt) - options.admissionRemainingMs
+    const initial = reconciliationResultAt(utcInstantFromEpochMillis(testStartedAt - (options.initialAgeMs ?? 30_000)))
     const exit = await Effect.runPromiseExit(
       Effect.gen(function* () {
-        yield* TestClock.setTime(Date.parse(evaluatedAt))
+        yield* TestClock.setTime(testStartedAt)
         const cache = yield* reconciliationForPreparation(
           initial,
           Effect.gen(function* () {
@@ -4693,11 +4700,27 @@ describe('OBSERVE runtime composition', () => {
         )
         const document = yield* buildMutationShadowCycleDecision({
           authorityGenerationHash: generationHash,
-          cycle,
+          cycle:
+            options.admissionRemainingMs === undefined
+              ? cycle
+              : {
+                  ...cycle,
+                  createdAt: utcInstantFromEpochMillis(testStartedAt - 1_000),
+                  updatedAt: utcInstantFromEpochMillis(testStartedAt - 1_000),
+                },
           executionModel: fixture.preparation.executionModel,
           policy,
           strategy: fixtureRuntime,
-          reconcile: cache.read,
+          reconcile: Effect.gen(function* () {
+            const facts = yield* cache.read
+            reconciliationReads += 1
+            if (reconciliationReads > 1 && options.postInferenceReconcileMs !== undefined)
+              yield* TestClock.adjust(options.postInferenceReconcileMs)
+            return facts
+          }),
+          ...(options.decisionFinalizationHeadroomMs === undefined
+            ? {}
+            : { decisionFinalizationHeadroomMs: options.decisionFinalizationHeadroomMs }),
           reconcileForPricing: (minimumRemainingMs) =>
             Effect.gen(function* () {
               const facts = yield* cache.readForPricing(minimumRemainingMs)
@@ -4725,7 +4748,7 @@ describe('OBSERVE runtime composition', () => {
                 return {
                   plan,
                   result: nativeJevBatchResult(plan, yield* currentUtcInstant, (symbol) =>
-                    symbol === 'NVDA' ? 'enter' : 'wait',
+                    symbol === 'NVDA' ? (options.entryAction ?? 'enter') : 'wait',
                   ),
                 }
               }),
@@ -4740,7 +4763,7 @@ describe('OBSERVE runtime composition', () => {
         Effect.provide(TestClock.layer()),
       ),
     )
-    return { exit, events, snapshotRequests, refreshes, initial, refreshed }
+    return { exit, events, snapshotRequests, refreshes, initial, refreshed, reconciliationReads }
   }
 
   test('Jev pricing follows committed refresh and uses current risk with immutable model evidence', async () => {
@@ -4763,6 +4786,47 @@ describe('OBSERVE runtime composition', () => {
     })
     expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe('2020-05-01T16:45:13.000Z')
   })
+
+  test.each([2_000, 3_000])(
+    'Jev abstention completing after %ims cannot construct a decision at or past its original admission cutoff',
+    async (inferenceMs) => {
+      const result = await buildEntryWithHeadroom({
+        entryAction: 'wait',
+        initialAgeMs: 0,
+        admissionRemainingMs: 2_000,
+        inferenceMs,
+      })
+      expect(Exit.isFailure(result.exit)).toBe(true)
+      if (Exit.isSuccess(result.exit)) throw new Error('expired admission must not produce a decision')
+      expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+        _tag: 'ObserveDecisionAwaitingSignal',
+      })
+      expect(result.events).not.toContain('pricing')
+      expect(result.refreshes).toBe(0)
+    },
+  )
+
+  test.each([4_000, 4_001])(
+    'Jev abstention reconciliation lasting %ims cannot outlive the admission with still-current inference',
+    async (postInferenceReconcileMs) => {
+      const result = await buildEntryWithHeadroom({
+        entryAction: 'wait',
+        initialAgeMs: 0,
+        admissionRemainingMs: 5_000,
+        inferenceMs: 1_000,
+        decisionFinalizationHeadroomMs: 5_000,
+        postInferenceReconcileMs,
+      })
+      expect(Exit.isFailure(result.exit)).toBe(true)
+      if (Exit.isSuccess(result.exit)) throw new Error('expired admission must not produce a decision')
+      expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+        _tag: 'ObserveDecisionAwaitingSignal',
+        readiness: { reason: DecisionReadinessReason.InferenceUnavailable },
+      })
+      expect(result.reconciliationReads).toBe(2)
+      expect(result.events).not.toContain('pricing')
+    },
+  )
 
   test('Jev binds timely inference without an unnecessary slow reconciliation refresh', async () => {
     const result = await buildEntryWithHeadroom({

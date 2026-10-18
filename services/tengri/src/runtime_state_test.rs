@@ -61,6 +61,91 @@ fn principal(action: Action) -> Principal {
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_independent_capabilities_do_not_wait_for_another_commit() {
+    let (database, a, _) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    let mut held = database.connection().await.unwrap();
+    let tx = held.transaction().await.unwrap();
+    // Reproduce the lock retained by an in-flight ticket transaction in the failing release.
+    tx.batch_execute("SELECT pg_advisory_xact_lock(726635522922)")
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(500),
+        a.issue_terminal(&owner, "agent", "terminal"),
+    )
+    .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "an independent Terminal launch must not wait for another capability commit: {outcome:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_expiry_cleanup_skips_uncommitted_capabilities() {
+    let (database, a, b) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    a.issue_terminal(&owner, "agent", "old").await.unwrap();
+    let mut held = database.connection().await.unwrap();
+    held.batch_execute("UPDATE tengri.tickets SET expires_at_ms=tengri.now_ms()-1")
+        .await
+        .unwrap();
+    let tx = held.transaction().await.unwrap();
+    tx.batch_execute("DELETE FROM tengri.tickets")
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(500),
+        b.issue_terminal(&owner, "agent", "new"),
+    )
+    .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "expiry cleanup must skip a row waiting for another transaction's commit: {outcome:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_parallel_workspace_issuance_cannot_exceed_its_quota() {
+    let (_, a, b) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    let issue_batch = || {
+        join_all((0..16).map(|index| {
+            let owner = &owner;
+            let store = if index % 2 == 0 { &a } else { &b };
+            async move {
+                store
+                    .issue_terminal(owner, "agent", &index.to_string())
+                    .await
+            }
+        }))
+    };
+    let admitted = issue_batch().await;
+    assert!(
+        admitted.iter().all(Result::is_ok),
+        "initial concurrent launches failed: {:?}",
+        admitted
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .collect::<Vec<_>>()
+    );
+    let results = issue_batch().await;
+    assert!(results.iter().all(Result::is_err));
+    assert!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .all(|error| error.code() == Code::ResourceExhausted)
+    );
+    assert_eq!(a.stats().await.unwrap().pending, 16);
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_replay_guard_tolerates_clock_lead_without_expiry_grace() {
     let (database, _, _) = fixture().await;
     let client = database.connection().await.unwrap();

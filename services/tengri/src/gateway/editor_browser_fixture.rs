@@ -66,6 +66,9 @@ async fn editor_browser_acceptance_fixture() {
         crate::guest::authorization::GuestAuthority::fixture(),
     )
     .unwrap();
+    // Accelerate real cookie expiry only in this disposable, cfg(test) fixture.
+    let mut state = state;
+    state.tickets = state.tickets.with_preview_lifetime(60_000);
     let issue_state = state.clone();
     let issue = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = issue_state.clone();
@@ -95,7 +98,7 @@ async fn editor_browser_acceptance_fixture() {
         }
     });
     let browser_state = state.clone();
-    let browser = get(move || {
+    let browser = get(move |Query(query): Query<HashMap<String, String>>| {
         let state = browser_state.clone();
         async move {
             let guest = state
@@ -110,12 +113,10 @@ async fn editor_browser_acceptance_fixture() {
             guest.open_browser().await.unwrap();
             let ticket = state
                 .tickets
-                .issue_preview(
+                .issue_browser(
                     &fixture_principal(crate::ofz::proto::Action::BrowserControl),
                     "editor-fixture",
-                    crate::guest::BROWSER_PORT,
-                    "/",
-                    "",
+                    query.get("window").unwrap(),
                 )
                 .await
                 .unwrap();

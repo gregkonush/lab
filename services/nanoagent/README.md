@@ -270,6 +270,12 @@ tasks, debugging, or workspace extensions inside the guest.
 The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
 workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
 
+Guest initialization sets `fs.inotify.max_user_watches=524288` for large workspaces. Native KVM acceptance verifies
+the running guest's limit. It also assigns the local hostname `tengri` and its loopback host entry so guest `sudo`
+resolves its own hostname. These settings do not change the host or storage configuration.
+An already running retained guest needs the same setting applied with its existing guest administrator authority;
+ordinary image promotion preserves that guest's processes and kernel state.
+
 See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Sleep and resume retain the
 slot's image and live editor process. An image change requires the explicit fenced recovery procedure in
 [the operations guide](../../docs/tengri/operations.md).

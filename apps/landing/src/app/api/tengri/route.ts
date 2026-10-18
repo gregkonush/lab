@@ -231,10 +231,10 @@ async function runAction(request: Request) {
         result = await issuePreviewSession(identity, action.agentId, action.port, action.path, action.fragment)
         break
       case 'editor-session':
-        result = await issueEditorSession(identity, action.agentId, action.windowId, request.signal)
+        result = await issueEditorSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'browser-session':
-        result = await issueBrowserSession(identity, action.agentId)
+        result = await issueBrowserSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'revoke-editor-sessions':
         await revokeDesktopPreviews(identity)
