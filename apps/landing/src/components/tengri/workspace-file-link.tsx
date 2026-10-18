@@ -221,13 +221,13 @@ function FilePreview({ agentId, file }: { agentId: string; file: FileTarget }) {
       aria-label="File preview"
       className="flex h-full min-h-0 flex-col border-t border-zinc-700 bg-zinc-950 text-copy-14 text-zinc-200"
     >
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-2">
+      <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-1.5">
         <h2 className="min-w-0 flex-1 truncate text-label-12" title={file.path}>
           {file.path}
           {file.line ? `:${file.line}${file.column ? `:${file.column}` : ''}` : ''}
         </h2>
         {markdown ? (
-          <div role="group" aria-label="Markdown view" className="inline-flex shrink-0 rounded-md bg-zinc-900 p-0.5">
+          <div role="group" aria-label="Markdown view" className="inline-flex shrink-0 items-center gap-2">
             {[
               { label: 'Preview', value: false },
               { label: 'Source', value: true },
@@ -237,7 +237,7 @@ function FilePreview({ agentId, file }: { agentId: string; file: FileTarget }) {
                 type="button"
                 aria-pressed={source === value}
                 onClick={() => setSource(value)}
-                className={`rounded px-2 py-1 text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-blue-400 ${source === value ? 'bg-zinc-700 text-zinc-100' : 'text-zinc-400 hover:text-zinc-200'}`}
+                className={`border-b py-0.5 text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-blue-400 [@media(pointer:coarse)]:min-h-6 ${source === value ? 'border-zinc-400 text-zinc-200' : 'border-transparent text-zinc-400 hover:text-zinc-200'}`}
               >
                 {label}
               </button>
