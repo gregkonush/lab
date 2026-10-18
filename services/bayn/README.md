@@ -49,6 +49,9 @@ constructing a decision that the durable contract must reject.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
+The generic continuous-cycle close phase starts only when the last admitted entry's fifteen-minute holding
+allowance ends, leaving the existing three-minute recovery reserve. The position's own maximum-hold trigger still
+starts at its actual first fill. Equity flatten-before-close leads never shorten a continuous position's horizon.
 An unused native admission retains its expiry classification at the equity cutoff, including when decision construction
 starts before the cutoff but durable binding happens afterward. Recovery still requires the unchanged authority,
 evidence and cooldown guards before acquiring a successor.
@@ -439,6 +442,18 @@ This numerical tie check is separate from the wider decimal-reporting allowance 
 It preserves the provider's selected label and numbers; a genuinely nonmaximum label still fails response validation.
 Bayn retains the reported values and hashes without normalization. Selection uses reported probabilities; larger
 discrepancies, mismatched choices or inconsistent scores remain unusable evidence.
+
+An entry batch with no requested candidates commits its verified plan and complete excluded result in one PostgreSQL
+statement. Admission still reproduces the stored observation and checks the original clock and evidence deadline.
+An insertion failure rolls back both records; concurrent retries reuse the immutable result. Older unfinished plans
+retain their existing recovery path. This avoids a second finalization transaction on all-excluded observations
+without changing which exclusions can support a no-entry decision.
+
+An on-time, verified all-excluded batch reports `SNAPSHOT_UNAVAILABLE` for missing candidate evidence or
+`SNAPSHOT_STALE` for stale candidate pricing, with the affected symbols in its readiness message. It does not report
+an inference outage when no model request was made. The observation remains unusable: source exclusions do not become
+verified non-signals. Expired or inconsistent batch evidence retains `INFERENCE_UNAVAILABLE`; requested-candidate
+evaluation and all trading, freshness, and accounting checks are unchanged.
 
 Each model request commits its at-most-once claim before inference. Native single-candidate management and entry
 batches with exactly one requested candidate persist the receipt, resolution and complete batch result in one
@@ -1420,6 +1435,20 @@ Production execution and simulation use `makeTradingEngine`. The engine construc
 recovery-first cycle driver from one strategy and risk policy. The broker, market-data source, clock, and isolated
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
 or accounting coordinator.
+
+The replay broker retains equity LIMIT/DAY orders after an unmatched or partial arrival. Each newly available
+accepted quote can fill the remaining quantity until cancellation, full fill or the verified broker session end.
+Pre-market and post-market quotes retain their native IEX clock-segment identity. The retained source delivers
+quotes in availability order, including brief crossings between controller polls; consuming the verification tail
+after trading ends cannot mutate the broker. Crypto LIMIT/IOC orders evaluate their arrival once and cancel any
+remainder through the same quote economics and accounting. Displayed liquidity is shared across orders and retries.
+
+Replay checkpoint v4 and broker state v2 retain every quote execution and uniquely identify partial-fill and fee
+activities. Restoration reconstructs cumulative order quantities, average prices, cash, inventory, fees and native
+activities before exposing the broker. Each fill selects its retained quote by topic, partition, offset and availability
+time, including separate quotes in the same millisecond. Replay cancellations use the shared Alpaca HTTP 204 response
+decoder and empty-response hash. Earlier replay checkpoint schemas cannot resume this contract. Missing
+original arrival receipts and PAPER's different liquidity assumptions still prevent claiming historical live-fill parity.
 
 The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
 buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility

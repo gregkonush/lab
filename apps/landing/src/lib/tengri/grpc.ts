@@ -954,6 +954,9 @@ async function metadata(
   const { injectTrace } = await import('@/lib/observability/server')
   injectTrace((key, header) => value.set(key, header))
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
+  if (binding.guestApiProtocolVersion !== 5) {
+    throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
+  }
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
   context.deadlineUnixMs = BigInt(Date.now() + 4000)

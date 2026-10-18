@@ -158,6 +158,10 @@ hashes and database timestamps. Its immutable key includes the complete payload 
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
+seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
+unchanged.
 
 If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
 the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit

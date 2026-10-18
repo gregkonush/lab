@@ -28,7 +28,14 @@ import {
 import type { EntryQuoteFreshness } from '../risk'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
-import { JevBatchPlanVersion, usableJevBatchInferences } from './batch'
+import {
+  JevBatchPlanVersion,
+  JevCandidatePlanStatus,
+  JevSourceExclusion,
+  decodeJevBatchPlan,
+  decodeJevBatchResult,
+  usableJevBatchInferences,
+} from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
 import {
@@ -239,11 +246,38 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     if (
       saved.result === null ||
       Result.isFailure(usableJevBatchInferences(saved.plan, saved.result, Date.parse(decidedAt)))
-    )
+    ) {
+      // Explain verified source exclusions without reclassifying expired or corrupt evidence.
+      // This remains a failed observation and cannot authorize a no-entry decision or an order.
+      const sourceExclusions = batchPlan.candidates.flatMap((candidate) =>
+        candidate.status === JevCandidatePlanStatus.Excluded &&
+        (candidate.reason === JevSourceExclusion.NotReady || candidate.reason === JevSourceExclusion.Freshness)
+          ? [{ symbol: candidate.symbol, reason: candidate.reason }]
+          : [],
+      )
+      if (
+        saved.result !== null &&
+        saved.plan.batchId === batchPlan.batchId &&
+        Date.parse(decidedAt) >= Date.parse(saved.result.completedAt) &&
+        Date.parse(decidedAt) < Date.parse(batchPlan.expiresAt) &&
+        batchPlan.candidates.every(({ status }) => status === JevCandidatePlanStatus.Excluded) &&
+        sourceExclusions.length > 0 &&
+        Result.isSuccess(decodeJevBatchPlan(saved.plan)) &&
+        Result.isSuccess(decodeJevBatchResult(batchPlan, saved.result))
+      )
+        return yield* new JevAwaitingEvidence({
+          message: `Jev has no inference candidate because market evidence is unavailable: ${sourceExclusions
+            .map((candidate) => `${candidate.symbol} (${candidate.reason})`)
+            .join(', ')}`,
+          readiness: sourceExclusions.some((candidate) => candidate.reason === JevSourceExclusion.NotReady)
+            ? DecisionReadinessReason.SnapshotUnavailable
+            : DecisionReadinessReason.SnapshotStale,
+        })
       return yield* new JevAwaitingEvidence({
         message: 'The complete committed Jev batch is not usable within its deadline',
         readiness: DecisionReadinessReason.InferenceUnavailable,
       })
+    }
     return {
       snapshot,
       evidence: { observation: observation.payload, batchPlan: saved.plan, batchResult: saved.result, decidedAt },
