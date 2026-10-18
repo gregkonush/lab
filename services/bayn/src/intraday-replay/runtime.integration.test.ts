@@ -933,6 +933,7 @@ durableTest.each(
               ),
             finalizationAtMs + 1,
             finalizationAtMs + 120_001,
+            true,
           )
           const reconciliation = yield* runtime.reconcile
           const state = yield* broker.snapshot
@@ -968,9 +969,13 @@ durableTest.each(
           ])
           expect(
             assessBacktestSession({
+              finalWindow: true,
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,
+              remainingOpenOrderCount: state.orders.filter(({ order }) =>
+                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+              ).length,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
                 metrics: reconciliation.report.metrics,
@@ -997,6 +1002,7 @@ durableTest.each(
               ),
             initialMs + 1,
             initialMs + 4001,
+            true,
           )
           const reconciliation = yield* runtime.reconcile
           const state = yield* broker.snapshot
@@ -1004,9 +1010,13 @@ durableTest.each(
           expect(state.orders).toEqual([])
           expect(state.fills).toEqual([])
           const assessment = assessBacktestSession({
+            finalWindow: true,
             ...schedule,
             valuationFailureCount: 0,
             remainingPositionCount: state.ledger.positions.length,
+            remainingOpenOrderCount: state.orders.filter(({ order }) =>
+              [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+            ).length,
             reconciliation: {
               status: reconciliation.report.reconciliation.status,
               metrics: reconciliation.report.metrics,
@@ -1555,6 +1565,7 @@ durableTest.each(
               ),
             start,
             start + 20_000,
+            true,
           )
           expect(managementCalls).toBe(1)
           expect(schedule.failedPassCount).toBe(0)
@@ -1575,9 +1586,13 @@ durableTest.each(
           expect(managementCalls).toBe(1)
           expect(
             assessBacktestSession({
+              finalWindow: true,
               ...schedule,
               valuationFailureCount: 0,
               remainingPositionCount: state.ledger.positions.length,
+              remainingOpenOrderCount: state.orders.filter(({ order }) =>
+                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
+              ).length,
               reconciliation: {
                 status: reconciliation.report.reconciliation.status,
                 metrics: reconciliation.report.metrics,

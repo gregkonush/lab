@@ -96,7 +96,7 @@ export const gapSourceFixture = (
     }
   })
   const manifest: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'original-capture',
     dataSha256: sha256(bytes),
@@ -108,16 +108,16 @@ export const gapSourceFixture = (
     origin: 'SYNTHETIC gap-recovery command fixture, not a captured market session',
     positions,
     nativeVisiblePartitions: partitions,
-    universe: fixture.universe,
+    marketSources: [fixture.universe] as const,
     deliveryModel: fixture.source.deliveryModel,
   }
   const receiptText = JSON.stringify({
-    schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+    schemaVersion: 'bayn.original-capture-replay-receipt.v2',
     recordedAt: new Date(coverageEndMs + 1).toISOString(),
     origin: manifest.origin,
     coverageStartMs,
     coverageEndMs,
-    universe: fixture.universe,
+    marketSources: [fixture.universe] as const,
     positions,
     nativeVisiblePartitions: partitions,
     deliveryModel: fixture.source.deliveryModel,
