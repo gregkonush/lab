@@ -1,7 +1,7 @@
 import { FeeActivitySchema } from '../broker/fee-activity'
 import { replayFeeActivity } from './broker-fees'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
-import { instrumentMarket, MarketKind, InstrumentSymbolSchema } from '../instruments'
+import { InstrumentSymbolSchema } from '../instruments'
 import { Data, Result, Schema } from 'effect'
 import {
   AssetClass,
@@ -13,7 +13,7 @@ import {
   TradeActivityType,
 } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
-import { orderRequestBody, limitOrderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   OrderSide as DomainSide,
   OrderType as DomainOrderType,
@@ -63,21 +63,13 @@ const OrderFields = {
   extendedHours: Schema.Boolean,
   observedAt: UtcInstantSchema,
 }
-const OrderSchema = Schema.Union([
-  Schema.Struct({
-    ...OrderFields,
-    side: Schema.Enum(OrderSide),
-    orderType: Schema.Literal(OrderType.Limit),
-    timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
-    limitPriceMicros: PositiveMicrosSchema,
-  }),
-  Schema.Struct({
-    ...OrderFields,
-    side: Schema.Literal(OrderSide.Sell),
-    orderType: Schema.Literal(OrderType.Market),
-    timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.GoodUntilCanceled]),
-  }),
-])
+const OrderSchema = Schema.Struct({
+  ...OrderFields,
+  side: Schema.Enum(OrderSide),
+  orderType: Schema.Literal(OrderType.Limit),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+  limitPriceMicros: PositiveMicrosSchema,
+})
 const EconomicFillSchema = Schema.Struct({
   executionIndex: NonNegativeIntegerSchema,
   symbol: InstrumentSymbolSchema,
@@ -96,12 +88,12 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v5'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v6'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v3'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v4'),
     createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
@@ -207,9 +199,6 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         order.createdAt > order.observedAt ||
         config.assets.find((asset) => asset.symbol === order.symbol)?.assetId !== order.assetId ||
         order.assetClass !== config.assets.find((asset) => asset.symbol === order.symbol)?.assetClass ||
-        (order.orderType === OrderType.Market &&
-          order.timeInForce !==
-            (instrumentMarket(order.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)) ||
         BigInt(order.filledQuantityAtoms) > BigInt(order.quantityAtoms)
       )
         return yield* fail('Broker checkpoint order identity, time or quantity is invalid')
@@ -219,30 +208,21 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         side: order.side === OrderSide.Buy ? DomainSide.Buy : DomainSide.Sell,
         quantityAtoms: order.quantityAtoms,
       }
-      const body = yield* order.orderType === OrderType.Market
-        ? orderRequestBody({
-            ...common,
-            orderType: DomainOrderType.Market,
-            timeInForce:
-              instrumentMarket(order.symbol) === MarketKind.Crypto
-                ? DomainTimeInForce.GoodUntilCanceled
-                : DomainTimeInForce.Day,
-            notionalLimitMicros: '1',
-          })
-        : limitOrderRequestBody({
-            ...common,
-            orderType: DomainOrderType.Limit,
-            timeInForce:
-              instrumentMarket(order.symbol) === MarketKind.Crypto
-                ? DomainTimeInForce.ImmediateOrCancel
-                : DomainTimeInForce.Day,
-            notionalLimitMicros: (
-              (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms)) /
-              1000000000n
-            ).toString(),
-          })
+      const body = yield* orderRequestBody({
+        ...common,
+        orderType: DomainOrderType.Limit,
+        timeInForce:
+          order.timeInForce === TimeInForce.Day ? DomainTimeInForce.Day : DomainTimeInForce.ImmediateOrCancel,
+        limitPriceMicros: order.limitPriceMicros,
+        notionalLimitMicros: (
+          (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms) +
+            (order.side === OrderSide.Buy ? 999999999n : 0n)) /
+          1000000000n
+        ).toString(),
+      })
       if (
         requestHash !== (yield* canonicalHashV1Result(body)) ||
+        order.extendedHours !== body.extended_hours ||
         (order.status === OrderStatus.Filled && order.filledQuantityAtoms !== order.quantityAtoms) ||
         (order.status === OrderStatus.Rejected && order.failedAt === undefined) ||
         ([OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) &&
@@ -392,7 +372,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v5' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v6' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

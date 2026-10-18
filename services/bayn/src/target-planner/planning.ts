@@ -1,6 +1,8 @@
 import { Result, pipe } from 'effect'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
 import {
@@ -79,9 +81,7 @@ const makeReferenceTargetIntents = (
   targetFacts: readonly PlannedTargetFact[],
 ): readonly ReferenceTargetIntent[] => {
   const executionTerms =
-    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion
-      ? input.executionTerms
-      : { orderType: OrderType.Market, timeInForce: TimeInForce.Day }
+    input.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion ? input.executionTerms : undefined
   return targetFacts
     .flatMap(({ target, delta }): readonly ReferenceTargetIntent[] =>
       delta === 0n
@@ -95,8 +95,8 @@ const makeReferenceTargetIntents = (
               accountId: input.accountId,
               symbol: target.symbol,
               side: delta > 0n ? OrderSide.Buy : OrderSide.Sell,
-              orderType: executionTerms.orderType,
-              timeInForce: executionTerms.timeInForce,
+              orderType: OrderType.Limit,
+              timeInForce: executionTerms?.timeInForce ?? cashSpotLimitTimeInForce(instrumentMarket(target.symbol)),
               quantityAtoms: (delta < 0n ? -delta : delta).toString(),
               createdAt: input.observedAt,
             },

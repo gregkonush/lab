@@ -190,7 +190,7 @@ const document = (
 ): ObserveShadowDecisionDocument =>
   value(
     makeObserveShadowDecisionDocument({
-      schemaVersion: 'bayn.observe-shadow-decision.v1',
+      schemaVersion: 'bayn.observe-shadow-decision.v2',
       mode: 'OBSERVE',
       dispatchable: false,
       bindings: {

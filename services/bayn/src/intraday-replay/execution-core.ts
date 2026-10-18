@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
-import { InstrumentSymbolSchema, instrumentMarket, MarketKind, type Instrument } from '../instruments'
+import { InstrumentSymbolSchema, instrumentMarket, type Instrument } from '../instruments'
 import { OrderSide } from '../execution/contracts'
 import { notionalMicros } from '../execution-model'
 import { PositiveMicrosSchema } from '../schemas'
@@ -45,7 +45,7 @@ type CoreCancelReason = 'adverse-price-exceeds-limit' | 'no-displayed-liquidity'
 export interface ReplayExecutionOrder {
   readonly side: OrderSide
   readonly quantityAtoms: bigint
-  readonly limitPriceMicros: bigint | null
+  readonly limitPriceMicros: bigint
 }
 
 /** Executable quote values selected from one event-time market snapshot. */
@@ -90,7 +90,6 @@ export interface ReplayExecutionFailure {
     | 'invalid-assumptions'
     | 'invalid-execution-model'
     | 'invalid-notional'
-    | 'insufficient-market-close-liquidity'
 }
 
 const invalid = (field: string, value: unknown, reason: ReplayExecutionFailure['reason']): ReplayExecutionFailure => ({
@@ -110,19 +109,14 @@ export const simulateIntradayReplayExecution = (
   input: ReplayExecutionInput,
 ): Result.Result<ReplayExecutionOutcome, ReplayExecutionFailure> => {
   const { order, quote, assumptions, executionModel: model, instrument } = input
-  const quantityIncrement =
-    order.limitPriceMicros === null && instrument.market === MarketKind.Equity ? 1n : instrument.quantityIncrementAtoms
+  const quantityIncrement = instrument.quantityIncrementAtoms
   if (
     (order.side !== OrderSide.Buy && order.side !== OrderSide.Sell) ||
     order.quantityAtoms <= 0n ||
     quantityIncrement <= 0n ||
     order.quantityAtoms % quantityIncrement !== 0n ||
-    (order.limitPriceMicros === null
-      ? order.side !== OrderSide.Sell
-      : quantityIncrement <= 0n ||
-        order.quantityAtoms % quantityIncrement !== 0n ||
-        order.limitPriceMicros <= 0n ||
-        (order.side === OrderSide.Buy && order.quantityAtoms < instrument.minimumQuantityAtoms))
+    order.limitPriceMicros <= 0n ||
+    (order.side === OrderSide.Buy && order.quantityAtoms < instrument.minimumQuantityAtoms)
   ) {
     return Result.fail(invalid('order', order, 'invalid-order'))
   }
@@ -182,19 +176,14 @@ export const simulateIntradayReplayExecution = (
       remainingQuantityAtoms: order.quantityAtoms,
     })
   if (
-    order.limitPriceMicros !== null &&
-    ((order.side === OrderSide.Buy && adversePrice > order.limitPriceMicros) ||
-      (order.side === OrderSide.Sell && adversePrice < order.limitPriceMicros))
+    (order.side === OrderSide.Buy && adversePrice > order.limitPriceMicros) ||
+    (order.side === OrderSide.Sell && adversePrice < order.limitPriceMicros)
   ) {
     return cancel('adverse-price-exceeds-limit')
   }
   const liquidity = (quote.displayedQuantityAtoms * BigInt(assumptions.availableLiquidityPpm)) / PPM
   const fillQuantity = (liquidity / quantityIncrement) * quantityIncrement
   const requestedOrAvailable = fillQuantity < order.quantityAtoms ? fillQuantity : order.quantityAtoms
-  if (order.limitPriceMicros === null && requestedOrAvailable < order.quantityAtoms)
-    return Result.fail(
-      invalid('quote.displayedQuantityAtoms', quote.displayedQuantityAtoms, 'insufficient-market-close-liquidity'),
-    )
   if (requestedOrAvailable === 0n) {
     return cancel(liquidity === 0n ? 'no-displayed-liquidity' : 'zero-after-instrument-rounding')
   }

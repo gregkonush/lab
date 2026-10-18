@@ -14,13 +14,11 @@ export {
   authorizeMutationAccess,
   cancelRequestHash,
   recordedOrderRequestBody,
-  limitOrderRequestBody,
   orderPriceBoundaryMicros,
   orderRequestBody,
   resolveMutationCapability,
   submitBody,
   type OrderRequestBody,
-  type LimitOrderRequestBody,
   type OrderRequestIntent,
   type ResolvedMutationCapability,
 } from './alpaca-mutations/decisions'

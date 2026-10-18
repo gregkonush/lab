@@ -210,7 +210,6 @@ export const controlEntryQuantity = (input: {
       // Price derivation needs a nonzero micro-dollar notional; a crypto increment can be one nano-coin.
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros,
-      executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(policy.maxAdverseSlippageBps),
     })
     while (low < high) {
