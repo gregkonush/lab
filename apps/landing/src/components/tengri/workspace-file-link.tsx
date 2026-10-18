@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { X } from 'lucide-react'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
@@ -59,9 +60,11 @@ export function WorkspaceFileLinkProvider({
             aria-label="Agent views"
             className="flex shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
             onKeyDown={(event) => {
-              if (event.key === 'Delete' && activePath) {
+              const focusedTab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]')
+              const closePath = focusedTab?.dataset.filePath
+              if (event.key === 'Delete' && closePath) {
                 event.preventDefault()
-                closeFile(activePath)
+                closeFile(closePath)
                 return
               }
               if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
@@ -86,31 +89,44 @@ export function WorkspaceFileLinkProvider({
               tabIndex={activeFile ? -1 : 0}
               type="button"
               onClick={() => setActivePath(null)}
-              className={`shrink-0 border-b-2 px-4 py-2 text-label-12 ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+              className={`border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'min-w-28 max-w-56 flex-1 px-3 pr-8' : 'shrink-0 px-4'} ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
             >
               Chat
             </button>
             {files.map((file, index) => (
-              <div
+              <button
                 key={file.path}
-                className={`flex shrink-0 items-center border-b-2 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+                role="tab"
+                id={`${id}-file-${index}`}
+                data-file-path={file.path}
+                aria-controls={`${id}-file-panel-${index}`}
+                aria-describedby={`${id}-close-hint`}
+                aria-selected={activePath === file.path}
+                tabIndex={activePath === file.path ? 0 : -1}
+                title={file.path}
+                type="button"
+                onClick={() => setActivePath(file.path)}
+                className={`group/tab relative flex min-w-28 max-w-56 flex-1 items-center border-b-2 px-3 py-2 pr-8 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
               >
-                <button
-                  role="tab"
-                  id={`${id}-file-${index}`}
-                  aria-controls={`${id}-file-panel-${index}`}
-                  aria-selected={activePath === file.path}
-                  tabIndex={activePath === file.path ? 0 : -1}
-                  title={file.path}
-                  type="button"
-                  onClick={() => setActivePath(file.path)}
-                  className="max-w-56 truncate px-3 py-2 text-label-12"
+                <span className="min-w-0 flex-1 truncate">{file.path.split('/').at(-1)}</span>
+                {/* Keep the tab a single control; Delete exposes closing to keyboard and screen-reader users. */}
+                <span
+                  aria-hidden="true"
+                  title={`Close ${file.path}`}
+                  onClick={(event) => {
+                    event.stopPropagation()
+                    closeFile(file.path)
+                  }}
+                  className="absolute right-1 inline-flex size-6 items-center justify-center rounded text-zinc-400 opacity-0 transition-opacity hover:bg-white/[0.08] hover:text-zinc-100 group-hover/tab:opacity-100 group-focus-within/tab:opacity-100 motion-reduce:transition-none [@media(hover:none)]:opacity-100"
                 >
-                  {file.path.split('/').at(-1)}
-                </button>
-              </div>
+                  <X className="size-3.5" aria-hidden="true" />
+                </span>
+              </button>
             ))}
           </div>
+          <span id={`${id}-close-hint`} className="sr-only">
+            Press Delete to close this tab.
+          </span>
           <div
             role="tabpanel"
             id={`${id}-chat-panel`}
@@ -129,12 +145,7 @@ export function WorkspaceFileLinkProvider({
               hidden={activePath !== file.path}
               className={activePath === file.path ? 'min-h-0 flex-1' : 'hidden'}
             >
-              <FilePreview
-                key={`${agentId}:${file.path}:${file.line}:${file.column}`}
-                agentId={agentId}
-                file={file}
-                onClose={() => closeFile(file.path)}
-              />
+              <FilePreview key={`${agentId}:${file.path}:${file.line}:${file.column}`} agentId={agentId} file={file} />
             </div>
           ))}
         </div>
@@ -143,7 +154,7 @@ export function WorkspaceFileLinkProvider({
   )
 }
 
-function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTarget; onClose: () => void }) {
+function FilePreview({ agentId, file }: { agentId: string; file: FileTarget }) {
   const [result, setResult] = useState<{ content: string; contentType: string } | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
@@ -194,9 +205,6 @@ function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTa
             {source ? 'Rendered' : 'Source'}
           </button>
         ) : null}
-        <button type="button" aria-label={`Close ${file.path}`} className="shrink-0 text-label-12" onClick={onClose}>
-          Close
-        </button>
       </div>
       <div className="min-h-0 overflow-auto p-3">
         {image ? <WorkspaceImage src={file.path} alt={file.path.split('/').at(-1)} /> : null}

@@ -6622,6 +6622,71 @@ test('pastes a real clipboard image, previews it, and sends an image-only messag
   await expect(message.getByRole('img')).toBeVisible()
 })
 
+test('keeps one attachment prompt per submission through live echoes and restored history', async ({ page }) => {
+  const histories: Record<string, string> = {}
+  const mock = await mockTengri(page, { resumeThreadRawJsonById: histories, preserveDraftStorageOnReload: true })
+  await page.goto('/')
+  const text = 'Inspect these screenshots.'
+  const messages = page.getByRole('article', { name: 'Your message' })
+  const items = []
+  for (const index of [0, 1]) {
+    const prompt = page.getByRole('textbox', {
+      name: index === 0 ? 'Message your agent' : 'Steer the current turn',
+      exact: true,
+    })
+    await expect(prompt).toBeEnabled()
+    await prompt.fill(text)
+    const png = await pasteClipboardImage(page, prompt)
+    await pasteClipboardImage(page, prompt)
+    await page.route('**/api/tengri/attachments?*', (route) =>
+      route.fulfill({ contentType: 'image/png', body: Buffer.from(png, 'base64') }),
+    )
+    await page.getByRole('button', { name: index === 0 ? 'Send message' : 'Steer turn', exact: true }).click()
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === (index === 0 ? 'send-turn' : 'steer-turn')).length)
+      .toBe(1)
+    await expect(messages).toHaveCount(index + 1)
+    const input = {
+      id: `image-user-${index}`,
+      type: 'userMessage',
+      content: [
+        { type: 'text', text },
+        ...[0, 1].map((image) => ({
+          type: 'localImage',
+          path: `/workspace/.tengri-attachments/11111111-1111-4111-8111-${String(index * 2 + image).padStart(12, '0')}.png`,
+        })),
+      ],
+    }
+    items.push(input)
+    for (const [phase, method] of ['item/started', 'item/completed'].entries()) {
+      await emitCodexEvent(page, {
+        sequence: index * 2 + phase + 1,
+        kind: 'user-message',
+        method,
+        threadId: 'thread-1',
+        turnId: 'turn-1',
+        itemId: input.id,
+        approvalId: '',
+        text,
+        rawJson: JSON.stringify({ params: { item: input } }),
+      })
+      await expect(messages).toHaveCount(index + 1)
+      await expect(messages.last()).toHaveText(text)
+      await expect(messages.last().getByRole('img')).toHaveCount(2)
+      await expect(messages.last().getByRole('img').first()).toHaveAttribute('src', /api\/tengri\/attachments\?/)
+    }
+  }
+  histories['thread-1'] = JSON.stringify({
+    thread: { turns: [{ id: 'turn-1', status: 'completed', items }] },
+  })
+  await page.reload()
+  await expect(messages).toHaveCount(2)
+  await expect(messages.getByRole('img')).toHaveCount(4)
+  await page
+    .getByRole('region', { name: 'Tengri window' })
+    .screenshot({ path: 'test-results/attachment-prompt-echo.png' })
+})
+
 test('retains pasted images and text after a failed send and supports retry', async ({ page }) => {
   const mock = await mockTengri(page, { failSendTurnOnce: true })
   await page.goto('/')
@@ -6910,6 +6975,32 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   expect(reads.get('/workspace/README.md')).toBe(1)
   await expect.poll(() => reads.get('/workspace/notes.md')).toBe(1)
   await expect(tengri.getByRole('tab')).toHaveText(['Chat', 'README.md', 'notes.md'])
+  const tabs = tengri.getByRole('tablist', { name: 'Agent views' })
+  const tabWidths = await tabs
+    .getByRole('tab')
+    .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width))
+  for (const width of tabWidths) expect(width).toBeCloseTo(tabWidths[0], 0)
+  const readmeTab = tabs.getByRole('tab', { name: 'README.md', exact: true })
+  const closeReadme = tabs.getByTitle('Close /workspace/README.md', { exact: true })
+  await expect(readmeTab).toHaveAccessibleDescription('Press Delete to close this tab.')
+  await preview.getByRole('button', { name: 'Rendered', exact: true }).focus()
+  await page.mouse.move(0, 0)
+  await expect(closeReadme).toHaveCSS('opacity', '0')
+  await readmeTab.hover()
+  await expect(closeReadme).toHaveCSS('opacity', '1')
+  await page.mouse.move(0, 0)
+  await readmeTab.focus()
+  await expect(closeReadme).toHaveCSS('opacity', '1')
+  await tengri.screenshot({ path: 'test-results/agent-file-tabs-hover.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(async () => {
+    const widths = await tabs
+      .getByRole('tab')
+      .evaluateAll((elements) => elements.map((element) => element.getBoundingClientRect().width))
+    for (const width of widths) expect(width).toBeCloseTo(widths[0], 0)
+  }).toPass({ timeout: 5_000 })
+  await tengri.screenshot({ path: 'test-results/agent-file-tabs-narrow.png' })
+  await page.setViewportSize({ width: 1440, height: 900 })
   await tengri.getByRole('tab', { name: 'README.md', exact: true }).press('ArrowRight')
   await expect(tengri.getByRole('tab', { name: 'notes.md', exact: true })).toHaveAttribute('aria-selected', 'true')
   await tengri.getByRole('tab', { name: 'notes.md', exact: true }).press('Home')
@@ -6918,7 +7009,12 @@ test('opens local file references as rendered agent tabs and preserves the chat 
   await tengri.getByRole('button', { name: 'Missing file', exact: true }).click()
   await expect(tengri.getByRole('alert')).toContainText('File not found')
   await expect(tengri.getByRole('button', { name: 'Retry file preview' })).toBeVisible()
-  await tengri.getByRole('button', { name: 'Close /workspace/missing.md', exact: true }).click()
+  await tengri.getByTitle('Close /workspace/missing.md', { exact: true }).click()
+  await expect(composer).toHaveValue('Keep this draft')
+  await readmeTab.click()
+  await readmeTab.press('Delete')
+  await expect(readmeTab).toHaveCount(0)
+  await expect(tabs.getByRole('tab', { name: 'Chat', exact: true })).toBeFocused()
   await expect(composer).toHaveValue('Keep this draft')
   expect(new URL(page.url()).pathname).toBe('/')
   expect(page.context().pages()).toHaveLength(1)
