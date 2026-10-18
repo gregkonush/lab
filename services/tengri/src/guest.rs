@@ -470,7 +470,7 @@ mod tests {
                                 );
                                 Ok(rpc::proto::GuestInfo {
                                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
-                                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                                 })
                             })),
                             ..Default::default()

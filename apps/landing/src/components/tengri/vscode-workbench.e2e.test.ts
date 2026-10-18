@@ -86,7 +86,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
           previewGatewayOrigin:
             process.env.TENGRI_EDITOR_TEST_HTTPS === '1'
               ? 'https://gateway.tengri.localhost:3443'
-              : 'http://localhost:33082',
+              : 'http://localhost:18082',
           authenticated,
           user: authenticated
             ? { id: 'editor-test-owner', name: 'Local editor test', email: 'editor@example.test', image: null }
@@ -105,7 +105,7 @@ test('runs the upstream VS Code workbench against real guest files and terminals
     if (action.action === 'editor-session') {
       if (action.renewal) automaticRenewals++
       const response = await request.get(
-        `http://127.0.0.1:33082/_test/editor?window=${encodeURIComponent(action.windowId)}`,
+        `http://127.0.0.1:18082/_test/editor?window=${encodeURIComponent(action.windowId)}`,
         { timeout: 120_000 },
       )
       expect(response.ok()).toBeTruthy()
@@ -117,12 +117,12 @@ test('runs the upstream VS Code workbench against real guest files and terminals
         await route.fulfill({ status: 503, json: { error: 'Editor sessions could not be revoked' } })
         return
       }
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke-desktop-previews')
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
-      await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
+      await request.post('http://127.0.0.1:18082/_test/revoke', { data: action })
     } else if (action.action === 'list-files') {
-      const response = await request.get(`http://127.0.0.1:33082/_test/files?path=${encodeURIComponent(action.path)}`)
+      const response = await request.get(`http://127.0.0.1:18082/_test/files?path=${encodeURIComponent(action.path)}`)
       expect(response.ok()).toBeTruthy()
       result = await response.json()
     } else if (action.action === 'codex-account') result = { authenticated: false, email: '', plan: '' }

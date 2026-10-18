@@ -476,7 +476,7 @@ export const runMatchedEntryStudy = (
       if (!dates.includes(manifest.sessionDate))
         return yield* new SignalStudyFailure({ message: 'Observation outside registered sessions' })
       if (
-        manifest.schemaVersion === 'bayn.simulated-market-snapshot.v1' &&
+        manifest.schemaVersion === 'bayn.simulated-market-snapshot.v2' &&
         (manifest.streaming.runId !== input.study.runId || manifest.streaming.sourceManifestHash !== sourceHash)
       )
         return yield* new SignalStudyFailure({ message: 'Observation belongs to another source or run' })

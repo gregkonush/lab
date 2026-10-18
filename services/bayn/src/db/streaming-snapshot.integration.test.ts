@@ -16,6 +16,9 @@ import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { prepareFreshReplayDatabase } from '../intraday-replay/backtest'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
 import { loadIntradaySnapshot } from '../observe-composition/intraday-market-data'
+import originalSimulationTable from '../../migrations/0068_simulated_snapshot_references'
+import mixedMarketReplayMigration from '../../migrations/0120_mixed_market_replay'
+import { canonicalHashV1Result } from '../hash'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55439/bayn_streaming_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -53,6 +56,51 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
   })
   afterAll(async () => {
     await runtime?.dispose()
+  })
+
+  test('mixed-source cutover preserves immutable old evidence and rejects new retired writes', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fixture = simulationFixture()
+        const market = yield* makeSimulatedMarketData(fixture.source, Effect.succeed(fixture.cursor))
+        const snapshot = yield* market.loadSnapshot(fixture.query)
+        const { contentHash: _hash, snapshotId: _id, ...manifest } = snapshot.manifest
+        const { marketSources, ...streaming } = manifest.streaming
+        const source = marketSources[0]
+        const material = {
+          ...manifest,
+          schemaVersion: 'bayn.simulated-market-snapshot.v1',
+          streaming: {
+            ...streaming,
+            schemaVersion: 'bayn.simulated-input-cut.v1',
+            featureTopic: source.topics.features,
+            ...(source.topics.technicalFeatures === undefined
+              ? {}
+              : { technicalFeatureTopic: source.topics.technicalFeatures }),
+          },
+        }
+        const contentHash = yield* Effect.fromResult(canonicalHashV1Result(material))
+        const snapshotId = yield* Effect.fromResult(canonicalHashV1Result({ ...material, contentHash }))
+        const historical = { ...material, contentHash, snapshotId }
+        yield* sql`DROP TABLE simulated_snapshot_references`
+        yield* originalSimulationTable
+        yield* sql`INSERT INTO simulated_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
+        VALUES (${snapshotId},'bayn.simulated-snapshot-reference.v1',${contentHash},${historical.observedAt}::timestamptz,${sql.json(historical)})`
+        const before = yield* sql`SELECT * FROM simulated_snapshot_references WHERE snapshot_id=${snapshotId}`
+        yield* mixedMarketReplayMigration
+        expect(yield* sql`SELECT * FROM simulated_snapshot_references WHERE snapshot_id=${snapshotId}`).toEqual(before)
+        const retiredWrite =
+          yield* Effect.exit(sql`INSERT INTO simulated_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
+        VALUES (${'d'.repeat(64)},'bayn.simulated-snapshot-reference.v1',${contentHash},${historical.observedAt}::timestamptz,${sql.json({ ...historical, snapshotId: 'd'.repeat(64) })})`)
+        expect(Exit.isFailure(retiredWrite)).toBe(true)
+        expect(
+          Exit.isFailure(
+            yield* Effect.exit(sql`DELETE FROM simulated_snapshot_references WHERE snapshot_id=${snapshotId}`),
+          ),
+        ).toBe(true)
+      }),
+    )
   })
 
   test('fresh replay rejects an occupied old schema before applying any migration', async () => {

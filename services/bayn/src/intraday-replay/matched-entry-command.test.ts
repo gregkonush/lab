@@ -161,7 +161,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     })
   }
   const source: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'captured-kafka',
     dataSha256: sha256(gzipSync(body)),
@@ -172,12 +172,14 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     lastAvailableAtMs: events.at(-1)?.availableAtMs ?? 0,
     origin: 'Synthetic native matched test capture',
     positions: [...positions.values()].sort((a, b) => a.topic.localeCompare(b.topic) || a.partition - b.partition),
-    universe: {
-      universeId: equityMarketProfile.universeId,
-      universeSymbolHash: equityMarketProfile.universeSymbolHash,
-      symbols: equityMarketProfile.universe,
-      topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
-    },
+    marketSources: [
+      {
+        universeId: equityMarketProfile.universeId,
+        universeSymbolHash: equityMarketProfile.universeSymbolHash,
+        symbols: equityMarketProfile.universe,
+        topics: { ...equityMarketProfile.sourceTopics, features: 'torghut.market-features.v1' },
+      },
+    ] as const,
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1',
       description: 'Synthetic observation-time capture',

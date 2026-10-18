@@ -1,3 +1,4 @@
+import { MarketSourcesSchema } from './market-data/streaming/raw-events'
 import { exchangeSessions } from './market-hours'
 import {
   isContinuousMarket,
@@ -100,7 +101,7 @@ const ExecutionMarketDataBindingBase = Schema.Union([
   Schema.Struct({
     ...ExecutionMarketDataBindingFields,
     schemaVersion: Schema.Literal('bayn.execution-market-data-binding.v4'),
-    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    snapshotSchemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v2'),
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
     streaming: SimulatedSnapshotEvidenceSchema,
   }),
@@ -1504,7 +1505,10 @@ const executionMaterialIssues = (
             other.streaming.regeneratedFeaturesRecordedAtMs !== binding.streaming.regeneratedFeaturesRecordedAtMs ||
             other.streaming.regeneratedTechnicalFeaturesRecordedAtMs !==
               binding.streaming.regeneratedTechnicalFeaturesRecordedAtMs ||
-            other.streaming.featureTopic !== binding.streaming.featureTopic ||
+            !Schema.toEquivalence(MarketSourcesSchema)(
+              other.streaming.marketSources,
+              binding.streaming.marketSources,
+            ) ||
             other.streaming.deliveryModel.description !== binding.streaming.deliveryModel.description),
       )
     )
