@@ -132,7 +132,7 @@ import {
   executionClosePlanNeedsResidualReplan,
   prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
-  loadQuoteBoundExecutionRiskPolicy,
+  loadExecutionRiskPolicy,
   loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
@@ -1199,9 +1199,10 @@ const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Po
       return Effect.runPromise(
         planExecutionIntent(
           {
-            schemaVersion: 'bayn.paper-intent-plan.v1',
+            schemaVersion: 'bayn.intent-plan.v2',
             ...target,
             notionalLimitMicros: risk.notionalLimitMicros,
+            limitPriceMicros: risk.limitPriceMicros,
             createdAt: document.createdAt,
           },
           {
@@ -1740,6 +1741,26 @@ describe('OBSERVE runtime composition', () => {
     ).toEqual({ kind: 'quote-bound', symbols: ['AAPL'] })
   })
 
+  test('each recovery pass selects one instrument market before advancing to the remaining holdings', () => {
+    const positions = ['TSLA', 'ETH/USD', 'BTC/USD', 'AAPL'].map((symbol) => ({
+      symbol,
+      quantityAtoms: '1000000000',
+    }))
+    expect(selectClosingSymbolPass(positions, ['AAPL'])).toEqual({
+      kind: 'broker-position',
+      symbols: ['BTC/USD', 'ETH/USD'],
+    })
+    expect(
+      selectClosingSymbolPass(
+        positions.filter(({ symbol }) => !symbol.includes('/')),
+        ['AAPL'],
+      ),
+    ).toEqual({
+      kind: 'broker-position',
+      symbols: ['TSLA'],
+    })
+  })
+
   test('uses the fractional pass only after external holdings are flat', () => {
     const positions = [
       { symbol: 'AAPL', quantityAtoms: '500000000' },
@@ -1755,12 +1776,12 @@ describe('OBSERVE runtime composition', () => {
         positions.filter(({ symbol }) => symbol === 'AAPL'),
         ['AAPL'],
       ),
-    ).toEqual({ kind: 'fractional', symbols: ['AAPL'] })
+    ).toEqual({ kind: 'quote-bound', symbols: ['AAPL'] })
   })
 
   test('projects accepted nonterminal intents as one unresolved order for the next risk pass', () => {
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v4',
       intentId: '1'.repeat(64),
       authorityGenerationHash: generationHash,
       riskDecisionId: '2'.repeat(64),
@@ -1772,10 +1793,11 @@ describe('OBSERVE runtime composition', () => {
       clientOrderId: 'accepted-prior-intent',
       symbol: 'NVDA',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '1000000000',
-      notionalLimitMicros: '100000001',
+      notionalLimitMicros: '100010000',
+      limitPriceMicros: '100010000',
       state: IntentState.Acknowledged,
       createdAt: evaluatedAt,
     }
@@ -1799,7 +1821,8 @@ describe('OBSERVE runtime composition', () => {
       brokerOrderId: accepted.brokerOrderId,
       clientOrderId: intent.clientOrderId,
       intentId: intent.intentId,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
+      limitPriceMicros: intent.limitPriceMicros,
       quantityAtoms: intent.quantityAtoms,
       status: OrderStatus.New,
       filledQuantityAtoms: '0',
@@ -1954,7 +1977,7 @@ describe('OBSERVE runtime composition', () => {
 
   test('executes unsubmitted intents and skips terminal intents in fresh mutation passes', () => {
     const base: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v4',
       intentId: '9'.repeat(64),
       authorityGenerationHash: generationHash,
       strategyName: 'risk-balanced-trend',
@@ -1965,10 +1988,11 @@ describe('OBSERVE runtime composition', () => {
       clientOrderId: 'fresh-pass-intent',
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.Planned,
       createdAt: evaluatedAt,
     }
@@ -4277,9 +4301,10 @@ describe('OBSERVE runtime composition', () => {
         return Effect.runPromise(
           planExecutionIntent(
             {
-              schemaVersion: 'bayn.paper-intent-plan.v1',
+              schemaVersion: 'bayn.intent-plan.v2',
               ...target,
               notionalLimitMicros: risk.notionalLimitMicros,
+              limitPriceMicros: risk.limitPriceMicros,
               createdAt: close.createdAt,
             },
             {
@@ -5251,9 +5276,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('decodes a versioned quote-bound LIMIT/IOC policy for intraday execution', async () => {
-    const policy = await Effect.runPromise(
-      loadQuoteBoundExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()),
-    )
+    const policy = await Effect.runPromise(loadExecutionRiskPolicy(accountId, [...fixtureProtocol.universe].reverse()))
 
     expect(policy).toMatchObject({
       schemaVersion: 'bayn.execution-risk-policy.v3',

@@ -136,7 +136,7 @@ const source = {
 }
 
 const intent = {
-  schemaVersion: 'bayn.paper-intent.v3' as const,
+  schemaVersion: 'bayn.execution-intent.v4' as const,
   intentId: hash('4'),
   authorityGenerationHash: hash('8'),
   strategyName: 'risk-balanced-trend',
@@ -147,13 +147,14 @@ const intent = {
   clientOrderId: order.clientOrderId,
   symbol: order.symbol,
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '200000000',
   state: IntentState.Planned,
   createdAt: instant,
-}
+} as const
 
 describe('execution contracts', () => {
   test('requires explicit position cost basis and rejects the retired position contract', async () => {

@@ -1,6 +1,6 @@
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
-import { quantityFromDecimal } from '../quantity'
-import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { quantityFromDecimal, quantityScale } from '../quantity'
+import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { Effect, Result } from 'effect'
 
 import {
@@ -402,18 +402,15 @@ export const validateIntentAuthorityBinding = Pipeable.dual(2, validateIntentAut
 const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
   intent.side === IntentOrderSide.Buy ? notional : -notional
 
-const parseCanonicalPositiveMicros = (value: string): bigint | undefined =>
-  /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
-
 export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
-  const notionalLimitMicros = parseCanonicalPositiveMicros(intent.notionalLimitMicros)
-  if (notionalLimitMicros === undefined) {
+  const price = orderPriceBoundaryMicros(intent)
+  if (Result.isFailure(price)) {
     return Result.fail({
       _tag: 'BoundedBrokerOrderInvalid',
       symbol: intent.symbol,
     })
   }
-  return Result.succeed(notionalLimitMicros)
+  return Result.succeed((BigInt(intent.quantityAtoms) * price.success + quantityScale - 1n) / quantityScale)
 }
 
 const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
@@ -1109,7 +1106,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
     limits,
     intent,
     cashSnapshot,
-    requestedNotional.success,
+    BigInt(intent.notionalLimitMicros),
     requestedNotional.success,
     openOrderNotionals.success,
     context,
@@ -1122,9 +1119,9 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
-  const transmit = (intent: Intent, closeOnly: boolean) =>
+  const transmit = (intent: Intent) =>
     dependencies
-      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent, closeOnly))
+      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
       .pipe(
         Effect.mapError((cause) =>
           cause instanceof BrokerMutationError
@@ -1132,14 +1129,14 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
             : mutationAuthorizationError('final broker submit authorization failed', cause),
         ),
       )
-  const submit = (intent: Intent, closeOnly = false) => {
+  const submit = (intent: Intent) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
       return Effect.fail(
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    return transmit(intent, closeOnly)
+    return transmit(intent)
   }
 
   return {

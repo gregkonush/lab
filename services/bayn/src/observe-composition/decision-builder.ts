@@ -1,6 +1,6 @@
-import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { accountTradingDate } from '../time'
-import { instrumentMarket, MarketKind } from '../instruments'
+import { MarketKind, instrumentMarket } from '../instruments'
 import { continuousMarketHours, type MarketHours } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { BrokerEnvironment } from '../broker/identity'
@@ -63,7 +63,7 @@ import {
 } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
-import { legacyRiskPolicySchemaVersion, legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
+import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import {
@@ -107,7 +107,6 @@ import {
 } from '../target-planner'
 import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
-import { defaultExecutionModel } from '../strategy/execution-model/model'
 import type { DecisionPlan, IsoDate } from '../types'
 import { mutationRunnerError } from './mutation-interpreter'
 import {
@@ -147,39 +146,6 @@ const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
 const loadExecutionRiskPolicyDataFirst = (
   accountId: string,
   allowedSymbols: readonly string[],
-  executionModel: CycleExecutionModel,
-  brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
-) =>
-  decodePolicy({
-    schemaVersion: isQuoteBoundExecutionModel(executionModel)
-      ? executionRiskPolicySchemaVersion
-      : legacyRiskPolicySchemaVersion,
-    accountId,
-    brokerMode: BrokerMode.Execution,
-    allowedSymbols: [...allowedSymbols].sort(),
-    allowedOrderTypes: [isQuoteBoundExecutionModel(executionModel) ? OrderType.Limit : OrderType.Market],
-    allowedTimeInForce: isQuoteBoundExecutionModel(executionModel)
-      ? [TimeInForce.Day, TimeInForce.ImmediateOrCancel]
-      : [TimeInForce.Day],
-    maxOpenOrders: allowedSymbols.length,
-    ...executionRiskLimits(brokerEnvironment),
-  })
-
-export const loadExecutionRiskPolicy = Pipeable.by<
-  (
-    allowedSymbols: readonly string[],
-    executionModel: CycleExecutionModel,
-    brokerEnvironment?: BrokerEnvironment,
-  ) => (accountId: string) => ReturnType<typeof loadExecutionRiskPolicyDataFirst>,
-  typeof loadExecutionRiskPolicyDataFirst
->((args) => typeof args[0] === 'string', loadExecutionRiskPolicyDataFirst)
-
-export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
-  loadExecutionRiskPolicyDataFirst(accountId, allowedSymbols, defaultExecutionModel)
-
-const loadQuoteBoundExecutionRiskPolicyDataFirst = (
-  accountId: string,
-  allowedSymbols: readonly string[],
   brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
 ) =>
   decodePolicy({
@@ -193,13 +159,16 @@ const loadQuoteBoundExecutionRiskPolicyDataFirst = (
     ...executionRiskLimits(brokerEnvironment),
   })
 
-export const loadQuoteBoundExecutionRiskPolicy = Pipeable.by<
+export const loadExecutionRiskPolicy = Pipeable.by<
   (
     allowedSymbols: readonly string[],
     brokerEnvironment?: BrokerEnvironment,
-  ) => (accountId: string) => ReturnType<typeof loadQuoteBoundExecutionRiskPolicyDataFirst>,
-  typeof loadQuoteBoundExecutionRiskPolicyDataFirst
->((args) => typeof args[0] === 'string', loadQuoteBoundExecutionRiskPolicyDataFirst)
+  ) => (accountId: string) => ReturnType<typeof loadExecutionRiskPolicyDataFirst>,
+  typeof loadExecutionRiskPolicyDataFirst
+>((args) => typeof args[0] === 'string', loadExecutionRiskPolicyDataFirst)
+
+export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
+  loadExecutionRiskPolicyDataFirst(accountId, allowedSymbols)
 
 type ObserveStrategy = StrategyRuntime
 
@@ -1227,7 +1196,6 @@ const reduceRiskInputs = (
             timeInForce: target.timeInForce,
             quantityAtoms: BigInt(target.quantityAtoms),
             referencePriceMicros: referencePrice,
-            executionModel: input.executionModel,
             limitSlippageBps: BigInt(input.limitSlippageBps),
           }),
           (pricing): ShadowDeltaRiskInput => {
@@ -1266,6 +1234,7 @@ const reduceRiskInputs = (
             return {
               symbol: target.symbol,
               notionalLimitMicros: pricing.notionalLimitMicros.toString(),
+              limitPriceMicros: pricing.expectedExecutionPriceMicros.toString(),
               state,
             }
           },
@@ -1531,7 +1500,7 @@ const recoverExecutionSession = (
 }
 
 export type ClosingSymbolPass = {
-  readonly kind: 'broker-position' | 'fractional' | 'quote-bound'
+  readonly kind: 'broker-position' | 'quote-bound'
   readonly symbols: readonly string[]
 }
 
@@ -1547,17 +1516,13 @@ export const selectClosingSymbolPass = (
   const externalSymbols = activePositions
     .filter(({ symbol }) => !allowedSymbols.has(symbol))
     .map(({ symbol }) => symbol)
-  if (externalSymbols.length > 0) return { kind: 'broker-position', symbols: externalSymbols }
-
-  const fractionalSymbols = activePositions
-    .filter(
-      ({ symbol, quantityAtoms }) =>
-        cashSpotClosingOrderType(instrumentMarket(symbol), BigInt(quantityAtoms)) === OrderType.Market,
-    )
-    .map(({ symbol }) => symbol)
-  return fractionalSymbols.length > 0
-    ? { kind: 'fractional', symbols: fractionalSymbols }
-    : { kind: 'quote-bound', symbols: activePositions.map(({ symbol }) => symbol) }
+  const symbols = externalSymbols.length > 0 ? externalSymbols : activePositions.map(({ symbol }) => symbol)
+  const first = symbols[0]
+  return {
+    kind: externalSymbols.length > 0 ? 'broker-position' : 'quote-bound',
+    symbols:
+      first === undefined ? [] : symbols.filter((symbol) => instrumentMarket(symbol) === instrumentMarket(first)),
+  }
 }
 
 export interface BuildClosingExecutionCycleDecisionInput<R = ReconciliationRuntime> {
@@ -1669,7 +1634,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       persistedUniverse ?? intradayParameters.universe,
     )
     const symbols = closingPass.symbols
-    const requiresFractionalClose = closingPass.kind === 'fractional'
+    const closingSymbol = symbols[0]
     const closeDecision = yield* Effect.fromResult(
       request.exitTarget === undefined
         ? makeClosingDecisionPlan(cycle.identity, symbols)
@@ -1851,73 +1816,36 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
             askPriceMicros: closeExecutionMarketData.askPriceMicros,
           }),
     ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
-    const reconciledEquityLimit =
-      reconciledPositionClose &&
-      symbols.every(
-        (symbol) =>
-          instrumentMarket(symbol) === MarketKind.Equity &&
-          cashSpotClosingOrderType(instrumentMarket(symbol), positionQuantities.get(symbol) ?? 0n) === OrderType.Limit,
-      )
     const plannerInput: TargetPlannerInput = {
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
       ...commonPlannerInput,
       referencePrices: prices,
       precision: {
-        quantityIncrementAtoms:
-          requiresFractionalClose || reconciledPositionClose ? '1' : executionModel.precision.quantityIncrementAtoms,
+        quantityIncrementAtoms: '1',
         priceIncrementMicros: executionModel.precision.priceIncrementMicros,
         minimumBuyNotionalMicros: executionModel.precision.minimumBuyNotionalMicros,
       },
       allocationCapitalMicros: '0',
-      executionTerms: reconciledPositionClose
-        ? {
-            executionPurpose: 'forced-close',
-            orderType: reconciledEquityLimit ? OrderType.Limit : OrderType.Market,
-            timeInForce: symbols.every((symbol) => instrumentMarket(symbol) === MarketKind.Crypto)
-              ? TimeInForce.GoodUntilCanceled
-              : TimeInForce.Day,
-            priceReference: 'reconciled-broker-position-mark',
-            snapshotId: closeExecutionMarketData.binding.snapshotId,
-            snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-            maximumBuyQuantityAtoms: maximumCloseBuyQuantityAtoms,
-            maximumSellQuantityAtoms: maximumCloseSellQuantityAtoms,
-          }
-        : requiresFractionalClose
-          ? {
-              executionPurpose: 'fractional-close',
-              orderType: OrderType.Market,
-              timeInForce: TimeInForce.Day,
-              priceReference: 'verified-adverse-quote-boundary',
-              snapshotId: closeExecutionMarketData.binding.snapshotId,
-              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-              maximumBuyQuantityAtoms: maximumCloseBuyQuantityAtoms,
-              maximumSellQuantityAtoms: maximumCloseSellQuantityAtoms,
-            }
-          : {
-              executionPurpose: 'forced-close',
-              orderType: OrderType.Limit,
-              timeInForce: cashSpotLimitTimeInForce(
-                cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-                  ? MarketKind.Crypto
-                  : MarketKind.Equity,
-              ),
-              priceReference: 'verified-adverse-quote-boundary',
-              snapshotId: closeExecutionMarketData.binding.snapshotId,
-              snapshotContentHash: closeExecutionMarketData.binding.contentHash,
-              maximumBuyQuantityAtoms: maximumCloseBuyQuantityAtoms,
-              maximumSellQuantityAtoms: maximumCloseSellQuantityAtoms,
-            },
+      executionTerms: {
+        executionPurpose: 'forced-close',
+        orderType: OrderType.Limit,
+        timeInForce: cashSpotLimitTimeInForce(
+          closingSymbol === undefined ? MarketKind.Equity : instrumentMarket(closingSymbol),
+        ),
+        priceReference: reconciledPositionClose ? 'reconciled-broker-position-mark' : 'verified-adverse-quote-boundary',
+        snapshotId: closeExecutionMarketData.binding.snapshotId,
+        snapshotContentHash: closeExecutionMarketData.binding.contentHash,
+        maximumBuyQuantityAtoms: maximumCloseBuyQuantityAtoms,
+        maximumSellQuantityAtoms: maximumCloseSellQuantityAtoms,
+      },
     }
     const targetPlan = yield* Effect.fromResult(planTargets(plannerInput)).pipe(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
-    const closeLimitSlippageBps =
-      (reconciledPositionClose && !reconciledEquityLimit) || requiresFractionalClose
-        ? undefined
-        : policy.maxAdverseSlippageBps
+    const closeLimitSlippageBps = policy.maxAdverseSlippageBps
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
-        limitSlippageBps: closeLimitSlippageBps ?? 0,
+        limitSlippageBps: closeLimitSlippageBps,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

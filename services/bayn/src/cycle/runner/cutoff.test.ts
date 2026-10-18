@@ -45,7 +45,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     }
     const document = Result.getOrThrow(
       makeObserveShadowDecisionDocument({
-        schemaVersion: 'bayn.observe-shadow-decision.v1',
+        schemaVersion: 'bayn.observe-shadow-decision.v2',
         mode: 'OBSERVE',
         dispatchable: false,
         bindings: {

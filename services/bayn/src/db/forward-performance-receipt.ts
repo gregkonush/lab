@@ -412,7 +412,7 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
                 SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
                 WHERE decision.cycle_id = cycle.cycle_id
                   AND decision.decision_hash = cycle.decision_hash
-                  AND decision.schema_version = 'bayn.paper-cycle-decision.v1'
+                  AND decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
                   AND decision.document ->> 'mode' = 'PAPER'
                   AND decision.document #>> '{bindings,accountId}' = generation.account_id
                   AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id

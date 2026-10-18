@@ -71,7 +71,7 @@ describePostgres('Forward-performance strategy generation binding', () => {
                 bindings: { accountId: 'account', qualificationRunId: hash('b'), authorityGenerationHash: hash('a') },
               }
               yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
-                'cycle', ${hash('d')}, 'bayn.paper-cycle-decision.v1', ${JSON.stringify(decision)}::jsonb
+                'cycle', ${hash('d')}, 'bayn.paper-cycle-decision.v2', ${JSON.stringify(decision)}::jsonb
               )`
               const fromDecision = yield* readForwardPerformanceStrategyRows(sql, 'account', hash('a'))
               const unscoped = yield* readForwardPerformanceStrategyRows(sql, 'account')

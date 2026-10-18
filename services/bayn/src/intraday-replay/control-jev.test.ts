@@ -11,7 +11,7 @@ import { JevError, type JevClient } from '../jev/client'
 import { JevFailure, prepareJevRequest, type JevRequest } from '../jev/contract'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { makeControlJevJournal } from './control-jev-journal'
 import { makeControlJev } from './control-jev'
 import { controlJevFixture } from './control-jev.test-support'
@@ -97,7 +97,7 @@ const simulate = (
             }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('managed-control-test', equityMarketProfile.universe)
+      const risk = yield* loadExecutionRiskPolicy('managed-control-test', equityMarketProfile.universe)
       const report = yield* runControlSession({
         policy: ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
