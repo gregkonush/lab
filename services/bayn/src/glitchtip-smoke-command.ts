@@ -12,6 +12,11 @@ if (!initializeErrorTracking(process.env['BAYN_ERROR_TRACKING_SERVICE'] || 'bayn
   throw new Error('GlitchTip smoke cannot run without a configured DSN')
 }
 Sentry.setTag('synthetic', 'true')
+let captured = false
+Sentry.addEventProcessor((event) => {
+  if (event.tags?.['stage'] === 'bayn.execution.cycle-pass' && event.tags?.['synthetic'] === 'true') captured = true
+  return event
+})
 NodeRuntime.runMain(
   Effect.gen(function* () {
     yield* observePass(() => Effect.void, {
@@ -23,14 +28,15 @@ NodeRuntime.runMain(
         message: 'GlitchTip synthetic handled cycle pass smoke',
       }),
     })
-    if (!(yield* Effect.promise(() => flushErrorTracking(5_000)))) {
+    const flushed = yield* Effect.promise(() => flushErrorTracking(5_000))
+    if (!captured || !flushed) {
       return yield* new OperationalError({
         component: 'http',
         operation: 'glitchtip-smoke',
         retryable: false,
-        message: 'GlitchTip synthetic integration event did not flush',
+        message: 'GlitchTip synthetic integration event was not captured and flushed',
       })
     }
-    yield* Effect.logInfo('Synthetic failed cycle pass was sent by the Sentry SDK')
+    yield* Effect.logInfo('Synthetic failed cycle pass was captured and flushed; verify the server receipt')
   }),
 )
