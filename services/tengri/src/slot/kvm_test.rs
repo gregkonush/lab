@@ -345,6 +345,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO before:\n{}",
+            index + 1,
+            fs::read_to_string("/sys/fs/cgroup/io.stat").await?
+        );
+        eprintln!(
+            "real KVM resume {} memory before: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
         let started = Instant::now();
         let stage = |name: &str| {
             eprintln!(
@@ -378,6 +388,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO after:\n{}",
+            index + 1,
+            fs::read_to_string("/sys/fs/cgroup/io.stat").await?
+        );
+        eprintln!(
+            "real KVM resume {} memory after: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
     }
     let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.open_browser().await?;
@@ -403,16 +423,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
     client.lifecycle("stop", &claim, fence).await?;
-    timings.sort_by(f64::total_cmp);
-    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
-    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
+    let mut sorted_timings = timings.clone();
+    sorted_timings.sort_by(f64::total_cmp);
+    let p95 = (samples >= 50).then(|| sorted_timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(sorted_timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
         "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
         "cpuMax":cpu_max.trim(),
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
-        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
+        "resumeP50Ms":sorted_timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":sorted_timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
         "browserStarted":true,"browserComputerToolInstalled":true,
@@ -863,7 +884,18 @@ async fn cgroup_memory() -> anyhow::Result<serde_json::Value> {
     for line in status.lines() {
         let mut fields = line.split_whitespace();
         let key = fields.next().context("empty cgroup counter")?;
-        if ["anon", "file", "file_dirty", "file_writeback"].contains(&key) {
+        if [
+            "anon",
+            "file",
+            "file_dirty",
+            "file_writeback",
+            "pgfault",
+            "pgmajfault",
+            "pgscan",
+            "pgsteal",
+        ]
+        .contains(&key)
+        {
             values.insert(
                 key.into(),
                 json!(
