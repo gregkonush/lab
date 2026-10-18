@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
-import { readCashReportingOffsets } from './cash-reporting'
+import { readCashReportingOffsets, readUnaccountedCashSettlementCount } from './cash-reporting'
 import { StoredCashSettlementSchema } from '../../accounting/cash-settlement'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 import { StoredFeeSchema, brokerFeeCashDeltaMicros } from '../../accounting/broker-fees'
@@ -445,18 +445,11 @@ export const readForwardPerformancePostgresDataFirst = (
             AND (data->>'occurredAt')::timestamptz<=${accountReconciledAt ?? null}::timestamptz
           ORDER BY transaction_id COLLATE "C"
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
-        const [unaccountedCashSettlements] = yield* sql`
-          SELECT count(*)::integer AS count FROM accounting_transactions t
-          WHERE t.account_id=${accountId} AND t.occurred_at<=${accountReconciledAt ?? null}::timestamptz
-            AND mod(t.cash_delta_micros,(
-              SELECT reporting.quantum_micros FROM account_cash_reporting reporting
-              JOIN account_snapshots a ON a.event_id=reporting.account_event_id
-              JOIN broker_events e ON e.event_id=a.event_id
-              WHERE a.account_id=t.account_id AND e.observed_at<=${accountReconciledAt ?? null}::timestamptz
-              ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1))<>0
-            AND NOT EXISTS(SELECT 1 FROM broker_cash_settlements s WHERE s.transaction_id=t.transaction_id
-              AND s.posted_at<=${accountReconciledAt ?? null}::timestamptz)
-        `.pipe(Effect.flatMap(decodeCount))
+        const unaccountedCashSettlements = yield* readUnaccountedCashSettlementCount(
+          sql,
+          accountId,
+          accountReconciledAt,
+        )
         const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeReceipts),
         )
@@ -990,7 +983,7 @@ export const readForwardPerformancePostgresDataFirst = (
               }),
           brokerFeeAccrualRecords,
           cashSettlementRecords,
-          unaccountedCashSettlementCount: unaccountedCashSettlements.count,
+          unaccountedCashSettlementCount: unaccountedCashSettlements,
           brokerFeeRecords: brokerFeeRows.map(
             ({
               includes_generation: _owned,
