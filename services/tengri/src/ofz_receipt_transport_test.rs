@@ -3,7 +3,7 @@ use std::{
     convert::Infallible,
     future::Future,
     pin::Pin,
-    sync::atomic::{AtomicBool, Ordering},
+    sync::atomic::{AtomicBool, AtomicU64, Ordering},
 };
 use tokio::sync::Mutex;
 
@@ -12,6 +12,7 @@ struct CheckService {
     calls: Arc<Mutex<Vec<CheckRequest>>>,
     allowed: Arc<AtomicBool>,
     concurrent: Arc<Mutex<Option<Arc<tokio::sync::Barrier>>>>,
+    delay_ms: Arc<AtomicU64>,
 }
 
 impl tonic::server::UnaryService<CheckRequest> for CheckService {
@@ -29,6 +30,10 @@ impl tonic::server::UnaryService<CheckRequest> for CheckService {
                 request.stream_receipt_id.clone()
             };
             service.calls.lock().await.push(request);
+            tokio::time::sleep(Duration::from_millis(
+                service.delay_ms.load(Ordering::SeqCst),
+            ))
+            .await;
             let concurrent = service.concurrent.lock().await.clone();
             if let Some(concurrent) = concurrent {
                 concurrent.wait().await;
@@ -54,6 +59,7 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         calls: Arc::new(Mutex::new(Vec::new())),
         allowed: Arc::new(AtomicBool::new(true)),
         concurrent: Arc::new(Mutex::new(None)),
+        delay_ms: Arc::new(AtomicU64::new(0)),
     };
     let incoming = service.clone();
     let server = tokio::spawn(async move {
@@ -235,5 +241,41 @@ async fn repeated_reads_still_call_ofz_and_control_submissions_keep_distinct_aud
         "an expired queued request must never reach Ofz"
     );
     drop(guard);
+
+    // The BFF assertion is checked on controller admission; a durable Ofz audit is
+    // followed by a fresh policy decision, rather than extending that assertion.
+    let principal = crate::auth::Principal::fixture(&"a".repeat(64), uid, Action::FilesObserve);
+    let access = crate::authz::WorkspaceAuthorization::new(client)
+        .access(
+            &principal,
+            uid,
+            &principal.context.runtime_epoch,
+            "/workspace/slow-audit",
+        )
+        .unwrap();
+    service.delay_ms.store(6100, Ordering::SeqCst);
+    access
+        .require()
+        .await
+        .expect("durable audit must outlive a five-second commit stall");
+    let last = service.calls.lock().await.last().cloned().unwrap();
+    assert!(last.context.unwrap().deadline_unix_ms > now_ms().unwrap());
+
+    service.delay_ms.store(0, Ordering::SeqCst);
+    service.allowed.store(false, Ordering::SeqCst);
+    assert_eq!(
+        access.require().await.unwrap_err().code(),
+        tonic::Code::PermissionDenied,
+        "a committed receipt must still check current revocation"
+    );
+
+    service.allowed.store(true, Ordering::SeqCst);
+    service.delay_ms.store(2100, Ordering::SeqCst);
+    let started = tokio::time::Instant::now();
+    assert!(
+        access.require().await.is_err(),
+        "receipt revalidation must retain its two-second deadline"
+    );
+    assert!(started.elapsed() < Duration::from_millis(2100));
     server.abort();
 }

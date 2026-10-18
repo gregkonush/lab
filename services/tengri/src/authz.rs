@@ -497,11 +497,7 @@ impl WorkspaceAccess {
                     } else {
                         2000
                     };
-                context.deadline_unix_ms = if receipt.is_empty() {
-                    self.context.deadline_unix_ms.min(decision_deadline)
-                } else {
-                    decision_deadline
-                };
+                context.deadline_unix_ms = decision_deadline;
                 let decision = client
                     .check(
                         context.clone(),

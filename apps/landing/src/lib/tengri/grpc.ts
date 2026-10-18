@@ -47,7 +47,7 @@ import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
 import type { CodexHistoryPage } from './codex-history'
 
-const DEFAULT_GRPC_DEADLINE_MS = 15_000
+const DEFAULT_GRPC_DEADLINE_MS = 35_000
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
@@ -896,6 +896,7 @@ async function metadata(
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
+  context.deadlineUnixMs = BigInt(Date.now() + 5000)
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {

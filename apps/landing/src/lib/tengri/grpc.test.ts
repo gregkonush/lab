@@ -1002,7 +1002,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { resumeAgent } = await import('./grpc')
     const started = Date.now()
     expect((await resumeAgent(identity, 'agent-test', workspaceUid, randomUUID())).id).toBe('agent-test')
-    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 5000)
+    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 30_000)
     expect(receivedCommandDeadline).toBeGreaterThan(started)
   })
 
