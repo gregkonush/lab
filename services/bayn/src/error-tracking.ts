@@ -3,6 +3,7 @@ import { trace } from '@opentelemetry/api'
 import { Cause, Effect } from 'effect'
 import { embeddedBuildMetadata } from './build'
 import type { Reconciliation } from './execution/contracts'
+import type { CycleRunnerError } from './cycle/runner'
 
 /**
  * Error-only GlitchTip reporting. Existing Effect/OpenTelemetry tracing remains
@@ -104,7 +105,18 @@ export const reportError = (error: unknown, service: string): void => {
   })
 }
 
-/** Only report a terminal Effect cause. Typed intermediate failures are not issues. */
+export const reportCyclePassFailure = (error: CycleRunnerError): Effect.Effect<void> =>
+  Effect.sync(() => {
+    if (!initialized) return
+    Sentry.withScope((scope) => {
+      scope.setTag('stage', 'bayn.execution.cycle-pass')
+      scope.setTag('operation', error.operation)
+      scope.setTag('failure', error.failure)
+      reportError(error, initializedService)
+    })
+  }).pipe(Effect.catchCause(() => Effect.logWarning('GlitchTip cycle failure could not be captured')))
+
+/** Process-terminal causes; completed failed cycle passes report at their observation boundary. */
 export const reportTerminalFailure =
   (service: string) =>
   <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>

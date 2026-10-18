@@ -125,7 +125,6 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Ofz authority is unavailable")?;
     let auth = auth::Authenticator::new(
-        database.clone(),
         &PathBuf::from(required_env("TENGRI_INTERNAL_HMAC_KEY_FILE")?),
         desktop_origin,
     )?;

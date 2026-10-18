@@ -188,6 +188,7 @@ message CodexLoginState {
 message CodexApproval {
   string approval_id = 1;
   string decision = 2;
+  bytes response_json = 3;
 }
 message CodexWatch {
   uint64 after = 1;
