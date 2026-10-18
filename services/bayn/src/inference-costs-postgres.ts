@@ -76,7 +76,9 @@ export const readInferenceExpenseSnapshot = (
           return {
             evidence: {
               ...evidence,
-              requests: evidence.requests.toSorted((left, right) => left.requestId.localeCompare(right.requestId)),
+              requests: evidence.requests.toSorted((left, right) =>
+                left.requestId < right.requestId ? -1 : left.requestId > right.requestId ? 1 : 0,
+              ),
             },
             quotes,
           }
