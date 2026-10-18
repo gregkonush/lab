@@ -450,6 +450,11 @@
   },
   {
     "surface": "bff",
+    "operation": "answer-questions",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "resolve-approval",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -696,6 +701,11 @@
     "surface": "bff_http",
     "operation": "GET /api/tengri/events",
     "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/attachments",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "bff_http",

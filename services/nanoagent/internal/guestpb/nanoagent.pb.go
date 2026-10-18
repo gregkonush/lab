@@ -1958,6 +1958,7 @@ type CodexApproval struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	ApprovalId    string                 `protobuf:"bytes,1,opt,name=approval_id,json=approvalId,proto3" json:"approval_id,omitempty"`
 	Decision      string                 `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
+	ResponseJson  []byte                 `protobuf:"bytes,3,opt,name=response_json,json=responseJson,proto3" json:"response_json,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -2004,6 +2005,13 @@ func (x *CodexApproval) GetDecision() string {
 		return x.Decision
 	}
 	return ""
+}
+
+func (x *CodexApproval) GetResponseJson() []byte {
+	if x != nil {
+		return x.ResponseJson
+	}
+	return nil
 }
 
 type CodexWatch struct {
@@ -2312,11 +2320,12 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\vresult_json\x18\x02 \x01(\fR\n" +
 	"resultJson\x12\x1d\n" +
 	"\n" +
-	"started_at\x18\x03 \x01(\tR\tstartedAt\"L\n" +
+	"started_at\x18\x03 \x01(\tR\tstartedAt\"q\n" +
 	"\rCodexApproval\x12\x1f\n" +
 	"\vapproval_id\x18\x01 \x01(\tR\n" +
 	"approvalId\x12\x1a\n" +
-	"\bdecision\x18\x02 \x01(\tR\bdecision\"\"\n" +
+	"\bdecision\x18\x02 \x01(\tR\bdecision\x12#\n" +
+	"\rresponse_json\x18\x03 \x01(\fR\fresponseJson\"\"\n" +
 	"\n" +
 	"CodexWatch\x12\x14\n" +
 	"\x05after\x18\x01 \x01(\x04R\x05after\"|\n" +

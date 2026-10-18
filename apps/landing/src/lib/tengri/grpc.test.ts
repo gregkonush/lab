@@ -1469,6 +1469,17 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('sends validated user answers separately from approval decisions', async () => {
+    const { answerCodexQuestions } = await import('./grpc')
+    const response = { answers: { environment: { answers: ['Staging'] } } }
+    await answerCodexQuestions(identity, 'agent-test', 'question-1', response)
+    if (!receivedRequest) throw new Error('The question response did not reach the gRPC server')
+    expect(receivedRequest.agentId).toBe('agent-test')
+    expect(receivedRequest.approvalId).toBe('question-1')
+    expect(receivedRequest.decision).toBe('CODEX_APPROVAL_DECISION_UNSPECIFIED')
+    expect(JSON.parse(Buffer.from(receivedRequest.responseJson as Uint8Array).toString())).toEqual(response)
+  })
+
   test('preserves structured command approval decisions across gRPC', async () => {
     const { resolveCodexApproval } = await import('./grpc')
 
@@ -1477,6 +1488,7 @@ describe('Tengri gRPC BFF transport', () => {
       agentId: 'agent-test',
       approvalId: 'approval-1',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
+      responseJson: Buffer.alloc(0),
     })
 
     await resolveCodexApproval(identity, 'agent-test', 'approval-2', 'approve-network-policy-amendment')
@@ -1484,6 +1496,7 @@ describe('Tengri gRPC BFF transport', () => {
       agentId: 'agent-test',
       approvalId: 'approval-2',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
+      responseJson: Buffer.alloc(0),
     })
   })
 

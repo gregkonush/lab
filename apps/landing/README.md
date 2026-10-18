@@ -241,6 +241,12 @@ Code runs the upstream VS Code workbench through [code-server 4.135.0](https://g
 servers, and extensions are native workbench features. Extensions use Open VSX; Microsoft Marketplace-only extensions
 may not be available in this distribution. The old Monaco shell and its browser dependency have been removed.
 
+The composer's **Approvals** selector offers **Ask first** and **Auto approve**. The browser remembers this per
+workspace and automatically resolves advertised action confirmations while the chat is open. Questions remain manual:
+native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
+The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
+the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
 

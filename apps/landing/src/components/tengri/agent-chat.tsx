@@ -53,7 +53,10 @@ import {
   upsertStoredConversation,
   type StoredConversation,
 } from './agent-conversation-storage'
+import { CodexQuestionCard } from './codex-question-card'
+import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
+import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
 import { WorkspaceFileLinkProvider } from './workspace-file-link'
 import { CodexCopyButton } from './codex-copy-button'
 import {
@@ -110,6 +113,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [events, setEvents] = useState<CodexBufferedEvent[]>([])
   const retainedEvents = useRef<CodexBufferedEvent[]>([])
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
+  const [approvalMode, setApprovalMode] = useState<ApprovalMode>(() => readApprovalMode(agentId))
+  const autoApprovalAttempts = useRef(new Set<string>())
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -276,6 +281,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEvents([])
     retainedEvents.current = []
     setSubmittedPrompts([])
+    setApprovalMode(readApprovalMode(agentId))
+    autoApprovalAttempts.current.clear()
     draftsRef.current.clear()
     lastScrollTop.current = 0
     setPrompt('')
@@ -752,6 +759,23 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       ),
     )
   }, [currentSubmissions, livePromptMatches, threadId])
+  useEffect(() => {
+    if (approvalMode !== 'auto') return
+    const pendingIds = new Set(renderedEvents.map(({ event }) => event.approvalId))
+    for (const id of autoApprovalAttempts.current) if (!pendingIds.has(id)) autoApprovalAttempts.current.delete(id)
+    for (const { event } of renderedEvents) {
+      const decision = automaticApprovalDecision(event)
+      if (
+        !decision ||
+        !event.approvalId ||
+        autoApprovalAttempts.current.has(event.approvalId) ||
+        resolvingApprovals.has(event.approvalId)
+      )
+        continue
+      autoApprovalAttempts.current.add(event.approvalId)
+      void resolveApproval(event, decision)
+    }
+  }, [approvalMode, renderedEvents, resolvingApprovals, resolveApproval])
   for (const { prompt, beforeItemId } of pendingPrompts) {
     const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
@@ -771,6 +795,26 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
+    const question = codexQuestionRequest(event)
+    if (question)
+      return (
+        <CodexQuestionCard
+          key={event.approvalId}
+          agentId={agentId}
+          approvalId={event.approvalId}
+          request={question}
+          onAnswered={() => {
+            retainedEvents.current = retainedEvents.current.filter((item) => item.approvalId !== event.approvalId)
+            setEvents((current) => current.filter((item) => item.approvalId !== event.approvalId))
+          }}
+        />
+      )
+    if (
+      approvalMode === 'auto' &&
+      automaticApprovalDecision(event) &&
+      (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
+    )
+      return null
     return (
       <CodexEventCard
         key={codexEventWrapperKey(event)}
@@ -1080,19 +1124,30 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }
 
-  const approvalPending = renderedEvents.some(({ event }) => event.kind === 'approval' && event.approvalId)
+  const approvalPending = renderedEvents.some(
+    ({ event }) =>
+      event.kind === 'approval' &&
+      event.approvalId &&
+      !(
+        approvalMode === 'auto' &&
+        automaticApprovalDecision(event) &&
+        (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
+      ),
+  )
   const agentStatus =
     eventStreamState === 'reconnecting'
       ? 'Reconnecting'
       : replayRecovering
         ? 'Recovering'
-        : approvalPending
-          ? 'Approval needed'
-          : activeTurnId || submitting
-            ? 'Working'
-            : eventStreamState === 'connecting'
-              ? 'Connecting'
-              : 'Ready'
+        : renderedEvents.some(({ event }) => codexQuestionRequest(event))
+          ? 'Input requested'
+          : approvalPending
+            ? 'Approval needed'
+            : activeTurnId || submitting
+              ? 'Working'
+              : eventStreamState === 'connecting'
+                ? 'Connecting'
+                : 'Ready'
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
@@ -1390,6 +1445,30 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   ) : null}
                 </div>
                 <div className="flex items-end gap-2 px-2 pt-1 pb-2">
+                  <Select
+                    value={approvalMode}
+                    onValueChange={(value) => {
+                      const next = value === 'auto' ? 'auto' : 'ask'
+                      autoApprovalAttempts.current.clear()
+                      setApprovalMode(next)
+                      if (!writeApprovalMode(agentId, next))
+                        setSelectionWarning(
+                          'Browser storage is unavailable. Approval mode lasts until this tab closes.',
+                        )
+                    }}
+                  >
+                    <SelectTrigger
+                      aria-label="Approvals"
+                      title="Automatically approve command, file and connected-app actions while this chat is open. Questions still need your answer."
+                      className="h-8 w-auto shrink-0 border-transparent bg-transparent px-2 text-label-12 text-zinc-400"
+                    >
+                      <SelectValue>{approvalMode === 'auto' ? 'Auto approve' : 'Ask first'}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent side="top">
+                      <SelectItem value="ask">Ask first</SelectItem>
+                      <SelectItem value="auto">Auto approve</SelectItem>
+                    </SelectContent>
+                  </Select>
                   <CodexModelPicker
                     disabled={Boolean(activeTurnId) || submitting || replayRecovering}
                     error={modelError}

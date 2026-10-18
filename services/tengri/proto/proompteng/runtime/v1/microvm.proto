@@ -245,6 +245,7 @@ message ResolveCodexApprovalRequest {
   string agent_id = 1;
   string approval_id = 2;
   CodexApprovalDecision decision = 3;
+  bytes response_json = 4;
 }
 
 message CodexAccount {

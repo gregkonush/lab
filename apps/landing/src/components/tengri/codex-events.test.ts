@@ -96,6 +96,22 @@ describe('Accepted prompt retention', () => {
 })
 
 describe('Codex event replay', () => {
+  test('keeps one pending request when an approval is replayed with a newer sequence', () => {
+    const approval = {
+      ...event,
+      kind: 'approval' as const,
+      method: 'item/commandExecution/requestApproval',
+      approvalId: 'request-1',
+      text: 'Run the check?',
+    }
+    const first = appendCodexEvent([], approval)
+    const replayed = appendCodexEvent(first, { ...approval, sequence: 8, text: 'Run the updated check?' })
+    expect(replayed).toHaveLength(1)
+    expect(replayed[0].text).toBe('Run the updated check?')
+    expect(appendCodexEvent(replayed, approval)).toBe(replayed)
+    expect(appendCodexEvent(replayed, { ...approval, sequence: 9, approvalId: 'request-2' })).toHaveLength(2)
+  })
+
   const runtimeError: TengriCodexEvent = {
     ...event,
     kind: 'error',

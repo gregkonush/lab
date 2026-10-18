@@ -66,6 +66,22 @@ describe('Codex event rows', () => {
     expect(html).not.toContain('src="https://example.com')
   })
 
+  test('bounds and deduplicates local Markdown images including reference links', () => {
+    const text =
+      Array.from({ length: 8 }, (_, index) => `![Plot ${index}](/workspace/plot-${index}.png)`).join('\n\n') +
+      '\n\n![Repeated](/workspace/plot-0.png)\n\n![Reference][plot]\n\n[plot]: /workspace/plot-7.png'
+    const html = renderToString(
+      createElement(
+        WorkspaceFileLinkProvider,
+        { agentId: 'microvm-ada' },
+        createElement(CodexEventCard, { kind: 'assistant-text', text }),
+      ),
+    )
+    expect(html.match(/<img /g)).toHaveLength(4)
+    expect(html).toContain('preview limit reached')
+    expect(html).toContain('repeated image')
+  })
+
   test('recognizes Mermaid fences while retaining source for server rendering and loading', () => {
     const html = renderToString(
       createElement(CodexEventCard, {

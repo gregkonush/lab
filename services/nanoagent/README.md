@@ -106,6 +106,12 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
+requests. `ResolveCodexApproval.response_json` delivers explicit answers using the same generation-fenced reply path.
+The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
+replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
+Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.
+
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
 

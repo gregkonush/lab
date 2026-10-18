@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
 import { finderCanPreviewText } from './finder-model'
@@ -229,7 +230,7 @@ function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTa
           ) : (
             <div className="break-words [&_h1]:my-3 [&_h1]:text-heading-20 [&_h2]:my-3 [&_h2]:text-heading-16 [&_h3]:my-2 [&_h3]:text-heading-14 [&_p]:my-2 [&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_pre]:overflow-auto [&_pre]:p-3 [&_pre]:bg-zinc-900 [&_code]:font-mono [&_table]:block [&_table]:overflow-auto [&_td]:p-2 [&_th]:p-2 [&_blockquote]:border-l [&_blockquote]:pl-3">
               <ReactMarkdown
-                remarkPlugins={[remarkGfm]}
+                remarkPlugins={[remarkGfm, [remarkWorkspaceImageBudget, { basePath: file.path }]]}
                 components={{
                   a: ({ href, children }) => (
                     <WorkspaceFileLink href={href} basePath={file.path}>

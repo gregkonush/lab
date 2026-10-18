@@ -621,6 +621,22 @@ export async function interruptCodexTurn(identity: TengriIdentity, agentId: stri
   await unary('interruptCodexTurn', { agentId, threadId, turnId }, identity)
 }
 
+export async function answerCodexQuestions(
+  identity: TengriIdentity,
+  agentId: string,
+  approvalId: string,
+  response: import('./codex-input').TengriCodexInputResponse,
+) {
+  const { codexInputResponseSchema } = await import('./codex-input')
+  const validated = codexInputResponseSchema.parse(response)
+  await unary<RawRecord>(
+    'resolveCodexApproval',
+    { agentId, approvalId, responseJson: Buffer.from(JSON.stringify(validated)) },
+    identity,
+    130_000,
+  )
+}
+
 export async function resolveCodexApproval(
   identity: TengriIdentity,
   agentId: string,

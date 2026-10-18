@@ -120,6 +120,20 @@ export function appendCodexEvent(
     )
   }
   if (isRawReasoningDelta(event)) return current
+  if (event.kind === 'approval' && event.approvalId) {
+    const index = current.findIndex(
+      (candidate) =>
+        candidate.kind === 'approval' &&
+        candidate.approvalId === event.approvalId &&
+        candidate.threadId === event.threadId,
+    )
+    if (index >= 0) {
+      if (current[index]!.sequence >= event.sequence) return current
+      const next = [...current]
+      next[index] = { ...event, text: truncateEventText(event.text) }
+      return next
+    }
+  }
   const key = codexEventKey(event)
   if (current.some((candidate) => codexEventKey(candidate) === key)) return current
   const eventText = commandOutputDeltaText(event)
@@ -296,7 +310,9 @@ export function codexApprovalTitle(event: TengriCodexEvent): string | undefined 
 export function codexApprovalDecisions(event: TengriCodexEvent): CodexApprovalDecision[] {
   if (event.kind !== 'approval') return []
   const params = record(parseRawEvent(event.rawJson).params)
+  if (event.method === 'item/tool/requestUserInput') return []
   if (event.method === 'mcpServer/elicitation/request') {
+    if (params.mode === 'url' || Object.keys(record(record(params.requestedSchema).properties)).length > 0) return []
     const meta = record(params._meta)
     if (meta.codex_approval_kind !== 'mcp_tool_call') return []
     const persist = meta.persist

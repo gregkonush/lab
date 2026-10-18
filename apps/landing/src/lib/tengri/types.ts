@@ -191,6 +191,12 @@ export type TengriAction =
       text: string
       images: import('./codex-images').TengriCodexImage[]
     }
+  | {
+      action: 'answer-questions'
+      agentId: string
+      approvalId: string
+      response: import('./codex-input').TengriCodexInputResponse
+    }
   | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
   | {
       action: 'resolve-approval'

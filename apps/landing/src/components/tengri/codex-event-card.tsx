@@ -5,6 +5,7 @@ import { memo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 
 import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
@@ -299,7 +300,7 @@ function MessageImage({ src, index }: { src: string; index: number }) {
 function Markdown({ text }: { text: string }) {
   return (
     <div className="min-w-0 break-words [&>p+p]:mt-3.5 [&_a]:text-blue-300 [&_a]:underline [&_a]:decoration-blue-300/40 [&_a]:underline-offset-4 [&_blockquote]:my-3.5 [&_blockquote]:border-l-2 [&_blockquote]:border-zinc-600 [&_blockquote]:pl-4 [&_blockquote]:text-zinc-400 [&_:not(pre)>code]:rounded-md [&_:not(pre)>code]:bg-zinc-800/90 [&_:not(pre)>code]:px-1.5 [&_:not(pre)>code]:py-0.5 [&_:not(pre)>code]:font-mono [&_:not(pre)>code]:text-copy-13-mono [&_h1]:mb-3 [&_h1]:text-heading-20 [&_h2]:mt-5 [&_h2]:mb-2 [&_h2]:text-heading-16 [&_h3]:mt-4 [&_h3]:mb-2 [&_h3]:text-heading-14 [&_li+li]:mt-1.5 [&_ol]:my-3.5 [&_ol]:list-decimal [&_ol]:pl-5 [&_ul]:my-3.5 [&_ul]:list-disc [&_ul]:pl-5 [&_input]:mr-2 [&_input]:accent-blue-500 [&_hr]:my-5 [&_hr]:border-zinc-800">
-      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm]}>
+      <ReactMarkdown components={markdownComponents} remarkPlugins={[remarkGfm, remarkWorkspaceImageBudget]}>
         {text}
       </ReactMarkdown>
     </div>

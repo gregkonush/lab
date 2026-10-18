@@ -6831,3 +6831,212 @@ test('retains accepted steering messages when replay recovery has not persisted 
   await expect(message).toHaveText('Also include the deployment notes.')
   await expect(message).toHaveCount(1)
 })
+
+test('auto-approves actions while keeping questions and elicitation forms manual', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toBeVisible()
+  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Auto approve')
+  const base = {
+    kind: 'approval',
+    threadId: 'thread-active',
+    turnId: 'turn-active',
+    itemId: '',
+    text: '',
+    rawJson: '{}',
+  }
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 1,
+    method: 'item/commandExecution/requestApproval',
+    approvalId: 'command-1',
+    rawJson: JSON.stringify({ params: { availableDecisions: ['accept', 'decline'] } }),
+  })
+  await expect
+    .poll(() => mock.actions.filter((action) => action.action === 'resolve-approval'))
+    .toMatchObject([{ approvalId: 'command-1', decision: 'approve-once' }])
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 2,
+    method: 'mcpServer/elicitation/request',
+    approvalId: 'github-1',
+    rawJson: JSON.stringify({
+      params: {
+        mode: 'form',
+        requestedSchema: { type: 'object', properties: {} },
+        _meta: { codex_approval_kind: 'mcp_tool_call' },
+      },
+    }),
+  })
+  await expect.poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length).toBe(2)
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 3,
+    method: 'item/tool/requestUserInput',
+    approvalId: 'question-1',
+    rawJson: JSON.stringify({
+      params: {
+        questions: [
+          {
+            id: 'environment',
+            question: 'Which environment?',
+            isOther: true,
+            options: [
+              { label: 'Staging', description: 'Preview only' },
+              { label: 'Production', description: 'Live environment' },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  const question = tengri.getByRole('article', { name: 'Agent question' })
+  await expect(question).toContainText('Which environment?')
+  await page.screenshot({ path: 'test-results/tengri-question-controls.png' })
+  expect(mock.actions.some((action) => action.approvalId === 'question-1')).toBe(false)
+  await question.getByRole('radio', { name: /Staging/ }).check()
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.approvalId === 'question-1'))
+    .toMatchObject({ action: 'answer-questions', response: { answers: { environment: { answers: ['Staging'] } } } })
+  await expect(question).toHaveCount(0)
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 4,
+    method: 'mcpServer/elicitation/request',
+    approvalId: 'form-1',
+    rawJson: JSON.stringify({
+      params: {
+        mode: 'form',
+        message: 'Name the release',
+        requestedSchema: {
+          type: 'object',
+          properties: { name: { type: 'string', title: 'Release name' } },
+          required: ['name'],
+        },
+      },
+    }),
+  })
+  await expect(question.getByRole('textbox', { name: 'Release name', exact: true })).toBeVisible()
+  expect(mock.actions.some((action) => action.approvalId === 'form-1')).toBe(false)
+  await question.getByRole('textbox', { name: 'Release name', exact: true }).fill('Preview')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.approvalId === 'form-1'))
+    .toMatchObject({ action: 'answer-questions', response: { action: 'accept', content: { name: 'Preview' } } })
+  await expect(question).toHaveCount(0)
+  await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toContainText('Auto approve')
+  expect(await page.evaluate(() => localStorage.getItem('tengri-approval-mode:microvm-ada'))).toBe('auto')
+  await selectCodexOption(page, tengri.getByRole('combobox', { name: 'Approvals', exact: true }), 'Ask first')
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 5,
+    method: 'item/commandExecution/requestApproval',
+    approvalId: 'manual-command',
+    text: 'Run the tests?',
+  })
+  await expect(tengri.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
+  expect(mock.actions.some((action) => action.approvalId === 'manual-command')).toBe(false)
+})
+
+test('keeps failed question answers editable and requires explicit URL completion in auto mode', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+    localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+  })
+  let attempts = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'answer-questions')
+      return route.fallback()
+    if (++attempts === 1)
+      return route.fulfill({ status: 503, json: { error: 'The answer service is temporarily unavailable' } })
+    return route.fallback()
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toContainText('Auto approve')
+  const base = { kind: 'approval', threadId: 'thread-active', turnId: 'turn-active', itemId: '', text: '' }
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 1,
+    method: 'item/tool/requestUserInput',
+    approvalId: 'question-retry',
+    rawJson: JSON.stringify({ params: { questions: [{ id: 'notes', question: 'Any deployment notes?' }] } }),
+  })
+  const question = tengri.getByRole('article', { name: 'Agent question' })
+  await question.getByRole('textbox', { name: 'Any deployment notes?', exact: true }).fill('Keep the retained files')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question.getByRole('alert')).toContainText('The answer service is temporarily unavailable')
+  await expect(question.getByRole('textbox')).toHaveValue('Keep the retained files')
+  await question.getByRole('button', { name: 'Submit answers', exact: true }).click()
+  await expect(question).toHaveCount(0)
+  await emitCodexEvent(page, {
+    ...base,
+    sequence: 2,
+    method: 'mcpServer/elicitation/request',
+    approvalId: 'url-1',
+    rawJson: JSON.stringify({
+      params: { mode: 'url', message: 'Connect the account', url: 'https://example.test/authorize' },
+    }),
+  })
+  await expect(question.getByRole('link', { name: 'Open request', exact: true })).toHaveAttribute(
+    'href',
+    'https://example.test/authorize',
+  )
+  expect(mock.actions.some((action) => action.approvalId === 'url-1')).toBe(false)
+  expect((await new AxeBuilder({ page }).include('[aria-label="Agent question"]').analyze()).violations).toEqual([])
+  await question.getByRole('button', { name: 'Done', exact: true }).click()
+  await expect
+    .poll(() => mock.actions.find((action) => action.approvalId === 'url-1'))
+    .toMatchObject({ action: 'answer-questions', response: { action: 'accept' } })
+})
+
+test('shows failed auto-approvals for manual retry without repeatedly submitting them', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+    }),
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+    localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+  })
+  let attempts = 0
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'resolve-approval')
+      return route.fallback()
+    attempts += 1
+    return route.fulfill({ status: 503, json: { error: 'Approval service unavailable' } })
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('combobox', { name: 'Approvals', exact: true })).toContainText('Auto approve')
+  const approval = {
+    kind: 'approval',
+    method: 'item/commandExecution/requestApproval',
+    threadId: 'thread-active',
+    turnId: 'turn-active',
+    itemId: 'command',
+    text: 'Run the check?',
+    approvalId: 'retry-approval',
+    rawJson: '{}',
+  }
+  await emitCodexEvent(page, { ...approval, sequence: 1 })
+  await expect(tengri.getByText('Approval service unavailable', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
+  await emitCodexEvent(page, { ...approval, sequence: 2 })
+  await expect(tengri.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
+  expect(attempts).toBe(1)
+  expect(mock.actions.filter((action) => action.action === 'resolve-approval')).toHaveLength(0)
+})
