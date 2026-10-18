@@ -253,7 +253,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     .await?;
     stage("files");
     let terminal = rpc
-        .create_terminal("fixture-terminal-continuity", "/", 80, 24)
+        .create_terminal("fixture-terminal-continuity", "/workspace", 80, 24)
         .await?
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
@@ -574,7 +574,10 @@ struct TerminalProbe {
 
 impl TerminalProbe {
     async fn open(rpc: &RpcClient, name: &str) -> anyhow::Result<Self> {
-        let terminal = rpc.create_terminal(name, "/", 100, 30).await?.session;
+        let terminal = rpc
+            .create_terminal(name, "/workspace", 100, 30)
+            .await?
+            .session;
         let (sender, receiver) = mpsc::channel(4);
         sender
             .send(proto::TerminalInput {
