@@ -101,7 +101,7 @@ if [[ -n "${TENGRI_BROWSER_TEST_IMAGE:-}" ]]; then
     -e TENGRI_EDITOR_TEST_BIND_ADDR=0.0.0.0:8080 -e TENGRI_BROWSER_TEST_BINARY=/usr/local/bin/launch-browser \
     -e TENGRI_BROWSER_TEST_BOOTSTRAP=/usr/local/bin/bootstrap-browser -e TENGRI_BROWSER_TEST_ASSETS=/usr/share/nanoagent/novnc \
     --entrypoint /bin/bash "$TENGRI_BROWSER_TEST_IMAGE" \
-    -c "$fixture_bootstrap && mkdir -p /home/nanoagent/workspace && exec /tmp/nanoagent.test -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v" >/dev/null
+    -c "$fixture_bootstrap && mkdir -p /home/nanoagent/workspace && rm -rf /home/nanoagent/.tengri/browser/profile && exec /tmp/nanoagent.test -test.run '^TestEditorBrowserFixture$' -test.timeout 0 -test.v" >/dev/null
   docker cp "$fixture_root/nanoagent.test" "$fixture_container:/tmp/nanoagent.test"
   docker cp "$repository/services/nanoagent/launch-browser.sh" "$fixture_container:/usr/local/bin/launch-browser"
   docker start "$fixture_container" >/dev/null

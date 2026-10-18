@@ -127,6 +127,7 @@ identityTest(
     const replaySlotsMigration = readFileSync(path.join(root, 'services/tengri/migrations/0003_replay_slots.sql'))
     const leadershipMigration = readFileSync(path.join(root, 'services/tengri/migrations/0004_leadership_window.sql'))
     const capabilityMigration = readFileSync(path.join(root, 'services/tengri/migrations/0005_capability_slots.sql'))
+    const leaseMigration = readFileSync(path.join(root, 'services/tengri/migrations/0006_preview_lease_identity.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -152,6 +153,7 @@ identityTest(
     const replaySlotsChecksum = createHash('sha256').update(replaySlotsMigration).digest()
     const leadershipChecksum = createHash('sha256').update(leadershipMigration).digest()
     const capabilityChecksum = createHash('sha256').update(capabilityMigration).digest()
+    const leaseChecksum = createHash('sha256').update(leaseMigration).digest()
     await bffAdmin.query('SET ROLE tengri_migrator')
     await bffAdmin.query(migration.toString())
     await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
@@ -179,7 +181,7 @@ identityTest(
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
       'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(5)
+    expect(versions.rowCount).toBe(6)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
     expect(versions.rows[1]?.version).toBe(2)
@@ -190,6 +192,13 @@ identityTest(
     expect(versions.rows[3]?.checksum.equals(leadershipChecksum)).toBe(true)
     expect(versions.rows[4]?.version).toBe(5)
     expect(versions.rows[4]?.checksum.equals(capabilityChecksum)).toBe(true)
+    expect(versions.rows[5]?.version).toBe(6)
+    expect(versions.rows[5]?.checksum.equals(leaseChecksum)).toBe(true)
+    const migratedLease = await bffAdmin.query(
+      "SELECT payload->>'lease_id' AS id FROM tengri.previews WHERE workspace_uid=$1",
+      [retainedWorkspace],
+    )
+    expect(z.uuid().safeParse(migratedLease.rows[0]?.id).success).toBe(true)
     for (const table of ['tickets', 'previews']) {
       const retained = await bffAdmin.query<{ capacity_slot: number; workspace_slot: number }>(
         `SELECT capacity_slot,workspace_slot FROM tengri.${table} WHERE workspace_uid=$1`,
@@ -224,6 +233,9 @@ identityTest(
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
     await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [capabilityChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [leaseChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {

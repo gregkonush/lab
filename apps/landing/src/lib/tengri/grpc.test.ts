@@ -244,6 +244,19 @@ beforeAll(async () => {
         expiresAt: '2026-09-09T00:00:00Z',
       })
     },
+    issueBrowserSession(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        id: 'b'.repeat(24),
+        launchUrl: 'https://tengri.example/v1/preview/open#lease',
+        previewOrigin: `https://tengri-${'b'.repeat(24)}.example`,
+        expiresAt: '2026-09-09T00:00:00Z',
+      })
+    },
     revokeEditorSessions(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
@@ -833,15 +846,31 @@ describe('Tengri gRPC BFF transport', () => {
     expect(metadataValue('x-tengri-signature')).not.toBe('')
   })
 
+  test('signs browser renewal with its exact agent and desktop window identity', async () => {
+    const { issueBrowserSession } = await import('./grpc')
+    const session = await issueBrowserSession(
+      identity,
+      'agent-test',
+      'desktop-stable-browser-window',
+      true,
+      new AbortController().signal,
+    )
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-browser-window', renewal: true })
+    expect(session.id).toBe('b'.repeat(24))
+    expect(metadataContext().sessionId).toBe(identity.session.id)
+    expect(metadataValue('x-tengri-signature')).not.toBe('')
+  })
+
   test('binds real editor sessions to the window and revokes only their issued lease', async () => {
     const { issueEditorSession, revokePreviewSession } = await import('./grpc')
     const session = await issueEditorSession(
       identity,
       'agent-test',
       'desktop-stable-code-window',
+      false,
       new AbortController().signal,
     )
-    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window' })
+    expect(receivedRequest).toEqual({ agentId: 'agent-test', windowId: 'desktop-stable-code-window', renewal: false })
     expect(session.id).toBe('a'.repeat(24))
     expect(metadataContext().sessionId).toBe(identity.session.id)
     await revokePreviewSession(identity, 'agent-test', session.id, 'lease')
@@ -857,7 +886,7 @@ describe('Tengri gRPC BFF transport', () => {
       editorRequestCancelled = resolve
     })
     const controller = new AbortController()
-    const pending = issueEditorSession(identity, 'agent-test', 'desktop-editor-cancel', controller.signal).catch(
+    const pending = issueEditorSession(identity, 'agent-test', 'desktop-editor-cancel', false, controller.signal).catch(
       (error: unknown) => error,
     )
     try {
