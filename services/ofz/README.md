@@ -58,6 +58,8 @@ The 128-item queue bounds pending work and leaves the other SQL connections avai
 The server and initial audited clients allow thirty seconds for durable admission. Ofz still rechecks current
 authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
 bounded to two seconds. This processing budget does not extend the BFF's five-second signed assertion admission.
+Ofz, Tengri and the BFF export traces in the background with a ten-second network budget. Diagnostic flush failures
+retain their trace and event IDs for collector readback. An unsuccessful flush remains a failed verification.
 
 Repeated controller runtime-state reads and guest health probes may reference their original durable observation
 receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
