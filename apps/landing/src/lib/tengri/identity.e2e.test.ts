@@ -1,13 +1,14 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { cpSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
 import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
+import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
@@ -854,6 +855,48 @@ identityTest(
     }
     await context.addInitScript(observeWebAuthn)
     const page = await context.newPage()
+    const themeScreenshots = process.env.TENGRI_IDENTITY_SCREENSHOTS
+    if (themeScreenshots) mkdirSync(themeScreenshots, { recursive: true })
+    const checkTheme = async (screen: string) => {
+      await browserExpect(page).toHaveTitle('Sign in to Tengri')
+      await browserExpect(page.locator('.tengri-brand')).toHaveText('Tengri')
+      await browserExpect(page.locator('.tengri-mark img')).toBeVisible()
+      await browserExpect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /\/img\/fruit-pear\.svg$/)
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 320, height: 740 },
+      ]) {
+        await page.setViewportSize(viewport)
+        await page.evaluate(() => document.fonts.ready)
+        await page
+          .locator('.tengri-window')
+          .evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)))
+        expect(await page.evaluate(() => document.fonts.check('14px Geist'))).toBe(true)
+        expect(await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily)).toContain(
+          'Geist',
+        )
+        expect(
+          await page
+            .locator('.tengri-mark img')
+            .evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth > 0),
+        ).toBe(true)
+        expect(await page.locator('body').evaluate((element) => element.scrollWidth <= window.innerWidth)).toBe(true)
+        await browserExpect(page.locator('.tengri-window')).toBeInViewport()
+        const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+        expect(accessibility.violations).toEqual([])
+        if (themeScreenshots)
+          await page.screenshot({
+            path: path.join(themeScreenshots, `${screen}-${viewport.width}.png`),
+            fullPage: true,
+          })
+      }
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      expect(await page.locator('.tengri-window').evaluate((element) => getComputedStyle(element).animationName)).toBe(
+        'none',
+      )
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+    }
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
     const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
@@ -869,7 +912,7 @@ identityTest(
     await page.goto(base)
     await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.getByRole('heading', { name: /Passkey Registration/ }))
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true }))
       .toBeVisible({ timeout: 20_000 })
       .catch(async () => {
         throw new Error(
@@ -884,7 +927,13 @@ identityTest(
         )
       })
     await page.waitForLoadState('domcontentloaded')
-    await page.getByRole('button', { name: /Register/ }).click()
+    await checkTheme('setup')
+    await page.keyboard.press('Tab')
+    await page.locator('#registerWebAuthn').focus()
+    expect(await page.locator('#registerWebAuthn').evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+      'solid',
+    )
+    await page.keyboard.press('Enter')
     await page
       .waitForURL((url) => url.origin === base, { timeout: 20_000 })
       .catch(async (cause: unknown) => {
@@ -1360,6 +1409,9 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    await checkTheme('verify')
+    await browserExpect(page.getByRole('heading', { name: 'Verify your passkey', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('link', { name: 'Use another account', exact: true })).toBeVisible()
     const subjectBeforeFailover = (
       await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
     ).rows[0]?.identity_subject
@@ -1417,9 +1469,9 @@ identityTest(
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
       await secondPage.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
-      await browserExpect(secondPage.getByRole('heading', { name: /Passkey Registration/ })).toBeVisible()
+      await browserExpect(secondPage.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
       await secondPage.waitForLoadState('domcontentloaded')
-      await secondPage.getByRole('button', { name: /Register/ }).click()
+      await secondPage.getByRole('button', { name: 'Create passkey', exact: true }).click()
       await secondPage
         .waitForURL((url) => url.origin === base && (id === '999' || url.pathname === '/'), {
           timeout: 10_000,
@@ -1616,6 +1668,13 @@ identityTest(
       expect(request).toEqual({ hints: ['security-key'], userVerification: 'discouraged' })
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
+    )
+    await page.goto(issuer + '/protocol/openid-connect/auth?client_id=invalid-theme-fixture&response_type=code')
+    await browserExpect(page.getByRole('heading', { name: 'Unable to continue', exact: true })).toBeVisible()
+    await browserExpect(page.locator('#kc-error-message')).toContainText('Client not found')
+    await checkTheme('error')
+    console.log(
+      'PASS: branded passkey setup, verification and error pages fit desktop and 320px, load Geist, respect reduced motion and pass WCAG A/AA browser checks',
     )
   },
   300_000,
