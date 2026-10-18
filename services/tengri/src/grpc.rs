@@ -48,7 +48,7 @@ use proto::{
     CodexModels, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
     CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest, Empty, FileEntry, FileEvent,
     FileEventKind, GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest,
-    InterruptCodexTurnRequest, IssueEditorSessionRequest, IssuePreviewSessionRequest,
+    InterruptCodexTurnRequest, IssueDesktopSessionRequest, IssuePreviewSessionRequest,
     IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest,
     ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
     MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
@@ -209,6 +209,17 @@ impl ControlPlane {
         id: &str,
         target: &str,
     ) -> Result<GuestClient, Status> {
+        self.guest_access(principal, id, target)
+            .await
+            .map(|(guest, _)| guest)
+    }
+
+    async fn guest_access(
+        &self,
+        principal: &Principal,
+        id: &str,
+        target: &str,
+    ) -> Result<(GuestClient, WorkspaceAccess), Status> {
         let (agent, access) = self.agent_access(principal, id, target).await?;
         if agent.spec.desired_state != MicroVMDesiredState::Running
             || !agent_ready_for_guest(&agent)
@@ -226,7 +237,7 @@ impl ControlPlane {
         if crate::authz::is_control(principal.action) {
             self.activity.touch(id);
         }
-        Ok(guest)
+        Ok((guest, access))
     }
 
     pub fn guest_pool(&self) -> GuestPool {
@@ -592,12 +603,10 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchFilesStream>, Status> {
         let principal = self.authorize(&request, "WatchFiles").await?;
         let request = request.into_inner();
-        let (_, access) = self
-            .agent_access(&principal, &request.agent_id, &request.path)
+        let (guest, access) = self
+            .guest_access(&principal, &request.agent_id, &request.path)
             .await?;
-        let stream = self
-            .guest(&principal, &request.agent_id, &request.path)
-            .await?
+        let stream = guest
             .watch_files(&request.path, request.after_sequence)
             .await
             .map_err(map_guest_error)?
@@ -889,12 +898,10 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_id(&request.thread_id)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let (_, access) = self
-            .agent_access(&principal, &request.agent_id, &request.thread_id)
+        let (guest, access) = self
+            .guest_access(&principal, &request.agent_id, &request.thread_id)
             .await?;
-        let history = self
-            .guest(&principal, &request.agent_id, &request.thread_id)
-            .await?
+        let history = guest
             .resume_codex_thread(&request.thread_id, &options)
             .await
             .map_err(map_guest_error)?;
@@ -1037,10 +1044,8 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchCodexEventsStream>, Status> {
         let principal = self.authorize(&request, "WatchCodexEvents").await?;
         let request = request.into_inner();
-        let (_, access) = self.agent_access(&principal, &request.agent_id, "").await?;
-        let stream = self
-            .guest(&principal, &request.agent_id, "")
-            .await?
+        let (guest, access) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let stream = guest
             .watch_codex_events(request.after_sequence)
             .await
             .map_err(map_guest_error)?
@@ -1050,27 +1055,22 @@ impl MicroVmControlPlane for ControlPlane {
 
     async fn issue_editor_session(
         &self,
-        request: Request<IssueEditorSessionRequest>,
+        request: Request<IssueDesktopSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssueEditorSession").await?;
         let request = request.into_inner();
-        if request.window_id.len() < 16
-            || request.window_id.len() > 128
-            || !request
-                .window_id
-                .bytes()
-                .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
-        {
-            return Err(Status::invalid_argument("invalid editor window identity"));
-        }
+        validate_desktop_window_id(&request.window_id)?;
         let (agent, access) = self.agent_access(&principal, &request.agent_id, "").await?;
-        self.guests
-            .for_microvm(&agent, self.guest_authority.user(access))
-            .await
-            .map_err(map_guest_error)?
-            .open_editor()
-            .await
-            .map_err(map_guest_error)?;
+        if !request.renewal {
+            self.guests
+                .for_microvm(&agent, self.guest_authority.user(access))
+                .await
+                .map_err(map_guest_error)?
+                .open_editor()
+                .await
+                .map_err(map_guest_error)?;
+            self.activity.touch(&request.agent_id);
+        }
         let issued = self
             .tickets
             .issue_editor(&principal, &request.agent_id, &request.window_id)
@@ -1110,18 +1110,23 @@ impl MicroVmControlPlane for ControlPlane {
 
     async fn issue_browser_session(
         &self,
-        request: Request<GetAgentRequest>,
+        request: Request<IssueDesktopSessionRequest>,
     ) -> Result<Response<PreviewSession>, Status> {
         let principal = self.authorize(&request, "IssueBrowserSession").await?;
         let request = request.into_inner();
-        self.guest(&principal, &request.id, "")
-            .await?
-            .open_browser()
-            .await
-            .map_err(map_guest_error)?;
+        validate_desktop_window_id(&request.window_id)?;
+        if request.renewal {
+            self.authorized_agent(&principal, &request.agent_id).await?;
+        } else {
+            self.guest(&principal, &request.agent_id, "")
+                .await?
+                .open_browser()
+                .await
+                .map_err(map_guest_error)?;
+        }
         let issued = self
             .tickets
-            .issue_preview(&principal, &request.id, BROWSER_PORT, "/", "")
+            .issue_browser(&principal, &request.agent_id, &request.window_id)
             .await?;
         let preview_origin = self.preview_origin.origin(&issued.id);
         Ok(Response::new(PreviewSession {
@@ -1159,6 +1164,17 @@ impl MicroVmControlPlane for ControlPlane {
             .await?;
         Ok(Response::new(Empty {}))
     }
+}
+
+fn validate_desktop_window_id(value: &str) -> Result<(), Status> {
+    if !(16..=128).contains(&value.len())
+        || !value
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err(Status::invalid_argument("invalid desktop window identity"));
+    }
+    Ok(())
 }
 
 fn agent_from_microvm(microvm: &MicroVM) -> Agent {
@@ -2562,6 +2578,168 @@ mod tests {
             ActivityTracker::new(client, namespace),
         )
         .unwrap()
+    }
+
+    #[tokio::test]
+    async fn stream_admission_checks_one_workspace_and_keeps_ofz_denial() {
+        use std::sync::atomic::AtomicUsize;
+        for (method, action) in [
+            ("WatchFiles", crate::ofz::proto::Action::FilesObserve),
+            ("ResumeCodexThread", crate::ofz::proto::Action::CodexControl),
+            ("WatchCodexEvents", crate::ofz::proto::Action::CodexControl),
+        ] {
+            for denied in [false, true] {
+                let (service, mut handle) =
+                    tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+                let mut control = test_control_plane(Client::new(service, "tengri"));
+                let fixture = crate::authz::tests::OfzFixture::new().await;
+                fixture.mode.store(u8::from(denied), Ordering::SeqCst);
+                control.authorization = fixture.authorization;
+                let mut agent = provisional_terminal_test_agent(Utc::now());
+                agent.spec.desired_state = MicroVMDesiredState::Sleeping;
+                let principal =
+                    Principal::fixture(&agent.spec.owner_hash, &agent.uid().unwrap(), action);
+                let audience = control.request_audience();
+                let reads = Arc::new(AtomicUsize::new(0));
+                let observed = reads.clone();
+                let responder = tokio::spawn(async move {
+                    while let Some((request, response)) = handle.next_request().await {
+                        assert_eq!(request.method(), http::Method::GET);
+                        assert!(request.uri().path().ends_with("/microvms/agent-current"));
+                        observed.fetch_add(1, Ordering::SeqCst);
+                        response.send_response(
+                            HttpResponse::builder()
+                                .header("content-type", "application/json")
+                                .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                                .unwrap(),
+                        );
+                    }
+                });
+                let path = format!("/{CONTROL_PLANE_SERVICE}/{method}");
+                let outcome = tokio::time::timeout(Duration::from_secs(2), async {
+                    match method {
+                        "WatchFiles" => control
+                            .watch_files(crate::auth::signed_fixture_request(
+                                WatchFilesRequest {
+                                    agent_id: "agent-current".into(),
+                                    path: "/workspace".into(),
+                                    after_sequence: None,
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                        "ResumeCodexThread" => control
+                            .resume_codex_thread(crate::auth::signed_fixture_request(
+                                ResumeCodexThreadRequest {
+                                    agent_id: "agent-current".into(),
+                                    thread_id: "thread-current".into(),
+                                    ..Default::default()
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                        _ => control
+                            .watch_codex_events(crate::auth::signed_fixture_request(
+                                WatchCodexEventsRequest {
+                                    agent_id: "agent-current".into(),
+                                    after_sequence: 0,
+                                },
+                                &principal,
+                                &path,
+                                audience,
+                            ))
+                            .await
+                            .err()
+                            .unwrap()
+                            .code(),
+                    }
+                })
+                .await
+                .unwrap();
+                responder.abort();
+                assert_eq!(
+                    outcome,
+                    if denied {
+                        tonic::Code::PermissionDenied
+                    } else {
+                        tonic::Code::FailedPrecondition
+                    }
+                );
+                assert_eq!(
+                    reads.load(Ordering::SeqCst),
+                    1,
+                    "{method}: one stream submission must not open a second workspace authorization"
+                );
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn preview_renewal_obeys_current_ofz_denial_before_tickets_or_guest_calls() {
+        for editor in [true, false] {
+            let (service, mut handle) =
+                tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+            let fixture = crate::authz::tests::OfzFixture::new().await;
+            fixture.mode.store(1, Ordering::SeqCst);
+            // The database is deliberately disconnected: denial must precede any capability write.
+            let mut control = test_control_plane(Client::new(service, "tengri"));
+            control.authorization = fixture.authorization;
+            let agent = provisional_terminal_test_agent(Utc::now());
+            let (method, action) = if editor {
+                ("IssueEditorSession", crate::ofz::proto::Action::EditorOpen)
+            } else {
+                (
+                    "IssueBrowserSession",
+                    crate::ofz::proto::Action::BrowserControl,
+                )
+            };
+            let principal =
+                Principal::fixture(&owner_hash("github:43"), &agent.uid().unwrap(), action);
+            let request = crate::auth::signed_fixture_request(
+                IssueDesktopSessionRequest {
+                    agent_id: agent.name_any(),
+                    window_id: "desktop-window-01".into(),
+                    renewal: true,
+                },
+                &principal,
+                &format!("/{CONTROL_PLANE_SERVICE}/{method}"),
+                control.request_audience(),
+            );
+            let task = tokio::spawn(async move {
+                if editor {
+                    control.issue_editor_session(request).await
+                } else {
+                    control.issue_browser_session(request).await
+                }
+            });
+            let (request, response) =
+                tokio::time::timeout(Duration::from_secs(2), handle.next_request())
+                    .await
+                    .unwrap()
+                    .unwrap();
+            assert_eq!(request.method(), http::Method::GET);
+            response.send_response(
+                HttpResponse::builder()
+                    .header("content-type", "application/json")
+                    .body(KubeBody::from(serde_json::to_vec(&agent).unwrap()))
+                    .unwrap(),
+            );
+            let result = tokio::time::timeout(Duration::from_secs(2), task)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(result.unwrap_err().code(), tonic::Code::PermissionDenied);
+        }
     }
 
     #[tokio::test]

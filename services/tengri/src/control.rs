@@ -22,6 +22,10 @@ const MIGRATIONS: &[(i32, &[u8])] = &[
         include_bytes!("../migrations/0004_leadership_window.sql"),
     ),
     (5, include_bytes!("../migrations/0005_capability_slots.sql")),
+    (
+        6,
+        include_bytes!("../migrations/0006_preview_lease_identity.sql"),
+    ),
 ];
 
 #[derive(Clone)]

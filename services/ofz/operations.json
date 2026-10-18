@@ -515,13 +515,13 @@
   },
   {
     "surface": "gateway",
-    "operation": "GET /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "GET /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "HEAD /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "HEAD /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",

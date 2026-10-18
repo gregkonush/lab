@@ -635,9 +635,16 @@ export async function issueEditorSession(
   identity: TengriIdentity,
   agentId: string,
   windowId: string,
+  renewal: boolean,
   signal: AbortSignal,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000, signal)
+  const response = await unary<RawRecord>(
+    'issueEditorSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -650,8 +657,20 @@ export async function revokeDesktopPreviews(identity: TengriIdentity) {
   await unary('revokeEditorSessions', {}, identity)
 }
 
-export async function issueBrowserSession(identity: TengriIdentity, agentId: string): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, identity, 400_000)
+export async function issueBrowserSession(
+  identity: TengriIdentity,
+  agentId: string,
+  windowId: string,
+  renewal: boolean,
+  signal: AbortSignal,
+): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>(
+    'issueBrowserSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
