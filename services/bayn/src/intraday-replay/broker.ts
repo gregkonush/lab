@@ -766,8 +766,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const current = yield* readState
         const { positions, observedAt } = yield* markedPositions
         const date = newYorkDate.format(Date.parse(observedAt))
-        const previousSession = config.calendar
-          .filter((session) => session.date < date)
+        const previousSession = referenceSessions
+          .filter((session) => session.date < date && Date.parse(session.closeAt) >= startedAtMs)
           .toSorted((a, b) => a.date.localeCompare(b.date))
           .at(-1)
         const previousClose = current.sessionCloses.find((session) => session.sessionDate === previousSession?.date)

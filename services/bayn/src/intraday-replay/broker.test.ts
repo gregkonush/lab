@@ -1729,3 +1729,32 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     )
   })
 }
+
+test('a new weekend account uses its opening capital before its first broker reference close', async () => {
+  const sunday = Date.parse('2026-10-18T23:59:00.000Z')
+  const calendar: ReplayBrokerConfig['calendar'] = [
+    { session_open: '0930', session_close: '1600', date: '2026-10-16', open: '09:30', close: '16:00' },
+    { session_open: '0930', session_close: '1600', date: '2026-10-19', open: '09:30', close: '16:00' },
+  ]
+  const quoteAt: ReplayBrokerConfig['quoteAt'] = () => Effect.die('A new flat account must not invent a price')
+  const value = await run(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(sunday)
+      const broker = yield* makeReplayBroker({ ...config, calendar, quoteAt })
+      const account = yield* broker.read.account
+      yield* TestClock.setTime(sunday + 120_000)
+      const checkpoint = yield* broker.checkpoint
+      const restored = yield* makeReplayBroker({
+        ...config,
+        calendar,
+        quoteAt,
+        restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+      })
+      return { account: account.value, restored: (yield* restored.read.account).value, state: yield* restored.snapshot }
+    }),
+  )
+  expect(value.account.lastEquityMicros).toBe(config.openingCashMicros)
+  expect(value.restored.lastEquityMicros).toBe(config.openingCashMicros)
+  expect(value.state.createdAt).toBe(new Date(sunday).toISOString())
+  expect(value.state.sessionCloses).toEqual([])
+})

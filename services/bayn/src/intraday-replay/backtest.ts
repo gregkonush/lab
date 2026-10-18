@@ -446,6 +446,7 @@ export const runBacktest = (
       const drawdown = peakEquity - equity
       if (drawdown > maximumObservedDrawdown) maximumObservedDrawdown = drawdown
     }
+    let nextPollAtMs = prepared.openMs
     const sessions = yield* Effect.forEach(
       prepared.reportingWindows,
       (session) =>
@@ -482,14 +483,15 @@ export const runBacktest = (
               ),
             },
             advanceTo,
-            Date.parse(session.openAt),
+            Math.max(nextPollAtMs, yield* Clock.currentTimeMillis),
             Date.parse(session.closeAt),
+            session === prepared.reportingWindows.at(-1),
           )
+          nextPollAtMs = schedule.nextPollAtMs
           const closingEquity = yield* broker.valuationAt(session.closeAt)
           const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
           if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
           else valuationFailureCount++
-          yield* advanceTo(Math.max(yield* Clock.currentTimeMillis, Date.parse(session.closeAt) + 1))
           const reconciliation = yield* timing.run(runtime.reconcile)
           const state = yield* broker.snapshot
           const netEquityChangeMicros = (closingNetEquity - previousClosingEquity).toString()

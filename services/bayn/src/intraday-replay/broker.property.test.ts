@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Clock, Effect, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
@@ -13,6 +13,7 @@ import { checkAsyncProperty } from '../testing/property-test-support'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeReplayBroker, type ReplayBrokerConfig } from './broker'
+import { driveReplaySession } from './session'
 
 const at = '2026-09-04T14:31:00.000Z'
 const start = Date.parse(at)
@@ -158,6 +159,60 @@ test('property: DAY partial fills conserve the account across quote retries, can
             yield* broker.checkpoint
           }).pipe(Effect.scoped, Effect.provide(TestClock.layer())),
         )
+      },
+    ),
+  )
+}, 150_000)
+
+test('property: UTC reports preserve continuous production polls with measured command latency', async () => {
+  await checkAsyncProperty(
+    'continuous-report-polling',
+    fc.asyncProperty(
+      fc.record({
+        before: fc.integer({ min: 1, max: 2000 }),
+        after: fc.integer({ min: 1, max: 2000 }),
+        delay: fc.integer({ min: 100, max: 500 }),
+        latency: fc.integer({ min: 0, max: 25 }),
+      }),
+      async ({ before, after, delay, latency }) => {
+        const boundary = Date.parse('2026-10-19T00:00:00.000Z')
+        const open = boundary - before
+        const close = boundary + after
+        const execute = (split: boolean) =>
+          Effect.runPromise(
+            Effect.gen(function* () {
+              yield* TestClock.setTime(open)
+              const polls: number[] = []
+              const runtime = {
+                nextDelayMs: delay,
+                advance: Effect.gen(function* () {
+                  const at = yield* Clock.currentTimeMillis
+                  polls.push(at)
+                  yield* TestClock.setTime(at + latency)
+                  return {
+                    observation: {
+                      result: 'SUCCESS' as const,
+                      outcome: 'WINDOW_CLOSED' as const,
+                      observedAt: utcInstantFromEpochMillis(at),
+                    },
+                  }
+                }),
+              }
+              let next = open
+              if (split)
+                next = (yield* driveReplaySession(runtime, (at) => TestClock.setTime(at), open, boundary, false))
+                  .nextPollAtMs
+              yield* driveReplaySession(
+                runtime,
+                (at) => TestClock.setTime(at),
+                Math.max(next, yield* Clock.currentTimeMillis),
+                close,
+                true,
+              )
+              return polls
+            }).pipe(Effect.provide(TestClock.layer())),
+          )
+        expect(await execute(true)).toEqual(await execute(false))
       },
     ),
   )
