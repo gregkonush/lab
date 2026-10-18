@@ -22,6 +22,7 @@ env:
 
 jobs:
   build:
+    if: github.repository == 'proompteng/lab' && github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     name: Build ${{ matrix.service }} (${{ inputs.architecture }})
     timeout-minutes: 75
     strategy:

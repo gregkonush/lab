@@ -65,6 +65,7 @@ describe('Tengri image workflow', () => {
     const runtime = native.jobs.build?.steps.find((step: { name: string }) => step.name === 'Build native image')
     const releaseOnly = "github.event_name != 'pull_request' && github.ref == 'refs/heads/main'"
     expect(workflow.jobs.build?.if).toBe(releaseOnly)
+    expect(native.jobs.build.if).toBe(`github.repository == 'proompteng/lab' && ${releaseOnly}`)
     expect(workflow.jobs.build?.uses).toBe('./.github/workflows/tengri-native.yml')
     expect(workflow.jobs.build?.strategy?.matrix.include).toEqual([
       { architecture: 'amd64', runner: 'arc-amd64' },
