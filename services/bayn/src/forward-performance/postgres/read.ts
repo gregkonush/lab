@@ -183,7 +183,7 @@ export const readForwardPerformanceStrategyRows = (
       AND scope_generation.account_id = cycle.account_id
       AND scope_generation.research_plan_hash = cycle.qualification_run_id
       AND scope_generation.strategy_protocol_hash = cycle.strategy_protocol_hash
-      AND (${durableCycleGenerationBinding(sql)})
+      AND (${durableCycleGenerationBinding(sql, authorityGenerationHash)})
     WHERE ${authorityGenerationHash === undefined ? true : sql`scope_generation.generation_hash = ${authorityGenerationHash}`}
   )
   SELECT * FROM qualified_strategy
