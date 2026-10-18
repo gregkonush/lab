@@ -614,11 +614,11 @@ describePostgres('PostgreSQL intraday cycle store', () => {
           INSERT INTO intents (
             intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
             decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-            quantity_atoms, notional_limit_micros, state, terminal_outcome, state_version, created_at, updated_at
+            quantity_atoms, notional_limit_micros, limit_price_micros, state, terminal_outcome, state_version, created_at, updated_at
           ) VALUES (
-            ${intentId}, 'bayn.paper-intent.v3', ${authorityGenerationHash}, NULL, 'intraday-momentum',
+            ${intentId}, 'bayn.execution-intent.v4', ${authorityGenerationHash}, NULL, 'intraday-momentum',
             ${'f'.repeat(64)}, ${'0'.repeat(64)}, ${policyHash}, ${accountId}, 'bayn-risk-cutoff-test',
-            'SPY', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000, 'PLANNED', NULL, 1,
+            'SPY', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000, 1000000000, 'PLANNED', NULL, 1,
             '2026-08-28T14:58:30.000Z', '2026-08-28T14:58:30.000Z'
           )
         `

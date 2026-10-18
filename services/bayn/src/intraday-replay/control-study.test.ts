@@ -13,7 +13,7 @@ import { OrderSide } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
@@ -177,7 +177,7 @@ const simulate = (
             return { status: 'AVAILABLE' as const, snapshot }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
+      const risk = yield* loadExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =

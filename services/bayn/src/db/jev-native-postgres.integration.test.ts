@@ -241,10 +241,10 @@ const seedManagedPosition = (
       ${r.expectedHash}, ${r.observedHash}, ${r.contentHash}, ${r.status}, '[]'::jsonb, ${r.reconciledAt})`
     for (const intentId of portfolio.entryIntentIds) {
       yield* sql`INSERT INTO intents (intent_id, schema_version, account_id, client_order_id, symbol, side, order_type,
-        time_in_force, quantity_atoms, notional_limit_micros, state, created_at, updated_at, cycle_id,
+        time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at, updated_at, cycle_id,
         strategy_name, decision_hash, policy_hash, authority_generation_hash)
-        VALUES (${intentId}, 'bayn.paper-intent.v3', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, ${options.symbol ?? 'AAPL'}, 'BUY', 'LIMIT', 'IOC',
-        '10000000000', '1000000000', 'PLANNED', ${entryAt}, ${entryAt}, ${nativeInput.cycleId}, 'jev',
+        VALUES (${intentId}, 'bayn.execution-intent.v4', ${r.accountId}, ${portfolio.entryFills[0]?.clientOrderId ?? 'entry-client'}, ${options.symbol ?? 'AAPL'}, 'BUY', 'LIMIT', ${options.symbol?.includes('/') === true ? 'IOC' : 'DAY'},
+        '10000000000', '1000000000', '100000000', 'PLANNED', ${entryAt}, ${entryAt}, ${nativeInput.cycleId}, 'jev',
         ${document.bindings.strategyDecisionHash}, ${'3'.repeat(64)}, ${nativeInput.authorityGenerationHash})`
     }
     yield* sql.withTransaction(
@@ -1743,11 +1743,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           authorityGenerationHash: nativeInput.authorityGenerationHash,
           cycle: active.cycle,
           executionModel: fixture.protocol.executionModel,
-          policy: yield* loadExecutionRiskPolicy(
-            state.account.accountId,
-            fixture.protocol.universe,
-            fixture.protocol.executionModel,
-          ),
+          policy: yield* loadExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe),
           strategy: retainedRuntime,
           reconcile: Effect.sync(() => {
             reconciliations += 1
@@ -1872,11 +1868,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
             executionPolicy: cycle.identity.executionPolicy,
             strategyProtocolHash: cycle.identity.strategyProtocolHash,
           },
-          policy: yield* loadExecutionRiskPolicy(
-            state.account.accountId,
-            fixture.protocol.universe,
-            fixture.protocol.executionModel,
-          ),
+          policy: yield* loadExecutionRiskPolicy(state.account.accountId, fixture.protocol.universe),
           cycle,
           entryDocument: document,
           reconcile: Effect.succeed(closeFacts),

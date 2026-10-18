@@ -28,7 +28,6 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
           timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms,
           referencePriceMicros: bidMicros,
-          executionModel: protocol.executionModel,
           limitSlippageBps: 10n,
         }),
       )
@@ -86,7 +85,7 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
   const acquisitionCostMicros = 128_059_041_016n
   const input = { protocol, symbol: 'BTC/USD', quantityAtoms }
   expect(Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 2_160_947_485n })).netMicros).toBe(
-    acquisitionCostMicros - 898n,
+    acquisitionCostMicros - 957n,
   )
   const bid = Result.getOrThrow(
     jevBreakEvenExitBid({ ...input, acquisitionCostMicros, upperBidMicros: 4_300_000_000n }),
@@ -108,19 +107,18 @@ test('the conservative cash floor remains monotone across an actual cent fee jum
   expect(after.conservativeNetMicros).toBeLessThanOrEqual(after.netMicros)
 })
 
-test('fractional equity liquidation uses the existing native MARKET/DAY pricing', () => {
+test('fractional equity liquidation uses the same explicit LIMIT/DAY pricing', () => {
   const protocol = defaultJevProtocolDocument
   const input = { protocol, symbol: 'NVDA', quantityAtoms: 250_000_000n, bidMicros: 100_000_000n }
   const pricing = Result.getOrThrow(
     deriveExecutionIntentPricing({
       symbol: input.symbol,
       side: OrderSide.Sell,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: input.bidMicros,
-      executionModel: protocol.executionModel,
-      limitSlippageBps: 0n,
+      limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
     }),
   )
   expect(Result.getOrThrow(jevLiquidationValue(input)).proceedsMicros).toBe(pricing.notionalLimitMicros)

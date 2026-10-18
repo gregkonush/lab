@@ -1,5 +1,5 @@
 import { replayFeeActivity } from './broker-fees'
-import { instrumentMarket, MarketKind } from '../instruments'
+import { instrumentMarket, instrumentQuantityTerms, MarketKind } from '../instruments'
 import { jevMarketForSymbol } from '../jev/markets'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 import { Cause, Clock, Data, Effect, Exit, Fiber, Ref, Result, Schema, SynchronizedRef } from 'effect'
@@ -107,7 +107,14 @@ export interface ReplayBrokerFill extends EconomicReplayFill {
   readonly quoteSource: ObservedQuoteSource
 }
 
-type ReplayOrder = Order & { readonly quantityAtoms: string; readonly submittedAt: string; readonly updatedAt: string }
+type ReplayOrder = Order & {
+  readonly orderType: OrderType.Limit
+  readonly timeInForce: TimeInForce.Day | TimeInForce.ImmediateOrCancel
+  readonly limitPriceMicros: string
+  readonly quantityAtoms: string
+  readonly submittedAt: string
+  readonly updatedAt: string
+}
 
 export interface ReplayBrokerOrder {
   readonly executions: readonly ReplayOrderExecution[]
@@ -116,7 +123,7 @@ export interface ReplayBrokerOrder {
   readonly order: ReplayOrder
 }
 export interface ReplayBrokerState {
-  readonly schemaVersion: 'bayn.simulated-broker-state.v3'
+  readonly schemaVersion: 'bayn.simulated-broker-state.v4'
   readonly createdAt: string
   readonly runId: string
   readonly accountId: string
@@ -214,7 +221,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
     const state = yield* SynchronizedRef.make<ReplayBrokerState>(
       restored?.state ?? {
-        schemaVersion: 'bayn.simulated-broker-state.v3',
+        schemaVersion: 'bayn.simulated-broker-state.v4',
         createdAt: accountCreatedAt,
         runId: config.runId,
         accountId,
@@ -344,7 +351,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const executeQuote = (
       side: OrderSide,
       quantity: string,
-      limit: string | undefined,
+      limit: string,
       quote: IntradayQuote,
       consumedLiquidityMicros = 0n,
     ) =>
@@ -357,13 +364,17 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
         const metadata = asset(quote.symbol)
         if (metadata === undefined)
           return yield* Result.fail(new ReplayBrokerFailure({ message: 'Missing frozen instrument metadata' }))
+        const instrument = {
+          symbol: quote.symbol,
+          market: instrumentMarket(quote.symbol),
+          minimumQuantityAtoms: BigInt(metadata.minimumQuantityAtoms),
+          quantityIncrementAtoms: BigInt(metadata.quantityIncrementAtoms),
+          priceIncrementAtoms: BigInt(metadata.priceIncrementAtoms),
+        }
         const input = {
           instrument: {
-            symbol: quote.symbol,
-            market: instrumentMarket(quote.symbol),
-            minimumQuantityAtoms: BigInt(metadata.minimumQuantityAtoms),
-            quantityIncrementAtoms: BigInt(metadata.quantityIncrementAtoms),
-            priceIncrementAtoms: BigInt(metadata.priceIncrementAtoms),
+            ...instrument,
+            ...instrumentQuantityTerms(instrument, metadata.fractionable && config.fractionalTrading),
           },
           quote: {
             priceMicros: yield* numberToMicros(side === OrderSide.Buy ? quote.askPrice : quote.bidPrice, 'quote.price'),
@@ -377,7 +388,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           order: {
             side: side === OrderSide.Buy ? IntentSide.Buy : IntentSide.Sell,
             quantityAtoms: BigInt(quantity),
-            limitPriceMicros: limit === undefined ? null : BigInt(limit),
+            limitPriceMicros: BigInt(limit),
           },
         })
       })
@@ -434,7 +445,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               outcome = yield* executeQuote(
                 previous.side,
                 remaining.toString(),
-                previous.orderType === OrderType.Limit ? previous.limitPriceMicros : undefined,
+                previous.limitPriceMicros,
                 quote.value,
                 consumed,
               )
@@ -654,7 +665,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           executeQuote(
             order.side,
             (BigInt(order.quantityAtoms) - (filledQuantities.get(order.brokerOrderId) ?? 0n)).toString(),
-            order.orderType === OrderType.Limit ? order.limitPriceMicros : undefined,
+            order.limitPriceMicros,
             quote.value,
             priorConsumption,
           ),
@@ -922,7 +933,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     }
 
     const mutation: BrokerMutationShape = {
-      submit: (intent: Intent, closeOnly = false) =>
+      submit: (intent: Intent) =>
         Effect.gen(function* () {
           yield* readState
           const prepared = yield* Effect.fromResult(prepareSubmit(intent, accountId))
@@ -932,34 +943,11 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               MutationOperation.Submit,
               'Replay account configuration disables fractional trading',
             )
-          const marketClose =
-            closeOnly &&
-            request.type === OrderType.Market &&
-            request.time_in_force ===
-              (instrumentMarket(intent.symbol) === MarketKind.Crypto
-                ? TimeInForce.GoodUntilCanceled
-                : TimeInForce.Day) &&
-            request.side === OrderSide.Sell
-          if (
-            !marketClose &&
-            (request.type !== OrderType.Limit ||
-              request.time_in_force !==
-                (instrumentMarket(intent.symbol) === MarketKind.Crypto
-                  ? TimeInForce.ImmediateOrCancel
-                  : TimeInForce.Day))
-          )
-            return yield* mutationFailure(
-              MutationOperation.Submit,
-              'Replay requires LIMIT with instrument session duration or a close-only market sell with the instrument time in force',
-            )
           const observedAt = yield* config.submissionTime ?? now
           const metadata = asset(intent.symbol)
           if (metadata === undefined || !metadata.tradable)
             return yield* mutationFailure(MutationOperation.Submit, 'Captured asset is not tradable')
-          const limit =
-            request.type === OrderType.Limit
-              ? yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
-              : undefined
+          const limit = yield* Effect.fromResult(decimalToMicrosResult(request.limit_price, false, 'limit price'))
           const brokerOrderId = simulatedUuid(
             yield* Effect.fromResult(hash({ runId: config.runId, clientOrderId: intent.clientOrderId })),
           )
@@ -979,7 +967,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
             orderType: request.type,
             side: request.side,
             timeInForce: request.time_in_force,
-            ...(limit === undefined ? {} : { limitPriceMicros: limit }),
+            limitPriceMicros: limit,
             status: OrderStatus.New,
             extendedHours: request.extended_hours,
             observedAt,
@@ -1040,10 +1028,6 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     ...jevMarketForSymbol(intent.symbol),
                   })
                 : 'outside-regular-session'
-              if (marketClose && unavailableReason !== null)
-                return yield* new ReplayBrokerFailure({
-                  message: `Market close simulation requires a fresh executable quote: ${unavailableReason}`,
-                })
               yield* settleOrder(brokerOrderId, arrivedAt, quote, unavailableReason)
             }).pipe(
               Effect.onExit((exit) =>

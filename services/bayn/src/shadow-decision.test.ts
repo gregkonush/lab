@@ -1,3 +1,4 @@
+import { intentPlanSchemaVersion } from './execution/contracts'
 import { withProviderSessions } from './testing/market-calendar-fixture'
 import { constructSimulatedSnapshot } from './market-data/streaming/snapshot'
 import { reproduceRecordedStreamingDecision } from './market-data/streaming/recorded-decision'
@@ -53,7 +54,7 @@ import { MutationEventType, MutationStore, type MutationEvent, type MutationStor
 import { MutationOperation } from './broker/alpaca-mutations'
 import { prepareMutationIntent } from './observe-composition/mutation-intent-interpreter'
 import type { ReconciliationPassResult } from './reconciler'
-import { legacyIntentPlanSchemaVersion } from './execution/legacy-wire'
+
 import { bindCycleExecutionSession } from './execution-session'
 import { canonicalHashV1 } from './hash'
 import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data'
@@ -454,6 +455,7 @@ const fixture = (
     if (plannedTarget === undefined) throw new Error(`intraday fixture is missing ${target.symbol}`)
     return {
       symbol: target.symbol,
+      limitPriceMicros: plannedTarget.referencePriceMicros,
       notionalLimitMicros: (
         (BigInt(target.quantityAtoms) * BigInt(plannedTarget.referencePriceMicros)) /
         1_000_000_000n
@@ -1108,9 +1110,10 @@ describe('intraday shadow decision', () => {
         const intent = await Effect.runPromise(
           planExecutionIntent(
             {
-              schemaVersion: legacyIntentPlanSchemaVersion,
+              schemaVersion: intentPlanSchemaVersion,
               ...target,
               notionalLimitMicros: risk.notionalLimitMicros,
+              limitPriceMicros: risk.limitPriceMicros,
               createdAt: document.createdAt,
             },
             { authority: { ...authority, effective: Authority.Execution, kill: KillState.Clear } },
@@ -1249,13 +1252,16 @@ describe('intraday shadow decision', () => {
       for (const [index, target] of document.targetPlan.intentTargets.entries()) {
         const risk = document.deltaRisk[index]?.evaluation.decision
         const notional = document.deltaRisk[index]?.notionalLimitMicros
-        if (risk === undefined || notional === undefined) throw new Error('missing bound risk')
+        const limitPriceMicros = document.deltaRisk[index]?.limitPriceMicros
+        if (risk === undefined || notional === undefined || limitPriceMicros === undefined)
+          throw new Error('missing bound risk')
         const intent = await Effect.runPromise(
           planExecutionIntent(
             {
-              schemaVersion: legacyIntentPlanSchemaVersion,
+              schemaVersion: intentPlanSchemaVersion,
               ...target,
               notionalLimitMicros: notional,
+              limitPriceMicros,
               createdAt: document.createdAt,
             },
             { authority },
@@ -1885,9 +1891,10 @@ describe('intraday shadow decision', () => {
     const intent = value(
       makeExecutionIntentFromDecodedPlan(
         {
-          schemaVersion: legacyIntentPlanSchemaVersion,
+          schemaVersion: intentPlanSchemaVersion,
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
+          limitPriceMicros: risk.limitPriceMicros,
         },
         authorityGenerationHash,
       ),
@@ -1937,9 +1944,10 @@ describe('intraday shadow decision', () => {
     const intent = value(
       makeExecutionIntentFromDecodedPlan(
         {
-          schemaVersion: legacyIntentPlanSchemaVersion,
+          schemaVersion: intentPlanSchemaVersion,
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
+          limitPriceMicros: risk.limitPriceMicros,
         },
         authorityGenerationHash,
       ),
@@ -1986,20 +1994,25 @@ describe('intraday shadow decision', () => {
     if (target === undefined || risk?.facts === undefined) {
       throw new Error('pricing fixture requires one persisted execution risk input')
     }
-    const forgedNotionalLimitMicros = (BigInt(risk.notionalLimitMicros) + 1n).toString()
+    const forgedLimitPriceMicros = (BigInt(risk.limitPriceMicros) + 10000n).toString()
+    const forgedNotionalLimitMicros = (
+      (BigInt(target.quantityAtoms) * BigInt(forgedLimitPriceMicros) + (target.side === Side.Buy ? 999999999n : 0n)) /
+      1000000000n
+    ).toString()
     const intent = value(
       makeExecutionIntentFromDecodedPlan(
         {
-          schemaVersion: legacyIntentPlanSchemaVersion,
+          schemaVersion: intentPlanSchemaVersion,
           ...target,
           notionalLimitMicros: forgedNotionalLimitMicros,
+          limitPriceMicros: forgedLimitPriceMicros,
         },
         authorityGenerationHash,
       ),
     )
     const forgedState = {
       ...risk.facts.state,
-      expectedExecutionPriceMicros: (BigInt(risk.facts.state.expectedExecutionPriceMicros) + 1n).toString(),
+      expectedExecutionPriceMicros: forgedLimitPriceMicros,
     }
     const forgedEvaluation = value(
       evaluate({
@@ -2017,6 +2030,7 @@ describe('intraday shadow decision', () => {
         {
           ...risk,
           notionalLimitMicros: forgedNotionalLimitMicros,
+          limitPriceMicros: forgedLimitPriceMicros,
           facts: { ...risk.facts, state: forgedState },
           evaluation: forgedEvaluation,
         },

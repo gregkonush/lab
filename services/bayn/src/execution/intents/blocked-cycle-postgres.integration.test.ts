@@ -925,11 +925,11 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           yield* sql`INSERT INTO intents (
           intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
-          quantity_atoms, notional_limit_micros, state, state_version, created_at, updated_at
+          quantity_atoms, notional_limit_micros, limit_price_micros, state, state_version, created_at, updated_at
         ) VALUES (
-          ${intentId}, 'bayn.paper-intent.v3', ${executionHash}, NULL, 'intraday-momentum',
+          ${intentId}, 'bayn.execution-intent.v4', ${executionHash}, NULL, 'intraday-momentum',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
-          'AAPL', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
+          'AAPL', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000000, 1000000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
         )`
           yield* sql.withTransaction(
             Effect.gen(function* () {
@@ -1586,7 +1586,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
     strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric
+    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric, limit_price_micros numeric
   )`
   yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
@@ -1621,7 +1621,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
     yield* sql`INSERT INTO intents VALUES (
       ${intentId}, ${expiryFixture.generationHash}, ${expiryFixture.cycleId}, ${accountId}, ${expiryFixture.policyHash},
       'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId},
-      ${'b1_' + 'A'.repeat(43)}, 'AAPL', 'MARKET', 'DAY', 1000000000, 100000000
+      ${'b1_' + 'A'.repeat(43)}, 'AAPL', 'LIMIT', 'DAY', 1000000000, 100000000, 100000000
     )`
     yield* sql`INSERT INTO risk_decisions VALUES (
       ${intentId}, ${intentId}, 'APPROVED', ${expiryFixture.createdAt}, ${expiryFixture.expiresAt}
@@ -1663,10 +1663,11 @@ const reserveExpiryIntent = Effect.gen(function* () {
           clientOrderId: 'b1_' + 'A'.repeat(43),
           symbol: 'AAPL',
           side: OrderSide.Buy,
-          orderType: OrderType.Market,
+          orderType: OrderType.Limit,
           timeInForce: TimeInForce.Day,
           quantityAtoms: '1000000000',
           notionalLimitMicros: '100000000',
+          limitPriceMicros: '100000000',
         }),
       ),
     ),

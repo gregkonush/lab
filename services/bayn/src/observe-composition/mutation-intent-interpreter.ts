@@ -1,3 +1,4 @@
+import { intentPlanSchemaVersion } from '../execution/contracts'
 import { Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
@@ -5,7 +6,7 @@ import { MutationOperation } from '../broker/alpaca-mutations'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
 import { CycleRunnerError } from '../cycle/runner'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
-import { legacyAuthorityStateSchemaVersion, legacyIntentPlanSchemaVersion } from '../execution/legacy-wire'
+import { legacyAuthorityStateSchemaVersion } from '../execution/legacy-wire'
 import {
   classifyExistingCommit,
   IntentStore,
@@ -200,10 +201,10 @@ const immutableIntentBindingMatches = (stored: Intent, expected: Intent): boolea
   stored.timeInForce === expected.timeInForce &&
   stored.quantityAtoms === expected.quantityAtoms &&
   stored.notionalLimitMicros === expected.notionalLimitMicros &&
+  stored.limitPriceMicros === expected.limitPriceMicros &&
   stored.createdAt === expected.createdAt
 
 const validateCurrentMutationExecutionTerms = (
-  preparation: MutationPreparation,
   limitSlippageBps: number,
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
@@ -216,7 +217,6 @@ const validateCurrentMutationExecutionTerms = (
     timeInForce: targetIntent.timeInForce,
     quantityAtoms: BigInt(targetIntent.quantityAtoms),
     referencePriceMicros: BigInt(target.referencePriceMicros),
-    executionModel: preparation.executionModel,
     limitSlippageBps: BigInt(limitSlippageBps),
   })
   if (Result.isFailure(pricing)) {
@@ -228,7 +228,8 @@ const validateCurrentMutationExecutionTerms = (
       }),
     )
   }
-  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros
+  return pricing.success.notionalLimitMicros.toString() === riskBinding.notionalLimitMicros &&
+    pricing.success.expectedExecutionPriceMicros.toString() === riskBinding.limitPriceMicros
     ? Result.succeed(undefined)
     : Result.fail(
         mutationRunnerError({
@@ -390,9 +391,10 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
     for (const lookup of recoveryLookups) {
       const intent = yield* planExecutionIntent(
         {
-          schemaVersion: legacyIntentPlanSchemaVersion,
+          schemaVersion: intentPlanSchemaVersion,
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
+          limitPriceMicros: lookup.riskBinding.limitPriceMicros,
           ...(document.replanGenerationHash === undefined
             ? {}
             : { replanGenerationHash: document.replanGenerationHash }),
@@ -590,7 +592,6 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
         if (!requiresFreshSubmission) continue
         yield* Effect.fromResult(
           validateCurrentMutationExecutionTerms(
-            preparation,
             document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0,
             prepared.targetIntent,
             prepared.target,

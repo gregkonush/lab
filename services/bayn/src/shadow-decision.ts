@@ -1,6 +1,11 @@
-import { quantityScale } from './quantity'
+import {
+  executionIntentSchemaVersion,
+  intentPlanSchemaVersion,
+  referenceIntentSchemaVersion,
+} from './execution/contracts'
 import { canonicalHashV1Result } from './hash'
-import { instrumentMarket, MarketKind } from './instruments'
+import { instrumentMarket } from './instruments'
+import { cashSpotLimitTimeInForce } from './execution/order-terms'
 
 import { makeBoundExecutionCalendar } from './cycle/construction'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
@@ -34,18 +39,11 @@ import {
   OrderType,
   ReferenceIntentSchema,
   RiskOutcome,
-  TimeInForce,
   type Intent,
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import {
-  legacyCycleDecisionSchemaVersion,
-  legacyExecutionAuthorityToken,
-  legacyExecutionIntentSchemaVersion,
-  legacyIntentPlanSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
-} from './execution/legacy-wire'
+import { legacyCycleDecisionSchemaVersion, legacyExecutionAuthorityToken } from './execution/legacy-wire'
 import { reconciledStateHash } from './reconciliation'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
@@ -92,6 +90,7 @@ export interface ShadowSnapshotBinding {
 export interface ShadowDeltaRiskInput {
   readonly symbol: string
   readonly notionalLimitMicros: string
+  readonly limitPriceMicros: string
   readonly state: State
 }
 
@@ -141,6 +140,7 @@ const ShadowSnapshotBindingSchema = Schema.Struct({
 const ShadowDeltaRiskInputSchema = Schema.Struct({
   symbol: StrictNonEmptyStringSchema,
   notionalLimitMicros: PositiveMicrosSchema,
+  limitPriceMicros: PositiveMicrosSchema,
   state: StateSchema,
 })
 
@@ -421,18 +421,9 @@ const validateBindings = (
     const narrowCloseTerms =
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
-      plannerInput.executionTerms.orderType ===
-        (positions.every(
-          (position) =>
-            instrumentMarket(position.symbol) === MarketKind.Equity &&
-            BigInt(position.quantityAtoms) % quantityScale === 0n,
-        )
-          ? OrderType.Limit
-          : OrderType.Market) &&
+      plannerInput.executionTerms.orderType === OrderType.Limit &&
       executionMarketData.symbols.every(
-        (symbol) =>
-          plannerInput.executionTerms.timeInForce ===
-          (instrumentMarket(symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day),
+        (symbol) => plannerInput.executionTerms.timeInForce === cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       ) &&
       plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
     if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
@@ -618,7 +609,7 @@ const makeRiskIntent = (
       strictParseOptions,
     )({
       schemaVersion:
-        authorityGenerationHash === undefined ? legacyReferenceIntentSchemaVersion : legacyExecutionIntentSchemaVersion,
+        authorityGenerationHash === undefined ? referenceIntentSchemaVersion : executionIntentSchemaVersion,
       ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
       intentId: identity.success.intentId,
       strategyName: decoded.strategyName,
@@ -633,6 +624,7 @@ const makeRiskIntent = (
       timeInForce: decoded.timeInForce,
       quantityAtoms: decoded.quantityAtoms,
       notionalLimitMicros: decoded.notionalLimitMicros,
+      limitPriceMicros: decoded.limitPriceMicros,
       ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
         ? {}
         : { replanGenerationHash: decoded.replanGenerationHash }),
@@ -672,9 +664,10 @@ const reduceShadowDelta = (
   }
   const intent = makeRiskIntent(
     {
-      schemaVersion: legacyIntentPlanSchemaVersion,
+      schemaVersion: intentPlanSchemaVersion,
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
       ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
@@ -716,6 +709,7 @@ const reduceShadowDelta = (
     ...accumulator.deltaRisk,
     {
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
       ...(context.authority === Authority.Execution
         ? {
             facts: {

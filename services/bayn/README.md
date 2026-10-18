@@ -31,23 +31,29 @@ Replay verifies those roles again; candidate quote/trade exclusions cannot downg
 Migration 118 retires protocol v8 for new authority generations and requires flat positions, settled orders, complete
 accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v8`.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
-calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading. Fractional equity holdings use the same
-MARKET/DAY terms and impact model as the close planner. Estimated net liquidation includes that sell
+calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
 predictive edge or profit.
 The equity universe uses the broker exchange calendar. BTC/USD, ETH/USD and SOL/USD use continuous market hours,
 including nights, weekends and UTC date boundaries. Both markets share the same account controller, planner, risk
 checks, intent coordinator, broker submission adapter, reconciliation and accounting. There is one account budget
-and at most one open position. Crypto uses cash buying power, quantity-based LIMIT/IOC entries and closes, and
-MARKET/GTC forced liquidation. No crypto shorting or margin is enabled.
+and at most one open position. All entries, ordinary exits and forced closes use quantity-based LIMIT orders:
+DAY with `extended_hours=true` for equities, including fractions, and IOC for crypto at every hour.
+Crypto uses cash buying power; shorting and margin remain disabled.
+Current `bayn.execution-intent.v4` intents store an explicit `limitPriceMicros`. That price binds the deterministic
+intent identity, immutable SQL row, request, recovery checks and replay checkpoint. Buy spending rounds up to a micro;
+sell proceeds round down. Risk caps and turnover use the conservative ceiling on either side. The adapter preserves
+the explicit price rather than reconstructing it from rounded notional. Migration 121 refuses nonterminal intents,
+unfinished bound cycles or unresolved mutations before installing the new write constraints. Historical terminal rows retain their original bytes
+and cannot enter the current intent codec. There is no MARKET or GTC submission path.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
-three-minute close lease. Fresh reconciled positions can authorize the existing MARKET/GTC forced close after an outage;
+three-minute close lease. Fresh reconciled positions can authorize the existing close-only liquidation binding after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
 The generic continuous-cycle close phase starts only when the last admitted entry's fifteen-minute holding
 allowance ends, leaving the existing three-minute recovery reserve. The position's own maximum-hold trigger still
@@ -524,7 +530,7 @@ and insertion. A late transaction rolls back. Production uses the database wall 
 account clock. This is the server acceptance boundary, not a guarantee about when the commit acknowledgment arrives.
 A committed close retains its original trigger through partial fills and recovery after the inference deadline.
 New entries and quote-backed instrument-quantized closes use
-IOC limit orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
+native LIMIT/DAY equity or LIMIT/IOC crypto orders with a price allowance bounded by the existing risk policy, currently 10 basis points from the
 verified ask for buys or bid for sells. Prices round toward the quote to stay within that allowance. The durable
 decision retains the original quote, phase-specific allowance, exact limit notional, and risk evidence; historical decisions without
 an allowance retain their original exact quote limit. Quote freshness and submission deadlines still apply.

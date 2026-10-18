@@ -143,7 +143,6 @@ export const makeControlManagementBatch = (input: {
       timeInForce: cashSpotLimitTimeInForce(instrumentMarket(order.symbol)),
       quantityAtoms: order.quantityAtoms,
       referencePriceMicros: yield* numberToMicros(decisionQuote.value.askPrice),
-      executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const accountId = `research-control-${runId}`

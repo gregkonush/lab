@@ -564,9 +564,10 @@ describe('closing market-data fallback boundaries', () => {
             if (risk === undefined) throw new Error('missing fixture risk binding')
             const intent = yield* planExecutionIntent(
               {
-                schemaVersion: 'bayn.paper-intent-plan.v1',
+                schemaVersion: 'bayn.intent-plan.v2',
                 ...target,
                 notionalLimitMicros: risk.notionalLimitMicros,
+                limitPriceMicros: risk.limitPriceMicros,
                 ...(document.replanGenerationHash === undefined
                   ? {}
                   : { replanGenerationHash: document.replanGenerationHash }),
