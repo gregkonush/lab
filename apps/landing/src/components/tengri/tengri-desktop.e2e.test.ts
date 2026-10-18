@@ -1930,6 +1930,23 @@ test('opens composer menus above the picker and supports keyboard selection on d
   await page.goto('/')
   const model = page.getByRole('combobox', { name: 'Model', exact: true })
   await expect(model).toBeEnabled()
+  const triggerStyle = (control: Locator) =>
+    control.evaluate((element) => {
+      const style = getComputedStyle(element)
+      return {
+        background: style.backgroundColor,
+        radius: style.borderRadius,
+        height: style.height,
+        padding: style.padding,
+        fontSize: style.fontSize,
+        fontWeight: style.fontWeight,
+        lineHeight: style.lineHeight,
+        gap: style.columnGap,
+      }
+    })
+  const modelStyle = await triggerStyle(model)
+  expect(await triggerStyle(page.getByRole('combobox', { name: 'Approvals', exact: true }))).toEqual(modelStyle)
+  expect(await triggerStyle(page.getByRole('combobox', { name: 'Reasoning effort', exact: true }))).toEqual(modelStyle)
   await model.focus()
   await model.press('ArrowUp')
   const menu = page.getByRole('listbox')
