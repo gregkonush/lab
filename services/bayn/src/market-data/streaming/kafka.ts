@@ -20,6 +20,7 @@ import {
 } from '@platformatic/kafka'
 import { Cause, Clock, Context, Data, Duration, Effect, Layer, Redacted, Result, Schedule, Stream } from 'effect'
 import { makeKafkaArrivalEnvelope } from './arrival-envelope'
+import type { NativeArrivalCaptureFactory } from './native-arrival-journal'
 import {
   featureAvailabilityMeasurement,
   partitionLagMeasurements,
@@ -300,6 +301,7 @@ export const makeKafkaMarketProjection = (
   universe: MarketSources,
   factory: KafkaProjectionTransportFactory = platformaticProjectionTransport,
   diagnosticStartMs?: number,
+  captureFactory?: NativeArrivalCaptureFactory,
 ) =>
   Effect.gen(function* () {
     const clock = yield* Clock.Clock
@@ -347,7 +349,7 @@ export const makeKafkaMarketProjection = (
 
         const transport = yield* Effect.acquireRelease(
           Effect.try({
-            try: () => factory(config, epoch),
+            try: () => factory(config, epoch, captureFactory !== undefined, captureFactory !== undefined),
             catch: (cause) => failure('connect', 'Kafka client acquisition failed', cause),
           }),
           (resource) =>
@@ -409,6 +411,12 @@ export const makeKafkaMarketProjection = (
           partitions,
         }
         const evidence = bootstrap
+        const capture =
+          captureFactory === undefined
+            ? undefined
+            : yield* captureFactory(evidence, universe).pipe(
+                Effect.mapError((cause) => failure('bootstrap', 'Native arrival capture could not start', cause)),
+              )
         let invalidation: KafkaMarketFailure | undefined
         const terminals = new Map<string, KafkaPartitionPosition>()
         positions = partitions.map((partition) => ({
@@ -459,9 +467,9 @@ export const makeKafkaMarketProjection = (
                   consumerKnownRawBytes += byteLength
                 else consumerUnknownRawByteLengthRecords++
               }
-              if (invalidation !== undefined) return
               const availableAtMs = clock.currentTimeMillisUnsafe()
               arrivals.observe(availableAtMs, record.tombstone === true ? 0 : record.rawByteLength)
+              const previousProjection = projection
               const previousSequence = projection.sequence
               const deliveryKey = topicPartitionKey(record.topic, record.partition)
               const priorDelivery = deliveredPositions.get(deliveryKey)
@@ -478,6 +486,21 @@ export const makeKafkaMarketProjection = (
                 projection = incorporateMarketRecord(projection, record, source, availableAtMs)
               }
               projectionConsumerSequence = consumerSequence
+
+              if (capture !== undefined)
+                yield* capture.observe({
+                  record,
+                  availableAtMs,
+                  consumerSequence,
+                  projectionSequence: projection.sequence,
+                  disposition:
+                    record.tombstone === true
+                      ? CaptureDisposition.Rejected
+                      : invalidation !== undefined
+                        ? CaptureDisposition.Ignored
+                        : kafkaCaptureDisposition(previousProjection, projection),
+                  assignmentInvalidated: invalidation !== undefined,
+                })
 
               if (invalidation !== undefined) return
               if (record.tombstone === true)
@@ -604,6 +627,7 @@ export const makeKafkaMarketProjection = (
               endOffsetLookupCompletedAtMs: measuredAtMs,
               endOffsetLookupFailure: Result.isFailure(ends) ? ends.failure.message : null,
               endOffsetLookupFailureCodes: Result.isFailure(ends) ? safeKafkaFailureCodes(ends.failure.cause) : null,
+              nativeArrivalCapture: capture?.status() ?? null,
               partitions: partitionLagMeasurements(positions, Result.isSuccess(ends) ? ends.success : undefined),
               ...projectionCoverageMeasurements(
                 projection,
@@ -709,5 +733,9 @@ export const makeKafkaMarketProjection = (
       })),
     }
   })
-export const KafkaMarketProjectionLive = (config: KafkaMarketConfig, universe: MarketSources) =>
-  Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe))
+export const KafkaMarketProjectionLive = (
+  config: KafkaMarketConfig,
+  universe: MarketSources,
+  captureFactory: NativeArrivalCaptureFactory,
+) =>
+  Layer.effect(KafkaMarketProjection, makeKafkaMarketProjection(config, universe, undefined, undefined, captureFactory))

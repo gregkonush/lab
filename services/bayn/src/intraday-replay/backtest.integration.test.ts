@@ -91,6 +91,7 @@ durableTest(
                         sourceOffset: String(BigInt(original.sourceOffset) + BigInt(consumed)),
                         eventAt: new Date(next[0]).toISOString(),
                         ingestedAt: new Date(next[0]).toISOString(),
+                        marketSession: next[0] < closeMs ? 'regular' : 'post',
                         bidPrice: next[1],
                         askPrice: next[1],
                         bidSize: 100,
@@ -136,7 +137,7 @@ durableTest(
             ),
           ],
           advanceToArrival: advanceTo,
-          quoteAt: (symbol, atMs) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs)),
+          quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
           schemaVersion: 'bayn.paper-intent.v3',

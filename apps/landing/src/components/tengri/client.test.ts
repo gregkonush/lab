@@ -75,7 +75,9 @@ test('reports rejected snapshot and action fetches without reporting caller canc
   )
   try {
     await expect(getDesktopSnapshot()).rejects.toBe(failure)
-    await expect(runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/' })).rejects.toBe(failure)
+    await expect(
+      runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/workspace' }),
+    ).rejects.toBe(failure)
     expect(capture).toHaveBeenCalledTimes(2)
     expect(String(capture.mock.calls)).not.toContain('PRIVATE_SENTINEL')
     const controller = new AbortController()
@@ -214,7 +216,9 @@ describe('Tengri guest operation coordination', () => {
     const unsubscribe = subscribeTengriGuestOperations(agentId, () => {
       snapshots.push(getTengriGuestOperationSnapshot(agentId))
     })
-    const pending = runTengriAction({ action: 'list-files', agentId, path: '/' }).catch((error: unknown) => error)
+    const pending = runTengriAction({ action: 'list-files', agentId, path: '/workspace' }).catch(
+      (error: unknown) => error,
+    )
     expect(getTengriGuestOperationSnapshot(agentId)).toBe(true)
 
     const releaseTransition = beginTengriLifecycleTransition(agentId)
@@ -224,7 +228,9 @@ describe('Tengri guest operation coordination', () => {
     expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
 
     const callsBeforeBlockedRequest = actions.length
-    const blocked = await runTengriAction({ action: 'list-files', agentId, path: '/' }).catch((error: unknown) => error)
+    const blocked = await runTengriAction({ action: 'list-files', agentId, path: '/workspace' }).catch(
+      (error: unknown) => error,
+    )
     expect(blocked).toBeInstanceOf(Error)
     expect((blocked as Error).message).toBe('Agent lifecycle transition is in progress')
     expect(blocked).toMatchObject({ name: 'AbortError' })
@@ -244,7 +250,12 @@ describe('Tengri guest operation coordination', () => {
 
     releaseTransition()
     expect(
-      await runTengriAction<{ entries: never[] }>({ action: 'search-files', agentId, path: '/', query: 'readme' }),
+      await runTengriAction<{ entries: never[] }>({
+        action: 'search-files',
+        agentId,
+        path: '/workspace',
+        query: 'readme',
+      }),
     ).toEqual({ entries: [] })
     expect(snapshots).toEqual([true, false, true, false])
     unsubscribe()

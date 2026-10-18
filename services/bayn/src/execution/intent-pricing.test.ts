@@ -22,7 +22,7 @@ const input = {
 } as const
 
 describe('execution intent pricing', () => {
-  test('keeps an NVDA IOC marketable after the observed submission price move without exceeding the risk cap', () => {
+  test('keeps an NVDA limit marketable after the observed submission price move without exceeding the risk cap', () => {
     for (const [reference, expectedLimit, arrivalAsk] of [
       [215_410_000n, 215_620_000n, 215_490_000n],
       [215_660_000n, 215_870_000n, 215_720_000n],
@@ -58,14 +58,14 @@ describe('execution intent pricing', () => {
             assumptions: { slippageBps: 0, availableLiquidityPpm: 1_000_000 },
           }),
         )
-      expect(simulate(reference)).toMatchObject({ status: 'canceled', filledQuantityAtoms: 0n })
+      expect(simulate(reference)).toMatchObject({ status: 'unfilled', filledQuantityAtoms: 0n })
       expect(simulate(pricing.expectedExecutionPriceMicros)).toMatchObject({
         status: 'filled',
         filledQuantityAtoms: 46000000000n,
         fillPriceMicros: arrivalAsk,
       })
       expect(simulate(pricing.expectedExecutionPriceMicros, expectedLimit + 10_000n)).toMatchObject({
-        status: 'canceled',
+        status: 'unfilled',
         filledQuantityAtoms: 0n,
       })
     }
@@ -115,7 +115,7 @@ describe('execution intent pricing', () => {
           assumptions: { slippageBps, availableLiquidityPpm },
         }),
       )
-    expect(simulate(reference, 1)).toMatchObject({ status: 'canceled', filledQuantityAtoms: 0n })
+    expect(simulate(reference, 1)).toMatchObject({ status: 'unfilled', filledQuantityAtoms: 0n })
     expect(simulate(pricing.expectedExecutionPriceMicros, 1)).toMatchObject({
       status: 'filled',
       filledQuantityAtoms: quantity,
@@ -125,10 +125,10 @@ describe('execution intent pricing', () => {
       status: 'filled',
       filledQuantityAtoms: 34000000000n,
       fillPriceMicros: 289_150_000n,
-      unfilledRemainder: 'canceled',
+      remainingQuantityAtoms: 34000000000n,
     })
     expect(simulate(pricing.expectedExecutionPriceMicros, 11)).toMatchObject({
-      status: 'canceled',
+      status: 'unfilled',
       filledQuantityAtoms: 0n,
     })
   })

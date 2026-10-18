@@ -91,6 +91,8 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
+let receiverGuestApiProtocolVersion = 5
+let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let editorRequestStarted: (() => void) | null = null
@@ -225,7 +227,7 @@ beforeAll(async () => {
       _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
-      callback(null, { audience: receiverAudience })
+      callback(null, { audience: receiverAudience, guestApiProtocolVersion: receiverGuestApiProtocolVersion })
     },
     issueEditorSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -511,6 +513,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      receivedRequest = call.request
       if (
         String(call.request.path).startsWith('/workspace/.tengri-attachments/') ||
         call.request.path === '/workspace/chart.png'
@@ -557,6 +560,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      fileWriteCalls += 1
       receivedRequest = call.request
       receivedMetadata = call.metadata
       if (call.request.expectedRevision === '0'.repeat(64)) {
@@ -614,7 +618,7 @@ beforeAll(async () => {
         kind: 'FILE_EVENT_KIND_RESET',
         path: String(call.request.path),
       })
-      if (call.request.path === '/renewal') renewingFileWatch = call
+      if (call.request.path === '/workspace/renewal') renewingFileWatch = call
       else call.end()
     },
     resolveCodexApproval(
@@ -728,9 +732,27 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
+  test('refuses incompatible controllers before sending canonical file writes', async () => {
+    const { writeFile } = await import('./grpc')
+    const before = fileWriteCalls
+    try {
+      for (const version of [0, 4, 6]) {
+        receiverGuestApiProtocolVersion = version
+        expect(
+          await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
+        ).toMatchObject({ status: 503 })
+        expect(fileWriteCalls).toBe(before)
+      }
+    } finally {
+      receiverGuestApiProtocolVersion = 5
+    }
+    await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
+    expect(fileWriteCalls).toBe(before + 1)
+  })
+
   test('renews the client certificate while an existing signed stream stays open', async () => {
     const { listCodexModels, watchFiles } = await import('./grpc')
-    const watch = await watchFiles(identity, 'agent-test', '/renewal')
+    const watch = await watchFiles(identity, 'agent-test', '/workspace/renewal')
     const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
       watch.once('data', resolve)
       watch.once('error', reject)
@@ -750,7 +772,7 @@ describe('Tengri gRPC BFF transport', () => {
       watch.once('data', resolve)
       watch.once('error', reject)
     })
-    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/renewal' })
+    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/workspace/renewal' })
     expect((await next).sequence).toBe('2')
     watch.cancel()
     before?.close()
@@ -1298,8 +1320,12 @@ describe('Tengri gRPC BFF transport', () => {
     const { readCodexAttachment, readWorkspaceImage } = await import('./grpc')
     const prefix = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111'
     const image = await readCodexAttachment(identity, 'agent-test', `${prefix}.png`)
+    expect(receivedRequest).toMatchObject({
+      path: '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png',
+    })
     expect(image.mediaType).toBe('image/png')
     expect((await readWorkspaceImage(identity, 'agent-test', '/workspace/chart.png')).mediaType).toBe('image/png')
+    expect(receivedRequest).toMatchObject({ path: '/workspace/chart.png' })
     expect(await rejection(readWorkspaceImage(identity, 'agent-test', '/etc/private.png'))).toMatchObject({
       status: 400,
     })
