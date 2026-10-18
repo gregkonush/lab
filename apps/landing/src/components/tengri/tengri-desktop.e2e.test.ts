@@ -1259,6 +1259,41 @@ test('supports Dock-only launching, Spotlight, menus, Finder Quick Look, and win
   expect(terminalDisposeFailures).toEqual([])
 })
 
+test('waits for compound terminal admission beyond thirty seconds', async ({ page }) => {
+  await page.clock.install()
+  const mock = await mockTengri(page)
+  let releaseTicket = () => {}
+  const ticketGate = new Promise<void>((resolve) => {
+    releaseTicket = resolve
+  })
+  let attempts = 0
+  await page.route('**/api/tengri', async (route) => {
+    const request = route.request()
+    if (request.method() === 'POST' && request.postDataJSON().action === 'terminal-ticket') {
+      attempts += 1
+      await ticketGate
+    }
+    await route.fallback()
+  })
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Terminal' }).click()
+  const terminal = page.getByRole('region', { name: 'Terminal window' })
+  try {
+    await expect.poll(() => attempts).toBe(1)
+    await page.clock.fastForward(31_000)
+    await page.clock.runFor(1_000)
+    expect(attempts).toBe(1)
+    await expect(terminal.locator('[data-connection-state="connecting"]')).toBeAttached()
+    await expect(terminal.locator('.xterm-helper-textarea')).toHaveJSProperty('readOnly', true)
+  } finally {
+    releaseTicket()
+  }
+  await expect(terminal.locator('[data-connection-state="connected"]')).toBeAttached()
+  await terminal.getByRole('textbox', { name: 'Terminal input' }).focus()
+  await page.keyboard.type('after-admission')
+  await expect.poll(() => mock.terminalInput.join('')).toBe('after-admission')
+})
+
 test('disables terminal input while connecting and reconnecting without replaying blocked keystrokes', async ({
   page,
 }) => {

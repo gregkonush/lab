@@ -358,6 +358,18 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedTerminalDeadlines.set('termination', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
       callback(null, {})
     },
     issueTerminalTicket(
@@ -365,6 +377,18 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedTerminalDeadlines.set('ticket', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
       callback(null, {
         websocketUrl: 'wss://tengri.example/v1/terminal/ws',
         ticket: 'fixture-ticket',
@@ -946,6 +970,43 @@ describe('Tengri gRPC BFF transport', () => {
       expect(receivedTerminalDeadlines.get(method)).toBeLessThanOrEqual(Date.now() + 130_000)
     }
   })
+
+  test.each(['terminateTerminal', 'issueTerminalTicket'] as const)(
+    'cancels compound terminal RPC %s when its HTTP request aborts',
+    async (method) => {
+      const client = await import('./grpc')
+      const started = new Promise<void>((resolve) => {
+        terminalRequestStarted = resolve
+      })
+      const cancelled = new Promise<void>((resolve) => {
+        terminalRequestCancelled = resolve
+      })
+      const controller = new AbortController()
+      const pending = client[method](identity, 'agent-test', 'terminal-compound-cancel', controller.signal).catch(
+        (error: unknown) => error,
+      )
+      try {
+        await started
+        controller.abort()
+        const result = await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal cancellation timed out')), 300),
+          ),
+        ])
+        expect(result).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+        await Promise.race([
+          cancelled,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal RPC was not cancelled')), 1_000),
+          ),
+        ])
+      } finally {
+        terminalRequestStarted = null
+        terminalRequestCancelled = null
+      }
+    },
+  )
 
   test('creates a workspace when the Ofz database clock trails the BFF by one second', async () => {
     const { createAgent } = await import('./grpc')

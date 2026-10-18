@@ -70,7 +70,8 @@ commit and returns a decision valid for at most two seconds. Receipt revalidatio
 A slow commit therefore does not automatically trigger a new admission every five seconds, and waiting for an audit
 does not lengthen a signed assertion or authorize access from a stale policy decision. Ordinary BFF unary operations
 use the existing 130-second guest-operation budget so parent, probe and exact-operation admissions can finish
-sequentially. Streaming operations retain their cancellation. Creation uses
+sequentially. Terminal callers share that budget with the BFF, and ticket and termination requests propagate browser
+cancellation through HTTP to gRPC. Streaming operations retain their cancellation. Creation uses
 that same budget for its thirty-second enrollment polling window, three admission transports and remaining request
 work. Its reservation ID still recovers an uncertain outcome.
 Conversation history, Codex events and file streams share their workspace admission with the guest connection, so one

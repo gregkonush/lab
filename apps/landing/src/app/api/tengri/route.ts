@@ -161,11 +161,11 @@ async function runAction(request: Request) {
         )
         break
       case 'terminate-terminal':
-        await terminateTerminal(identity, action.agentId, action.terminalId)
+        await terminateTerminal(identity, action.agentId, action.terminalId, request.signal)
         result = null
         break
       case 'terminal-ticket':
-        result = await issueTerminalTicket(identity, action.agentId, action.terminalId)
+        result = await issueTerminalTicket(identity, action.agentId, action.terminalId, request.signal)
         break
       case 'codex-account':
         result = await getCodexAccount(identity, action.agentId, request.signal)
