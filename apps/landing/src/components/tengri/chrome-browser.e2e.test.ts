@@ -1,4 +1,4 @@
-import { expect, test, type WebSocket, type WebSocketRoute } from '@playwright/test'
+import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { codexModelFixtures } from './codex-models.fixture'
 
 test.afterEach(async ({ request }, testInfo) => {
@@ -23,10 +23,18 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
 }, testInfo) => {
   test.skip(process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1', 'Run the real guest browser acceptance runner')
   test.setTimeout(240_000)
-  const sockets: WebSocket[] = []
-  const displayConnections: Array<{ client: WebSocketRoute; server: WebSocketRoute }> = []
-  await page.routeWebSocket('**/websockify', (client) => {
-    displayConnections.push({ client, server: client.connectToServer() })
+  const sockets: PlaywrightWebSocket[] = []
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket
+    let displaySocket: WebSocket | undefined
+    Object.defineProperty(window, '__tengriTestDisplaySocket', { get: () => displaySocket })
+    window.WebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args) {
+        const socket = Reflect.construct(target, args) as WebSocket
+        if (new URL(String(args[0]), location.href).pathname === '/websockify') displaySocket = socket
+        return socket
+      },
+    })
   })
   const errors: string[] = []
   const signOutActions: string[] = []
@@ -185,13 +193,12 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   expect((await state()).loaded?.url).toBe(humanUrl)
   expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
   // A dropped display transport must retain the viewer document and the guest's unsent form input.
-  const disconnected = displayConnections[0]
-  expect(disconnected).toBeTruthy()
-  await Promise.all([
-    disconnected.client.close({ code: 1012, reason: 'Fixture service restart' }),
-    disconnected.server.close({ code: 1012, reason: 'Fixture service restart' }),
-  ])
-  await expect.poll(() => displayConnections.length).toBeGreaterThan(1)
+  await frame.locator('#screen').evaluate(() => {
+    const socket = (window as Window & { __tengriTestDisplaySocket?: WebSocket }).__tengriTestDisplaySocket
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error('The real display transport is not open')
+    socket.close(4000, 'Fixture transport restart')
+  })
+  await expect.poll(() => sockets.length).toBeGreaterThan(establishedSockets.length)
   await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')
   expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
   expect((await state()).loaded?.url).toBe(humanUrl)
