@@ -50,6 +50,10 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+`product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
+Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
+They do not create unused product image archives or PR registry caches.
+
 Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
 must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
 successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three

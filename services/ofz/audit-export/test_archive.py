@@ -704,6 +704,48 @@ class RealArchive(unittest.TestCase):
                 0,
             )
 
+            checkpoint = newer
+            delayed.execute("BEGIN")
+            older = append(delayed, "commit-during-independent-upload")
+            newer = append(connect("ofz_api"), "visible-before-upload")
+
+            class CommitDuringUpload(archive.Exporter):
+                def store(self, rows, now_ms):
+                    receipt = super().store(rows, now_ms)
+                    delayed.execute("COMMIT")
+                    return receipt
+
+            try:
+                self.assertEqual(CommitDuringUpload(caller, storage).tick(), 1)
+            finally:
+                delayed.rollback()
+            state = database.execute(
+                "SELECT acknowledged_sequence,acknowledged_at_ms FROM ofz.archive_state"
+            ).fetchone()
+            self.assertEqual(state["acknowledged_sequence"], checkpoint)
+            self.assertGreater(state["acknowledged_at_ms"], 0)
+            self.assertIsNone(
+                database.execute(
+                    "SELECT acknowledged_at_ms FROM ofz.audit_outbox WHERE audit_sequence=%s",
+                    (older,),
+                ).fetchone()["acknowledged_at_ms"]
+            )
+            self.assertTrue(cli("activate")["currentArchiveHealthy"])
+            self.assertEqual(exporter.tick(), 2)
+            self.assertEqual(exporter.tick(), 0)
+            self.assertEqual(
+                database.execute(
+                    "SELECT acknowledged_sequence FROM ofz.archive_state"
+                ).fetchone()["acknowledged_sequence"],
+                newer,
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) AS pending FROM ofz.audit_outbox WHERE acknowledged_at_ms IS NULL"
+                ).fetchone()["pending"],
+                0,
+            )
+
             docker("kill", "--signal=KILL", name)
             with self.assertRaises(Exception):
                 exporter.tick()

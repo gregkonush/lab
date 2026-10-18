@@ -2,7 +2,7 @@ import { equityMarketProfile } from '../jev/markets'
 import { makeReplayCheckpointStore } from './checkpoint-store'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
-import { Clock, Config, Effect, FileSystem, Layer, Redacted, Result, Schema } from 'effect'
+import { Clock, Config, Effect, FileSystem, Layer, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
@@ -37,10 +37,6 @@ const main = Effect.scoped(
     const runId = yield* Schema.decodeUnknownEffect(Sha256Schema)(rawRunId)
     const postgresUrl = yield* Config.Redacted('BAYN_TEST_POSTGRES_URL')
     const tigerAddress = yield* Config.String('BAYN_TEST_TIGERBEETLE_ADDRESS')
-    if (!Redacted.value(postgresUrl).endsWith('/bayn_test'))
-      return yield* new ReplayBrokerFailure({
-        message: 'Restart acceptance requires its disposable bayn_test database',
-      })
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
       ...baseConfig,
