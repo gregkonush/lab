@@ -1413,6 +1413,10 @@ recovery-first cycle driver from one strategy and risk policy. The broker, marke
 persistence are environment bindings. Replay does not implement its own strategy selection, sizing, order planning,
 or accounting coordinator.
 
+The simulated cash account enables crypto when its supplied assets include crypto instruments. Its non-marginable
+buying power follows ledger cash through fills and fees, so the native submission guard can enforce crypto eligibility
+and available cash. These account conditions are simulation assumptions, not historical account-entitlement evidence.
+
 `backtest-command.js` runs one or more consecutive exchange-calendar sessions through that engine. One simulated
 broker, account, portfolio, PostgreSQL database, and TigerBeetle ledger span the entire run. Cash, positions, fees,
 risk history, and unresolved orders are retained between sessions. The command rejects duplicate session dates,
