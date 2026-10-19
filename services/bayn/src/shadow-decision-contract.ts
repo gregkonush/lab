@@ -15,7 +15,6 @@ import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
 import { jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { JevCandidatePlanStatus } from './jev/batch'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
-import { JevExitReason } from './jev/exit'
 import {
   SnapshotCalendarSchema as ExecutionCalendarObservationSchema,
   SnapshotManifestFields as ExecutionMarketDataBindingFields,
@@ -1184,7 +1183,7 @@ const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v1' || document.plannerInput === undefined)
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v2' || document.plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
@@ -1311,7 +1310,7 @@ const jevEntryEvidenceIssues = (
 }
 
 const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
-  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v1'
+  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v2'
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
@@ -1319,7 +1318,7 @@ const jevExitEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-exit-target.v1') return []
+  if (target?.schemaVersion !== 'bayn.jev-exit-target.v2') return []
   const evidence = target.evidence
   const input = document.plannerInput
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
@@ -1344,10 +1343,7 @@ const jevExitEvidenceIssues = (
     Object.values(input.targetWeights).some((weight) => weight !== 0) ||
     document.targetPlan.intentTargets.some(
       (intent) => intent.side !== OrderSide.Sell || intent.symbol !== position.symbol,
-    ) ||
-    (evidence.trigger.reason === JevExitReason.Model &&
-      evidence.trigger.decision.evidence.observation.authorityGenerationHash !==
-        document.bindings.authorityGenerationHash)
+    )
   )
     return [
       {

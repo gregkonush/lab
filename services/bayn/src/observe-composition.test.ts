@@ -4800,8 +4800,8 @@ describe('OBSERVE runtime composition', () => {
     expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed', 'pricing'])
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
-    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v1')
-    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v1') throw new Error('expected Jev entry')
+    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v2')
+    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v2') throw new Error('expected Jev entry')
     expect(canonicalHashV1(document.strategyDecision.evidence.observation.portfolio.brokerState)).toBe(
       canonicalHashV1(result.initial.brokerState),
     )
@@ -4866,7 +4866,7 @@ describe('OBSERVE runtime composition', () => {
     expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
     expect(result.refreshes).toBe(0)
     const decision = result.exit.value.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v1') throw new Error('expected Jev entry')
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v2') throw new Error('expected Jev entry')
     expect(decision.selectedSymbols).toEqual(['NVDA'])
     expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
   })
@@ -5046,7 +5046,7 @@ describe('OBSERVE runtime composition', () => {
         decisionMarketData: { symbols: equityMarketProfile.universe },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v1', selectedSymbols: ['NVDA'] },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v2', selectedSymbols: ['NVDA'] },
       targetPlan: { status: TargetPlanStatus.Planned },
     })
     expect(fixture.document.orderedIntentIds).toHaveLength(1)

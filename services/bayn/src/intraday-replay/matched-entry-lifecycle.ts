@@ -120,6 +120,7 @@ export const stepMatchedLifecycle = (
         ...jevMarketForSymbol(terms.symbol),
       })
       const portfolio = yield* triggerControlExit({
+        feeMultiplierPpm: terms.assumptions.feeMultiplierPpm,
         portfolio: state.portfolio,
         protocol: terms.protocol,
         policy: ControlPolicy.RelativeMomentum,

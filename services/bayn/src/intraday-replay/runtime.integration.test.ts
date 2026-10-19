@@ -109,7 +109,6 @@ durableTest.each(
       'no-trade-finalization',
       'missing-calendar',
       'failed-model-response',
-      'failed-management-response',
       'recovery',
       'recovery-filled',
       'early-exit',
@@ -168,8 +167,7 @@ durableTest.each(
       scenario === 'measured-zero-fill-reentry' ||
       scenario === 'measured-submit-expired-reentry'
     const restingDayLifecycle =
-      measured ||
-      ['fill', 'fallback', 'failed-management-response', 'early-exit', 'partial-exit-reentry'].includes(scenario)
+      measured || ['fill', 'fallback', 'early-exit', 'partial-exit-reentry'].includes(scenario)
     const fixture = { ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined), protocol }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
@@ -184,10 +182,10 @@ durableTest.each(
               fullWindow: (index + 1) % 5 === 0,
               offset: BigInt((index + 2) * 1000),
               bidSize: 40,
-              premium: 0.02,
+              premium: index >= 9 ? 0.035 : 0.02,
             })),
             { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
-            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.02 },
+            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.035 },
           ]
         : measured
           ? [
@@ -197,14 +195,14 @@ durableTest.each(
                 fullWindow: (index + 1) % 25 === 0,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
-                premium: slippedExit ? 0.02 : 0.02 + (index + 1) * 0.00002,
+                premium: 0.02 + (index + 1) * 0.00002 + (index >= 49 ? 0.015 : 0),
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
               partialEntryReentry
                 ? [
                     { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
-                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.02 },
+                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.035 },
                   ]
                 : []),
             ]
@@ -218,7 +216,7 @@ durableTest.each(
                     fullWindow: index % 5 === 0,
                     offset: BigInt((index + 1) * 1000),
                     bidSize: 100,
-                    premium: 0.02,
+                    premium: scenario === 'early-exit' && index >= 10 ? 0.035 : 0.02,
                   }))
                 : []
     const lifecycleArrivals = lifecycleObservations
@@ -276,11 +274,9 @@ durableTest.each(
       strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
     })
     const closeAtMs =
-      scenario === 'failed-management-response'
-        ? initialAtMs + (protocol.maximumHoldingMinutes + 1) * 60_000
-        : scenario === 'fill' || scenario === 'fallback'
-          ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
-          : Date.parse('2026-09-04T19:59:02Z')
+      scenario === 'fill' || scenario === 'fallback'
+        ? Date.parse('2026-09-04T20:00:00Z') - protocol.flattenBeforeCloseMinutes * 60_000 + 2_000
+        : Date.parse('2026-09-04T19:59:02Z')
     const closeQuery = {
       ...fixture.query,
       purpose: IntradaySnapshotPurpose.Liquidation,
@@ -1401,13 +1397,18 @@ durableTest.each(
             yield* advanceMarketTo(next)
           }
           const state = yield* broker.snapshot
-          expect(managementCalls, JSON.stringify(yield* Ref.get(passes))).toBe(1)
+          expect(managementCalls).toBe(0)
           expect(state.fills.map((fill) => fill.side)).toEqual(
             scenario === 'partial-exit-reentry'
               ? [OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell]
               : [OrderSide.Buy, OrderSide.Sell],
           )
           expect(state.ledger.positions).toHaveLength(0)
+          expect(
+            yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason
+              FROM autonomous_cycle_paper_closures AS closure
+              JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
+          ).toEqual([{ reason: 'PROFIT_TARGET' }])
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
@@ -1453,7 +1454,7 @@ durableTest.each(
             expect((yield* Ref.get(passes)).filter((pass) => pass.result === 'FAILURE')).toEqual([])
           }
           if (scenario === 'measured-exit') {
-            expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length + 1)
+            expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
             const entryCalls = measuredCalls.filter((call) => {
               const action = call.request.questions['action']
               return action?.type === 'choice' && 'enter' in action.criteria
@@ -1482,7 +1483,7 @@ durableTest.each(
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
-              const expectedMidpoint = 100 * (1.02 + tick * 0.00002)
+              const expectedMidpoint = 100 * (1.02 + tick * 0.00002 + (tick >= 50 ? 0.015 : 0))
               expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
               expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
               expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
@@ -1520,7 +1521,7 @@ durableTest.each(
               repeated.fills.map((fill) => fill.side),
               JSON.stringify(yield* Ref.get(passes)),
             ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
-            expect(managementCalls).toBe(2)
+            expect(managementCalls).toBe(0)
             expect(repeated.ledger.positions).toHaveLength(0)
             const final = yield* restarted.reconcile
             expect(final.report.metrics.accountingExact).toBe(true)
@@ -1552,57 +1553,6 @@ durableTest.each(
           }
           return { _tag: 'Lifecycle' as const }
         }
-        if (scenario === 'failed-management-response') {
-          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          const start = (yield* Clock.currentTimeMillis) + 1
-          const schedule = yield* driveReplaySession(
-            runtime,
-            (at) =>
-              advanceMarketTo(at).pipe(
-                Effect.mapError(
-                  (cause) => new ReplayBrokerFailure({ message: 'Management evidence clock failed', cause }),
-                ),
-              ),
-            start,
-            start + 20_000,
-            true,
-          )
-          expect(managementCalls).toBe(1)
-          expect(schedule.failedPassCount).toBe(0)
-          expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
-          expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
-          yield* advanceMarketTo(closeAtMs)
-          for (const arrival of closeArrivals)
-            cursor = yield* Effect.fromResult(advanceHistoricalMarketCursor(cursor, arrival))
-          yield* advanceMarketTo(closeAtMs)
-          for (let attempt = 0; attempt < 20 && (yield* broker.snapshot).ledger.positions.length > 0; attempt++) {
-            yield* runtime.advance
-            yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
-          }
-          const state = yield* broker.snapshot
-          const reconciliation = yield* runtime.reconcile
-          expect(state.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
-          expect(state.ledger.positions).toHaveLength(0)
-          expect(managementCalls).toBe(1)
-          expect(
-            assessBacktestSession({
-              finalWindow: true,
-              ...schedule,
-              valuationFailureCount: 0,
-              remainingPositionCount: state.ledger.positions.length,
-              remainingOpenOrderCount: state.orders.filter(({ order }) =>
-                [OrderStatus.New, OrderStatus.PartiallyFilled].includes(order.status),
-              ).length,
-              reconciliation: {
-                status: reconciliation.report.reconciliation.status,
-                metrics: reconciliation.report.metrics,
-                unknownOrderCount: reconciliation.brokerState.unknownOrderCount,
-                unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
-              },
-            }),
-          ).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
-          return { _tag: 'ManagementUnavailable' as const }
-        }
         let managementStartedAt = yield* currentUtcInstant
         let waiting = yield* runtime.advance
         for (
@@ -1631,7 +1581,10 @@ durableTest.each(
         const evaluatedMs = Date.parse(waiting.result.maximumHoldEvaluatedAt ?? '')
         expect(evaluatedMs).toBeGreaterThanOrEqual(Date.parse(managementStartedAt))
         expect(evaluatedMs).toBeLessThanOrEqual(Date.parse(waiting.result.observedAt))
-        expect(waiting.nextWakeAt).toBe(waiting.result.maximumHoldDueAt)
+        expect(Date.parse(waiting.nextWakeAt ?? '')).toBeLessThanOrEqual(evaluatedMs + 5000)
+        expect(Date.parse(waiting.nextWakeAt ?? '')).toBeLessThanOrEqual(
+          Date.parse(waiting.result.maximumHoldDueAt ?? ''),
+        )
         expect(waiting.nextDelayMs).toBeGreaterThan(0)
         const recreated = yield* createRuntime
         expect(recreated.authorityGenerationHash).toBe(runtime.authorityGenerationHash)
@@ -1687,15 +1640,18 @@ durableTest.each(
               const { request } = Result.getOrThrow(prepareJevRequest(raw))
               const action = request.questions['action']
               const managing = action?.type === 'choice' && 'exit' in action.criteria
-              if (managing) managementCalls += 1
+              if (managing) {
+                managementCalls += 1
+                throw new Error('Native position exits must not request model management')
+              }
               if (measured) {
                 if (measuredProviderClock === undefined) throw new Error('Missing independent provider test clock')
                 yield* measuredProviderClock.adjust(100)
               }
               const now = yield* Clock.currentTimeMillis
-              if (scenario === 'failed-model-response' || (scenario === 'failed-management-response' && managing)) {
+              if (scenario === 'failed-model-response') {
                 const rejected = {
-                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), managing ? 'hold' : 'enter').response,
+                  ...nativeJevInference(raw, utcInstantFromEpochMillis(now), 'enter').response,
                   answers: {},
                 }
                 return yield* new JevError({
@@ -1706,20 +1662,7 @@ durableTest.each(
                 })
               }
               return {
-                ...nativeJevInference(
-                  raw,
-                  utcInstantFromEpochMillis(now),
-                  managing
-                    ? scenario === 'early-exit' ||
-                      scenario === 'partial-exit-reentry' ||
-                      scenario === 'measured-exit' ||
-                      partialEntryReentry
-                      ? 'exit'
-                      : 'hold'
-                    : noTrade
-                      ? 'wait'
-                      : 'enter',
-                ),
+                ...nativeJevInference(raw, utcInstantFromEpochMillis(now), noTrade ? 'wait' : 'enter'),
                 startedAt: utcInstantFromEpochMillis(started),
               }
             }),

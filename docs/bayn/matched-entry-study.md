@@ -6,7 +6,7 @@ never calls a provider, places orders, changes safeguards or promotes a strategy
 
 The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive exchange sessions or continuous UTC observation days,
 at least twenty different selections, a USD 10,000 budget quantized by frozen broker instrument increments per opportunity, five-second management polls,
-a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
+a 50 bp price stop, a 100 bp estimated execution-net profit target including adverse exit allowance, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
 at witnessed deterministic completion; delayed momentum and Jev start at witnessed decision commitment. One IOC entry is followed by
 persistent reducing exit retries; actual partial fills and consumed quote liquidity remain in the ledger.
 Idle management keeps the five-second cadence regardless of routing latency. Only an actual pending exit skips
@@ -21,7 +21,7 @@ independent confidence intervals. The older resolved-only signal screen answers 
 Keep all registrations, trading evidence and outputs private, outside Git and CI artifacts.
 Decode registrations with `MatchedRegistrationSchema`:
 
-- `schemaVersion: "bayn.matched-entry-registration.v1"`
+- `schemaVersion: "bayn.matched-entry-registration.v2"`
 - Canonical `definitionHash`, native `protocolHash`, and reviewed code `sourceRevision`.
 - `registeredAt`, `dataRole` (`DEVELOPMENT` or `PROSPECTIVE`), and five ordered unique `sessionDates`.
 - `latencyMs` and canonical `executionAssumptionsHash` for the complete `study.assumptions` object.
@@ -107,8 +107,8 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v5` and `bayn.matched-entry-study.v5`. Input is v2;
-registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
+Definition and report are `bayn.matched-entry-definition.v6` and `bayn.matched-entry-study.v6`. Input is v2;
+registration is v2 with the new definition hash and frozen native profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that

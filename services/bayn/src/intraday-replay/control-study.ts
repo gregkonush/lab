@@ -1,3 +1,4 @@
+import { researchManagementExitProbability } from './research-management'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery, jevHistoryStartMs } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
@@ -98,14 +99,15 @@ export const ControlStudyInputSchema = Schema.Struct({
 )
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v10',
+  schemaVersion: 'bayn.control-study-definition.v11',
+  researchManagementExitProbability,
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
     REPEATED_BREAKOUT:
-      'Jev candidate universe and retained breakout thresholds, mechanical stop and maximum hold, repeated entries.',
+      'Jev candidate universe and retained breakout thresholds, mechanical stop, net-profit target and maximum hold, repeated entries.',
     REPEATED_RELATIVE_MOMENTUM:
-      'Jev candidate universe, exact positive return and benchmark-relative return, mechanical stop and maximum hold, repeated entries.',
+      'Jev candidate universe, exact positive return and benchmark-relative return, mechanical stop, net-profit target and maximum hold, repeated entries.',
     REPEATED_JEV_ENTRY:
       'Native Jev entry selection from the independent flat portfolio, committed inference evidence before IOC pricing, mechanical management and repeated entries.',
   },
@@ -120,12 +122,12 @@ export const controlStudyDefinition = {
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
-    'JEV mode uses native observation, evaluation, deadline and management decisions for each repeated control from its own filled position. An exclusive simulation journal records source observations, batches, request claims, receipts and resolutions. Measured provider and journal work advance an independent market clock. Entry and management consume signal windows independently. Existing exit triggers, stops, holding deadlines and the close window precede inference.',
+    'JEV mode uses research-only observation, evaluation, deadline and management decisions for each repeated control from its own filled position. An exclusive simulation journal records source observations, batches, request claims, receipts and resolutions. Measured provider and journal work advance an independent market clock. Entry and management consume signal windows independently. Existing exit triggers, stops, holding deadlines and the close window precede inference.',
   valuation:
     'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Broker equity and its carried peak govern risk. Net equity deducts cumulative external costs only for reported performance, drawdown and session loss, matching native replay. External costs never change broker cash, sizing or risk.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
-    'Management is explicitly selected. JEV gives each repeated control its own native held-position decisions; MECHANICAL deliberately removes model management. The retained close control never calls Jev. No model responses are synthesized.',
+    'MECHANICAL uses native stop, net-profit target and holding/session deadlines. JEV is an offline model-management comparator; its decisions cannot authorize native broker exits. The retained close control never calls Jev. The residual-shock candidate retains its frozen 60-second horizon without a profit trigger. No model responses are synthesized.',
     'The retained selection and close lifecycle do not reproduce historical persistence, reconciliation, authority, retry and market-close fallback machinery.',
     'Deterministic entry latency is a declared scenario. Jev entry and management measure provider and simulation-journal work, not production PostgreSQL persistence or a full-controller p95. Timing still requires calibration for the frozen matched comparison. Routing latency is added separately.',
     'Quote size units and impact remain uncalibrated. Source completeness and a flat simulated close do not establish executable live capacity.',
@@ -523,6 +525,7 @@ export const runControlSession = (input: {
       const held = portfolio.ledger.positions[0]
       portfolio = yield* Effect.fromResult(
         triggerControlExit({
+          feeMultiplierPpm: assumptions.feeMultiplierPpm,
           portfolio,
           policy: input.policy,
           protocol,
@@ -601,6 +604,7 @@ export const runControlSession = (input: {
           }
           portfolio = yield* Effect.fromResult(
             triggerControlExit({
+              feeMultiplierPpm: assumptions.feeMultiplierPpm,
               portfolio,
               policy: input.policy,
               protocol,
@@ -1018,7 +1022,8 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       )
     const definition = {
       ...(input.ridge !== undefined ? ridgeControlStudyDefinition : policyDefinition),
-      schemaVersion: 'bayn.control-study-definition.v10',
+      schemaVersion: 'bayn.control-study-definition.v11',
+      researchManagementExitProbability,
       entry: input.entry,
       opportunityAccounting: opportunityAccountingDefinition,
       nativeEntry:

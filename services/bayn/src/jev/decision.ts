@@ -1,3 +1,4 @@
+import { JevPositionExitPolicySchema, jevPositionExitPolicy } from './exit-policy'
 import { isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
@@ -29,7 +30,7 @@ export type JevDecisionEvidence = typeof JevDecisionEvidenceSchema.Type
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
-const reproduceDecisionEvidence = (input: unknown) =>
+export const reproduceDecisionEvidence = (input: unknown) =>
   Result.gen(function* () {
     const evidence = yield* Schema.decodeUnknownResult(JevDecisionEvidenceSchema, strictParseOptions)(input)
     const { observation, plan } = yield* reproduceJevTradingSignalBatchEvidence(
@@ -88,8 +89,9 @@ export const decideJevEntry = (input: unknown) =>
         Math.min(observation.protocol.maximumGrossWeight, observation.protocol.maximumSymbolWeight) * 1_000_000,
       ) / 1_000_000
     return {
-      schemaVersion: 'bayn.jev-entry-target.v1' as const,
+      schemaVersion: 'bayn.jev-entry-target.v2' as const,
       strategy: 'jev' as const,
+      exitPolicy: jevPositionExitPolicy(observation.protocol),
       sessionDate: yield* Schema.decodeUnknownResult(IsoDateSchema)(observation.snapshot.manifest.sessionDate),
       snapshotId: observation.snapshot.manifest.snapshotId,
       observedAt: observation.observedAt,
@@ -104,8 +106,9 @@ export const decideJevEntry = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev entry target could not be derived', cause })))
 
 const TargetBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-target.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-target.v2'),
   strategy: Schema.Literal('jev'),
+  exitPolicy: JevPositionExitPolicySchema,
   sessionDate: IsoDateSchema,
   snapshotId: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -138,59 +141,6 @@ export const jevEntryQuoteMaximumAgeMs = (
   _quoteEventAt: string,
   quoteAgeLimitMs: number,
 ): number => quoteAgeLimitMs
-
-export enum JevManagementAction {
-  Hold = 'HOLD',
-  Exit = 'EXIT',
-}
-
-export const decideJevManagement = (input: unknown) =>
-  Result.gen(function* () {
-    const { evidence, observation, inferences } = yield* reproduceDecisionEvidence(input)
-    const inference = inferences[0]
-    if (observation.portfolio.purpose !== JevPurpose.Manage || inferences.length !== 1 || inference === undefined)
-      return yield* unavailable('Management requires the complete held-position inference')
-    const answer = inference.inference.response.answers['action']
-    if (answer?.type !== 'choice' || answer.probabilities['exit'] === undefined)
-      return yield* unavailable('Jev management has no typed exit probability')
-    return {
-      schemaVersion: 'bayn.jev-management-decision.v1' as const,
-      cycleId: observation.cycleId,
-      entryDecisionHash: observation.portfolio.entryDecisionHash,
-      symbol: inference.symbol,
-      action:
-        answer.choice === 'exit' && answer.probabilities['exit'] >= observation.protocol.minimumExitProbability
-          ? JevManagementAction.Exit
-          : JevManagementAction.Hold,
-      evidence,
-    }
-  }).pipe(
-    Result.mapError(
-      (cause) => new JevContractError({ message: 'Jev management decision could not be derived', cause }),
-    ),
-  )
-
-export const JevManagementDecisionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-management-decision.v1'),
-  cycleId: Sha256Schema,
-  entryDecisionHash: Sha256Schema,
-  symbol: SymbolSchema,
-  action: Schema.Enum(JevManagementAction),
-  evidence: JevDecisionEvidenceSchema,
-}).check(
-  Schema.makeFilter((decision) => {
-    const { evidence, ...material } = decision
-    const reproduced = decideJevManagement(evidence).pipe(
-      Result.flatMap(({ evidence: _, ...derived }) => canonicalHashV1Result(derived)),
-    )
-    const supplied = canonicalHashV1Result(material)
-    return Result.isSuccess(reproduced) && Result.isSuccess(supplied) && reproduced.success === supplied.success
-      ? []
-      : [{ path: ['evidence'], issue: 'recorded held-position evidence must reproduce the exact management decision' }]
-  }),
-)
-
-export type JevManagementDecision = typeof JevManagementDecisionSchema.Type
 
 export const makeJevDefinition = (
   protocol: JevProtocol,

@@ -285,7 +285,7 @@ export const jevTradingQuestions = {
   action: {
     type: 'choice',
     instructions:
-      'Given `candidate`, `benchmark` and `relativeSignals`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Assess the setup from the supplied trading signals; code separately checks permission, sizing and risk.',
+      'Given `candidate`, `benchmark`, `relativeSignals` and `entryEconomics`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Enter only when the evidence supports reaching entryEconomics.profitTargetExitBidUsd before the holding deadline. That target includes estimated entry and exit fees, bounded adverse execution and the required net profit. Use wait or avoid when the target is unsupported or entryEconomics is null. Code owns the entry-bound stop, profit target, permission, sizing and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',

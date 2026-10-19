@@ -12,22 +12,22 @@ import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 import { IsoDateSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { JevContractError } from './contract'
-import { JevManagementAction, JevManagementDecisionSchema } from './decision'
+import { jevPositionExitPolicy } from './exit-policy'
+import { jevProfitTargetCrossed } from './profit-target'
 import { JevObservationSchema } from './observation-contract'
 import { JevPortfolioSchema, JevPurpose, type JevPortfolio } from './portfolio'
 import { JevProtocolSchema } from './protocol'
 
 export enum JevExitReason {
-  Model = 'JEV_EXIT',
+  ProfitTarget = 'PROFIT_TARGET',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
 }
 
 const TriggerSchema = Schema.Union([
-  Schema.Struct({ reason: Schema.Literal(JevExitReason.Model), decision: JevManagementDecisionSchema }),
   Schema.Struct({ reason: Schema.Literal(JevExitReason.MaximumHold) }),
   Schema.Struct({
-    reason: Schema.Literal(JevExitReason.ProtectiveStop),
+    reason: Schema.Literals([JevExitReason.ProtectiveStop, JevExitReason.ProfitTarget]),
     manifest: JevObservationSchema.fields.manifest,
     rows: JevObservationSchema.fields.rows,
   }),
@@ -80,6 +80,8 @@ export const decideJevExit = (input: unknown) =>
     const evidence = yield* Schema.decodeUnknownResult(JevExitEvidenceSchema, strictParseOptions)(input)
     const { portfolio, protocol, trigger } = evidence
     if (portfolio.purpose !== JevPurpose.Manage) return yield* invalid('Exit requires an accounted held position')
+    if (!equal(portfolio.exitPolicy, jevPositionExitPolicy(protocol)))
+      return yield* invalid('Exit policy differs from the policy sealed into the entry decision')
     const state = portfolio.brokerState
     const position = state.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
     const firstFill = portfolio.entryFills[0]
@@ -107,22 +109,8 @@ export const decideJevExit = (input: unknown) =>
         if (now < Date.parse(firstFill.occurredAt) + protocol.maximumHoldingMinutes * 60_000)
           return yield* invalid('Maximum holding time has not elapsed since the actual first fill')
         break
-      case JevExitReason.Model: {
-        const decision = trigger.decision
-        if (
-          decision.action !== JevManagementAction.Exit ||
-          decision.cycleId !== evidence.cycleId ||
-          decision.entryDecisionHash !== portfolio.entryDecisionHash ||
-          decision.symbol !== position.symbol ||
-          decision.evidence.decidedAt !== evidence.observedAt ||
-          !equal(decision.evidence.observation.portfolio, portfolio) ||
-          !equal(decision.evidence.observation.protocol, protocol)
-        )
-          return yield* invalid('Exit must reproduce the same position and protocol as the complete model decision')
-        commitDeadlineAt = decision.evidence.batchPlan.expiresAt
-        break
-      }
-      case JevExitReason.ProtectiveStop: {
+      case JevExitReason.ProtectiveStop:
+      case JevExitReason.ProfitTarget: {
         const snapshot = yield* reproduceStrategySnapshot(trigger.manifest, trigger.rows)
         const m = snapshot.manifest
         const end = Math.floor(now / 60_000) * 60_000
@@ -147,32 +135,31 @@ export const decideJevExit = (input: unknown) =>
           (!isContinuousMarket(m.calendar) &&
             (session === undefined || m.rangeStartAt < session.openAt || evidence.observedAt >= session.closeAt))
         )
-          return yield* invalid(
-            'Protective stop requires a fresh reproduced liquidation quote from the exact market source',
-          )
+          return yield* invalid('Price exit requires a fresh reproduced liquidation quote from the exact market source')
         const quote = snapshot.latestQuotes[position.symbol]
         if (
           quote === undefined ||
           quote.bidSize <= 0 ||
           !jevProtectiveQuoteIsFresh(quote, evidence.observedAt, protocol.maximumQuoteAgeMs)
         )
-          return yield* invalid('Protective stop has no fresh executable bid')
+          return yield* invalid('Price exit has no fresh executable bid')
         const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-        if (
-          !jevProtectiveStopCrossed(
-            BigInt(position.costBasisMicros),
-            BigInt(position.quantityAtoms),
-            bid,
-            protocol.protectiveStopBps,
-          )
-        )
-          return yield* invalid('The verified bid has not crossed the protective stop')
+        const crossed =
+          trigger.reason === JevExitReason.ProtectiveStop
+            ? jevProtectiveStopCrossed(
+                BigInt(position.costBasisMicros),
+                BigInt(position.quantityAtoms),
+                bid,
+                portfolio.exitPolicy.protectiveStopBps,
+              )
+            : yield* jevProfitTargetCrossed(protocol, portfolio, bid)
+        if (!crossed) return yield* invalid('The verified bid has not crossed its entry-bound exit threshold')
         commitDeadlineAt = new Date(Date.parse(quote.eventAt) + protocol.maximumQuoteAgeMs).toISOString()
         break
       }
     }
     return {
-      schemaVersion: 'bayn.jev-exit-target.v1' as const,
+      schemaVersion: 'bayn.jev-exit-target.v2' as const,
       strategyName: 'jev' as const,
       cycleId: evidence.cycleId,
       entryDecisionHash: portfolio.entryDecisionHash,
@@ -187,7 +174,7 @@ export const decideJevExit = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })))
 
 export const JevExitTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-exit-target.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-exit-target.v2'),
   strategyName: Schema.Literal('jev'),
   cycleId: Sha256Schema,
   entryDecisionHash: Sha256Schema,
