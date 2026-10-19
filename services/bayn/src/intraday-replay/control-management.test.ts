@@ -269,18 +269,17 @@ describe('native control management requests', () => {
     expect(result.observation.portfolio.entryFills[0]?.priceAtoms).toBe('100000000000')
     expect(candidate.request.request).toEqual(nativeCandidate.request.request)
     expect(candidate.request.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-trading-signal-state.v10',
+      schemaVersion: 'bayn.jev-trading-signal-state.v11',
       task: { decisionPurpose: 'MANAGE' },
       position: {
         quantityUnits: 5,
-        costBasisUsd: 500,
-        averageEntryPriceUsd: 100,
         heldForMinutes: 3,
         remainingHoldingMinutes: 12,
-        entryFeesUsd: 0.01,
       },
     })
     expect(result.controlPortfolio.ledger.cashMicros).toBe('99499990000')
+    expect(result.observation.portfolio.entryFills[0]?.feeMicros).toBe('10000')
+    expect(result.observation.portfolio.brokerState.positions[0]?.costBasisMicros).toBe('500000000')
     expect(result.observation.portfolio.brokerState.orders[0]?.status).toBe(OrderStatus.Canceled)
     expect(result.observation.portfolio.brokerState.orders[0]?.quantityAtoms).toBe('10000000000')
     expect(result.observation.portfolio.brokerState.orders[0]?.filledQuantityAtoms).toBe('5000000000')
@@ -292,7 +291,7 @@ describe('native control management requests', () => {
     const result = prepared({ ...i, entryOrder: { ...i.entryOrder, arrivalQuote: quote(i.entryOrder.arrivalAtMs, 2) } })
     const candidate = result.batch.candidates[0]
     if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Missing management request')
-    expect(candidate.request.request.state).toMatchObject({ position: { quantityUnits: 2, costBasisUsd: 200 } })
+    expect(candidate.request.request.state).toMatchObject({ position: { quantityUnits: 2 } })
     expect(result.entryIdentity).not.toBe(prepared().entryIdentity)
   })
 
