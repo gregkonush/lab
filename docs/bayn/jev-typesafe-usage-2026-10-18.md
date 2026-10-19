@@ -1,7 +1,7 @@
 # Using Jev and TypeSafe in Bayn
 
 Research date: October 18, 2026. This is a research record, not trading authority or a profitable-strategy qualification.
-The code references describe `bayn.jev.protocol.v10` and `bayn.jev-trading-signal-state.v9`. Check the deployed source,
+This audit records `bayn.jev.protocol.v10` and `bayn.jev-trading-signal-state.v9`. The subsequent focused-action change removes unused diagnostics and distinguishes the forecast horizon from the lookback; see the current [service contract](../../services/bayn/README.md). Check the deployed source,
 immutable image, retained requests and actual broker/accounting receipts before applying any operational conclusion.
 
 ## What Jev does

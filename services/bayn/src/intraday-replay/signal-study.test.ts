@@ -121,13 +121,7 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
-  expect(Object.keys(factors.answers).sort()).toEqual([
-    'action',
-    'continuation',
-    'exhaustion',
-    'regime',
-    'setup_quality',
-  ])
+  expect(Object.keys(factors.answers).sort()).toEqual(['action'])
   expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
 })
 

@@ -283,53 +283,10 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
   })
 
 export const jevTradingQuestions = {
-  regime: {
-    type: 'choice',
-    instructions: {
-      question:
-        'Which current price-action regime best fits the candidate, considering its recent path, computed signals and benchmark context?',
-      evidence: ['candidate', 'benchmark', 'relativeSignals'],
-      uncertainty: 'Use unclear when the available evidence does not distinguish these regimes.',
-    },
-    criteria: {
-      upward_trend: 'Broadly sustained upward movement, rather than a single isolated jump.',
-      downward_trend: 'Broadly sustained downward movement, rather than a single isolated drop.',
-      range: 'Mostly oscillating or balanced movement without sustained direction.',
-      unstable: 'Abrupt or conflicting movements dominate.',
-      unclear: 'Insufficient or conflicting evidence prevents classification.',
-    },
-  },
-  continuation: {
-    type: 'noul',
-    instructions:
-      'Does the combined candidate price path, volume, technical signals and benchmark context support sustained upward continuation over the stated horizon?',
-    criteria: {
-      true: 'The evidence supports an upward continuation setup.',
-      false:
-        'The evidence does not support upward continuation, including downtrend, exhaustion, contradictory signals or insufficient evidence.',
-    },
-  },
-  exhaustion: {
-    type: 'noul',
-    instructions:
-      'Does the candidate show a stretched or weakening upward move with meaningful reversal risk over the stated horizon? Evaluate the joint pattern rather than applying one indicator threshold.',
-  },
-  setup_quality: {
-    type: 'score',
-    instructions:
-      'How coherent is the candidate long-entry setup across price action, volume, technical signals and benchmark context? Missing indicators provide no supporting evidence. Do not calculate sizing or treat this score as a return forecast.',
-    criteria: [
-      'No supported long setup',
-      'Weak or contradictory setup',
-      'Mixed but plausible setup',
-      'Several signals support a coherent setup',
-      'Strongly aligned evidence across the available signal groups',
-    ],
-  },
   action: {
     type: 'choice',
     instructions:
-      'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
+      'Given `candidate`, `benchmark` and `relativeSignals`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Assess the setup from the supplied trading signals; code separately checks permission, sizing and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
@@ -339,12 +296,10 @@ export const jevTradingQuestions = {
 } satisfies JevRequest['questions']
 
 export const jevManagementQuestions = {
-  continuation: jevTradingQuestions.continuation,
-  exhaustion: jevTradingQuestions.exhaustion,
   action: {
     type: 'choice',
     instructions:
-      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Use netLiquidationPnlUsd, actual entryFeesUsd and estimatedExitFeesUsd when assessing the economics. Entry fees are sunk costs, so a loss or an unmet break-even price is not a reason to postpone an otherwise justified exit. Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+      'Given the current market signals and actual held long `position`, is holding for `position.remainingHoldingMinutes` supported, or is exiting now better supported? Use netLiquidationPnlUsd, actual entryFeesUsd and estimatedExitFeesUsd when assessing the economics. Entry fees are sunk costs, so a loss or an unmet break-even price is not a reason to postpone an otherwise justified exit. Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
     criteria: {
       hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
       exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
@@ -479,7 +434,7 @@ const requestFromSnapshot = (
         relativeSignals: {
           ...metrics,
           referenceAt: common.referenceAt,
-          horizonMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
           candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
           benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
         },
