@@ -3,6 +3,8 @@
 Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
 Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
+The [Relay connector gateway](../relay/README.md) uses canonical connection ownership, separate read/mutation grants,
+and `CheckConnectorAgent` for proof-bound runtime access; it holds no native authorization key.
 
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision

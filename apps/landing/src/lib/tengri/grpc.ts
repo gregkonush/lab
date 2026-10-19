@@ -507,6 +507,27 @@ export async function listCodexModels(
   }
 }
 
+export async function connectorAgent(
+  identity: TengriIdentity,
+  agentId: string,
+  action: 'identity' | 'configure' | 'remove',
+  parameters: Record<string, unknown>,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>(
+    'connectorAgent',
+    { agentId, action, rawJson: JSON.stringify(parameters) },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
+  try {
+    return JSON.parse(stringValue(response.rawJson)) as unknown
+  } catch {
+    throw new TengriUnavailableError('The agent returned an invalid connector configuration response', 502)
+  }
+}
+
 export async function createCodexThread(
   identity: TengriIdentity,
   agentId: string,

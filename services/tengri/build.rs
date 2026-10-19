@@ -21,6 +21,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .build_server(false)
         .build_client(true)
         .type_attribute(".", "#[derive(serde::Serialize, serde::Deserialize)]")
+        .field_attribute(
+            ".proompteng.authz.v1.ObservationScope.connector_operations",
+            "#[serde(default)]",
+        )
+        .field_attribute(
+            ".proompteng.authz.v1.ObservationScope.connector_runtime_epoch",
+            "#[serde(default)]",
+        )
         .compile_protos(&[&authz_proto], &[&authz_root])?;
     let descriptors = prost_build::Config::new().load_fds(
         &[

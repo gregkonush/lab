@@ -280,6 +280,14 @@ def main():
         "BFF schema and handler classification disagree"
     )
     gateway = (ROOT / "services/tengri/src/gateway.rs").read_text()
+    relay = (ROOT / "services/relay/src/main.rs").read_text()
+    actual["relay_http"] = rust_routes(relay)
+    relay_service = (ROOT / "services/relay/src/service.rs").read_text()
+    command = relay_service[relay_service.index("pub enum Command {"):relay_service.index("#[derive(Deserialize)]\n#[serde(rename_all = \"camelCase\", deny_unknown_fields)]\nstruct AgentCall")]
+    variants = set(re.findall(r"^    ([A-Z]\w*)(?: \{|,)$", command, re.M))
+    handled = set(re.findall(r"Command::(\w+)", relay_service[relay_service.index("pub async fn handle"):]))
+    assert variants == handled, "Relay commands and explicit handlers disagree"
+    actual["relay_command"] = variants
     actual["gateway"] = rust_routes(gateway, "preview_host_proxy")
     actual["gateway"].add("* {*preview_host_proxy}")
     codex = (ROOT / "services/nanoagent/codex.go").read_text()

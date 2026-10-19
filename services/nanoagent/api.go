@@ -105,6 +105,7 @@ func newAPIServer(config apiConfig) (*apiServer, error) {
 	if config.startCodex {
 		server.codex = newCodexSupervisor(config.codexBinary, workspace.realRoot)
 		server.codex.browserMCP = server.browser != nil
+		server.codex.relayRoot = filepath.Join(config.homeRoot, ".tengri", "relay")
 		server.codex.start()
 	}
 	server.evidence.GuestProtocolVersion = guestProtocolVersion

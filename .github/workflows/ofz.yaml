@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - 'services/ofz/**'
+      - 'services/relay/**'
       - 'devices/nuc/ofz-recovery/**'
       - 'argocd/applications/ofz/**'
       - 'proto/proompteng/authz/**'
@@ -76,6 +77,7 @@ on:
       - 'proto/proompteng/authz/**'
       - 'services/nanoagent/**'
       - 'services/ofz/**'
+      - 'services/relay/**'
       - 'services/ofz/Cargo.*'
       - 'services/ofz/build.rs'
       - 'services/ofz/migrations/**'

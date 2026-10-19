@@ -73,6 +73,10 @@ export const observationScopeSchema = z
     browserScreenshot: z.boolean(),
     maxBytes: z.number().int().min(1).max(1_048_576),
     maxItems: z.number().int().min(1).max(200),
+    connectorOperations: z
+      .array(z.string().regex(/^[a-zA-Z0-9_.-]{1,128}$/))
+      .max(128)
+      .optional(),
   })
   .strict()
 const common = {
@@ -170,8 +174,21 @@ const commandSchema = z.discriminatedUnion('action', [
     })
     .strict(),
 ])
-export const accessCommandSchema = commandSchema.refine(
-  (command) => utf8.encode(JSON.stringify(command)).byteLength <= MAX_ACCESS_COMMAND_BYTES,
-  'Access request exceeds 64 KiB. Reduce the selected targets or reason.',
-)
+export const accessCommandSchema = commandSchema
+  .superRefine((command, context) => {
+    if (
+      command.action === 'grant' &&
+      command.permissions.includes('connector') &&
+      !command.scope.connectorOperations?.length
+    )
+      context.addIssue({
+        code: 'custom',
+        path: ['scope', 'connectorOperations'],
+        message: 'Choose at least one exact connector operation.',
+      })
+  })
+  .refine(
+    (command) => utf8.encode(JSON.stringify(command)).byteLength <= MAX_ACCESS_COMMAND_BYTES,
+    'Access request exceeds 64 KiB. Reduce the selected targets or reason.',
+  )
 export type AccessCommand = z.infer<typeof accessCommandSchema>
