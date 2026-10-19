@@ -1,6 +1,7 @@
 import { HashMap, HashSet, Option, Result, pipe } from 'effect'
 
 import { AccountStatus, DiscrepancyKind, type Position } from '../execution/contracts'
+import { reportedPositionBasis } from '../reconciliation/position-cost-reporting'
 import {
   absolute,
   compareValue,
@@ -21,22 +22,21 @@ export interface PositionComparison {
 }
 
 const matchesReportedBasis = (input: {
-  readonly acquisitionQuantity: bigint
-  readonly acquisitionNotional: bigint
+  readonly priceAtomsDenominator: bigint
+  readonly priceAtomsNumerator: bigint
   readonly quantity: bigint
   readonly averagePriceMicros: bigint
   readonly costMicros: bigint
 }): boolean => {
-  const { acquisitionQuantity, acquisitionNotional, quantity, averagePriceMicros, costMicros } = input
-  const averageAtoms = (acquisitionNotional * 2n + acquisitionQuantity) / (acquisitionQuantity * 2n)
-  const averageMicros = (acquisitionNotional * 2n + acquisitionQuantity * 1000n) / (acquisitionQuantity * 2000n)
-  const divisor = acquisitionQuantity * 1_000_000_000_000n
-  const weightedCost = (acquisitionNotional * quantity * 2n + divisor) / (divisor * 2n)
-  const atomAverageCost = (averageAtoms * quantity + 500_000_000_000n) / 1_000_000_000_000n
-  const microAverageCost = (averageMicros * quantity + 500_000_000n) / 1_000_000_000n
+  const { priceAtomsDenominator, priceAtomsNumerator, quantity, averagePriceMicros, costMicros } = input
+  const { averageMicros, atomAverageMicros, weightedCost, atomAverageCost, microAverageCost } = reportedPositionBasis(
+    priceAtomsNumerator,
+    priceAtomsDenominator,
+    quantity,
+  )
   return (
     (averagePriceMicros === averageMicros && (costMicros === weightedCost || costMicros === microAverageCost)) ||
-    (averagePriceMicros === (averageAtoms + 500n) / 1000n && costMicros === atomAverageCost)
+    (averagePriceMicros === atomAverageMicros && costMicros === atomAverageCost)
   )
 }
 
@@ -56,15 +56,15 @@ const comparePosition = (
       expectedQuantity: integer('projected-position-quantity', symbol, expectedQuantityText),
       observedQuantity: integer('position-quantity', symbol, observedQuantityText),
       expectedCost: integer('projected-position-cost', symbol, expectedCostText),
-      anchorQuantity: integer(
+      basisDenominator: integer(
         'projected-position-quantity',
         symbol,
-        expectedPosition?.costBasisAnchor?.quantityAtoms ?? expectedQuantityText,
+        expectedPosition?.costBasisAnchor?.priceAtomsDenominator ?? expectedQuantityText,
       ),
-      anchorCost: integer(
+      basisNumerator: integer(
         'projected-position-cost',
         symbol,
-        expectedPosition?.costBasisAnchor?.notionalAtomProduct ?? expectedCostText,
+        expectedPosition?.costBasisAnchor?.priceAtomsNumerator ?? expectedCostText,
       ).pipe(
         Result.map((value) =>
           expectedPosition?.costBasisAnchor === null || expectedPosition === undefined
@@ -85,8 +85,8 @@ const comparePosition = (
         observedCost,
         observedQuantity,
         averagePrice,
-        anchorQuantity,
-        anchorCost,
+        basisDenominator,
+        basisNumerator,
       }) => {
         // A partial disposal preserves the verified entry average, while posted fills allocate whole micros.
         // Both broker fields must reproduce from that basis; ledger and cash amounts remain exact.
@@ -94,11 +94,11 @@ const comparePosition = (
           expectedQuantity === observedQuantity &&
           observedQuantity > 0n &&
           expectedCost > 0n &&
-          anchorQuantity >= observedQuantity &&
-          anchorCost > 0n &&
+          basisDenominator > 0n &&
+          basisNumerator > 0n &&
           matchesReportedBasis({
-            acquisitionQuantity: anchorQuantity,
-            acquisitionNotional: anchorCost,
+            priceAtomsDenominator: basisDenominator,
+            priceAtomsNumerator: basisNumerator,
             quantity: observedQuantity,
             averagePriceMicros: averagePrice,
             costMicros: observedCost,

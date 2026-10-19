@@ -70,7 +70,8 @@ retained historical observations remain immutable audit evidence. Reconciliation
 its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
 unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
 After a partial crypto disposal, reconciliation also reproduces the broker's weighted-average basis from the complete
-native entry fills and verified coin-fee accrual. The pre-disposal broker basis must reproduce from those fill prices,
+native entry fills and verified coin-fee accruals. Staggered fills carry the remaining quantity and acquisition average
+through every accrual cohort. Each observed broker basis must reproduce from those fill prices,
 and every later disposal must reproduce the remaining native quantity and posted cost. The reported average and basis
 must match that acquisition calculation exactly. This accounts for per-fill rounding without a monetary tolerance or
 changes to immutable ledger amounts. The calculation retains the original fill precision and reproduces rounded

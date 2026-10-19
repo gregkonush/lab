@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import fc from 'fast-check'
 
 import { prepareAccounting } from '../accounting/domain'
-import { prepareFeeAccrual } from '../accounting/fee-accrual'
+import { prepareFeeAccrual, type FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { AccountStatus, OrderSide, type AccountingReceipt, type Fill } from '../execution/contracts'
@@ -22,10 +22,41 @@ const actualSales: readonly [string, string][] = [
   ['27943000000', '105300000000'],
 ]
 
-const partialExit = (sales = actualSales) => {
+const actualBuys: readonly [string, string][] = [
+  ['94975780000', '105490000000'],
+  ['41550000000', '105410000000'],
+  ['3161474370', '105490000000'],
+  ['697183700', '105429000000'],
+  ['13921000000', '105400000000'],
+  ['27890000000', '105400000000'],
+]
+const actualCohorts = [
+  { buys: actualBuys, quantity: '181794608105', cost: '19170399376', at: '2026-10-19T03:12:44.159Z' },
+]
+const splitCohorts = [
+  {
+    buys: actualBuys.filter((_, index) => [0, 3, 4].includes(index)),
+    quantity: '109352856980',
+    cost: '11534340315',
+    at: '2026-10-19T03:12:44.159Z',
+  },
+  {
+    buys: actualBuys.filter((_, index) => [1, 2, 5].includes(index)),
+    quantity: '181794608107',
+    cost: '19170392797',
+    at: '2026-10-19T03:12:45.159Z',
+  },
+]
+
+const partialExit = (
+  sales = actualSales,
+  cohorts = actualCohorts,
+  reportedPosition?: { readonly costBasisMicros: string; readonly averageEntryPriceMicros: string },
+) => {
   const transactions: AccountingTransaction[] = []
   const fills: Fill[] = []
   const receipts: AccountingReceipt[] = []
+  const accruals: FeeAccrual[] = []
   let quantity = 0n
   let cost = 0n
   const append = (side: OrderSide, quantityAtoms: string, priceAtoms: string, occurredAt: string) => {
@@ -59,48 +90,44 @@ const partialExit = (sales = actualSales) => {
     quantity += BigInt(prepared.transaction.quantityDeltaAtoms)
     cost += BigInt(prepared.transaction.costBasisDeltaMicros)
   }
-  for (const [qty, price] of [
-    ['94975780000', '105490000000'],
-    ['41550000000', '105410000000'],
-    ['3161474370', '105490000000'],
-    ['697183700', '105429000000'],
-    ['13921000000', '105400000000'],
-    ['27890000000', '105400000000'],
-  ] satisfies [string, string][])
-    append(OrderSide.Buy, qty, price, '2026-10-19T03:12:40.233Z')
-  const accrual = Result.getOrThrow(
-    prepareFeeAccrual(
-      {
-        schemaVersion: 'bayn.broker-fee-accrual.v1',
-        kind: 'COIN',
-        accountId,
-        symbol: 'SOL/USD',
-        date: '2026-10-19',
-        cycleId: hash('cycle'),
-        observedAt: '2026-10-19T03:12:44.159Z',
-        positionSnapshotId: hash('position-snapshot'),
-        projectedQuantityAtoms: String(quantity),
-        observedQuantityAtoms: '181794608105',
-        projectedCostMicros: String(cost),
-        observedCostMicros: '19170399376',
-        sourceTrades: transactions
-          .map(({ transactionId, quantityAtoms, priceAtoms }) => ({
-            transactionId,
-            quantityAtoms,
-            priceAtoms,
-          }))
-          .sort((left, right) => left.transactionId.localeCompare(right.transactionId)),
-      },
-      1,
-    ),
-  )
-  quantity = 181794608105n
-  cost = 19170399376n
+  for (const cohort of cohorts) {
+    const first = transactions.length
+    for (const [qty, price] of cohort.buys) append(OrderSide.Buy, qty, price, '2026-10-19T03:12:40.233Z')
+    const accrual = Result.getOrThrow(
+      prepareFeeAccrual(
+        {
+          schemaVersion: 'bayn.broker-fee-accrual.v1',
+          kind: 'COIN',
+          accountId,
+          symbol: 'SOL/USD',
+          date: '2026-10-19',
+          cycleId: hash('cycle'),
+          observedAt: cohort.at,
+          positionSnapshotId: hash(`position-snapshot-${first}`),
+          projectedQuantityAtoms: String(quantity),
+          observedQuantityAtoms: cohort.quantity,
+          projectedCostMicros: String(cost),
+          observedCostMicros: cohort.cost,
+          sourceTrades: transactions
+            .slice(first)
+            .map(({ transactionId, quantityAtoms, priceAtoms }) => ({
+              transactionId,
+              quantityAtoms,
+              priceAtoms,
+            }))
+            .sort((left, right) => left.transactionId.localeCompare(right.transactionId)),
+        },
+        1,
+      ),
+    )
+    accruals.push(accrual.data)
+    quantity = BigInt(cohort.quantity)
+    cost = BigInt(cohort.cost)
+  }
   for (const [qty, price] of sales) append(OrderSide.Sell, qty, price, '2026-10-19T03:13:18.921Z')
-  const sourceProduct = accrual.data.sourceTrades.reduce(
-    (sum, t) => sum + BigInt(t.quantityAtoms) * BigInt(t.priceAtoms),
-    0n,
-  )
+  const sourceProduct = transactions
+    .filter((t) => t.side === OrderSide.Buy)
+    .reduce((sum, t) => sum + BigInt(t.quantityAtoms) * BigInt(t.priceAtoms), 0n)
   const divisor = 182195438070n * 1_000_000_000_000n
   const reportedCost = (sourceProduct * quantity * 2n + divisor) / (divisor * 2n)
   const cashMicros = (
@@ -117,6 +144,7 @@ const partialExit = (sales = actualSales) => {
     marketValueMicros: '8458787104',
     unrealizedPnlMicros: '-12119348',
     observedAt,
+    ...reportedPosition,
   }
   const equityMicros = (BigInt(cashMicros) + BigInt(position.marketValueMicros)).toString()
   return {
@@ -124,7 +152,7 @@ const partialExit = (sales = actualSales) => {
     openingCash: { cash_micros: '100000000000', observed_at: '2026-10-19T03:00:00.000Z' },
     transactions,
     fees: [],
-    brokerFeeAccruals: [accrual.data],
+    brokerFeeAccruals: accruals,
     brokerFeeCashDeltaMicros: '0',
     cashReportingOffsetMicros: '0',
     cashSettlementDeltaMicros: '0',
@@ -233,6 +261,42 @@ test('reproduces a nine-decimal broker average before rounding the remaining pos
     },
   }
   expect(Result.getOrThrow(compareOpeningCash(changed)).comparison.discrepancies).toEqual([])
+})
+
+test('carries earlier observed coin fees when later IOC fills arrive in another reconciliation', () => {
+  const input = partialExit(
+    ['31976639476', '21085846470', '26143673352', '7516022243'].map((qty): [string, string] => [qty, '105300000000']),
+    splitCohorts,
+    { costBasisMicros: '10025466544', averageEntryPriceMicros: '105450833' },
+  )
+  expect(input.projectedPositions[0]).toMatchObject({ quantityAtoms: '95072426566', costBasisMicros: '10025466543' })
+  expect(Result.getOrThrow(compareOpeningCash(input)).comparison.discrepancies).toEqual([])
+  const missingPriorCohort = { ...input, brokerFeeAccruals: input.brokerFeeAccruals.slice(1) }
+  expect(
+    Result.getOrThrow(compareOpeningCash(missingPriorCohort)).comparison.discrepancies.some(
+      (d) => d.identity === 'SOL/USD:cost',
+    ),
+  ).toBe(true)
+})
+
+test('property: multiple coin-fee cohorts preserve the acquisition average through partial disposals', () => {
+  checkProperty(
+    'partial-position-cost-cohorts',
+    fc.property(
+      fc.array(fc.bigInt({ min: 10_000n, max: 40_000_000_000n }), { minLength: 4, maxLength: 4 }),
+      (quantities) => {
+        const quantity = 181794608107n - quantities.reduce((sum, value) => sum + value, 0n)
+        const denominator = 3988219277005934399n * 1_000_000_000_000n
+        const reportedCost = (420561043566276145686352800000n * quantity * 2n + denominator) / (denominator * 2n)
+        const input = partialExit(
+          quantities.map((qty): [string, string] => [String(qty), '105300000000']),
+          splitCohorts,
+          { costBasisMicros: String(reportedCost), averageEntryPriceMicros: '105450833' },
+        )
+        expect(Result.getOrThrow(compareOpeningCash(input)).comparison.discrepancies).toEqual([])
+      },
+    ),
+  )
 })
 
 test('property: partial fill rounding preserves exact quantity and rejects unexplained broker costs', () => {
