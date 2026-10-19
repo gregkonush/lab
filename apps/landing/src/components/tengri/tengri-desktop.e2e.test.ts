@@ -152,6 +152,7 @@ type MockOptions = {
   holdCodexAccountAfterLogin?: boolean
   holdLifecycleAction?: 'delete-agent' | 'sleep-agent'
   holdReplayResume?: boolean
+  holdInitialResume?: boolean
   legacyFileRevision?: boolean
   resumeThreadDelayMs?: number
   resumeThreadEventSequence?: number
@@ -753,7 +754,10 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           await route.fulfill({ status, json: failure })
           return
         }
-        if (options.holdReplayResume && resumeThreadRequests === 2) {
+        if (
+          (options.holdReplayResume && resumeThreadRequests === 2) ||
+          (options.holdInitialResume && resumeThreadRequests === 1)
+        ) {
           markHeldResumeStarted()
           await heldResume
         }
@@ -2171,6 +2175,33 @@ test('cancels a pending model catalog retry when the chat window closes', async 
   options.codexModelsError = undefined
   await page.clock.runFor(31_000)
   expect(mock.actions.filter((action) => action.action === 'codex-models')).toHaveLength(1)
+})
+
+test('shows no retry action while a healthy conversation is loading or after it loads', async ({ page }) => {
+  const mock = await mockTengri(page, {
+    holdInitialResume: true,
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'completed',
+            items: [{ id: 'loaded', type: 'agentMessage', text: 'Conversation loaded.' }],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  await mock.waitForHeldResume()
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeDisabled()
+  expect(await tengri.getByRole('button', { name: 'Retry conversation recovery' }).count()).toBe(0)
+  mock.releaseHeldResume()
+  await expect(tengri.getByText('Conversation loaded.', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
 })
 
 test('automatically recovers a saved conversation after a temporary control-plane failure', async ({ page }) => {
@@ -6448,6 +6479,104 @@ test('keeps following when a delayed scroll event arrives after streamed content
     .poll(() => conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight))
     .toBeLessThan(2)
   await expect(page.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
+})
+
+test('recovery follows the latest restored message and stays at the bottom after an image loads', async ({ page }) => {
+  const items = Array.from({ length: 30 }, (_, index) => ({
+    id: `answer-${index}`,
+    type: 'agentMessage',
+    text: `Workspace finding ${index + 1}. ${'A detailed explanation. '.repeat(12)}`,
+  }))
+  const options: MockOptions = {
+    holdReplayResume: true,
+    resumeThreadRawJson: JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'completed', items }] } }),
+  }
+  const mock = await mockTengri(page, options)
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  const conversation = tengri.getByTestId('agent-conversation-scroll')
+  const distanceFromBottom = () =>
+    conversation.evaluate((element) => element.scrollHeight - element.scrollTop - element.clientHeight)
+  await expect(tengri.getByRole('article', { name: 'Codex response' })).toHaveCount(30)
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Keep my recovery draft')
+  await conversation.evaluate((element) => {
+    element.scrollTop = 0
+  })
+  const jumpToLatest = tengri.getByRole('button', { name: 'Jump to latest' })
+  await expect(jumpToLatest).toBeVisible()
+  await expect(jumpToLatest).toHaveText('')
+  await expect(jumpToLatest.getByTestId('jump-to-latest-dots')).toBeVisible()
+  await expect(jumpToLatest.getByTestId('jump-to-latest-arrow')).not.toBeVisible()
+  await jumpToLatest.screenshot({ path: 'test-results/jump-to-latest-dots.png', animations: 'disabled' })
+  await jumpToLatest.hover()
+  await expect(jumpToLatest.getByTestId('jump-to-latest-dots')).not.toBeVisible()
+  await expect(jumpToLatest.getByTestId('jump-to-latest-arrow')).toBeVisible()
+  await jumpToLatest.screenshot({ path: 'test-results/jump-to-latest-arrow.png' })
+  await page.mouse.move(0, 0)
+  await page.keyboard.press('Tab')
+  await jumpToLatest.focus()
+  await expect(jumpToLatest.getByTestId('jump-to-latest-arrow')).toBeVisible()
+  await jumpToLatest.evaluate((button) => button.blur())
+  const png = await page.evaluate(() => {
+    const canvas = document.createElement('canvas')
+    canvas.width = 640
+    canvas.height = 480
+    const context = canvas.getContext('2d')!
+    context.fillStyle = '#18181b'
+    context.fillRect(0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/png').split(',')[1]
+  })
+  const imageResponse = Promise.withResolvers<void>()
+  await page.route('**/api/tengri/attachments?*', async (route) => {
+    await imageResponse.promise
+    await route.fulfill({ contentType: 'image/png', body: Buffer.from(png, 'base64') })
+  })
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'warning',
+    method: 'tengri/replayWarning',
+    threadId: 'thread-1',
+    turnId: '',
+    itemId: '',
+    approvalId: '',
+    rawJson: '{}',
+    text: 'Recovering a gap in the event stream.',
+  })
+  await mock.waitForHeldResume()
+  options.resumeThreadRawJson = JSON.stringify({
+    thread: {
+      turns: [
+        {
+          id: 'turn-1',
+          status: 'completed',
+          items: [
+            ...items,
+            {
+              id: 'latest-restored',
+              type: 'agentMessage',
+              text: 'The latest restored reply.\n\n![Recovered diagram](/workspace/recovered-diagram.png)',
+            },
+          ],
+        },
+      ],
+    },
+  })
+  mock.releaseHeldResume()
+  try {
+    await expect(tengri.getByRole('article', { name: 'Codex response' })).toHaveCount(31)
+    await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+    await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+    await expect.poll(distanceFromBottom).toBeLessThan(2)
+  } finally {
+    imageResponse.resolve()
+  }
+  const image = tengri.getByRole('img', { name: 'Recovered diagram', exact: true })
+  await expect.poll(() => image.evaluate((element: HTMLImageElement) => element.naturalWidth)).toBe(640)
+  await expect.poll(distanceFromBottom).toBeLessThan(2)
+  await expect(tengri.getByRole('button', { name: 'Jump to latest' })).toHaveCount(0)
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toHaveValue('Keep my recovery draft')
 })
 
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
