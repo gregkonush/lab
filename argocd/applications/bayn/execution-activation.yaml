@@ -55,24 +55,15 @@ spec:
             - name: BAYN_IMAGE_DIGEST
               value: sha256:47143f3136a8ef2bd00910ff970c75db98c2e1229f2a7c028019bd82833c5ba7
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af"
+              value: "723aa7123f79826961d1b13e646df343f5ab40bb6475b90052ea2c8280f98977"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6"
+              value: "aebb1eb7e0d1bdd1d5dfde3d074552ac5742d7ed4e49048e563781f3f6313271"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"05a9730864e88f4e50912223baaa8be8d3d182da4dce2931d7cef9dab02069de","authoredActivation":{"sourceRevision":"77474c1582a2ba78476b913b8690aa37add142c0","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:aa0e24c83610cebb9e7ce98dae4b322a2db1132ec67dba6eb9431587c152875f"},"activation":{"sourceRevision":"77474c1582a2ba78476b913b8690aa37add142c0","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:aa0e24c83610cebb9e7ce98dae4b322a2db1132ec67dba6eb9431587c152875f"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "22793abfac57568433147fb6d7a47ce7a34fb500ee47e035353ae8935a3e3fa7"
+              value: "4ef2312f1b9378be3cc8137498efcf6b55f591d22e08386b5ea9ebcc8086e1ac"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT

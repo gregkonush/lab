@@ -1,3 +1,4 @@
+import { JevPurpose } from './portfolio'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
@@ -191,3 +192,30 @@ test('property: exchange queries admit the first completed minute and clamp cont
     }),
   )
 })
+
+test('property: settled entry cash fees cannot alter a future management judgment', () => {
+  const fixture = nativeJevFixture(JevPurpose.Manage)
+  const portfolio = fixture.portfolio
+  if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a held position')
+  const baseline = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  checkProperty(
+    'jev-management-sunk-cost-independence',
+    fc.property(fc.integer({ min: 0, max: 100_000_000 }), (feeMicros) => {
+      const observation = Result.getOrThrow(
+        makeJevObservation({
+          ...fixture.input,
+          portfolio: {
+            ...portfolio,
+            entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: String(feeMicros) })),
+          },
+        }),
+      )
+      const actual = Result.getOrThrow(makeJevTradingSignalRequest(observation.payload, 'AAPL'))
+      expect(actual.requestHash).toBe(baseline.requestHash)
+      expect(actual.body).toBe(baseline.body)
+      expect(observation.payload.portfolio).toMatchObject({
+        entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: String(feeMicros) })),
+      })
+    }),
+  )
+}, 150_000)

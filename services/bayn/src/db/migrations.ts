@@ -1,3 +1,4 @@
+import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
 import focusedJevJudgments from '../../migrations/0124_focused_jev_judgments'
 import setupActionProtocol from '../../migrations/0123_setup_action_protocol'
 import explicitLimitDecisions from '../../migrations/0122_explicit_limit_decisions'
@@ -128,6 +129,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 export const migrationLoader = PgMigrator.fromRecord({
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,
+  '125_market_management_judgment': marketManagementJudgment,
   '122_explicit_limit_decisions': explicitLimitDecisions,
   '121_explicit_limit_intents': explicitLimitIntents,
   '120_mixed_market_replay': mixedMarketReplay,
