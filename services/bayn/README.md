@@ -42,8 +42,7 @@ required benchmark bars or features produce source `not-ready` during snapshot a
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
 accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v12 uses state v11.
-Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
-calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
+Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
 predictive edge or profit.
@@ -101,10 +100,10 @@ above the inference-bound ceiling is rejected before decision construction and a
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v11 and trading-signal input v10 replace their executable predecessors. Migration 124 requires flat,
+Protocol v12 and trading-signal input v11 replace their executable predecessors. Migration 125 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
-new Jev authority generations to v11. Historical generation rows remain immutable audit evidence. Create a new
-same-account PAPER mandate against a verified published v11 image through its sealed GitOps path after cutover; source success alone
+new Jev authority generations to v12. Historical generation rows remain immutable audit evidence. Create a new
+same-account PAPER mandate against a verified published v12 image through its sealed GitOps path after cutover; source success alone
 does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
@@ -158,10 +157,10 @@ Each candidate receives one typed entry Choice, `enter / wait / avoid`. Manageme
 Unconsumed regime, continuation, exhaustion and setup-quality diagnostics are no longer requested.
 The entry question names `task.horizonMinutes`; `relativeSignals.lookbackMinutes` describes the observed past window.
 The model-directed exit threshold remains 0.65 for both markets; deterministic stops and deadlines remain independent.
-`wait` and `avoid` keep zero targets. Protocol v11 rejects retired executable protocols and the retired
-`minimumEntryProbability` field. Migration 124 requires flat, settled inventory and fresh exact reconciliation,
+`wait` and `avoid` keep zero targets. Protocol v12 rejects retired executable protocols and the retired
+`minimumEntryProbability` field. Migration 125 requires flat, settled inventory and fresh exact reconciliation,
 retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
-same-account v11 PAPER mandate against its verified published image. Existing position, turnover, loss,
+same-account v12 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
 
 Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
@@ -1910,9 +1909,9 @@ per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. 
 quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 124 owns the
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 125 owns the
 current protocol-v12 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
-reconciliation before activating a new same-account v11 PAPER mandate against its verified published image.
+reconciliation before activating a new same-account v12 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.
