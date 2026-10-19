@@ -49,6 +49,7 @@ import { strictParseOptions, type IsoDate } from '../schemas'
 import { Pipeable } from '../pipeable'
 import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import type { FeeAccrual } from '../accounting/fee-accrual'
+import { positionCostAnchor } from './position-cost-reporting'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -427,7 +428,7 @@ export const compareOpeningCash = (input: {
   readonly snapshot: ReconciliationSnapshotMaterial
   readonly intents: readonly IntentExpectation[]
   readonly durableFills: readonly DurableFill[]
-  readonly projectedPositions: readonly ProjectedPosition[]
+  readonly projectedPositions: readonly Omit<ProjectedPosition, 'costBasisAnchor'>[]
 }): Result.Result<AccountingComparison, ReconciliationAlgebraFailure> =>
   Result.gen(function* () {
     const predecessor = input.transactions.find((transaction) => transaction.occurredAt < input.openingCash.observed_at)
@@ -499,7 +500,10 @@ export const compareOpeningCash = (input: {
         fills: input.snapshot.fills,
         intents: input.intents,
         durableFills: input.durableFills,
-        projectedPositions: input.projectedPositions,
+        projectedPositions: input.projectedPositions.map((position) => ({
+          ...position,
+          costBasisAnchor: positionCostAnchor(input.accountId, position, input.transactions, input.brokerFeeAccruals),
+        })),
         expectedCashMicros,
         valuation: input.snapshot.valuation,
         accountingHash: accountingHashValue,

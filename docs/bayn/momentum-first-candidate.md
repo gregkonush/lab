@@ -26,8 +26,8 @@ future, malformed or stale evidence cannot become a valid non-signal. If every c
 fails an entry gate, the batch makes zero model calls and produces zero targets. A fully non-requested batch containing
 unknown source candidates remains unusable.
 
-Jev receives only admitted signals. It retains the existing `enter`/`wait`/`avoid` question. A valid chosen `enter`
-action is eligible only with a `supported` net-economics assessment, without an additional probability floor. `wait` and `avoid` never authorize entry. Among chosen
+Jev receives only admitted signals. It selects the setup through its `enter`/`wait`/`avoid` question. A valid chosen `enter`
+action selects a funded target without a second model economics judgment or an additional probability floor. `wait` and `avoid` never authorize entry. Among chosen
 enter actions, selection retains descending Jev enter probability, then symbol for ties. The action distribution
 is not a calibrated probability of net profit.
 This is a momentum eligibility gate before Jev, not a new momentum-ranked portfolio. Choosing the highest exact
@@ -43,13 +43,13 @@ never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- The only active protocol is `bayn.jev.protocol.v9`, with `cost-supported-model-action` entry selection and
-  `capital-weighted-session-limit` sizing. Both an enter action and supported net economics are required. Retired protocols and their numeric entry floor are rejected by the runtime
-- The current behavior is `bayn.jev.completed-bar-benchmark.behavior.v1`. Protocol, behavior, observation, batch v4,
+- The only active protocol is `bayn.jev.protocol.v11`, with `chosen-model-action` entry selection and
+  `capital-weighted-session-limit` sizing. A valid chosen enter action selects a funded target; no second model economic judgment is required. Retired protocols and their numeric entry floor are rejected by the runtime
+- The current behavior is `bayn.jev.focused-action.behavior.v1`. Protocol, behavior, observation, batch v4,
   cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles
-- Trading-signal input v8 includes an explicit fee break-even exit bid and a net-economics question. Entry
+- Trading-signal input v9 retains explicit fee break-even context and restores the setup question. Entry
   pricing retains its fresh-quote lifetime and must stay within the inference-bound price ceiling, in addition to
-  final spread, displayed-size and risk checks. Migration 118 requires flat settled inventory before this cutover
+  final spread, displayed-size and risk checks. Migration 123 requires flat settled inventory before this cutover
 - Keep one durable observation per completed signal minute/purpose/cycle, the existing minute-plus-two-second window,
   pending-batch recovery, ten-second original deadline, at most fifteen eligible concurrent requests, and no queued
   historical catch-up. Every requested result must finish validly before selection. No top-K cutoff is introduced
@@ -67,12 +67,12 @@ Activation pairs `strategy.ts`, the compiled Nix strategy identities, runtime ma
 mandate. It does not add an environment toggle or generic strategy registry. The mandate retains the same sandbox
 account, credentials, exposure/loss limits, protective exits and existing account/day turnover history.
 
-Publish the v9 cutover in OBSERVE first. Restore PAPER only with a new same-account mandate bound to the verified
-published v9 strategy and image after native cutover proof.
+Publish the v10 cutover in OBSERVE first. Restore PAPER only with a new same-account mandate bound to the verified
+published v10 strategy and image after native cutover proof.
 
-The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v9 policy.
-Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 118 admits the v9 authority
-identity after flat, settled, freshly reconciled cutover. Historical evidence and account/day turnover remain immutable. A new PAPER mandate must bind the published v9 image and strategy.
+The existing backtest CLI remains bound to the active source protocol and therefore follows the selected v10 policy.
+Tests exercise the native evaluator and PostgreSQL persistence directly. Migration 123 admits the v10 authority
+identity after flat, settled, freshly reconciled cutover. Historical evidence and account/day turnover remain immutable. A new PAPER mandate must bind the published v10 image and strategy.
 
 PAPER research activation requires an explicit immutable Research mandate, current build/strategy/account/risk bindings,
 and fresh exact, flat sandbox reconciliation. It does not require a previously profitable result. Before making an
