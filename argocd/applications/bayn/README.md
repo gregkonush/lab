@@ -179,7 +179,7 @@ account budget. The entry gate requires positive own and market-benchmark-relati
 action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
 Migration 124 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
 rotates the previous PAPER generation through native OBSERVE recovery before a new v11 mandate can activate.
-The current strategy protocol hash is `9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7`.
+The current strategy protocol hash is `f4ad4bda48f5a470474cadcefc2a555e0e9c33146ff90f5839e01fb1f78786ca`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -577,3 +577,16 @@ The same path retires bound, unused cycles left by the previous worker even afte
 cycles with snapshot, decision or intent evidence still block cutover recovery.
 The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
 Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.
+
+### Market-only management cutover
+
+Protocol v12 / state v11 removes sunk entry costs and historical PnL from the management Choice. Full financial
+evidence stays in native observations and accounting. Entry admission and every capital, fee, stop, holding and
+submission gate are unchanged. Migration 125 requires flat settled inventory, terminal mutation cycles, complete
+accounting and fresh exact reconciliation before retiring v11 for new authority generations.
+
+This reviewed source temporarily requests OBSERVE without an encrypted prior-strategy mandate. After its immutable
+image is published and reconciled through Kargo, author and seal the same-account, same-risk PAPER mandate against
+that verified v12 image through the existing rotation procedure. Restore the request, identity annotation and three
+build lineages together. Verify native recovery and actual broker/accounting behavior; the input correction does not
+establish a profitable entry strategy.

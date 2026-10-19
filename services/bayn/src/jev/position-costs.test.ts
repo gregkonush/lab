@@ -11,7 +11,7 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test.each([0, 1_230_000])(
-    `${symbol} management reports booked coin fees plus cash fill fees %i and net liquidation PnL`,
+    `${symbol} management retains the held horizon without sunk cost input at cash fee %i`,
     (cashFeeMicros) => {
       const { snapshot } = cryptoMarketFixture(symbol)
       const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
@@ -89,26 +89,14 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         }),
       ).payload
       const state = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(observation, symbol)).body).state
-      const entryFees = 25 + cashFeeMicros / 1_000_000
-      expect(state.position.entryFeesUsd).toBe(entryFees)
-      expect(state.position.estimatedExitFeesUsd).toBeGreaterThan(25)
-      const liquidationCash = (bid: bigint) => {
-        const boundary = (bid * 9990n + 9999n) / 10000n
-        const proceeds = (boundary * 99_750_000_000n) / 1_000_000_000n
-        return proceeds - ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
-      }
-      const observedBid = BigInt(Math.floor(state.candidate.quote.bid * 1_000_000))
-      expect(state.position.netLiquidationPnlUsd).toBe(
-        Number(liquidationCash(observedBid) - 10_000_000_000n - BigInt(cashFeeMicros)) / 1_000_000,
-      )
-      expect(state.position.netLiquidationPnlUsd).toBeLessThan(
-        state.position.unrealizedPnlAtBidUsd - entryFees - state.position.estimatedExitFeesUsd,
-      )
-      expect(state.position.remainingHoldingMinutes).toBe(15)
-      const breakEvenBid = BigInt(Math.round(state.position.breakEvenExitBidUsd * 1_000_000))
-      const acquired = 10_000_000_000n + BigInt(cashFeeMicros)
-      expect(liquidationCash(breakEvenBid)).toBeGreaterThanOrEqual(acquired)
-      expect(liquidationCash(breakEvenBid - 1n)).toBeLessThan(acquired + 10_000n)
+      expect(state.position).toEqual({
+        symbol,
+        quantityUnits: 99.75,
+        entryFilledAt: at,
+        heldForMinutes: 0,
+        maximumHoldingMinutes: 15,
+        remainingHoldingMinutes: 15,
+      })
     },
   )
 }
@@ -150,8 +138,6 @@ test.each([
   const request = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'AAPL'))
   const state = JSON.parse(request.body).state
   expect(state.position.quantityUnits).toBe(units)
-  expect(state.position.estimatedExitFeesUsd).toBeGreaterThan(0)
-  expect(state.position.breakEvenExitBidUsd).toBeGreaterThan(100)
-  expect(Number.isFinite(state.position.netLiquidationPnlUsd)).toBe(true)
+  expect(state.position.remainingHoldingMinutes).toBe(12)
   expect(request.request.questions['action']?.type).toBe('choice')
 })

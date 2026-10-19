@@ -18,7 +18,20 @@ before the approved PAPER activation can resume. A prior no-trade decision canno
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v11` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v12` and native Dorvud feature contracts.
+
+Protocol v12 uses trading-signal input v11. The management Choice judges the future market setup over the actual
+remaining holding horizon. Its state retains the actual symbol, net held quantity, first-fill time and remaining
+horizon; it omits the paid acquisition basis, sunk entry fees, historical unrealized PnL and break-even target.
+Changing an already paid entry fee cannot change that future market judgment. Native observations and accounting
+retain the full financial evidence. Entry admission, fee calculations, the 0.65 exit threshold, protective stop,
+15-minute holding limit, capital limits and order deadlines are unchanged. This input correction does not establish
+a profitable strategy or calibrated return forecast.
+
+Migration 125 rejects new v11 authority generations after terminal cycles, flat inventory, settled orders, complete
+accounting and fresh exact reconciliation. It clamps the prior PAPER authority for native OBSERVE recovery before a
+new protocol-bound activation; retained generations remain immutable audit evidence. No v11 execution fallback exists.
+
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
@@ -28,7 +41,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v10`.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v12 uses state v11.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
 calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
@@ -1528,7 +1541,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v10"`. Its `costs` object contains
+`inputDefinition: "bayn.jev-trading-signal-state.v11"`. Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
 `allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
 
@@ -1898,7 +1911,7 @@ quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
 predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 124 owns the
-current protocol-v11 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
+current protocol-v12 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
 reconciliation before activating a new same-account v11 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
