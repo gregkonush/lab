@@ -292,7 +292,7 @@ export const triggerControlExit = (input: {
           )
         )
           reason = ControlExit.ProtectiveStop
-        else {
+        else if (input.policy !== ControlPolicy.ResidualShock) {
           const liquidation = yield* jevLiquidationValue({
             protocol,
             symbol: position.symbol,

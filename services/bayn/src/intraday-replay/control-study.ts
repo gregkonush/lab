@@ -127,7 +127,7 @@ export const controlStudyDefinition = {
     'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Broker equity and its carried peak govern risk. Net equity deducts cumulative external costs only for reported performance, drawdown and session loss, matching native replay. External costs never change broker cash, sizing or risk.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
-    'MECHANICAL uses native stop, net-profit target and holding/session deadlines. JEV is an offline model-management comparator; its decisions cannot authorize native broker exits. The retained close control never calls Jev. No model responses are synthesized.',
+    'MECHANICAL uses native stop, net-profit target and holding/session deadlines. JEV is an offline model-management comparator; its decisions cannot authorize native broker exits. The retained close control never calls Jev. The residual-shock candidate retains its frozen 60-second horizon without a profit trigger. No model responses are synthesized.',
     'The retained selection and close lifecycle do not reproduce historical persistence, reconciliation, authority, retry and market-close fallback machinery.',
     'Deterministic entry latency is a declared scenario. Jev entry and management measure provider and simulation-journal work, not production PostgreSQL persistence or a full-controller p95. Timing still requires calibration for the frozen matched comparison. Routing latency is added separately.',
     'Quote size units and impact remain uncalibrated. Source completeness and a flat simulated close do not establish executable live capacity.',

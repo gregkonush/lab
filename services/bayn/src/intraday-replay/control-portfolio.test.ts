@@ -385,6 +385,16 @@ test('residual shock target starts at first partial fill and follows protective 
   }
   expect(
     Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
+        ...common,
+        atMs: at + 5100,
+        quote: quote(at + 5100, { bidPrice: 102, askPrice: 102.02 }),
+      }),
+    ).inventory.status,
+  ).toBe('HOLDING')
+  expect(
+    Result.getOrThrow(
       triggerControlExit({ feeMultiplierPpm: 1_000_000, ...common, atMs: at + 60_099, quote: quote(at + 60_099) }),
     ).inventory.status,
   ).toBe('HOLDING')
