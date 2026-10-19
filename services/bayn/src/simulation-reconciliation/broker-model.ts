@@ -45,6 +45,7 @@ export interface ProjectedPosition {
   readonly symbol: string
   readonly quantityAtoms: string
   readonly costBasisMicros: string
+  readonly costBasisAnchor: { readonly quantityAtoms: string; readonly notionalAtomProduct: string } | null
 }
 
 export interface ReconciliationSnapshot {

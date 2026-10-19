@@ -36,44 +36,75 @@ const comparePosition = (
       expectedQuantity: integer('projected-position-quantity', symbol, expectedQuantityText),
       observedQuantity: integer('position-quantity', symbol, observedQuantityText),
       expectedCost: integer('projected-position-cost', symbol, expectedCostText),
+      anchorQuantity: integer(
+        'projected-position-quantity',
+        symbol,
+        expectedPosition?.costBasisAnchor?.quantityAtoms ?? expectedQuantityText,
+      ),
+      anchorCost: integer(
+        'projected-position-cost',
+        symbol,
+        expectedPosition?.costBasisAnchor?.notionalAtomProduct ?? expectedCostText,
+      ).pipe(
+        Result.map((value) =>
+          expectedPosition?.costBasisAnchor === null || expectedPosition === undefined
+            ? value * 1_000_000_000_000n
+            : value,
+        ),
+      ),
       averagePrice: integer('position-average-price', symbol, observedPosition?.averageEntryPriceMicros ?? '0'),
       observedCost:
         observedPosition === undefined
           ? Result.succeed(0n)
           : integer('position-cost-basis', symbol, observedPosition.costBasisMicros),
     }),
-    Result.flatMap(({ expectedCost, expectedQuantity, observedCost, observedQuantity, averagePrice }) => {
-      // A reported basis formed from the rounded average must reproduce both provider fields.
-      // The ledger and cash retain the exact fill cost; no monetary tolerance is applied.
-      const reportedAverageMatches =
-        expectedQuantity === observedQuantity &&
-        observedQuantity > 0n &&
-        expectedCost > 0n &&
-        (expectedCost * 1_000_000_000n * 2n + observedQuantity) / (observedQuantity * 2n) === averagePrice &&
-        (averagePrice * observedQuantity + 500_000_000n) / 1_000_000_000n === observedCost
-      return pipe(
-        Result.all({
-          quantity: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Position,
-            `${symbol}:quantity`,
-            expectedQuantity.toString(),
-            observedQuantity.toString(),
-          ),
-          cost: compareValue(
-            snapshot.accountId,
-            DiscrepancyKind.Position,
-            `${symbol}:cost`,
-            expectedCost.toString(),
-            (reportedAverageMatches ? expectedCost : observedCost).toString(),
-          ),
-        }),
-        Result.map(({ cost, quantity }) => ({
-          difference: absolute(expectedQuantity - observedQuantity),
-          discrepancies: [...quantity, ...cost],
-        })),
-      )
-    }),
+    Result.flatMap(
+      ({
+        expectedCost,
+        expectedQuantity,
+        observedCost,
+        observedQuantity,
+        averagePrice,
+        anchorQuantity,
+        anchorCost,
+      }) => {
+        // A partial disposal preserves the verified entry average, while posted fills allocate whole micros.
+        // Both broker fields must reproduce from that basis; ledger and cash amounts remain exact.
+        const reportedAverageMatches =
+          expectedQuantity === observedQuantity &&
+          observedQuantity > 0n &&
+          expectedCost > 0n &&
+          anchorQuantity >= observedQuantity &&
+          anchorCost > 0n &&
+          (anchorCost * 2n + anchorQuantity * 1000n) / (anchorQuantity * 2000n) === averagePrice &&
+          ((anchorCost * observedQuantity * 2n + anchorQuantity * 1_000_000_000_000n) /
+            (anchorQuantity * 2_000_000_000_000n) ===
+            observedCost ||
+            (averagePrice * observedQuantity + 500_000_000n) / 1_000_000_000n === observedCost)
+        return pipe(
+          Result.all({
+            quantity: compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Position,
+              `${symbol}:quantity`,
+              expectedQuantity.toString(),
+              observedQuantity.toString(),
+            ),
+            cost: compareValue(
+              snapshot.accountId,
+              DiscrepancyKind.Position,
+              `${symbol}:cost`,
+              expectedCost.toString(),
+              (reportedAverageMatches ? expectedCost : observedCost).toString(),
+            ),
+          }),
+          Result.map(({ cost, quantity }) => ({
+            difference: absolute(expectedQuantity - observedQuantity),
+            discrepancies: [...quantity, ...cost],
+          })),
+        )
+      },
+    ),
   )
 }
 

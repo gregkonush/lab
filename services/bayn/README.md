@@ -69,6 +69,11 @@ Current positions require explicit broker cost basis. Migration 115 rejects new 
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
 its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
 unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
+After a partial crypto disposal, reconciliation also reproduces the broker's weighted-average basis from the complete
+native entry fills and verified coin-fee accrual. The pre-disposal broker basis must reproduce from those fill prices,
+and every later disposal must reproduce the remaining native quantity and posted cost. The reported average and basis
+must match that acquisition calculation exactly. This accounts for per-fill rounding without a monetary tolerance or
+changes to immutable ledger amounts.
 
 Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
 including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
