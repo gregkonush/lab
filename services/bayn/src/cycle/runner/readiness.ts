@@ -5,6 +5,7 @@ import { RequiredMarketFeatureSchema } from '../../market-data/features/contract
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
 export enum DecisionReadinessReason {
+  AccountProtection = 'ACCOUNT_PROTECTION',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   LookbackWarmup = 'LOOKBACK_WARMUP',

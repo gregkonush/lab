@@ -663,20 +663,23 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   }
   if (state.cycle.current.phase !== CycleState.Active) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs < Date.parse(session.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
-  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
   const pass = state.autonomousCycleLoop.lastPass
-  if (
+  const readiness =
     pass?.result === 'SUCCESS' &&
     pass.readiness !== undefined &&
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
-  ) {
-    if (pass.readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
+      ? pass.readiness
+      : undefined
+  if (readiness?.reason === DecisionReadinessReason.AccountProtection) return result(ExecutionSessionCondition.Blocked)
+  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+  if (readiness !== undefined) {
+    if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
       return result(ExecutionSessionCondition.Abstaining)
-    if (pass.readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+    if (readiness.reason === DecisionReadinessReason.InferenceUnavailable)
       return result(ExecutionSessionCondition.EvaluationUnavailable)
     if (
-      pass.readiness.reason !== DecisionReadinessReason.DecisionPending &&
-      pass.readiness.reason !== DecisionReadinessReason.SignalWindowObserved
+      readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      readiness.reason !== DecisionReadinessReason.SignalWindowObserved
     ) {
       return result(ExecutionSessionCondition.InputUnavailable)
     }

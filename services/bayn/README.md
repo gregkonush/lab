@@ -24,9 +24,16 @@ Protocol v12 uses trading-signal input v11. The management Choice judges the fut
 remaining holding horizon. Its state retains the actual symbol, net held quantity, first-fill time and remaining
 horizon; it omits the paid acquisition basis, sunk entry fees, historical unrealized PnL and break-even target.
 Changing an already paid entry fee cannot change that future market judgment. Native observations and accounting
-retain the full financial evidence. Entry admission, fee calculations, the 0.65 exit threshold, protective stop,
+retain the full financial evidence. Entry selection, fee calculations, the 0.65 exit threshold, protective stop,
 15-minute holding limit, capital limits and order deadlines are unchanged. This input correction does not establish
 a profitable strategy or calibrated return forecast.
+
+For flat PAPER accounts, the same reconciled daily-loss and all-time drawdown limits also run before market-data
+reads and Jev batch admission. `ACCOUNT_PROTECTION` readiness names the existing limit that prevents an entry;
+the execution-session status and metric report `BLOCKED`, not an input outage. It does not create a model
+abstention or a risk-approved order. Position management and reducing exits continue
+through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
+research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
 
 Migration 125 rejects new v11 authority generations after terminal cycles, flat inventory, settled orders, complete
 accounting and fresh exact reconciliation. It clamps the prior PAPER authority for native OBSERVE recovery before a

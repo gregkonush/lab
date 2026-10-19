@@ -11,7 +11,7 @@ import { JevClient } from '../jev/client'
 import { decideJevEntry } from '../jev/decision'
 import type { JevExitTarget } from '../jev/exit'
 import { decodeJevProtocol } from '../jev/protocol'
-import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
+import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
   evaluateJevObservationFromSnapshot,
@@ -67,9 +67,11 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import {
+  accountLossMicros,
   BrokerMode,
   decodePolicy,
   executionRiskPolicySchemaVersion,
+  Reason as RiskReason,
   type Policy,
   type State,
   type EntryQuoteFreshness,
@@ -668,11 +670,95 @@ export const prepareObserveDecisionReads = <R>(
   )
 }
 
+type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
+
+const validateEntryDecisionContext = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: Pick<ObserveDecisionFacts, 'reconciliation' | 'evaluatedAt'>,
+): Result.Result<void, ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal> => {
+  if (
+    facts.reconciliation.riskContext.tradingDate !==
+    (input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+      ? accountTradingDate(facts.evaluatedAt)
+      : input.cycle.identity.executionSessionDate)
+  ) {
+    return Result.fail(
+      compositionFailure(
+        'cycle-binding',
+        'same-pass reconciliation risk context is not from the execution session date',
+      ),
+    )
+  }
+  if (Date.parse(facts.evaluatedAt) >= unusedEntryExpiresAt(input.cycle)) {
+    return Result.fail(
+      new ObserveDecisionAwaitingSignal({
+        message: 'Entry admission expired during reconciliation',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'The unused entry lease has expired',
+        },
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      }),
+    )
+  }
+  return Result.succeed(undefined)
+}
+
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
-): Effect.Effect<ObserveDecisionFacts, OperationalError, BrokerRead | R> =>
+  requiredAuthority: DecisionAuthorityRequirement,
+): Effect.Effect<
+  { readonly facts: ObserveDecisionFacts; readonly portfolio: JevPortfolio },
+  OperationalError | ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal,
+  BrokerRead | R
+> =>
   Effect.gen(function* () {
+    const reconciliation = yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))
+    const evaluatedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(
+      requireDecisionAuthority(reconciliation, input.policy, input.authorityGenerationHash, requiredAuthority),
+    )
+    yield* Effect.fromResult(validateEntryDecisionContext(input, { reconciliation, evaluatedAt }))
+    if (reconciliation.riskContext.unknownMutationCount !== 0)
+      return yield* operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'Unresolved broker mutations prevent Jev entry',
+      })
+    const portfolio = yield* Effect.fromResult(
+      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError({
+          component: 'strategy',
+          operation: 'current-decision',
+          message: 'Native Jev decision could not be constructed',
+          cause,
+        }),
+      ),
+    )
+    if (requiredAuthority === Authority.Execution) {
+      const { dailyLossMicros, drawdownMicros } = accountLossMicros({
+        accountEquityMicros: BigInt(portfolio.brokerState.account.equityMicros),
+        dayStartEquityMicros: BigInt(reconciliation.riskContext.dayStartEquityMicros),
+        peakEquityMicros: BigInt(reconciliation.riskContext.peakEquityMicros),
+      })
+      const reasons = [
+        ...(dailyLossMicros > BigInt(input.policy.maxDailyLossMicros) ? [RiskReason.DailyLossExceeded] : []),
+        ...(drawdownMicros > BigInt(input.policy.maxDrawdownMicros) ? [RiskReason.DrawdownExceeded] : []),
+      ]
+      if (reasons.length > 0) {
+        const message = `Existing account limits block new entries: ${reasons.join(', ')}`
+        return yield* new ObserveDecisionAwaitingSignal({
+          message,
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message },
+          observedAt: evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        })
+      }
+    }
     const brokerRead = yield* BrokerRead
     const readCalendar: Effect.Effect<{ readonly value: MarketHours }, OperationalError> =
       input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -687,20 +773,17 @@ export const readObserveDecisionFacts = <R>(
               }),
             ),
           )
-    const [calendar, reconciliation] = yield* Effect.all(
-      [readCalendar, input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))],
-      { concurrency: 2 },
-    )
-    const evaluatedAt = yield* currentUtcInstant
+    const calendar = yield* readCalendar
     return {
-      schemaVersion: 'bayn.observe-decision-facts.v2' as const,
-      calendar,
-      reconciliation,
-      evaluatedAt,
+      facts: {
+        schemaVersion: 'bayn.observe-decision-facts.v2' as const,
+        calendar,
+        reconciliation,
+        evaluatedAt: yield* currentUtcInstant,
+      },
+      portfolio,
     }
   })
-
-type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
 
 const requireDecisionAuthority = (
   result: ReconciliationPassResult,
@@ -757,32 +840,8 @@ const prepareExecutionSessionBinding = <R>(
   ExecutionSessionBinding,
   ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal
 > => {
-  if (
-    facts.reconciliation.riskContext.tradingDate !==
-    (input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-      ? accountTradingDate(facts.evaluatedAt)
-      : input.cycle.identity.executionSessionDate)
-  ) {
-    return Result.fail(
-      compositionFailure(
-        'cycle-binding',
-        'same-pass reconciliation risk context is not from the execution session date',
-      ),
-    )
-  }
-  if (Date.parse(facts.evaluatedAt) >= unusedEntryExpiresAt(input.cycle)) {
-    return Result.fail(
-      new ObserveDecisionAwaitingSignal({
-        message: 'Entry admission expired during reconciliation',
-        readiness: {
-          reason: DecisionReadinessReason.NoEligibleCandidate,
-          message: 'The unused entry lease has expired',
-        },
-        observedAt: facts.evaluatedAt,
-        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-      }),
-    )
-  }
+  const context = validateEntryDecisionContext(input, facts)
+  if (Result.isFailure(context)) return Result.fail(context.failure)
   const stateHash = reconciledStateHash(facts.reconciliation.brokerState)
   if (Result.isFailure(stateHash)) {
     return Result.fail(
@@ -880,6 +939,7 @@ const compileObserveStrategyDecision = <R>(
   initialFacts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
   requiredAuthority: DecisionAuthorityRequirement,
+  portfolio: JevPortfolio,
 ): Effect.Effect<
   { readonly compiled: CompiledObserveStrategyDecision; readonly facts: ObserveDecisionFacts },
   OperationalError | ObserveDecisionAwaitingSignal | ObserveDecisionCompositionFailure,
@@ -894,15 +954,6 @@ const compileObserveStrategyDecision = <R>(
         message: 'Jev requires the native market-data reader',
       })
     const protocol = yield* Effect.fromResult(nativeJevProtocol(input.strategy))
-    if (initialFacts.reconciliation.riskContext.unknownMutationCount !== 0)
-      return yield* operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'Unresolved broker mutations prevent Jev entry',
-      })
-    const portfolio = yield* Effect.fromResult(
-      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
-    )
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
@@ -1298,14 +1349,10 @@ function buildCycleDecision<R>(
 ): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
-    const initialFacts = yield* readObserveDecisionFacts(input, readPreparation)
-    yield* Effect.fromResult(
-      requireDecisionAuthority(
-        initialFacts.reconciliation,
-        input.policy,
-        input.authorityGenerationHash,
-        requirements.authorityRequirement,
-      ),
+    const { facts: initialFacts, portfolio } = yield* readObserveDecisionFacts(
+      input,
+      readPreparation,
+      requirements.authorityRequirement,
     )
     const initialSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, initialFacts))
     const { compiled, facts } = yield* compileObserveStrategyDecision(
@@ -1313,6 +1360,7 @@ function buildCycleDecision<R>(
       initialFacts,
       initialSession,
       requirements.authorityRequirement,
+      portfolio,
     )
     const executionAuthority = yield* Effect.fromResult(
       requireDecisionAuthority(
