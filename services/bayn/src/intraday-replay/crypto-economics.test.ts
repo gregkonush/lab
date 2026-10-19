@@ -161,7 +161,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
 
 test('continuous frozen comparison registers five consecutive UTC days including weekends without a midnight close', () => {
   const registration = {
-    schemaVersion: 'bayn.matched-entry-registration.v1' as const,
+    schemaVersion: 'bayn.matched-entry-registration.v2' as const,
     definitionHash: 'a'.repeat(64),
     sourceRevision: 'b'.repeat(40),
     protocolHash: 'c'.repeat(64),

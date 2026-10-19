@@ -1,3 +1,4 @@
+import { JevPositionExitPolicySchema } from '../jev/exit-policy'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
 
@@ -40,7 +41,8 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       WHERE decision.cycle_id = ${cycleId} AND decision.decision_hash = ${portfolio.entryDecisionHash}
         AND cycle.strategy_name = 'jev' AND cycle.account_id = ${state.account.accountId}
         AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-        AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v1'
+        AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v2'
+        AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
           SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND intent.side = ${OrderSide.Buy}
             AND (intent.account_id <> cycle.account_id OR intent.strategy_name <> 'jev'
@@ -149,11 +151,22 @@ export const makeJevPositionStore = Effect.gen(function* () {
         ORDER BY event.occurred_at, fill.fill_id COLLATE "C"
       `,
         )
+        const [entry] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ exitPolicy: JevPositionExitPolicySchema })]),
+          strictParseOptions,
+        )(
+          yield* sql`
+          SELECT document #> '{strategyDecision,exitPolicy}' AS "exitPolicy"
+          FROM autonomous_cycle_shadow_decisions
+          WHERE cycle_id = ${cycleId} AND decision_hash = ${entryDecisionHash}
+        `,
+        )
         const portfolio = yield* Effect.fromResult(
           decodeJevPortfolio({
             purpose: JevPurpose.Manage,
             brokerState,
             entryDecisionHash,
+            exitPolicy: entry.exitPolicy,
             entryIntentIds: intents.map(({ intent_id }) => intent_id),
             entryFills: rows.map(({ fill }) => fill),
             entryInventoryDebit: yield* readEntryInventoryDebit(

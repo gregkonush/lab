@@ -343,7 +343,7 @@ const validateBindings = (
   }
   const intradayEntry =
     decision.schemaVersion === 'bayn.intraday-momentum.target.v3' ||
-    decision.schemaVersion === 'bayn.jev-entry-target.v1'
+    decision.schemaVersion === 'bayn.jev-entry-target.v2'
   const intradayClose = isFlatExecutionTarget(decision) && ['intraday-momentum', 'jev'].includes(decision.strategyName)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
@@ -356,7 +356,7 @@ const validateBindings = (
       : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
   if (intradayEntry) {
     const expected =
-      decision.schemaVersion === 'bayn.jev-entry-target.v1' && decisionMarketData !== undefined
+      decision.schemaVersion === 'bayn.jev-entry-target.v2' && decisionMarketData !== undefined
         ? canonicalHashV1Result(decisionMarketData.calendar)
         : Result.succeed(cycle.window.executionCalendarHash)
     if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
@@ -471,7 +471,7 @@ const validateBindings = (
             )
             .map((position) => position.symbol),
         )
-      : input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+      : input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
         ? jevPlanningTargetWeights(input.compiledDecision)
         : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
@@ -526,7 +526,7 @@ const validateRiskState = (
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
       state.entryQuote.maximumAgeMs !==
-        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
           ? jevEntryQuoteMaximumAgeMs(
               input.compiledDecision,
               state.entryQuote.eventAt,

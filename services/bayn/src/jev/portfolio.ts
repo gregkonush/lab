@@ -1,3 +1,4 @@
+import { JevPositionExitPolicySchema } from './exit-policy'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { Context, Effect, Result, Schema } from 'effect'
 
@@ -46,6 +47,7 @@ const Base = Schema.Union([
     purpose: Schema.Literal(JevPurpose.Manage),
     brokerState: ReconciledStateSchema,
     entryDecisionHash: Sha256Schema,
+    exitPolicy: JevPositionExitPolicySchema,
     entryIntentIds: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     entryFills: Schema.Array(FillSchema).check(Schema.isMinLength(1)),
     entryInventoryDebit: JevInventoryDebitSchema,

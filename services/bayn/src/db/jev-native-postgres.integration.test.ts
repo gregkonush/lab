@@ -35,7 +35,8 @@ import {
   makeJevBatchPlan,
   usableJevBatchInferences,
 } from '../jev/batch'
-import { decideJevEntry, decideJevManagement, JevManagementAction, makeJevDefinition } from '../jev/decision'
+import { decideJevEntry, makeJevDefinition } from '../jev/decision'
+import { decideJevManagement, JevManagementAction } from '../intraday-replay/research-management'
 import { JevBatchStore, recoverPendingJevBatches } from '../jev/batch-evaluation'
 import { JevClient, JevError } from '../jev/client'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
@@ -217,7 +218,7 @@ const seedManagedPosition = (
         strategyDecisionHash: '2'.repeat(64),
         authorityGenerationHash: nativeInput.authorityGenerationHash,
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v1' },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v2', exitPolicy: portfolio.exitPolicy },
       orderedIntentIds: portfolio.entryIntentIds,
     }
     yield* acquireEntryCycle(entryAt)
@@ -955,7 +956,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v12' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v13' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1042,7 +1043,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                     ),
                 },
               }),
-            ).toMatchObject({ _tag: 'Wait', details: { readiness: { reason: 'SNAPSHOT_STALE' } } })
+            ).toMatchObject({ _tag: 'Exit', target: { reason: JevExitReason.ProfitTarget } })
             expect(calls).toBe(0)
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
@@ -1199,7 +1200,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
     },
   )
 
-  test('a recorded hold evaluates only once for the same completed signal window', async () => {
+  test('native held-position protection rechecks quotes without model observations', async () => {
     let calls = 0
     let signalReads = 0
     let protectiveReads = 0
@@ -1229,7 +1230,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   makeIntradayMomentumTestSnapshot(
                     fixture.protocol,
                     { ...query, archiveWatermarks: [] },
-                    { AAPL: adverseQuote ? -0.02 : 0.02 },
+                    { AAPL: adverseQuote ? -0.02 : 0.002 },
                   ),
                   query,
                 ).snapshot
@@ -1242,18 +1243,18 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         })
         expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
           _tag: 'Wait',
-          details: { readiness: { reason: 'SIGNAL_WINDOW_OBSERVED' } },
+          details: { waitReason: 'JEV_POSITION_HELD' },
         })
-        expect(calls).toBe(1)
-        expect(signalReads).toBe(1)
+        expect(calls).toBe(0)
+        expect(signalReads).toBe(0)
         expect(protectiveReads).toBe(2)
         adverseQuote = true
         expect(yield* evaluateJevPositionManagement(input)).toMatchObject({
           _tag: 'Exit',
           target: { reason: JevExitReason.ProtectiveStop },
         })
-        expect(calls).toBe(1)
-        expect(signalReads).toBe(1)
+        expect(calls).toBe(0)
+        expect(signalReads).toBe(0)
         expect(protectiveReads).toBe(3)
       }).pipe(
         Effect.provideService(JevClient, {
@@ -1768,7 +1769,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           },
         }).pipe(Effect.tapError((error) => Effect.logError(error)))
         expect(reconciliations).toBe(2)
-        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v1')
+        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v2')
         expect(document.dispatchable).toBe(true)
         expect(document.orderedIntentIds).toHaveLength(1)
         expect(document.createdAt).toBe(new Date(observed + 7000).toISOString())
@@ -1778,7 +1779,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe(
           new Date(Date.parse(entryQuote.eventAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
         )
-        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v1')
+        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v2')
           throw new Error('Expected native Jev entry target')
         expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V4)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
@@ -1839,8 +1840,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         })
         if (management._tag !== 'Exit') throw new Error('Expected native Jev exit')
         const exitTarget = management.target
-        expect(exitTarget.reason).toBe(JevExitReason.Model)
-        expect(calls).toBe(16)
+        expect(exitTarget.reason).toBe(JevExitReason.ProfitTarget)
+        expect(calls).toBe(15)
         if (reconciliation.riskContext.authority === null) throw new Error('Expected execution authority')
         const closeFacts: ReconciliationPassResult = {
           brokerState: portfolio.brokerState,
@@ -1996,7 +1997,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* TestClock.setTime(Date.parse(exitTarget.observedAt) + 60_000)
         expect(yield* store.bind(closure)).toEqual(saved)
         expect(Option.getOrThrow(yield* store.read(nativeInput.cycleId))).toEqual(saved)
-        expect(calls).toBe(16)
+        expect(calls).toBe(15)
         const closeWindow = {
           startAt: new Date(Date.parse(cycle.window.executionCloseAt) - 300_000).toISOString(),
           submitCutoffAt: cycle.window.executionCloseAt,
@@ -2083,7 +2084,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           existing: Option.getOrUndefined(yield* store.read(nativeInput.cycleId)),
         })
         expect(recoveredReplan).toEqual({ _tag: 'Close', document: residual.document })
-        expect(calls).toBe(16)
+        expect(calls).toBe(15)
       }).pipe(
         Effect.provideService(BrokerRead, broker),
         Effect.provideService(JevClient, {
