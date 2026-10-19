@@ -177,6 +177,7 @@ export const AuthorityGenerationRow = Schema.Struct({
       'bayn.jev.protocol.v7',
       'bayn.jev.protocol.v8',
       'bayn.jev.protocol.v9',
+      'bayn.jev.protocol.v10',
       'bayn.jev.protocol.v11',
     ]),
   ),
