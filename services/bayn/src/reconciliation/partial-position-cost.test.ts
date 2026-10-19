@@ -50,7 +50,7 @@ const splitCohorts = [
 
 const partialExit = (
   sales = actualSales,
-  cohorts = actualCohorts,
+  cohorts: readonly (typeof actualCohorts)[number][] = actualCohorts,
   reportedPosition?: { readonly costBasisMicros: string; readonly averageEntryPriceMicros: string },
 ) => {
   const transactions: AccountingTransaction[] = []
@@ -263,21 +263,35 @@ test('reproduces a nine-decimal broker average before rounding the remaining pos
   expect(Result.getOrThrow(compareOpeningCash(changed)).comparison.discrepancies).toEqual([])
 })
 
-test('carries earlier observed coin fees when later IOC fills arrive in another reconciliation', () => {
-  const input = partialExit(
-    ['31976639476', '21085846470', '26143673352', '7516022243'].map((qty): [string, string] => [qty, '105300000000']),
-    splitCohorts,
-    { costBasisMicros: '10025466544', averageEntryPriceMicros: '105450833' },
-  )
-  expect(input.projectedPositions[0]).toMatchObject({ quantityAtoms: '95072426566', costBasisMicros: '10025466543' })
-  expect(Result.getOrThrow(compareOpeningCash(input)).comparison.discrepancies).toEqual([])
-  const missingPriorCohort = { ...input, brokerFeeAccruals: input.brokerFeeAccruals.slice(1) }
-  expect(
-    Result.getOrThrow(compareOpeningCash(missingPriorCohort)).comparison.discrepancies.some(
-      (d) => d.identity === 'SOL/USD:cost',
-    ),
-  ).toBe(true)
-})
+test.each([
+  { cohorts: splitCohorts, cost: '10025466544', average: '105450833', nativeCost: '10025466543' },
+  {
+    cohorts: [
+      { buys: actualBuys.slice(0, 3), quantity: '139379942411', cost: '14699873438', at: '2026-10-19T03:12:44.159Z' },
+      { buys: actualBuys.slice(3), quantity: '181794608107', cost: '19170394666', at: '2026-10-19T03:12:45.159Z' },
+    ],
+    cost: '10025467521',
+    average: '105450843',
+    nativeCost: '10025467522',
+  },
+])(
+  'carries earlier observed coin fees when later IOC fills arrive in another reconciliation: $average',
+  ({ cohorts, cost, average, nativeCost }) => {
+    const input = partialExit(
+      ['31976639476', '21085846470', '26143673352', '7516022243'].map((qty): [string, string] => [qty, '105300000000']),
+      cohorts,
+      { costBasisMicros: cost, averageEntryPriceMicros: average },
+    )
+    expect(input.projectedPositions[0]).toMatchObject({ quantityAtoms: '95072426566', costBasisMicros: nativeCost })
+    expect(Result.getOrThrow(compareOpeningCash(input)).comparison.discrepancies).toEqual([])
+    const missingPriorCohort = { ...input, brokerFeeAccruals: input.brokerFeeAccruals.slice(1) }
+    expect(
+      Result.getOrThrow(compareOpeningCash(missingPriorCohort)).comparison.discrepancies.some(
+        (d) => d.identity === 'SOL/USD:cost',
+      ),
+    ).toBe(true)
+  },
+)
 
 test('property: multiple coin-fee cohorts preserve the acquisition average through partial disposals', () => {
   checkProperty(
