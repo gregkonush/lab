@@ -91,6 +91,14 @@ describe('native Jev exit targets', () => {
     expect(Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(result.success))).toEqual(result.success)
     expect(
       Result.isFailure(
+        Schema.decodeUnknownResult(JevExitTargetSchema)({
+          ...result.success,
+          schemaVersion: 'bayn.jev-exit-target.v1',
+        }),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
         decideJevExit({ ...evidence, trigger: { ...trigger, manifest: { ...snapshot.manifest, feed: 'sip' } } }),
       ),
     ).toBe(true)

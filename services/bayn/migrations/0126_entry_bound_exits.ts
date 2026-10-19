@@ -72,4 +72,21 @@ export default Effect.gen(function* () {
       OR (strategy_name = 'intraday-momentum' AND strategy_parameter_schema_version IN ('bayn.intraday-momentum.protocol.v1', 'bayn.intraday-momentum.protocol.v2', 'bayn.intraday-momentum.protocol.v3'))
       OR (strategy_name = 'jev' AND strategy_parameter_schema_version = 'bayn.jev.protocol.v13')
     ) NOT VALID`
+  yield* sql`
+    CREATE OR REPLACE FUNCTION enforce_jev_exit_commit_deadline() RETURNS trigger LANGUAGE plpgsql AS $function$
+    DECLARE checked_at timestamptz; deadline_at timestamptz;
+    BEGIN
+      IF NEW.document #>> '{document,strategyDecision,schemaVersion}' = 'bayn.jev-exit-target.v1' THEN
+        RAISE EXCEPTION 'retired Jev exit-target contract' USING ERRCODE = '23514';
+      ELSIF NEW.document #>> '{document,strategyDecision,schemaVersion}' = 'bayn.jev-exit-target.v2' THEN
+        checked_at := execution_account_commit_now(NEW.document #>> '{document,bindings,accountId}');
+        deadline_at := (NEW.document #>> '{document,strategyDecision,commitDeadlineAt}')::timestamptz;
+        IF deadline_at IS NULL OR checked_at < NEW.created_at OR checked_at >= deadline_at THEN
+          RAISE EXCEPTION 'initial Jev exit evidence expired before transaction commitment' USING ERRCODE = '23514';
+        END IF;
+      END IF;
+      RETURN NEW;
+    END
+    $function$
+  `
 })

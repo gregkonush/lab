@@ -584,7 +584,7 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 
 ### Entry-bound native-exit cutover
 
-Protocol v13 / state v12 removes model exit authority. Entry target v2 stores the immutable stop, profit target,
+Protocol v13 / state v12 removes model exit authority. Entry and exit targets v2 store the immutable stop, profit target,
 maximum holding time and protection interval. Portfolio reconstruction verifies that exact entry policy against
 accounted fills and fresh reconciliation. Price exits reproduce their native liquidation quote and predicate;
 `JEV_EXIT` cannot enter the active exit codec. Offline research comparisons remain non-executable.

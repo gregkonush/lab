@@ -1318,7 +1318,7 @@ const jevExitEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-exit-target.v1') return []
+  if (target?.schemaVersion !== 'bayn.jev-exit-target.v2') return []
   const evidence = target.evidence
   const input = document.plannerInput
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
