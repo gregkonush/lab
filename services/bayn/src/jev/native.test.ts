@@ -4,14 +4,12 @@ import { Result, Schema } from 'effect'
 
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { decideJevEntry, jevEntryQuoteMaximumAgeMs, JevEntryTargetSchema } from './decision'
 import {
-  decideJevEntry,
   decideJevManagement,
-  jevEntryQuoteMaximumAgeMs,
-  JevEntryTargetSchema,
   JevManagementAction,
   JevManagementDecisionSchema,
-} from './decision'
+} from '../intraday-replay/research-management'
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1 } from '../hash'
@@ -252,7 +250,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v11',
+        schemaVersion: 'bayn.jev-trading-signal-state.v12',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })

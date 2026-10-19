@@ -1,3 +1,4 @@
+import { positionProtectionIntervalMs } from '../jev/exit-policy'
 import type { ReconciliationRuntime } from './model'
 import { operationCurrentTimeMillis, operationTimeoutOrElse } from '../operation-timeout'
 import { ActiveExecutionStages, type ActiveExecutionStage, withObservedStage } from '../telemetry'
@@ -424,7 +425,7 @@ export const decisionReadinessContinuationDelayMs = (
     : undefined
 }
 
-/** A holding deadline selected before eligibility caps one wait, without changing overdue retry cadence. */
+/** Price protection wakes independently of signal windows; the first-fill deadline still caps each wait. */
 export const maximumHoldContinuationDelayMs = (
   result: CycleRunResult,
   normalDelayMs: number,
@@ -434,8 +435,10 @@ export const maximumHoldContinuationDelayMs = (
     return undefined
   const dueAt = Date.parse(result.maximumHoldDueAt)
   const remainingMs = dueAt - Date.parse(observedAt)
-  if (!Number.isSafeInteger(remainingMs) || dueAt >= Date.parse(result.cycle.window.executionCloseAt)) return undefined
-  if (remainingMs > 0) return Math.min(remainingMs, normalDelayMs)
+  const closeRemainingMs = Date.parse(result.cycle.window.executionCloseAt) - Date.parse(observedAt)
+  if (!Number.isSafeInteger(remainingMs) || !Number.isSafeInteger(closeRemainingMs) || closeRemainingMs <= 0)
+    return undefined
+  if (remainingMs > 0) return Math.min(remainingMs, closeRemainingMs, normalDelayMs, positionProtectionIntervalMs)
   // Slow management work may cross a deadline that was still future when evaluated. Recheck once; the next
   // fresh management pass takes the maximum-hold exit path and cannot emit this pre-eligibility wait again.
   const evaluatedAt = Date.parse(result.maximumHoldEvaluatedAt ?? '')
@@ -643,14 +646,7 @@ const makeRecoveryFirstCycleDriverEffect = (
               return {
                 ...advanced,
                 nextDelayMs: delay,
-                nextWakeAt: new Date(
-                  Math.min(
-                    continuation === undefined ? Number.POSITIVE_INFINITY : Date.parse(observedAt) + continuation,
-                    advanced.result.outcome === 'RECOVERED' && advanced.result.action === 'WAITING'
-                      ? Date.parse(advanced.result.maximumHoldDueAt ?? '')
-                      : Number.POSITIVE_INFINITY,
-                  ),
-                ).toISOString(),
+                nextWakeAt: new Date(Date.parse(observedAt) + delay).toISOString(),
               }
             }
             return continuation === undefined ? advanced : { ...advanced, nextDelayMs: continuation }

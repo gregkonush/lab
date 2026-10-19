@@ -4,7 +4,6 @@ import { Effect, Layer, Option, Schema } from 'effect'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { WriterFence } from '../execution/writer-fence'
 import { canonicalHashV1Result } from '../hash'
-import { JevExitReason } from '../jev/exit'
 import { currentUtcInstant } from '../time'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
 import {
@@ -182,21 +181,6 @@ const makeStore = Effect.gen(function* () {
       )
         return yield* storeError('bind', 'invariant', 'The initial Jev exit evidence expired before durable commitment')
       yield* verifyJevPortfolioSources(sql, closure.cycleId, target.evidence.portfolio)
-      const trigger = target.evidence.trigger
-      if (trigger.reason === JevExitReason.Model) {
-        const e = trigger.decision.evidence
-        yield* Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]))(
-          yield* sql`
-        SELECT EXISTS (
-          SELECT 1 FROM jev_batch_plans AS plan JOIN jev_batch_results AS result USING (batch_id)
-          JOIN intraday_candidate_observations AS observation ON observation.content_hash = plan.observation_hash
-          WHERE plan.cycle_id = ${closure.cycleId} AND plan.batch_id = ${e.batchPlan.batchId}
-            AND plan.payload = ${sql.json(e.batchPlan)} AND result.payload = ${sql.json(e.batchResult)}
-            AND observation.payload = ${sql.json(e.observation)}
-        ) AS matches
-      `,
-        )
-      }
     })
   const store: ExecutionCycleClosureStoreShape = {
     read: (cycleId) => readByCycleId(sql, cycleId),

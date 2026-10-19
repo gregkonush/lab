@@ -174,7 +174,7 @@ export const buildEntryTimingExport = (input: {
       strictParseOptions,
     )(yield* text(input.decisionBytes))
     const target = decision.strategyDecision
-    if (target?.schemaVersion !== 'bayn.jev-entry-target.v1')
+    if (target?.schemaVersion !== 'bayn.jev-entry-target.v2')
       return yield* fail('Timing requires the current native committed Jev entry decision')
     const batch = yield* prepareSignalStudyBatch({
       observation: target.evidence.observation,

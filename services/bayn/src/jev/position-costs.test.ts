@@ -1,3 +1,4 @@
+import { jevPositionExitPolicy } from './exit-policy'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
@@ -67,6 +68,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
               reconciliation: { ...broker.reconciliation, expectedHash: hash, observedHash: hash },
             },
             entryDecisionHash: '2'.repeat(64),
+            exitPolicy: jevPositionExitPolicy(native.protocol),
             entryIntentIds: [intentId],
             entryFills: [
               {

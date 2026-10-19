@@ -1,3 +1,4 @@
+import { jevPositionExitPolicy } from './exit-policy'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -187,6 +188,7 @@ export const nativeJevFixture = (
             purpose,
             brokerState,
             entryDecisionHash: 'f'.repeat(64),
+            exitPolicy: jevPositionExitPolicy(protocol),
             entryIntentIds: [intentId],
             entryFills,
             entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },

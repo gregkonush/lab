@@ -1,3 +1,4 @@
+import entryBoundExitsMigration from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgmentMigration from '../../migrations/0125_market_management_judgment'
 import focusedJevJudgmentsMigration from '../../migrations/0124_focused_jev_judgments'
 import setupActionProtocolMigration from '../../migrations/0123_setup_action_protocol'
@@ -32,6 +33,7 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  { label: 'jev-native-exits', id: 126, protocol: 'bayn.jev.protocol.v13', migration: entryBoundExitsMigration },
   {
     label: 'jev-market-management',
     id: 125,
