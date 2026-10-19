@@ -89,6 +89,15 @@ spec:
               value: "aebb1eb7e0d1bdd1d5dfde3d074552ac5742d7ed4e49048e563781f3f6313271"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"d8aa0e574139d5f77b527b1cdbf06b3c6ca03612bd898d026e2a8fc9639d4e5b","authoredActivation":{"sourceRevision":"9a4203ca45a475444f326bad462a0f9120c1c353","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ca5b78c579397a0c638da775a1aad11569c8ff40e3ba875ff784d8a4eb9758d"},"activation":{"sourceRevision":"9a4203ca45a475444f326bad462a0f9120c1c353","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:5ca5b78c579397a0c638da775a1aad11569c8ff40e3ba875ff784d8a4eb9758d"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
