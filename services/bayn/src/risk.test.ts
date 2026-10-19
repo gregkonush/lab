@@ -28,6 +28,7 @@ import {
 import { reconciledStateHash } from './reconciliation'
 import { utcInstantFromEpochMillis } from './time'
 import {
+  accountLossMicros,
   BrokerMode,
   EvaluationSchema,
   Gate,
@@ -46,6 +47,31 @@ import {
 import { strictParseOptions } from './schemas'
 
 const evaluatedAt = '2026-07-21T19:30:00.000Z'
+
+test('property: absolute account loss limits retain micro-dollar precision after capital translations', () => {
+  checkProperty(
+    'account-loss-capital-translation',
+    fc.property(
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 15n }),
+      (equity, addition, loss) => {
+        const original = accountLossMicros({
+          accountEquityMicros: equity,
+          dayStartEquityMicros: equity + loss,
+          peakEquityMicros: equity + loss + 1n,
+        })
+        const translated = accountLossMicros({
+          accountEquityMicros: equity + addition,
+          dayStartEquityMicros: equity + addition + loss,
+          peakEquityMicros: equity + addition + loss + 1n,
+        })
+        expect(translated).toEqual(original)
+        expect(original.drawdownMicros - original.dailyLossMicros).toBe(1n)
+      },
+    ),
+  )
+})
 const observedAt = '2026-07-21T19:29:30.000Z'
 const hash = (character: string): string => character.repeat(64)
 

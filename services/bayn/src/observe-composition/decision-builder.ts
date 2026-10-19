@@ -67,9 +67,11 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import {
+  accountLossMicros,
   BrokerMode,
   decodePolicy,
   executionRiskPolicySchemaVersion,
+  Reason as RiskReason,
   type Policy,
   type State,
   type EntryQuoteFreshness,
@@ -903,6 +905,26 @@ const compileObserveStrategyDecision = <R>(
     const portfolio = yield* Effect.fromResult(
       decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
     )
+    if (requiredAuthority === Authority.Execution) {
+      const { dailyLossMicros, drawdownMicros } = accountLossMicros({
+        accountEquityMicros: BigInt(portfolio.brokerState.account.equityMicros),
+        dayStartEquityMicros: BigInt(initialFacts.reconciliation.riskContext.dayStartEquityMicros),
+        peakEquityMicros: BigInt(initialFacts.reconciliation.riskContext.peakEquityMicros),
+      })
+      const reasons = [
+        ...(dailyLossMicros > BigInt(input.policy.maxDailyLossMicros) ? [RiskReason.DailyLossExceeded] : []),
+        ...(drawdownMicros > BigInt(input.policy.maxDrawdownMicros) ? [RiskReason.DrawdownExceeded] : []),
+      ]
+      if (reasons.length > 0) {
+        const message = `Existing account limits block new entries: ${reasons.join(', ')}`
+        return yield* new ObserveDecisionAwaitingSignal({
+          message,
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message },
+          observedAt: initialFacts.evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        })
+      }
+    }
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
