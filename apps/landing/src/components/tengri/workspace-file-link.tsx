@@ -3,6 +3,7 @@
 import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
+import { X } from 'lucide-react'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
@@ -26,6 +27,8 @@ export function WorkspaceFileLinkProvider({
 }) {
   const [files, setFiles] = useState<FileTarget[]>([])
   const [activePath, setActivePath] = useState<string | null>(null)
+  const [hoveredPath, setHoveredPath] = useState<string | null>(null)
+  const [focusedPath, setFocusedPath] = useState<string | null>(null)
   const id = useId()
   const activeFile = files.find((file) => file.path === activePath)
   useEffect(() => {
@@ -45,7 +48,9 @@ export function WorkspaceFileLinkProvider({
   }
   const closeFile = (path: string) => {
     setFiles((current) => current.filter((file) => file.path !== path))
-    if (activePath === path) {
+    setHoveredPath(null)
+    setFocusedPath(null)
+    if (!activePath || activePath === path) {
       setActivePath(null)
       document.getElementById(`${id}-chat`)?.focus()
     }
@@ -55,62 +60,99 @@ export function WorkspaceFileLinkProvider({
       <WorkspaceAgentContext.Provider value={agentId}>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div
-            role="tablist"
-            aria-label="Agent views"
-            className="flex shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
-            onKeyDown={(event) => {
-              if (event.key === 'Delete' && activePath) {
-                event.preventDefault()
-                closeFile(activePath)
-                return
-              }
-              if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-              const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-              const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
-              const next =
-                event.key === 'Home'
-                  ? 0
-                  : event.key === 'End'
-                    ? tabs.length - 1
-                    : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-              event.preventDefault()
-              tabs[next]?.focus()
-              tabs[next]?.click()
+            className="grid shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
+            style={{
+              gridTemplateColumns: files.length ? `repeat(${files.length + 1}, minmax(7rem, 14rem))` : 'max-content',
             }}
           >
-            <button
-              role="tab"
-              id={`${id}-chat`}
-              aria-controls={`${id}-chat-panel`}
-              aria-selected={!activeFile}
-              tabIndex={activeFile ? -1 : 0}
-              type="button"
-              onClick={() => setActivePath(null)}
-              className={`shrink-0 border-b-2 px-4 py-2 text-label-12 ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+            <div
+              role="tablist"
+              aria-label="Agent views"
+              className="col-span-full row-start-1 grid grid-cols-subgrid"
+              onKeyDown={(event) => {
+                const focusedTab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]')
+                const closePath = focusedTab?.dataset.filePath
+                if (event.key === 'Delete' && closePath) {
+                  event.preventDefault()
+                  closeFile(closePath)
+                  return
+                }
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+                const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
+                const next =
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? tabs.length - 1
+                      : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                event.preventDefault()
+                tabs[next]?.focus()
+                tabs[next]?.click()
+              }}
             >
-              Chat
-            </button>
-            {files.map((file, index) => (
-              <div
-                key={file.path}
-                className={`flex shrink-0 items-center border-b-2 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+              <button
+                role="tab"
+                id={`${id}-chat`}
+                aria-controls={`${id}-chat-panel`}
+                aria-selected={!activeFile}
+                tabIndex={activeFile ? -1 : 0}
+                type="button"
+                onClick={() => setActivePath(null)}
+                className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
               >
+                Chat
+              </button>
+              {files.map((file, index) => (
                 <button
+                  key={file.path}
                   role="tab"
                   id={`${id}-file-${index}`}
+                  data-file-path={file.path}
                   aria-controls={`${id}-file-panel-${index}`}
+                  aria-describedby={`${id}-close-hint`}
                   aria-selected={activePath === file.path}
                   tabIndex={activePath === file.path ? 0 : -1}
                   title={file.path}
                   type="button"
                   onClick={() => setActivePath(file.path)}
-                  className="max-w-56 truncate px-3 py-2 text-label-12"
+                  onPointerEnter={() => setHoveredPath(file.path)}
+                  onPointerLeave={() => setHoveredPath(null)}
+                  onFocus={() => setFocusedPath(file.path)}
+                  onBlur={() => setFocusedPath(null)}
+                  className={`flex min-w-0 items-center border-b-2 px-3 py-2 pr-8 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
                 >
-                  {file.path.split('/').at(-1)}
+                  <span className="min-w-0 flex-1 truncate">{file.path.split('/').at(-1)}</span>
+                </button>
+              ))}
+            </div>
+            {/* Close buttons share the tab grid without being nested inside tabs or the tablist. */}
+            {files.map((file, index) => (
+              <div
+                key={file.path}
+                className="pointer-events-none relative row-start-1 min-w-0"
+                style={{ gridColumn: index + 2 }}
+              >
+                <button
+                  type="button"
+                  aria-label={`Close ${file.path}`}
+                  title={`Close ${file.path}`}
+                  tabIndex={activePath === file.path ? 0 : -1}
+                  onClick={() => closeFile(file.path)}
+                  onPointerEnter={() => setHoveredPath(file.path)}
+                  onPointerLeave={() => setHoveredPath(null)}
+                  onFocus={() => setFocusedPath(file.path)}
+                  onBlur={() => setFocusedPath(null)}
+                  className={`pointer-events-auto absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-zinc-400 outline-none transition-opacity hover:bg-white/[0.08] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none [@media(hover:none)]:opacity-100 ${hoveredPath === file.path || focusedPath === file.path ? 'opacity-100' : 'opacity-0'}`}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
                 </button>
               </div>
             ))}
           </div>
+          <span id={`${id}-close-hint`} className="sr-only">
+            Press Delete to close this tab.
+          </span>
           <div
             role="tabpanel"
             id={`${id}-chat-panel`}
@@ -129,12 +171,7 @@ export function WorkspaceFileLinkProvider({
               hidden={activePath !== file.path}
               className={activePath === file.path ? 'min-h-0 flex-1' : 'hidden'}
             >
-              <FilePreview
-                key={`${agentId}:${file.path}:${file.line}:${file.column}`}
-                agentId={agentId}
-                file={file}
-                onClose={() => closeFile(file.path)}
-              />
+              <FilePreview key={`${agentId}:${file.path}:${file.line}:${file.column}`} agentId={agentId} file={file} />
             </div>
           ))}
         </div>
@@ -143,7 +180,7 @@ export function WorkspaceFileLinkProvider({
   )
 }
 
-function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTarget; onClose: () => void }) {
+function FilePreview({ agentId, file }: { agentId: string; file: FileTarget }) {
   const [result, setResult] = useState<{ content: string; contentType: string } | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
@@ -184,19 +221,29 @@ function FilePreview({ agentId, file, onClose }: { agentId: string; file: FileTa
       aria-label="File preview"
       className="flex h-full min-h-0 flex-col border-t border-zinc-700 bg-zinc-950 text-copy-14 text-zinc-200"
     >
-      <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-2">
+      <div className="flex items-center gap-3 border-b border-zinc-800 px-3 py-1.5">
         <h2 className="min-w-0 flex-1 truncate text-label-12" title={file.path}>
           {file.path}
           {file.line ? `:${file.line}${file.column ? `:${file.column}` : ''}` : ''}
         </h2>
         {markdown ? (
-          <button type="button" className="shrink-0 text-label-12 text-blue-300" onClick={() => setSource(!source)}>
-            {source ? 'Rendered' : 'Source'}
-          </button>
+          <div role="group" aria-label="Markdown view" className="inline-flex shrink-0 items-center gap-2">
+            {[
+              { label: 'Preview', value: false },
+              { label: 'Source', value: true },
+            ].map(({ label, value }) => (
+              <button
+                key={label}
+                type="button"
+                aria-pressed={source === value}
+                onClick={() => setSource(value)}
+                className={`border-b py-0.5 text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-blue-400 [@media(pointer:coarse)]:min-h-6 ${source === value ? 'border-zinc-400 text-zinc-200' : 'border-transparent text-zinc-400 hover:text-zinc-200'}`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         ) : null}
-        <button type="button" aria-label={`Close ${file.path}`} className="shrink-0 text-label-12" onClick={onClose}>
-          Close
-        </button>
       </div>
       <div className="min-h-0 overflow-auto p-3">
         {image ? <WorkspaceImage src={file.path} alt={file.path.split('/').at(-1)} /> : null}

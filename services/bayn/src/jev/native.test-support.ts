@@ -229,20 +229,14 @@ export const nativeJevFixture = (
   return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft, input }
 }
 
-export const nativeJevInference = (
-  input: unknown,
-  at: string,
-  action = 'enter',
-  probability = 0.8,
-  economics = 'supported',
-) => {
+export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
   const { request, requestHash } = Result.getOrThrow(prepareJevRequest(input))
   const answers: Record<string, JevResponse['answers'][string]> = {}
   for (const [key, question] of Object.entries(request.questions)) {
     if (question.type === 'noul') answers[key] = { type: 'noul', noul: 0.8 }
     else if (question.type === 'choice') {
       const choices = Object.keys(question.criteria)
-      const selected = key === 'action' ? action : key === 'net_economics' ? economics : choices[0]
+      const selected = key === 'action' ? action : choices[0]
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
         type: 'choice',
@@ -277,7 +271,6 @@ export const nativeJevDecisionEvidence = (
   } = nativeJevFixture(),
   action = 'enter',
   probability = 0.8,
-  economics = 'supported',
 ) => {
   const observation = fixture.observation.payload
   const at = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -288,7 +281,7 @@ export const nativeJevDecisionEvidence = (
       planVersion: JevBatchPlanVersion.V4,
     }),
   )
-  const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability, economics)
+  const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)
   return { observation, batchPlan, batchResult, decidedAt: at }
 }
 
@@ -297,7 +290,6 @@ export const nativeJevBatchResult = (
   at: string,
   action: (symbol: string) => string = () => 'enter',
   probability = 0.8,
-  economics = 'supported',
 ) =>
   Result.getOrThrow(
     makeJevBatchResult(batchPlan, {
@@ -315,13 +307,7 @@ export const nativeJevBatchResult = (
             completedAt: at,
             outcome: {
               status: JevOutcome.Received,
-              inference: nativeJevInference(
-                candidate.request.request,
-                at,
-                action(candidate.symbol),
-                probability,
-                economics,
-              ),
+              inference: nativeJevInference(candidate.request.request, at, action(candidate.symbol), probability),
             },
           }),
         )

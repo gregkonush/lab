@@ -84,11 +84,20 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "b12adaa9febc0a207c07b4b6a773b833cced9731e71dc06d4b7686608fea8ac5"
+              value: "1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "ca77ee9e9a5bbab64e74164a3547f5e70be699b10f49f6880e4f4e144e4a379d"
+              value: "3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6"
             - name: BAYN_BROKER_ACCESS
               value: read-only
+            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-alpaca-auth
+                  key: capital-activation-request
+            - name: BAYN_CAPITAL_ACTIVATION_KIND
+              value: ResearchCapitalActivationRequest
+            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"05a9730864e88f4e50912223baaa8be8d3d182da4dce2931d7cef9dab02069de","authoredActivation":{"sourceRevision":"77474c1582a2ba78476b913b8690aa37add142c0","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:aa0e24c83610cebb9e7ce98dae4b322a2db1132ec67dba6eb9431587c152875f"},"activation":{"sourceRevision":"77474c1582a2ba78476b913b8690aa37add142c0","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:aa0e24c83610cebb9e7ce98dae4b322a2db1132ec67dba6eb9431587c152875f"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
@@ -188,15 +197,6 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"568606b968351fe9bb1fe99723674d0655c118e7ef051a0f04ae8bb60e9bba0c","authoredActivation":{"sourceRevision":"ea804cd06edb9596c6ccf1b2dd1cfffc9a903481","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:4382b44028c153535647fa6086cd85e947766bd0a46c8957d6436ee02ed095c9"},"activation":{"sourceRevision":"ea804cd06edb9596c6ccf1b2dd1cfffc9a903481","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:4382b44028c153535647fa6086cd85e947766bd0a46c8957d6436ee02ed095c9"}}'
             - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
               value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
           startupProbe:

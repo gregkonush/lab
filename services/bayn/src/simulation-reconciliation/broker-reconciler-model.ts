@@ -53,7 +53,7 @@ export interface ReconciliationPassResult {
 export type PaginationFailureReason =
   | 'OrderPageTooLarge'
   | 'OrderSubmittedAtMissing'
-  | 'OrderHistoryNotAscending'
+  | 'OrderHistoryNotDescending'
   | 'OrderTimestampCursorDidNotAdvance'
   | 'DuplicateOrder'
   | 'OrderHistoryTooLarge'
