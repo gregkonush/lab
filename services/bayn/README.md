@@ -106,10 +106,11 @@ new Jev authority generations to v12. Historical generation rows remain immutabl
 same-account PAPER mandate against a verified published v12 image through its sealed GitOps path after cutover; source success alone
 does not establish profitability or actual broker fills.
 
-Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
-net liquidation P&L and the break-even bid. Estimated exit costs remain estimates; delayed final broker fee matching
-and unknown operating costs retain their existing qualification boundaries. Sunk entry fees never postpone a
-protective stop or holding deadline.
+Management requests contain the actual symbol, net held quantity, first-fill time, elapsed holding time and remaining
+holding horizon. Their Choice judges the future market setup from verified candidate and benchmark signals.
+Paid entry basis, entry fees, historical PnL and break-even targets are absent from the model input. Native
+observations, accounting and financial reports retain that evidence; delayed final fee matching and unknown
+operating costs keep their existing qualification boundaries. Protective stops and holding deadlines remain code-owned.
 
 A held position that survives an outage can use the same bounded forced-close lease after its data session ends,
 while the retained broker calendar still permits extended-hours orders. Whole equity positions retain LIMIT/DAY
