@@ -137,7 +137,9 @@ export function isTengriControlPlaneConfigured() {
 
 export async function listAgents(identity: TengriIdentity): Promise<TengriAgent[]> {
   const response = await unary<{ agents?: RawAgent[] }>('listAgents', {}, identity)
-  return (response.agents ?? []).map(normalizeAgent)
+  const agents = (response.agents ?? []).map(normalizeAgent)
+  await reconcileRelayCleanup(identity, agents)
+  return agents
 }
 
 export async function createAgent(identity: TengriIdentity, displayName: string, operationId: string) {
@@ -172,7 +174,26 @@ export async function sleepAgent(identity: TengriIdentity, id: string, workspace
 }
 
 export async function resumeAgent(identity: TengriIdentity, id: string, workspaceUid: string, operationId: string) {
-  return setRuntime(identity, id, workspaceUid, { operationId, action: 'resume', agentId: id, workspaceUid }, true)
+  const agent = await setRuntime(
+    identity,
+    id,
+    workspaceUid,
+    { operationId, action: 'resume', agentId: id, workspaceUid },
+    true,
+  )
+  await reconcileRelayCleanup(identity, [agent])
+  return agent
+}
+
+async function reconcileRelayCleanup(identity: TengriIdentity, agents: TengriAgent[]) {
+  if (!process.env.RELAY_ENDPOINT) return
+  try {
+    const { reconcileConnectorCleanups } = await import('./connector-agent')
+    await reconcileConnectorCleanups(identity, agents, AbortSignal.timeout(4000))
+  } catch {
+    // Relay owns the durable queue; an outage must not hide otherwise healthy workspaces.
+    process.stderr.write('Relay connector cleanup remains pending\n')
+  }
 }
 
 async function setRuntime(

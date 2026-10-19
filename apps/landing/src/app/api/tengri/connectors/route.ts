@@ -1,5 +1,4 @@
 import { connectorCommandSchema } from '@/lib/tengri/connector-schemas'
-import { z } from 'zod'
 import { configureConnector, relayCall } from '@/lib/tengri/relay'
 import { installConnectorAgent, removeConnectorAgents } from '@/lib/tengri/connector-agent'
 import {
@@ -22,14 +21,7 @@ export async function POST(request: Request) {
     if (command.action === 'create') {
       await configureConnector(identity, command.id, command.operationId, true, true, request.signal)
     }
-    let disconnectedWorkspaces: string[] = []
     if (command.action === 'disconnect') {
-      const listing = z
-        .object({ bindings: z.array(z.object({ connectionId: z.uuid(), workspaceUid: z.uuid() })) })
-        .parse(await relayCall({ action: 'list' }, identity, request.signal))
-      disconnectedWorkspaces = listing.bindings
-        .filter((binding) => binding.connectionId === command.id)
-        .map((binding) => binding.workspaceUid)
       await configureConnector(identity, command.id, command.operationId, false, false, request.signal)
     }
     const { operationId: _operationId, ...relayCommand } = command as typeof command & { operationId?: string }
@@ -39,8 +31,7 @@ export async function POST(request: Request) {
         result,
         await installConnectorAgent(identity, command.id, command.workspace, command.operations, request.signal),
       )
-    if (command.action === 'disconnect')
-      Object.assign(result, await removeConnectorAgents(identity, command.id, disconnectedWorkspaces, request.signal))
+    if (command.action === 'disconnect') Object.assign(result, await removeConnectorAgents(identity, request.signal))
     return Response.json(result, { headers: noStoreHeaders() })
   } catch (error) {
     if (error instanceof Error && error.name === 'ZodError')

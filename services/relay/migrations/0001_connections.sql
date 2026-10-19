@@ -53,8 +53,24 @@ CREATE TABLE relay.revocations (
     next_attempt_at timestamptz NOT NULL DEFAULT clock_timestamp()
 );
 -- Create role relay_runtime separately; migrations run as the schema owner.
+CREATE TABLE relay.agent_cleanups (
+    connection_id uuid NOT NULL REFERENCES relay.connections(id),
+    workspace_uid uuid NOT NULL,
+    PRIMARY KEY(connection_id,workspace_uid)
+);
 GRANT USAGE ON SCHEMA relay TO relay_runtime;
 GRANT SELECT ON relay.schema_version TO relay_runtime;
 GRANT SELECT,INSERT,UPDATE ON relay.connections,relay.oauth_attempts,relay.workspace_bindings,relay.invocations TO relay_runtime;
 GRANT DELETE ON relay.oauth_attempts,relay.workspace_bindings TO relay_runtime;
 GRANT SELECT,INSERT,UPDATE,DELETE ON relay.revocations TO relay_runtime;
+GRANT SELECT,INSERT,DELETE ON relay.agent_cleanups TO relay_runtime;
+
+CREATE TABLE relay.grant_installations (
+    grant_id uuid PRIMARY KEY,
+    connection_id uuid NOT NULL REFERENCES relay.connections(id),
+    workspace_uid uuid NOT NULL,
+    status text NOT NULL CHECK (status IN ('pending','active','cancelled','revoked')),
+    expires_at timestamptz NOT NULL,
+    revoke_after timestamptz NOT NULL DEFAULT clock_timestamp()+interval '2 minutes'
+);
+GRANT SELECT,INSERT,UPDATE,DELETE ON relay.grant_installations TO relay_runtime;

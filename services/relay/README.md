@@ -32,6 +32,13 @@ Settings displays the expiry and saving again renews access. This does not limit
 Ofz captures the running epoch when issuing a connector grant; a later restart requires saving agent access again.
 Requests remain subject to the current runtime epoch, issuer permissions, membership, workspace binding and Ofz recovery
 generation. Disconnect denies dispatch before erasing credentials and queues provider revocation when supported.
+Guest cleanup is queued in the same database transaction before bindings are removed. Ready guests are reconciled
+on disconnect, workspace listing and resume; sleeping guests retain their cleanup entry until removal is acknowledged.
+A BFF restart or failed guest RPC does not lose the queue.
+Automatic installation is staged in PostgreSQL before Ofz creates its grant. Relay denies that grant until the guest
+acknowledges setup and the BFF activates it. Browser cancellation uses a separate bounded compensation signal. Failed
+or abandoned installations remain denied and queue native grant revocation; workspace listing/resume retries it when
+Ofz is available. No provider token or scoped grant secret is stored in this retry record.
 
 ## Configuration and storage
 

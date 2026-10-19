@@ -70,7 +70,8 @@ An uncertain refresh never blindly retries a consumed rotating token. Invalid gr
 requiring reconnection. Client-credentials flows obtain a new access token rather than assuming a refresh token.
 
 Disconnect denies new dispatch before attempting provider revocation. Pending authorization attempts are cancelled;
-encrypted credentials are erased. Failed provider revocation remains recorded and retryable without restoring local
+encrypted credentials are erased. Guest removal is queued durably before workspace bindings are deleted, then
+reconciled when a guest is ready, including on resume and workspace listing. Failed provider revocation remains recorded and retryable without restoring local
 access. Already dispatched provider requests cannot be undone by local disconnect.
 
 ## Execution and performance
@@ -108,7 +109,9 @@ The implementation and operating inputs are documented in [Relay's README](../..
 Connections Settings creates accounts, authorizes them, selects operations and resource constraints, and installs the
 agent client. The guest holds a stable P-256 proof key and a one-hour scoped native grant; the provider credential
 stays encrypted in Relay. Clearing the selected operations removes the client and revokes matching native grants.
-The exact-body DPoP boundary binds the capability, proof key, endpoint, method and request bytes with shared SQL replay
+Automatic grants are staged durably before creation and cannot dispatch until guest setup is acknowledged. Browser
+abort compensation has its own deadline; failed/abandoned records stay denied and native revocation is retried after
+Ofz recovery, without requiring the original request or a running guest. The exact-body DPoP boundary binds the capability, proof key, endpoint, method and request bytes with shared SQL replay
 protection. Read and mutation grants are separate, and both recheck the current issuer and runtime before dispatch
 and result disclosure. Unconfirmed mutations are recorded as unknown and never automatically retried.
 

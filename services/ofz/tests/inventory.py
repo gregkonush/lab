@@ -283,7 +283,8 @@ def main():
     relay = (ROOT / "services/relay/src/main.rs").read_text()
     actual["relay_http"] = rust_routes(relay)
     relay_service = (ROOT / "services/relay/src/service.rs").read_text()
-    command = relay_service[relay_service.index("pub enum Command {"):relay_service.index("#[derive(Deserialize)]\n#[serde(rename_all = \"camelCase\", deny_unknown_fields)]\nstruct AgentCall")]
+    start = relay_service.index("pub enum Command {")
+    command = relay_service[start:relay_service.index("\n}", start)]
     variants = set(re.findall(r"^    ([A-Z]\w*)(?: \{|,)$", command, re.M))
     handled = set(re.findall(r"Command::(\w+)", relay_service[relay_service.index("pub async fn handle"):]))
     assert variants == handled, "Relay commands and explicit handlers disagree"

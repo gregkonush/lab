@@ -296,6 +296,7 @@ impl Store {
     pub async fn disconnect(&self, id: Uuid, owner: &str, revoke: bool) -> Result<()> {
         let mut client = self.pool.get().await?;
         let tx = client.transaction().await?;
+        tx.execute("INSERT INTO relay.agent_cleanups(connection_id,workspace_uid) SELECT b.connection_id,b.workspace_uid FROM relay.workspace_bindings b JOIN relay.connections c ON c.id=b.connection_id WHERE b.connection_id=$1 AND c.owner_id=$2 ON CONFLICT DO NOTHING", &[&id,&owner]).await?;
         if revoke {
             tx.execute("INSERT INTO relay.revocations(connection_id,credential) SELECT id,credential FROM relay.connections WHERE id=$1 AND owner_id=$2 AND credential IS NOT NULL", &[&id,&owner]).await?;
         }

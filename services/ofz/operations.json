@@ -1,5 +1,23 @@
 [
   {
+    "surface": "relay_command",
+    "operation": "StageGrant",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner and workspace authority checked before native grant creation; pending grants cannot dispatch"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "SetGrantStatus",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Activation requires current connection and workspace grant authority; cancellation/revocation is owner-filtered and monotonic"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "AckCleanup",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "dispatch": "Owner-filtered monotonic acknowledgement after authenticated guest configuration removal"
+  },
+  {
     "surface": "relay_http",
     "operation": "HEAD /livez",
     "public": true,

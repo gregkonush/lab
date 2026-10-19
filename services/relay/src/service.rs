@@ -67,6 +67,20 @@ pub enum Command {
     Disconnect {
         id: Uuid,
     },
+    AckCleanup {
+        id: Uuid,
+        workspace: Uuid,
+    },
+    StageGrant {
+        id: Uuid,
+        workspace: Uuid,
+        grant_id: Uuid,
+        expires_at: chrono::DateTime<chrono::Utc>,
+    },
+    SetGrantStatus {
+        grant_id: Uuid,
+        status: GrantStatus,
+    },
     Invoke {
         id: Uuid,
         workspace: Uuid,
@@ -79,6 +93,14 @@ pub enum Command {
         proof: String,
         body: String,
     },
+}
+
+#[derive(Deserialize, PartialEq)]
+#[serde(rename_all = "camelCase")]
+pub enum GrantStatus {
+    Active,
+    Cancelled,
+    Revoked,
 }
 
 #[derive(Deserialize)]
@@ -120,6 +142,8 @@ pub struct Service {
 
 impl Service {
     pub async fn maintain(&self) -> Result<()> {
+        self.store.pool.get().await?.execute("UPDATE relay.grant_installations SET status='cancelled' WHERE status='pending' AND revoke_after<=clock_timestamp()", &[]).await?;
+        self.store.pool.get().await?.execute("DELETE FROM relay.grant_installations WHERE expires_at<clock_timestamp()-interval '5 minutes'", &[]).await?;
         self.store.expire_uncertain_refreshes().await?;
         self.store.pool.get().await?.execute("UPDATE relay.invocations SET outcome='unknown',completed_at=clock_timestamp() WHERE outcome='started' AND started_at<clock_timestamp()-interval '2 minutes'", &[]).await?;
         self.store
@@ -254,6 +278,23 @@ impl Service {
             body,
         } = input.command
         {
+            let grant_uuid = Uuid::parse_str(&grant_id)?;
+            if let Some(row) = self
+                .store
+                .pool
+                .get()
+                .await?
+                .query_opt(
+                    "SELECT status FROM relay.grant_installations WHERE grant_id=$1",
+                    &[&grant_uuid],
+                )
+                .await?
+            {
+                ensure!(
+                    row.get::<_, String>(0) == "active",
+                    "connector installation is not confirmed"
+                );
+            }
             let binding = STANDARD.decode(body).context("invalid agent body")?;
             ensure!(binding.len() <= 1024 * 1024, "agent request too large");
             let AgentCall {
@@ -301,6 +342,7 @@ impl Service {
                 workspace: Some(workspace),
             }
             | Command::Bind { workspace, .. }
+            | Command::StageGrant { workspace, .. }
             | Command::Invoke { workspace, .. } => context.workspace_uid = workspace.to_string(),
             _ => {}
         }
@@ -368,7 +410,11 @@ impl Service {
                 for row in self.store.pool.get().await?.query("SELECT b.connection_id,b.operations,b.constraints,b.workspace_uid FROM relay.workspace_bindings b JOIN relay.connections c ON c.id=b.connection_id WHERE c.owner_id=$1 AND ($2::uuid IS NULL OR b.workspace_uid=$2) LIMIT 768", &[&owner,&workspace]).await? {
                     bindings.push(json!({"connectionId":row.get::<_,Uuid>(0),"operations":row.get::<_,Vec<String>>(1),"constraints":row.get::<_,Value>(2),"workspaceUid":row.get::<_,Uuid>(3)}));
                 }
-                Ok(json!({"connections":self.store.list(owner).await?,"bindings":bindings}))
+                let cleanups=self.store.pool.get().await?.query("SELECT a.connection_id,a.workspace_uid FROM relay.agent_cleanups a JOIN relay.connections c ON c.id=a.connection_id WHERE c.owner_id=$1 ORDER BY a.connection_id,a.workspace_uid LIMIT 128", &[&owner]).await?.into_iter().map(|row|json!({"connectionId":row.get::<_,Uuid>(0),"workspaceUid":row.get::<_,Uuid>(1)})).collect::<Vec<_>>();
+                let grant_cleanups=self.store.pool.get().await?.query("SELECT g.grant_id,g.workspace_uid FROM relay.grant_installations g JOIN relay.connections c ON c.id=g.connection_id WHERE c.owner_id=$1 AND (g.status='cancelled' OR (g.status='pending' AND g.revoke_after<=clock_timestamp())) AND g.expires_at>clock_timestamp() ORDER BY g.grant_id LIMIT 128", &[&owner]).await?.into_iter().map(|row|json!({"grantId":row.get::<_,Uuid>(0),"workspaceUid":row.get::<_,Uuid>(1)})).collect::<Vec<_>>();
+                Ok(
+                    json!({"connections":self.store.list(owner).await?,"bindings":bindings,"cleanups":cleanups,"grantCleanups":grant_cleanups}),
+                )
             }
             Command::Create { id, provider, name } => {
                 let provider = self.catalog.provider(&provider)?;
@@ -518,6 +564,67 @@ impl Service {
                 );
                 self.store.disconnect(id, owner, revoke).await?;
                 Ok(json!({"disconnected":true}))
+            }
+            Command::AckCleanup { id, workspace } => {
+                self.store.pool.get().await?.execute("DELETE FROM relay.agent_cleanups a USING relay.connections c WHERE a.connection_id=c.id AND c.owner_id=$1 AND a.connection_id=$2 AND a.workspace_uid=$3", &[&owner,&id,&workspace]).await?;
+                Ok(json!({"acknowledged":true}))
+            }
+            Command::StageGrant {
+                id,
+                workspace,
+                grant_id,
+                expires_at,
+            } => {
+                self.connection(&context, id).await?;
+                self.policy
+                    .check(
+                        &context,
+                        Action::GrantsManage,
+                        ResourceKind::Workspace,
+                        &workspace.to_string(),
+                        "",
+                        "",
+                    )
+                    .await?;
+                ensure!(
+                    expires_at > chrono::Utc::now()
+                        && expires_at <= chrono::Utc::now() + chrono::Duration::hours(1),
+                    "grant deadline must be bounded"
+                );
+                let count:i64=self.store.pool.get().await?.query_one("SELECT count(*) FROM relay.grant_installations g JOIN relay.connections c ON c.id=g.connection_id WHERE c.owner_id=$1 AND g.expires_at>clock_timestamp()",&[&owner]).await?.get(0);
+                ensure!(count < 128, "too many outstanding connector installations");
+                self.store.pool.get().await?.execute("INSERT INTO relay.grant_installations(grant_id,connection_id,workspace_uid,status,expires_at) VALUES($1,$2,$3,'pending',$4)",&[&grant_id,&id,&workspace,&expires_at]).await?;
+                Ok(json!({"staged":true}))
+            }
+            Command::SetGrantStatus { grant_id, status } => {
+                let row=self.store.pool.get().await?.query_opt("SELECT g.connection_id,g.workspace_uid FROM relay.grant_installations g JOIN relay.connections c ON c.id=g.connection_id WHERE g.grant_id=$1 AND c.owner_id=$2",&[&grant_id,&owner]).await?.context("connector installation unavailable")?;
+                if status == GrantStatus::Active {
+                    let id: Uuid = row.get(0);
+                    let workspace: Uuid = row.get(1);
+                    self.connection(&context, id).await?;
+                    let mut workspace_context = context.clone();
+                    workspace_context.workspace_uid = workspace.to_string();
+                    self.policy
+                        .check(
+                            &workspace_context,
+                            Action::GrantsManage,
+                            ResourceKind::Workspace,
+                            &workspace.to_string(),
+                            "",
+                            "",
+                        )
+                        .await?;
+                    let changed=self.store.pool.get().await?.execute("UPDATE relay.grant_installations SET status='active' WHERE grant_id=$1 AND status IN ('pending','active') AND revoke_after>clock_timestamp() AND expires_at>clock_timestamp()",&[&grant_id]).await?;
+                    ensure!(changed == 1, "connector installation expired or cancelled");
+                } else {
+                    let value = if status == GrantStatus::Revoked {
+                        "revoked"
+                    } else {
+                        "cancelled"
+                    };
+                    self.store.pool.get().await?.execute("UPDATE relay.grant_installations SET status=$1 WHERE grant_id=$2 AND status<>'revoked'",&[&value,&grant_id]).await?;
+                }
+                Ok(json!({"updated":true}))
             }
             Command::Invoke {
                 id,

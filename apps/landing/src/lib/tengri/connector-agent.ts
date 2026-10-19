@@ -8,6 +8,7 @@ import { connectorAgent, listAgents } from './grpc'
 import { Action, AuthorizationService, ResourceKind } from './generated/proompteng/authz/v1/authz_pb'
 import { OfzError, ofzCall } from './ofz'
 import { relayCall } from './relay'
+import type { TengriAgent } from './types'
 
 const operationSchema = z.object({
   name: z.string(),
@@ -59,8 +60,8 @@ export async function installConnectorAgent(
     cursor = page.cursor
     if (previous.length > 10_000) throw new OfzError(503)
   } while (cursor)
-  const revoke = async (id: string) => {
-    const current = await ofzCall(AuthorizationService.method.getPolicyState, {}, signal)
+  const revoke = async (id: string, revokeSignal = signal) => {
+    const current = await ofzCall(AuthorizationService.method.getPolicyState, {}, revokeSignal)
     await ofzCall(
       AuthorizationService.method.executeCommand,
       {
@@ -70,7 +71,7 @@ export async function installConnectorAgent(
         reason: 'Remove the previous connector capability',
         command: { case: 'revokeGrant', value: { grantId: id } },
       },
-      signal,
+      revokeSignal,
     )
   }
   const matching = previous.filter(
@@ -92,36 +93,47 @@ export async function installConnectorAgent(
     ...(selected.some((operation) => operation.readOnly) ? [Action.CONNECTOR_READ] : []),
     ...(selected.some((operation) => !operation.readOnly) ? [Action.CONNECTOR_INVOKE] : []),
   ]
-  const result = await ofzCall(
-    AuthorizationService.method.executeCommand,
+  await relayCall(
     {
-      context,
-      operationId: randomUUID(),
-      expectedVersion: state.version,
-      reason: 'Enable selected connector operations for this agent',
-      command: {
-        case: 'createGrant',
-        value: {
-          grantId,
-          agentId: identityResult.agentId,
-          workspaceUid,
-          resource: { kind: ResourceKind.CONNECTOR_CONNECTION, id: connectionId },
-          actions,
-          scope: { connectorOperations: operations, maxBytes: 1_048_576, maxItems: 200 },
-          expiresAtUnixMs: BigInt(expiresAt),
-          proofKeyThumbprint: identityResult.proofKeyThumbprint,
-        },
-      },
+      action: 'stageGrant',
+      id: connectionId,
+      workspace: workspaceUid,
+      grantId,
+      expiresAt: new Date(expiresAt).toISOString(),
     },
+    identity,
     signal,
   )
-  const credential = result.receipt?.agentCredential
-  if (!credential) throw new OfzError(503)
-  const endpoint = new URL(
-    '/api/tengri/connectors/agent',
-    process.env.TENGRI_DESKTOP_ORIGIN || 'https://proompteng.ai',
-  ).toString()
   try {
+    const result = await ofzCall(
+      AuthorizationService.method.executeCommand,
+      {
+        context,
+        operationId: randomUUID(),
+        expectedVersion: state.version,
+        reason: 'Enable selected connector operations for this agent',
+        command: {
+          case: 'createGrant',
+          value: {
+            grantId,
+            agentId: identityResult.agentId,
+            workspaceUid,
+            resource: { kind: ResourceKind.CONNECTOR_CONNECTION, id: connectionId },
+            actions,
+            scope: { connectorOperations: operations, maxBytes: 1_048_576, maxItems: 200 },
+            expiresAtUnixMs: BigInt(expiresAt),
+            proofKeyThumbprint: identityResult.proofKeyThumbprint,
+          },
+        },
+      },
+      signal,
+    )
+    const credential = result.receipt?.agentCredential
+    if (!credential) throw new OfzError(503)
+    const endpoint = new URL(
+      '/api/tengri/connectors/agent',
+      process.env.TENGRI_DESKTOP_ORIGIN || 'https://proompteng.ai',
+    ).toString()
     await connectorAgent(
       identity,
       agent.id,
@@ -140,9 +152,22 @@ export async function installConnectorAgent(
       },
       signal,
     )
+    await relayCall({ action: 'setGrantStatus', grantId, status: 'active' }, identity, signal)
   } catch (error) {
-    // An acknowledgement may be lost after installation, so revoke on every failure.
-    await revoke(grantId)
+    // The staged grant is denied until the guest acknowledgement and activation both succeed.
+    // Compensation must survive a browser cancellation; the durable record also survives BFF loss.
+    const cleanupSignal = AbortSignal.timeout(8000)
+    try {
+      await relayCall({ action: 'setGrantStatus', grantId, status: 'cancelled' }, identity, cleanupSignal)
+    } catch {
+      process.stderr.write('Relay grant cancellation remains queued\n')
+    }
+    try {
+      await revoke(grantId, cleanupSignal)
+      await relayCall({ action: 'setGrantStatus', grantId, status: 'revoked' }, identity, cleanupSignal)
+    } catch {
+      process.stderr.write('Relay grant revocation remains queued\n')
+    }
     throw error
   }
   // Replace previous capabilities only after the new configuration is installed. Scope narrowing
@@ -151,25 +176,56 @@ export async function installConnectorAgent(
   return { expiresAt: new Date(expiresAt).toISOString() }
 }
 
-export async function removeConnectorAgents(
+export async function reconcileConnectorCleanups(
   identity: TengriIdentity,
-  connectionId: string,
-  workspaces: string[],
+  agents: TengriAgent[],
   signal?: AbortSignal,
+  dependencies = { relayCall, connectorAgent, ofzCall },
 ) {
-  const agents = await listAgents(identity)
-  let pending = false
-  for (const agent of agents) {
-    if (!workspaces.includes(agent.uid)) continue
-    if (agent.phase !== 'ready') {
-      pending = true
-      continue
-    }
+  const { relayCall, connectorAgent, ofzCall } = dependencies
+  const listing = z
+    .object({
+      cleanups: z.array(z.object({ connectionId: z.uuid(), workspaceUid: z.uuid() })),
+      grantCleanups: z.array(z.object({ grantId: z.uuid(), workspaceUid: z.uuid() })).default([]),
+    })
+    .parse(await relayCall({ action: 'list' }, identity, signal))
+  let grantPending = false
+  for (const job of listing.grantCleanups.slice(0, 16)) {
     try {
-      await connectorAgent(identity, agent.id, 'remove', { connectionId }, signal)
+      const state = await ofzCall(AuthorizationService.method.getPolicyState, {}, signal)
+      await ofzCall(
+        AuthorizationService.method.executeCommand,
+        {
+          context: humanContext(identity, job.workspaceUid),
+          operationId: randomUUID(),
+          expectedVersion: state.version,
+          reason: 'Revoke an unconfirmed connector installation',
+          command: { case: 'revokeGrant', value: { grantId: job.grantId } },
+        },
+        signal,
+      )
+      await relayCall({ action: 'setGrantStatus', grantId: job.grantId, status: 'revoked' }, identity, signal)
     } catch {
-      pending = true
+      grantPending = true
+      process.stderr.write('Relay grant revocation remains queued\n')
     }
   }
-  return { agentCleanupPending: pending }
+  let remaining = listing.cleanups.length
+  for (const job of listing.cleanups.slice(0, 16)) {
+    const agent = agents.find((agent) => agent.uid === job.workspaceUid && agent.phase === 'ready')
+    if (!agent) continue
+    try {
+      await connectorAgent(identity, agent.id, 'remove', { connectionId: job.connectionId }, signal)
+      await relayCall({ action: 'ackCleanup', id: job.connectionId, workspace: job.workspaceUid }, identity, signal)
+      remaining -= 1
+    } catch {
+      // The database entry is retained until both guest removal and acknowledgement succeed.
+      process.stderr.write('Relay connector cleanup remains pending\n')
+    }
+  }
+  return { agentCleanupPending: remaining > 0 || grantPending || listing.grantCleanups.length > 16 }
+}
+
+export async function removeConnectorAgents(identity: TengriIdentity, signal?: AbortSignal) {
+  return reconcileConnectorCleanups(identity, await listAgents(identity), signal)
 }

@@ -363,6 +363,72 @@ async fn database_oauth_api_mcp_refresh_revocation_and_disconnect() -> Result<()
         ))
         .await?;
     service.handle(input(&context,json!({"action":"bind","id":mcp,"workspace":workspace,"operations":["search","echo","write"],"constraints":{}}))).await?;
+    let staged = Uuid::new_v4();
+    let expiry = (chrono::Utc::now() + chrono::Duration::minutes(59)).to_rfc3339();
+    service.handle(input(&context,json!({"action":"stageGrant","id":mcp,"workspace":workspace,"grantId":staged,"expiresAt":expiry}))).await?;
+    let staged_call = || {
+        serde_json::from_value::<service::Input>(json!({"command":{"action":"agentInvoke","grantId":staged,"credential":"a".repeat(43),"proof":"fixture","body":STANDARD.encode(serde_json::to_vec(&json!({"connectionId":mcp,"operation":"search","arguments":{}})).unwrap())}})).unwrap()
+    };
+    let checks = authority.checks.load(Ordering::SeqCst);
+    assert!(
+        service
+            .handle(staged_call())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not confirmed")
+    );
+    assert_eq!(authority.checks.load(Ordering::SeqCst), checks);
+    service
+        .handle(input(
+            &context,
+            json!({"action":"setGrantStatus","grantId":staged,"status":"active"}),
+        ))
+        .await?;
+    assert!(
+        service
+            .handle(staged_call())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("separate Ofz proof fixture"),
+        "activation still requires canonical proof verification"
+    );
+    service
+        .handle(input(
+            &context,
+            json!({"action":"setGrantStatus","grantId":staged,"status":"cancelled"}),
+        ))
+        .await?;
+    assert!(
+        service
+            .handle(staged_call())
+            .await
+            .unwrap_err()
+            .to_string()
+            .contains("not confirmed")
+    );
+    assert!(
+        service
+            .handle(input(
+                &context,
+                json!({"action":"setGrantStatus","grantId":staged,"status":"active"})
+            ))
+            .await
+            .is_err(),
+        "cancelled installations cannot reactivate"
+    );
+    let pending = service
+        .handle(input(&context, json!({"action":"list"})))
+        .await?;
+    assert!(
+        pending["grantCleanups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|job| job["grantId"] == staged.to_string()),
+        "failed installations remain queued durably"
+    );
     let result=service.handle(input(&context,json!({"action":"invoke","id":mcp,"workspace":workspace,"operation":"search","arguments":{}}))).await?;
     assert_eq!(result["result"]["content"][0]["text"], "MCP result");
     assert!(service.handle(input(&context,json!({"action":"invoke","id":mcp,"workspace":workspace,"operation":"echo","arguments":{}}))).await.is_err());
@@ -542,6 +608,63 @@ async fn database_oauth_api_mcp_refresh_revocation_and_disconnect() -> Result<()
     state.release.notify_one();
     assert!(pending.await?.is_err());
     assert!(store.connection(id).await?.credential.is_none());
+    let cleanups = service
+        .handle(input(&context, json!({"action":"list"})))
+        .await?;
+    assert!(
+        cleanups["cleanups"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|job| job["connectionId"] == id.to_string()
+                && job["workspaceUid"] == workspace.to_string())
+    );
+    // Bindings are gone, but durable cleanup remains discoverable after service/BFF restarts.
+    let bindings: i64 = store
+        .pool
+        .get()
+        .await?
+        .query_one(
+            "SELECT count(*) FROM relay.workspace_bindings WHERE connection_id=$1",
+            &[&id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(bindings, 0);
+    service
+        .handle(input(
+            &stranger,
+            json!({"action":"ackCleanup","id":id,"workspace":workspace}),
+        ))
+        .await?;
+    let pending: i64 = store
+        .pool
+        .get()
+        .await?
+        .query_one(
+            "SELECT count(*) FROM relay.agent_cleanups WHERE connection_id=$1",
+            &[&id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(pending, 1, "another owner cannot acknowledge this cleanup");
+    service
+        .handle(input(
+            &context,
+            json!({"action":"ackCleanup","id":id,"workspace":workspace}),
+        ))
+        .await?;
+    let pending: i64 = store
+        .pool
+        .get()
+        .await?
+        .query_one(
+            "SELECT count(*) FROM relay.agent_cleanups WHERE connection_id=$1",
+            &[&id],
+        )
+        .await?
+        .get(0);
+    assert_eq!(pending, 0);
     // Rotate every encrypted record class, including pending PKCE and revocation work.
     let attempt = Uuid::new_v4();
     let pending = store
