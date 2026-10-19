@@ -612,6 +612,18 @@ export const accountLossMicros = (facts: {
   drawdownMicros: positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros),
 })
 
+/** The existing entry limits retain exact micros and permit equality at either boundary. */
+export const accountEntryProtectionReasons = (
+  facts: Parameters<typeof accountLossMicros>[0],
+  limits: Pick<Policy, 'maxDailyLossMicros' | 'maxDrawdownMicros'>,
+): readonly (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] => {
+  const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
+  const reasons: (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] = []
+  if (dailyLossMicros > BigInt(limits.maxDailyLossMicros)) reasons.push(Reason.DailyLossExceeded)
+  if (drawdownMicros > BigInt(limits.maxDrawdownMicros)) reasons.push(Reason.DrawdownExceeded)
+  return reasons
+}
+
 const divideUp = (numerator: bigint, denominator: bigint): bigint =>
   numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator
 const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>

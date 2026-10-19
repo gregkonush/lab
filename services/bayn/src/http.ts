@@ -18,6 +18,7 @@ import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, ty
 import { Pipeable } from './pipeable'
 import { defaultJevProtocolDocument } from './jev/protocol'
 import { telemetryHeartbeat } from './telemetry'
+import { accountTradingDate } from './time'
 
 export type HttpResponseDecision =
   | {
@@ -144,6 +145,7 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
     outcome: pass.outcome,
     ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
     ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.admissionProtection === undefined ? {} : { admissionProtection: pass.admissionProtection }),
     ...(pass.readiness === undefined
       ? {}
       : {
@@ -604,6 +606,29 @@ const readySessionConditions = new Set([
   ExecutionSessionCondition.Rearming,
 ])
 
+const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number): boolean => {
+  const pass = state.autonomousCycleLoop.lastPass
+  if (
+    pass?.result !== 'SUCCESS' ||
+    pass.outcome !== 'ADMISSION_WAITING' ||
+    pass.readiness?.reason !== DecisionReadinessReason.AccountProtection ||
+    pass.admissionProtection === undefined ||
+    state.cycle.current !== null ||
+    state.cycle.unfinishedCycleCount !== 0 ||
+    !Number.isSafeInteger(checkedAtMs)
+  )
+    return false
+  const proof = pass.admissionProtection
+  return (
+    proof.authorityGenerationHash === state.cycle.authority?.generationHash &&
+    proof.authorityUpdatedAt === state.cycle.authority.updatedAt &&
+    proof.reconciliationId === state.cycle.reconciliation?.reconciliationId &&
+    proof.tradingDate === accountTradingDate(new Date(checkedAtMs).toISOString()) &&
+    Date.parse(pass.observedAt) <= checkedAtMs &&
+    checkedAtMs < Date.parse(proof.validUntil)
+  )
+}
+
 const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) => {
   const session = state.cycle.current ?? state.cycle.last
   const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
@@ -640,9 +665,11 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   ) {
     return result(ExecutionSessionCondition.Blocked)
   }
-  if (session === null || !Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
+  if (!Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
     return result(ExecutionSessionCondition.Unavailable)
   }
+  if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
+  if (session === null) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
   if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
     return result(
@@ -666,6 +693,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   const pass = state.autonomousCycleLoop.lastPass
   const readiness =
     pass?.result === 'SUCCESS' &&
+    pass.outcome !== 'ADMISSION_WAITING' &&
     pass.readiness !== undefined &&
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
       ? pass.readiness

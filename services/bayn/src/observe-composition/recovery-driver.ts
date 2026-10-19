@@ -582,6 +582,7 @@ const makeRecoveryFirstCycleDriverEffect = (
             context,
             { read: reconcileForAdvance, refresh: refreshForAdvance },
             capability,
+            preflight,
           ),
           cyclePassTimeoutMs,
         )
