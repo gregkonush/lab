@@ -1,3 +1,5 @@
+import focusedJevJudgmentsMigration from '../../migrations/0124_focused_jev_judgments'
+import setupActionProtocolMigration from '../../migrations/0123_setup_action_protocol'
 import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
 import costSupportedEntryMigration from '../../migrations/0116_cost_supported_entry'
 import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
@@ -13,6 +15,10 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { Authority } from '../execution/contracts'
+import { makeAuthorityPostgres } from './execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -25,6 +31,13 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  {
+    label: 'jev-focused-judgments',
+    id: 124,
+    protocol: 'bayn.jev.protocol.v11',
+    migration: focusedJevJudgmentsMigration,
+  },
+  { label: 'jev-setup-action', id: 123, protocol: 'bayn.jev.protocol.v10', migration: setupActionProtocolMigration },
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
@@ -82,6 +95,88 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id === 124) {
+      test('recovers retained v10 authority through the native OBSERVE interpreter after cutover', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const broker = Result.getOrThrow(
+              makeBrokerIdentity({
+                schemaVersion: 'bayn.broker-identity.v2',
+                provider: BrokerProvider.Alpaca,
+                environment: BrokerEnvironment.Sandbox,
+                accountId: 'paper-cutover',
+              }),
+            )
+            const authority = makeAuthorityPostgres(sql)
+            const observe = makeObserveAuthorityInterpreter(sql, authority, broker)
+            const ensure = observe.ensureAuthorityGeneration
+            if (ensure === undefined) return yield* Effect.die(new Error('Native authority interpreter is unavailable'))
+            const original = 'a'.repeat(64),
+              retained = 'b'.repeat(64),
+              successor = 'c'.repeat(64)
+            const reconciliation = 'd'.repeat(64),
+              content = 'e'.repeat(64)
+            yield* ensure({ generationHash: original, maximum: Authority.Observe })
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at) VALUES(${'f'.repeat(64)},'bayn.paper-position-snapshot.v1',${broker.accountId},${'6'.repeat(64)},${'7'.repeat(64)},0,clock_timestamp())`
+            yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,
+              expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+              VALUES(${reconciliation},'bayn.paper-reconciliation.v1',${broker.accountId},${content},${content},
+                ${content},'EXACT','[]'::jsonb,clock_timestamp())`
+            yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,activation_schema_version,
+              previous_generation_hash,maximum,authority_version,broker_identity_schema_version,broker_identity_hash,
+              broker_provider,broker_environment,activation_source_revision,activation_image_repository,
+              activation_image_digest,strategy_name,strategy_behavior_hash,strategy_parameter_hash,
+              strategy_parameter_schema_version,account_id,risk_policy_hash,proof_plan_hash,reconciliation_id,
+              reconciliation_content_hash,research_plan_hash,strategy_protocol_hash,activated_at)
+              VALUES(${retained},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
+                ${original},'PAPER',2,${broker.schemaVersion},${broker.identityHash},${broker.provider},${broker.environment},
+                ${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
+                '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
+                '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
+                'bayn.jev.protocol.v10',${broker.accountId},${'3'.repeat(64)},${'4'.repeat(64)},${reconciliation},
+                ${content},${'5'.repeat(64)},'48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',clock_timestamp())`
+            yield* sql`UPDATE authority_state SET generation_hash=${retained},maximum='PAPER',effective='PAPER',
+              kill_state='CLEAR',reason=NULL,version=2,updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${retained}) WHERE singleton`
+            yield* sql.withTransaction(migration)
+            expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
+              'bayn.jev.protocol.v10',
+            )
+            const staleRecovery = yield* ensure({ generationHash: successor, maximum: Authority.Observe }).pipe(
+              Effect.result,
+            )
+            expect(Result.isFailure(staleRecovery)).toBe(true)
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at) VALUES(${'8'.repeat(64)},'bayn.paper-position-snapshot.v1',${broker.accountId},${'9'.repeat(64)},${'0'.repeat(64)},0,clock_timestamp())`
+            yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,
+              expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+              VALUES(${'9'.repeat(64)},'bayn.paper-reconciliation.v1',${broker.accountId},${content},${content},
+                ${content},'EXACT','[]'::jsonb,clock_timestamp())`
+            const recovered = yield* ensure({ generationHash: successor, maximum: Authority.Observe })
+            expect(recovered).toMatchObject({
+              generationHash: successor,
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: 'CLEAR',
+            })
+            expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
+              'bayn.jev.protocol.v10',
+            )
+            const retiredWrite = yield* sql
+              .withTransaction(
+                sql`INSERT INTO authority_generations SELECT (jsonb_populate_record(NULL::authority_generations, to_jsonb(history) || jsonb_build_object('generation_hash',${'f'.repeat(64)}::text,'authority_version',999))).* FROM authority_generations history WHERE generation_hash=${retained}`,
+              )
+              .pipe(Effect.result)
+            expect(Result.isFailure(retiredWrite)).toBe(true)
+            if (Result.isFailure(retiredWrite))
+              expect(retiredWrite.failure.reason.cause).toMatchObject({
+                code: '23514',
+                constraint: expect.stringContaining('authority_generations_strategy_'),
+              })
+          }),
+        )
+      })
+    }
 
     if (id === 113) {
       test('upgrades an already-recorded equity-hours migration to native limit completion', async () => {

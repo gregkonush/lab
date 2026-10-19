@@ -269,7 +269,7 @@ describe('native control management requests', () => {
     expect(result.observation.portfolio.entryFills[0]?.priceAtoms).toBe('100000000000')
     expect(candidate.request.request).toEqual(nativeCandidate.request.request)
     expect(candidate.request.request.state).toMatchObject({
-      schemaVersion: 'bayn.jev-trading-signal-state.v8',
+      schemaVersion: 'bayn.jev-trading-signal-state.v10',
       task: { decisionPurpose: 'MANAGE' },
       position: {
         quantityUnits: 5,

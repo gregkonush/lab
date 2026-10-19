@@ -18,18 +18,17 @@ before the approved PAPER activation can resume. A prior no-trade decision canno
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects one active strategy, `jev`, using `bayn.jev.protocol.v9` and native Dorvud feature contracts.
+The source selects one active strategy, `jev`, using `bayn.jev.protocol.v11` and native Dorvud feature contracts.
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
-still requires its own real window trade, fresh two-sided quote, positive own and relative momentum, and supported
-fee-inclusive economics. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
+still requires its own real window trade, fresh two-sided quote, positive own and relative momentum, a valid model-selected setup, and a funded target. A missing ETH print excludes ETH as a candidate without excluding BTC when ETH's completed
 bars remain valid. Equity benchmarks retain the existing SPY quote, trade and feature contract.
 The immutable query records canonical `benchmarkSymbols`, including symbols that are also candidates. Missing
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
-Migration 118 retires protocol v8 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v8`.
+Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
+accounting and fresh exact reconciliation before cutover. The observation state is `bayn.jev-trading-signal-state.v10`.
 Entry and position-management break-even bids use native close terms, instrument price rounding and session fee
 calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
@@ -70,20 +69,29 @@ Current positions require explicit broker cost basis. Migration 115 rejects new 
 retained historical observations remain immutable audit evidence. Reconciliation accepts a broker basis derived from
 its rounded average price only when both reported price and basis reproduce from the exact native fill cost and
 unchanged quantity. Cash, fills, ledger transfers and unrelated basis differences keep their exact checks.
+After a partial crypto disposal, reconciliation also reproduces the broker's weighted-average basis from the complete
+native entry fills and verified coin-fee accruals. Staggered fills carry the remaining quantity and acquisition average
+through every accrual cohort. Each observed broker basis must reproduce from those fill prices,
+and every later disposal must reproduce the remaining native quantity and posted cost. The reported average and basis
+must match that acquisition calculation exactly. This accounts for per-fill rounding without a monetary tolerance or
+changes to immutable ledger amounts. The calculation retains the original fill precision and reproduces rounded
+nine-decimal broker averages before rounding the reported remaining cost to micros.
 
 Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
 including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
-coin-denominated buy fees and the existing rounded transaction-fee schedule. Selection requires both an `enter`
-action and a `supported` net-economics assessment; adverse or uncertain economics abstain. The model assessment
-remains uncalibrated. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
+coin-denominated buy fees and the existing rounded transaction-fee schedule. Jev selects the setup with its
+`enter`, `wait` or `avoid` action. The extra `net_economics` question and mandatory model-support veto have been
+removed: a paired comparison found they suppressed setup entries, and they had not been qualified as a profitable
+selection policy. Entry still requires a funded target and every native source, sizing, price and risk check.
+These model actions remain uncalibrated and do not establish positive fee-net returns. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
 above the inference-bound ceiling is rejected before decision construction and again at the durable boundary.
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v9 and trading-signal input v8 replace their executable predecessors. Migration 118 requires flat,
+Protocol v10 and trading-signal input v9 replace their executable predecessors. Migration 124 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
-new Jev authority generations to v9. Historical generation rows remain immutable audit evidence. Create a new
-same-account PAPER mandate against a verified published v9 image through its sealed GitOps path after cutover; source success alone
+new Jev authority generations to v10. Historical generation rows remain immutable audit evidence. Create a new
+same-account PAPER mandate against a verified published v10 image through its sealed GitOps path after cutover; source success alone
 does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
@@ -131,12 +139,16 @@ accrual evidence and ledger identities remain unchanged.
 The [momentum-first research policy](../../docs/bayn/momentum-first-candidate.md) uses a positive-momentum entry gate:
 exact positive own and market-benchmark-relative momentum before Jev, with current Jev selection, sizing and management preserved.
 The paired sandbox mandate binds this policy and its $1,000,000 daily turnover budget; source selection alone grants no capital authority.
-Entry selection requires the model's chosen `enter` action and supported net economics. There is no additional action-probability floor;
+Entry selection requires the model's chosen `enter` action and a funded target. There is no additional model economics veto or action-probability floor;
 the recorded enter probability ranks simultaneous eligible enter actions, with symbol order breaking ties.
-`wait` and `avoid` keep zero targets. Protocol v9 rejects retired executable protocols and the retired
-`minimumEntryProbability` field. Migration 118 requires flat, settled inventory and fresh exact reconciliation,
+Each candidate receives one typed entry Choice, `enter / wait / avoid`. Management receives one typed Choice, `hold / exit / unclear`.
+Unconsumed regime, continuation, exhaustion and setup-quality diagnostics are no longer requested.
+The entry question names `task.horizonMinutes`; `relativeSignals.lookbackMinutes` describes the observed past window.
+The model-directed exit threshold remains 0.65 for both markets; deterministic stops and deadlines remain independent.
+`wait` and `avoid` keep zero targets. Protocol v11 rejects retired executable protocols and the retired
+`minimumEntryProbability` field. Migration 124 requires flat, settled inventory and fresh exact reconciliation,
 retires unused admissions and clamps the prior PAPER authority before native OBSERVE recovery. Activate a new
-same-account v9 PAPER mandate against its verified published image. Existing position, turnover, loss,
+same-account v11 PAPER mandate against its verified published image. Existing position, turnover, loss,
 management and submission risk limits remain.
 
 Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
@@ -474,9 +486,9 @@ failure, defect or interruption during atomic persistence rolls back the receipt
 the pre-call claim remains pending and cannot trigger another inference. Every consumer still checks the original
 evidence deadline after persistence. Synchronous commit and standby durability are unchanged.
 
-The submission window opens with the regular session. Bayn can evaluate after the first completed minute and
-the two-second decision delay, at 09:31:02 New York time on a normal session. It uses up to 30 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. The development protocol requires an entry probability of at least 0.65. Entry spreads may not exceed five basis
+The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
+the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. It uses up to 30 minutes of actual
+completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. Jev selects entries by its chosen action and ranks simultaneous eligible entries by enter probability, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
@@ -1491,7 +1503,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v8"`. Its `costs` object contains
+`inputDefinition: "bayn.jev-trading-signal-state.v10"`. Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
 `allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
 
@@ -1860,9 +1872,9 @@ per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. 
 quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 118 owns the
-current protocol-v9 cutover. Verify all three migrations, flat settled inventory, terminal orders and fresh exact
-reconciliation before activating a new same-account v9 PAPER mandate against its verified published image.
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 124 owns the
+current protocol-v11 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
+reconciliation before activating a new same-account v11 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.

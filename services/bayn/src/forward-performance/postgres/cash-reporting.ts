@@ -3,7 +3,29 @@ import { Effect, Schema } from 'effect'
 import { cashAccrualReportingOffsetMicros, type StoredAccrual } from '../../db/fee-accruals'
 import { UnsignedMicrosSchema } from '../../execution/contracts'
 import { Sha256Schema, strictParseOptions } from '../../schemas'
-import { postgresError } from './model'
+import { decodeCount, postgresError } from './model'
+
+export const readUnaccountedCashSettlementCount = (
+  sql: PgClient.PgClient,
+  accountId: string,
+  reconciledAt: Date | undefined,
+) =>
+  sql`
+    SELECT count(*)::integer AS count FROM accounting_transactions t
+    WHERE t.account_id=${accountId} AND t.occurred_at<=${reconciledAt ?? null}::timestamptz
+      AND mod(t.cash_delta_micros,(
+        SELECT reporting.quantum_micros FROM account_cash_reporting reporting
+        JOIN account_snapshots a ON a.event_id=reporting.account_event_id
+        JOIN broker_events e ON e.event_id=a.event_id
+        WHERE e.account_id=${accountId} AND e.event_kind='ACCOUNT'
+          AND a.account_id=${accountId} AND e.observed_at<=${reconciledAt ?? null}::timestamptz
+        ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1))<>0
+      AND NOT EXISTS(SELECT 1 FROM broker_cash_settlements s WHERE s.transaction_id=t.transaction_id
+        AND s.posted_at<=${reconciledAt ?? null}::timestamptz)
+  `.pipe(
+    Effect.flatMap(decodeCount),
+    Effect.map(([row]) => row.count),
+  )
 
 export const readCashReportingOffsets = (
   sql: PgClient.PgClient,

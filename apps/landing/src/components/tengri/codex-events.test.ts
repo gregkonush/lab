@@ -93,6 +93,45 @@ describe('Accepted prompt retention', () => {
     expect([...result.acknowledged]).toEqual(['sent-1'])
     expect(result.pending).toEqual([])
   })
+
+  test.each([
+    { text: '', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 2 },
+  ])('reconciles structured live image inputs ($text, $imageCount images)', ({ text, imageCount }) => {
+    const paths = Array.from(
+      { length: imageCount },
+      (_, index) => `/workspace/.tengri-attachments/11111111-1111-4111-8111-${String(index).padStart(12, '0')}.png`,
+    )
+    const input = {
+      id: 'new-image',
+      type: 'userMessage',
+      content: [...(text ? [{ type: 'text', text }] : []), ...paths.map((path) => ({ type: 'localImage', path }))],
+    }
+    const live = {
+      ...event,
+      kind: 'user-message' as const,
+      method: 'item/completed',
+      itemId: input.id,
+      text,
+      rawJson: JSON.stringify({ params: { item: input } }),
+    }
+    const canonicalText = [text, ...paths.map((path) => `[Local image: ${path}]`)].filter(Boolean).join('\n')
+    expect(codexEventDisplayText(live)).toBe(canonicalText)
+    const imagePrompt = {
+      ...prompt,
+      text: [text, ...paths.map(() => '[Image]')].filter(Boolean).join('\n'),
+      images: paths.map(() => ({ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' })),
+    }
+    const canonical = { id: input.id, kind: live.kind, text: codexEventDisplayText(live) }
+    const { matches, pending, acknowledged } = reconcileSubmittedPrompts([canonical], [imagePrompt])
+    expect(pending).toEqual([])
+    expect([...acknowledged]).toEqual([imagePrompt.id])
+    expect(retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))).toMatchObject({
+      text: canonicalText,
+      images: undefined,
+    })
+  })
 })
 
 describe('Codex event replay', () => {

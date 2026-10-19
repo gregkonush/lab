@@ -12,12 +12,18 @@ import { jevEntryEconomics } from './entry-economics'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { defaultJevProtocolDocument } from './protocol'
 
-test.each(['not_supported', 'uncertain'])('a chosen enter action with %s net economics abstains', (economics) => {
-  const evidence = nativeJevDecisionEvidence(undefined, 'enter', 0.8, economics)
-  expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual([])
+test('setup selection asks the model for its setup action without a second economics judgment', () => {
+  const fixture = nativeJevFixture()
+  const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  expect(request.request.questions['net_economics']).toBeUndefined()
+  expect(request.request.questions['action']?.instructions).toBe(
+    'Given `candidate`, `benchmark` and `relativeSignals`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Assess the setup from the supplied trading signals; code separately checks permission, sizing and risk.',
+  )
+  const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
+  expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
 
-test('an unfunded whole-equity target abstains even when the model chooses supported economics', () => {
+test('an unfunded whole-equity target abstains even when the model chooses enter', () => {
   const fixture = nativeJevFixture(JevPurpose.Entry, undefined, undefined, {
     ...defaultJevProtocolDocument,
     maximumGrossWeight: 0.000001,
@@ -38,7 +44,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     expect(state.entryEconomics.breakEvenExitBidUsd).toBeGreaterThan(state.candidate.quote.ask)
     expect(state.entryEconomics.requiredBidRiseBps).toBeGreaterThan(70)
     expect(state.entryEconomics.maximumEntryPriceUsd).toBeGreaterThan(state.candidate.quote.ask)
-    expect(request.request.questions['net_economics']?.type).toBe('choice')
+    expect(request.request.questions['net_economics']).toBeUndefined()
   },
 )
 
