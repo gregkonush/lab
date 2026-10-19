@@ -214,7 +214,7 @@ export function SettingsApp({
         >
           System Settings
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto [container-type:size]">
           <div className="mx-auto w-full max-w-[660px] space-y-5 px-6 py-7 @max-[640px]/settings:px-4 @max-[640px]/settings:py-5">
             <section
               ref={(element) => {
@@ -387,7 +387,7 @@ export function SettingsApp({
                 sectionRefs.current.connections = element
               }}
               aria-labelledby={`${instanceId}-settings-connections`}
-              className="scroll-mt-5 space-y-3"
+              className="min-h-[calc(100cqh-2rem)] scroll-mt-5 space-y-3"
             >
               <h2 id={`${instanceId}-settings-connections`} className="text-sm font-medium text-zinc-200">
                 Connections

@@ -86,6 +86,13 @@ test('connects an API account, scopes agent operations, and disconnects in compa
   await expect(settings.getByRole('alert')).toContainText('could not be confirmed')
   await create.getByRole('button', { name: 'Connect', exact: true }).click()
   await expect(settings.getByText('Work account', { exact: true })).toBeVisible()
+  await expect
+    .poll(async () => {
+      const heading = await settings.getByRole('heading', { name: 'Connections', exact: true }).boundingBox()
+      const window = await settings.boundingBox()
+      return heading && window ? heading.y - window.y : Number.POSITIVE_INFINITY
+    })
+    .toBeLessThan(100)
   expect(creates).toHaveLength(2)
   expect(creates[1]).toEqual(creates[0])
   expect(connections).toHaveLength(1)
