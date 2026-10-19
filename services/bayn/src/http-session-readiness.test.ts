@@ -471,6 +471,7 @@ test('an unused entry expiry reports rearming during the market rotation cooldow
 
 test.each([
   [null, 'AWAITING_DECISION', true],
+  [DecisionReadinessReason.AccountProtection, 'BLOCKED', false],
   [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
   [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
 ] as const)(
@@ -518,6 +519,27 @@ test.each([
     })
   },
 )
+
+test('account protection takes precedence over equity first-minute warmup', () => {
+  const state = sessionState('2026-10-01T13:30:10.000Z')
+  expectSession(
+    {
+      ...state,
+      autonomousCycleLoop: {
+        ...state.autonomousCycleLoop,
+        lastPass: {
+          result: 'SUCCESS',
+          outcome: 'RECOVERED',
+          recoveryAction: 'WAITING',
+          observedAt: state.health.checkedAt ?? '',
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        },
+      },
+    },
+    'BLOCKED',
+    false,
+  )
+})
 
 test('equity admission uses the later of the first completed minute and submission opening', () => {
   const state = sessionState('2026-10-01T13:45:00.000Z')

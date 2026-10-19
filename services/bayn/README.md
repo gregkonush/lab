@@ -30,7 +30,8 @@ a profitable strategy or calibrated return forecast.
 
 For flat PAPER accounts, the same reconciled daily-loss and all-time drawdown limits also run before market-data
 reads and Jev batch admission. `ACCOUNT_PROTECTION` readiness names the existing limit that prevents an entry;
-it does not create a model abstention or a risk-approved order. Position management and reducing exits continue
+the execution-session status and metric report `BLOCKED`, not an input outage. It does not create a model
+abstention or a risk-approved order. Position management and reducing exits continue
 through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
 research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
 

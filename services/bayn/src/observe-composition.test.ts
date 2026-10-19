@@ -6739,6 +6739,7 @@ test.each([
   }
   let snapshots = 0
   let batches = 0
+  let calendarReads = 0
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(evaluatedAt))
@@ -6777,7 +6778,13 @@ test.each([
         ),
       )
     }).pipe(
-      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      (program) =>
+        provideDecisionServices(program, marketData([]), (query) => {
+          calendarReads++
+          return entry.excess > 0n
+            ? Effect.die('A protected entry must not request the calendar')
+            : calendarRead([])(query)
+        }),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -6793,11 +6800,13 @@ test.each([
       })
     expect(snapshots).toBe(0)
     expect(batches).toBe(0)
+    expect(calendarReads).toBe(0)
   } else {
     expect(Result.isSuccess(result)).toBe(true)
     if (Result.isSuccess(result)) expect(result.success.riskBlock).toBeUndefined()
     expect(snapshots).toBeGreaterThan(0)
     expect(batches).toBeGreaterThan(0)
+    expect(calendarReads).toBeGreaterThan(0)
   }
 })
 
