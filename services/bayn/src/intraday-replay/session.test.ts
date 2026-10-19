@@ -156,6 +156,7 @@ test('unavailable decision evidence is counted separately from lifecycle waits a
 test('expected warmup, valid no-trade and lifecycle waits preserve complete decision coverage', async () => {
   const observations: RetainedAutonomousCyclePassObservation[] = [
     ...[
+      DecisionReadinessReason.AccountProtection,
       DecisionReadinessReason.LookbackWarmup,
       DecisionReadinessReason.NoEligibleCandidate,
       DecisionReadinessReason.SignalWindowObserved,
@@ -197,7 +198,12 @@ test('expected warmup, valid no-trade and lifecycle waits preserve complete deci
     }).pipe(Effect.provide(TestClock.layer())),
   )
   expect(outcome.unavailableDecisionPassCount).toBe(0)
-  expect(outcome.readinessCounts).toEqual({ LOOKBACK_WARMUP: 1, NO_ELIGIBLE_CANDIDATE: 1, SIGNAL_WINDOW_OBSERVED: 1 })
+  expect(outcome.readinessCounts).toEqual({
+    ACCOUNT_PROTECTION: 1,
+    LOOKBACK_WARMUP: 1,
+    NO_ELIGIBLE_CANDIDATE: 1,
+    SIGNAL_WINDOW_OBSERVED: 1,
+  })
 })
 
 test('UTC reporting windows preserve the pending production poll after measured cleanup', async () => {

@@ -13,6 +13,7 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
+import { buildObserveCycleDecision, loadObserveRiskPolicy } from './observe-composition/decision-builder'
 import { JevPositionStore } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -6715,4 +6716,140 @@ test('entry expiry during reconciliation remains a non-dispatchable lifecycle re
       readiness: { reason: DecisionReadinessReason.NoEligibleCandidate },
     })
   expect(snapshots).toBe(0)
+})
+
+test.each([
+  { field: 'peakEquityMicros', limit: 'maxDrawdownMicros', reason: 'DRAWDOWN_EXCEEDED', excess: 1n },
+  { field: 'dayStartEquityMicros', limit: 'maxDailyLossMicros', reason: 'DAILY_LOSS_EXCEEDED', excess: 1n },
+  { field: 'peakEquityMicros', limit: 'maxDrawdownMicros', reason: 'DRAWDOWN_EXCEEDED', excess: 0n },
+  { field: 'dayStartEquityMicros', limit: 'maxDailyLossMicros', reason: 'DAILY_LOSS_EXCEEDED', excess: 0n },
+] as const)('$reason entry protection retains the exact limit with $excess excess micros', async (entry) => {
+  const fixture = await executionLifecycleFixture()
+  const original = reconciliationResult(generationHash, Authority.Execution)
+  const boundary =
+    BigInt(original.brokerState.account.equityMicros) + BigInt(fixture.policy[entry.limit]) + entry.excess
+  const facts = {
+    ...original,
+    riskContext: {
+      ...original.riskContext,
+      dayStartEquityMicros:
+        entry.field === 'dayStartEquityMicros' ? boundary.toString() : original.riskContext.dayStartEquityMicros,
+      peakEquityMicros: boundary.toString(),
+    },
+  }
+  let snapshots = 0
+  let batches = 0
+  let calendarReads = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* Effect.result(
+        buildMutationShadowCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixture.preparation.executionModel,
+          policy: fixture.policy,
+          strategy: fixtureRuntime,
+          reconcile: Effect.succeed(facts),
+          intradayMarketData: {
+            ...fixture.input.intradayMarketData,
+            loadSnapshot: (query) => {
+              snapshots++
+              return fixture.input.intradayMarketData.loadSnapshot(query)
+            },
+          },
+        }).pipe(
+          Effect.mapError(decisionBuildError),
+          Effect.provideService(JevBatchStore, {
+            read: () => Effect.die('Unexpected batch read'),
+            pending: () => Effect.succeed([]),
+            begin: (plan) =>
+              Clock.currentTimeMillis.pipe(
+                Effect.map((now) => {
+                  batches++
+                  return {
+                    plan,
+                    result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), () => 'enter'),
+                  }
+                }),
+              ),
+            finish: () => Effect.die('Unexpected batch finish'),
+          }),
+        ),
+      )
+    }).pipe(
+      (program) =>
+        provideDecisionServices(program, marketData([]), (query) => {
+          calendarReads++
+          return entry.excess > 0n
+            ? Effect.die('A protected entry must not request the calendar')
+            : calendarRead([])(query)
+        }),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  if (entry.excess > 0n) {
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result))
+      expect(result.failure).toMatchObject({
+        failure: 'not-ready',
+        readiness: {
+          reason: DecisionReadinessReason.AccountProtection,
+          message: expect.stringContaining(entry.reason),
+        },
+      })
+    expect(snapshots).toBe(0)
+    expect(batches).toBe(0)
+    expect(calendarReads).toBe(0)
+  } else {
+    expect(Result.isSuccess(result)).toBe(true)
+    if (Result.isSuccess(result)) expect(result.success.riskBlock).toBeUndefined()
+    expect(snapshots).toBeGreaterThan(0)
+    expect(batches).toBeGreaterThan(0)
+    expect(calendarReads).toBeGreaterThan(0)
+  }
+})
+
+test('account drawdown does not suppress read-only strategy observations', async () => {
+  const fixture = await executionLifecycleFixture()
+  const original = reconciliationResult(generationHash, Authority.Observe)
+  const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+  let snapshots = 0
+  const result = await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(evaluatedAt))
+      return yield* Effect.result(
+        buildObserveCycleDecision({
+          authorityGenerationHash: generationHash,
+          cycle,
+          executionModel: fixture.preparation.executionModel,
+          policy,
+          strategy: fixtureRuntime,
+          reconcile: Effect.succeed({
+            ...original,
+            riskContext: {
+              ...original.riskContext,
+              peakEquityMicros: (
+                BigInt(original.brokerState.account.equityMicros) +
+                BigInt(policy.maxDrawdownMicros) +
+                1n
+              ).toString(),
+            },
+          }),
+          intradayMarketData: {
+            ...fixture.input.intradayMarketData,
+            loadSnapshot: (query) => {
+              snapshots++
+              return fixture.input.intradayMarketData.loadSnapshot(query)
+            },
+          },
+        }),
+      )
+    }).pipe(
+      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+  expect(Result.isSuccess(result)).toBe(true)
+  expect(snapshots).toBeGreaterThan(0)
 })
