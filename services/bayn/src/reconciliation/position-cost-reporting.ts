@@ -35,10 +35,11 @@ export const positionCostAnchor = (
   const sourceQuantity = BigInt(anchor.projectedQuantityAtoms)
   const sourceNotional = sources.reduce((sum, t) => sum + BigInt(t.quantityAtoms) * BigInt(t.priceAtoms), 0n)
   const divisor = sourceQuantity * 1_000_000_000_000n
-  if (
-    (sourceNotional * BigInt(anchor.observedQuantityAtoms) * 2n + divisor) / (divisor * 2n) !==
-    BigInt(anchor.observedCostMicros)
-  )
+  const averageAtoms = (sourceNotional * 2n + sourceQuantity) / (sourceQuantity * 2n)
+  const weightedCost = (sourceNotional * BigInt(anchor.observedQuantityAtoms) * 2n + divisor) / (divisor * 2n)
+  const reportedAverageCost =
+    (averageAtoms * BigInt(anchor.observedQuantityAtoms) + 500_000_000_000n) / 1_000_000_000_000n
+  if (weightedCost !== BigInt(anchor.observedCostMicros) && reportedAverageCost !== BigInt(anchor.observedCostMicros))
     return null
   const firstSourceAt = sources.reduce((first, t) => (t.occurredAt < first ? t.occurredAt : first), anchor.observedAt)
   const subsequent = transactions.filter(

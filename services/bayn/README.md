@@ -73,7 +73,8 @@ After a partial crypto disposal, reconciliation also reproduces the broker's wei
 native entry fills and verified coin-fee accrual. The pre-disposal broker basis must reproduce from those fill prices,
 and every later disposal must reproduce the remaining native quantity and posted cost. The reported average and basis
 must match that acquisition calculation exactly. This accounts for per-fill rounding without a monetary tolerance or
-changes to immutable ledger amounts.
+changes to immutable ledger amounts. The calculation retains the original fill precision and reproduces rounded
+nine-decimal broker averages before rounding the reported remaining cost to micros.
 
 Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
 including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,

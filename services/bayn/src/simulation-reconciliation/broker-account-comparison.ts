@@ -20,6 +20,26 @@ export interface PositionComparison {
   readonly discrepancies: readonly DiscrepancyInput[]
 }
 
+const matchesReportedBasis = (input: {
+  readonly acquisitionQuantity: bigint
+  readonly acquisitionNotional: bigint
+  readonly quantity: bigint
+  readonly averagePriceMicros: bigint
+  readonly costMicros: bigint
+}): boolean => {
+  const { acquisitionQuantity, acquisitionNotional, quantity, averagePriceMicros, costMicros } = input
+  const averageAtoms = (acquisitionNotional * 2n + acquisitionQuantity) / (acquisitionQuantity * 2n)
+  const averageMicros = (acquisitionNotional * 2n + acquisitionQuantity * 1000n) / (acquisitionQuantity * 2000n)
+  const divisor = acquisitionQuantity * 1_000_000_000_000n
+  const weightedCost = (acquisitionNotional * quantity * 2n + divisor) / (divisor * 2n)
+  const atomAverageCost = (averageAtoms * quantity + 500_000_000_000n) / 1_000_000_000_000n
+  const microAverageCost = (averageMicros * quantity + 500_000_000n) / 1_000_000_000n
+  return (
+    (averagePriceMicros === averageMicros && (costMicros === weightedCost || costMicros === microAverageCost)) ||
+    (averagePriceMicros === (averageAtoms + 500n) / 1000n && costMicros === atomAverageCost)
+  )
+}
+
 const comparePosition = (
   snapshot: ReconciliationSnapshot,
   observed: HashMap.HashMap<string, Position>,
@@ -76,11 +96,13 @@ const comparePosition = (
           expectedCost > 0n &&
           anchorQuantity >= observedQuantity &&
           anchorCost > 0n &&
-          (anchorCost * 2n + anchorQuantity * 1000n) / (anchorQuantity * 2000n) === averagePrice &&
-          ((anchorCost * observedQuantity * 2n + anchorQuantity * 1_000_000_000_000n) /
-            (anchorQuantity * 2_000_000_000_000n) ===
-            observedCost ||
-            (averagePrice * observedQuantity + 500_000_000n) / 1_000_000_000n === observedCost)
+          matchesReportedBasis({
+            acquisitionQuantity: anchorQuantity,
+            acquisitionNotional: anchorCost,
+            quantity: observedQuantity,
+            averagePriceMicros: averagePrice,
+            costMicros: observedCost,
+          })
         return pipe(
           Result.all({
             quantity: compareValue(

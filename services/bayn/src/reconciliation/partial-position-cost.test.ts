@@ -219,6 +219,22 @@ test('requires the complete entry and coin-debit evidence for partial-exit repor
   expect(cashMismatch.comparison.metrics.cashDifferenceMicros).toBe('-1')
 })
 
+test('reproduces a nine-decimal broker average before rounding the remaining position basis', () => {
+  const input = partialExit([['78451390064', '105300000000']])
+  expect(input.projectedPositions[0]?.costBasisMicros).toBe('10897632132')
+  const changed = {
+    ...input,
+    snapshot: {
+      ...input.snapshot,
+      positions: input.snapshot.positions.map((position) => ({
+        ...position,
+        costBasisMicros: '10897632131',
+      })),
+    },
+  }
+  expect(Result.getOrThrow(compareOpeningCash(changed)).comparison.discrepancies).toEqual([])
+})
+
 test('property: partial fill rounding preserves exact quantity and rejects unexplained broker costs', () => {
   checkProperty(
     'partial-position-cost-reporting',
@@ -233,7 +249,21 @@ test('property: partial fill rounding preserves exact quantity and rejects unexp
             position.costBasisMicros,
             input.projectedPositions[0]?.costBasisMicros,
             String((BigInt(position.averageEntryPriceMicros) * quantity + 500_000_000n) / 1_000_000_000n),
+            String((105_450_868_843n * quantity + 500_000_000_000n) / 1_000_000_000_000n),
           ])
+          const reportedAtNineDecimals = {
+            ...input,
+            snapshot: {
+              ...input.snapshot,
+              positions: [
+                {
+                  ...position,
+                  costBasisMicros: String((105_450_868_843n * quantity + 500_000_000_000n) / 1_000_000_000_000n),
+                },
+              ],
+            },
+          }
+          expect(Result.getOrThrow(compareOpeningCash(reportedAtNineDecimals)).comparison.discrepancies).toEqual([])
           for (const offset of [-1n, 1n]) {
             const changedCost = String(BigInt(position.costBasisMicros) + offset)
             if (known.has(changedCost)) continue
