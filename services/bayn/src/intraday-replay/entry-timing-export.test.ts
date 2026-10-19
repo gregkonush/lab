@@ -303,6 +303,16 @@ test('checks raw nanosecond containment before millisecond quantization', () => 
   expect(Result.isFailure(buildEntryTimingExport(f.input()))).toBeTrue()
 })
 
+test('requires readiness within its native cycle-pass clock while preserving the millisecond interval', () => {
+  const f = fixture()
+  const cyclePass = f.byName('bayn.execution.cycle-pass')
+  // Readiness is observed + 1 ms; the native millisecond interval ends just before observed + 2 ms.
+  cyclePass.startTimeUnixNano = String(f.observed + 2n * ms - 1n)
+  expect(Result.isSuccess(buildEntryTimingExport(f.input()))).toBeTrue()
+  cyclePass.startTimeUnixNano = String(f.observed + 2n * ms)
+  expect(Result.isFailure(buildEntryTimingExport(f.input()))).toBeTrue()
+})
+
 test('rejects clock reversals and a selection annotation outside its actual planning span', () => {
   const f = fixture()
   const plan = f.byName('bayn.jev.batch-plan')

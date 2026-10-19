@@ -289,11 +289,12 @@ export const buildEntryTimingExport = (input: {
     const completedAt = intradayInstantNanos(target.evidence.batchResult.completedAt)
     const createdAt = intradayInstantNanos(decision.createdAt)
     const committedAt = BigInt(commit.span.endTimeUnixNano)
-    // Native annotations have millisecond resolution. Their millisecond interval must contain
-    // the planning event; compare every available span clock before commitment quantization.
+    // Native annotations have millisecond resolution. Their millisecond intervals must overlap
+    // their enclosing native spans; compare raw clocks before commitment quantization.
     if (
       inputAt < intradayInstantNanos(batch.observation.observedAt) ||
       inputAt > BigInt(planning.span.startTimeUnixNano) ||
+      inputAt + nanosPerMillisecond <= BigInt(parent.span.startTimeUnixNano) ||
       selectedAt < inputAt ||
       selectedAt + nanosPerMillisecond <= BigInt(planning.span.startTimeUnixNano) ||
       selectedAt > BigInt(planning.span.endTimeUnixNano) ||
