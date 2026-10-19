@@ -35,6 +35,15 @@ abstention or a risk-approved order. Position management and reducing exits cont
 through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
 research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
 
+After unfinished work is recovered or an expired unused lease is terminalized, an exact flat reconciliation
+preflight can hold entry admission before creating another cycle. The existing daily-loss and drawdown comparisons
+still permit equality. This cycle-free `ADMISSION_WAITING` result binds the authority generation and update,
+reconciliation, account trading date and earliest broker-evidence expiry. Public execution readiness reports
+`BLOCKED` only while that proof still matches the current account state; an older closed cycle cannot hide it.
+Missing or expired preflight evidence follows the existing admission and decision checks. The check adds no
+database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
+cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
+
 Migration 125 rejects new v11 authority generations after terminal cycles, flat inventory, settled orders, complete
 accounting and fresh exact reconciliation. It clamps the prior PAPER authority for native OBSERVE recovery before a
 new protocol-bound activation; retained generations remain immutable audit evidence. No v11 execution fallback exists.

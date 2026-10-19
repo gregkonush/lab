@@ -90,6 +90,7 @@ import {
   resolveExecutionCycleCloseWindow,
   type ExecutionCycleCloseWindow,
 } from './execution-window'
+import { protectedAccountAdmission } from './account-admission'
 
 type RecoveredExecutionContext = {
   readonly preparation: ObserveStartupPreparation
@@ -1309,6 +1310,7 @@ export const runRecoveryFirstCyclePass = (
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
+  preflight?: ReconciliationPassResult,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     let cycle = yield* readUnfinishedMutationCycle(context)
@@ -1328,6 +1330,15 @@ export const runRecoveryFirstCyclePass = (
           return yield* terminalizeUnboundMutationCycle(cycle, terminalReason, observedAt)
       }
       if (capability._tag !== 'Mutation') return { outcome: 'WINDOW_CLOSED' as const, observedAt }
+      if (cycle === undefined) {
+        const protectedAdmission = protectedAccountAdmission(
+          preflight,
+          policy,
+          input.authorityGenerationHash,
+          observedAt,
+        )
+        if (protectedAdmission !== undefined) return protectedAdmission
+      }
       const result = yield* runAutonomousCyclePass(context, cycle)
       const continuation = selectCyclePassContinuation(result)
       if (continuation._tag === 'RETURN') return result

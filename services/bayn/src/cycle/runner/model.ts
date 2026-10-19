@@ -3,7 +3,8 @@ import { Data, Effect } from 'effect'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
 import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store'
-import type { CycleWaitingDetails, DecisionReadiness } from './readiness'
+import type { CycleWaitingDetails, DecisionReadiness, DecisionReadinessReason } from './readiness'
+import type { AdmissionProtectionEvidence } from './pass-observation'
 
 export type { CycleWaitReason } from './readiness'
 
@@ -34,6 +35,12 @@ export interface CycleRunContext<R = never> {
 }
 
 export type CycleRunResult =
+  | {
+      readonly outcome: 'ADMISSION_WAITING'
+      readonly observedAt: string
+      readonly readiness: DecisionReadiness & { readonly reason: DecisionReadinessReason.AccountProtection }
+      readonly admissionProtection: AdmissionProtectionEvidence
+    }
   | {
       readonly outcome: 'WINDOW_CLOSED'
       readonly observedAt: string

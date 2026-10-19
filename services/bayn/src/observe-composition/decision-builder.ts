@@ -67,11 +67,10 @@ import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
 import { reconciledStateHash } from '../reconciliation'
 import {
-  accountLossMicros,
+  accountEntryProtectionReasons,
   BrokerMode,
   decodePolicy,
   executionRiskPolicySchemaVersion,
-  Reason as RiskReason,
   type Policy,
   type State,
   type EntryQuoteFreshness,
@@ -740,15 +739,14 @@ export const readObserveDecisionFacts = <R>(
       ),
     )
     if (requiredAuthority === Authority.Execution) {
-      const { dailyLossMicros, drawdownMicros } = accountLossMicros({
-        accountEquityMicros: BigInt(portfolio.brokerState.account.equityMicros),
-        dayStartEquityMicros: BigInt(reconciliation.riskContext.dayStartEquityMicros),
-        peakEquityMicros: BigInt(reconciliation.riskContext.peakEquityMicros),
-      })
-      const reasons = [
-        ...(dailyLossMicros > BigInt(input.policy.maxDailyLossMicros) ? [RiskReason.DailyLossExceeded] : []),
-        ...(drawdownMicros > BigInt(input.policy.maxDrawdownMicros) ? [RiskReason.DrawdownExceeded] : []),
-      ]
+      const reasons = accountEntryProtectionReasons(
+        {
+          accountEquityMicros: BigInt(portfolio.brokerState.account.equityMicros),
+          dayStartEquityMicros: BigInt(reconciliation.riskContext.dayStartEquityMicros),
+          peakEquityMicros: BigInt(reconciliation.riskContext.peakEquityMicros),
+        },
+        input.policy,
+      )
       if (reasons.length > 0) {
         const message = `Existing account limits block new entries: ${reasons.join(', ')}`
         return yield* new ObserveDecisionAwaitingSignal({

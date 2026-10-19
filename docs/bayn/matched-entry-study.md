@@ -144,6 +144,50 @@ comparison incomplete. Earlier captures without the producer cannot supply an im
 
 The [incremental-value audit](jev-incremental-audit.md) explains why selection and delay require separate arms.
 
+### Export a retained native timing witness
+
+`services/bayn/tools/entry-timing-export.ts` derives the existing v1 timing receipt from one independently retained
+Tempo trace query response and the exact committed native execution-decision document. It runs offline, reproduces
+the current native decision and momentum selection, and has no database, broker or model client.
+
+```sh
+bun services/bayn/tools/entry-timing-export.ts \
+  --trace /private/tempo-trace.json --trace-sha256 <pinned-original-trace-sha256> \
+  --decision /private/native-decision.json --decision-sha256 <pinned-original-decision-sha256> \
+  --source-revision <instrumented-worker-source-revision> \
+  --output /private/new-timing-directory
+```
+
+The trace must be the original JSON returned by Tempo's `/api/traces/<traceId>` query endpoint: a `batches` envelope,
+canonical protobuf base64 trace/span identifiers and string enums. This is a Tempo query representation, not the
+different OTLP/JSON ingestion wire format. The command validates both input hashes before decoding those same bytes;
+each input is limited to 16 MiB and the trace to 10,000 spans. It rejects malformed or duplicate identities and
+attributes. Preserve the private original files, capture/review seals and exporter code revision; hashes do not prove
+that a trace or native document was independently captured.
+
+The native planning and accepted binding must belong to the same successful cycle pass, source revision and worker
+instance. The command requires exactly one successful direct writer-fence child of that binding and one successful
+COMMIT child of the fence, matching the exact native decision, batch and result. Replays, rejected bindings, rollback,
+missing or ambiguous spans, foreign processes, inconsistent ancestry and conflicting clocks fail without a completed
+export. Valid native abstentions can supply timing; unavailable inference or an uncommitted batch cannot.
+Historical protocol documents are not rewritten and have no decoding fallback.
+
+All span chronology and containment checks use integer nanoseconds. The unchanged v1 study/receipt contract accepts
+millisecond UTC strings, so the acknowledged COMMIT end is rounded **up** to the next millisecond only after those
+checks. This adds from zero to less than one millisecond and never starts the delayed control earlier than the observed
+commit. Original input-readiness and deterministic-completion annotations retain their native millisecond values.
+
+The new directory has mode `0700`, with `timing.json` and `receipt.json` at `0600`. Existing destinations are never
+overwritten. The `bayn.jev-entry-timing-export.v1` receipt binds both input byte hashes, the timing-file hash, exact
+selected trace/span identities and nanosecond boundaries, and the exact commitment-rounding difference. A directory
+without a complete receipt is an incomplete attempt. The command prints only output receipt metadata.
+Pin the raw `timing.json` hash as the matched input's `evidenceHash`, and the original native-decision file hash as
+`decisionEvidenceHash`; copy the timing fields from that verified receipt into the inline witness.
+
+An export establishes only observed entry timing. It remains `UNQUALIFIED` and does not provide complete source,
+session or controller coverage, latency/capacity calibration, cost allocations or profitability evidence. Every
+existing matched-study inventory, registration, source, cost and completeness requirement remains in force.
+
 ## Run
 
 The command remains available for validated retained inputs and development fixtures. A new prospective matched-entry
