@@ -278,7 +278,9 @@ export const acquireBrokerObservationRuntime = (
               budget.nextPollNotBeforeMs,
             )
           }).pipe(
-            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
+            // A canceled predecessor must not invalidate a newer capture or a published result. Retain the
+            // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
+            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
             withObservedStage('bayn.broker.observation.poll', {
               attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),

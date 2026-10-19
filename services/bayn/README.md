@@ -88,10 +88,10 @@ above the inference-bound ceiling is rejected before decision construction and a
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v10 and trading-signal input v9 replace their executable predecessors. Migration 124 requires flat,
+Protocol v11 and trading-signal input v10 replace their executable predecessors. Migration 124 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting
-new Jev authority generations to v10. Historical generation rows remain immutable audit evidence. Create a new
-same-account PAPER mandate against a verified published v10 image through its sealed GitOps path after cutover; source success alone
+new Jev authority generations to v11. Historical generation rows remain immutable audit evidence. Create a new
+same-account PAPER mandate against a verified published v11 image through its sealed GitOps path after cutover; source success alone
 does not establish profitability or actual broker fills.
 
 Management requests report actual entry fill fees plus posted coin-fee inventory debits, estimated exit taker fees,
@@ -269,8 +269,10 @@ inactive while the observation object's delayed loop continues to retry.
 A polling invocation issues one journaled worker command. Its Restate invocation ID is claimed atomically in
 `broker_observation_captures` before any broker HTTP request. The claim survives worker replacement, later polls and
 source rotation, so a repeated or late invocation cannot repeat its capture. Publication and failure settle the claim
-atomically with their existing database update. Replaying an unfinished claim invalidates and fences its generation;
-a published lost result and a newer cut remain usable. A reserved quota window schedules a
+atomically with their existing database update. Replaying or interrupting an unfinished claim invalidates and fences
+only the matching account, source revision and capture generation. A published lost result and a newer cut remain
+usable, and interruption retains unknown HTTP quota debt. Trading mutations still invalidate the account-wide
+projection. A reserved quota window schedules a
 successor without sleeping inside the exclusive polling handler. Deployment activation waits for reserved quota
 before capturing the fresh snapshot required to start execution. The same database transaction reserves the account quota before HTTP. Publication or failure replaces that reservation
 with measured request debt in PostgreSQL, so losing the Restate result cannot repeat HTTP or discard outstanding quota.
@@ -367,8 +369,11 @@ the position; an already-overdue evaluation retains the normal evidence-wait cad
 not a guaranteed broker-flat time: fresh reconciliation, executable quotes, risk checks and partial-fill recovery
 remain required. Old retained completions keep their existing durable replay command order.
 The send boundary uses a live transport clock rather than a journaled time sample, so a restart before send
-persistence cannot add the old remaining delay again. An overdue successor is scheduled once with a one-millisecond
-minimum; actual delivery still depends on Restate availability and the next pass repeats the normal execution guards.
+persistence cannot add the old remaining delay again. Ordinary polling waits also subtract time already spent on
+completion projection and journaling from their persisted due-time budget. An overdue successor is scheduled once
+with a one-millisecond minimum; a clock regression cannot extend the original requested delay. Completion logs expose
+the requested and scheduled delays plus completion-to-schedule time. Actual delivery still depends on Restate
+availability and the next pass repeats the normal execution guards.
 
 Alpaca's Trading/Paper API limit is [200 calls per minute per account](https://alpaca.markets/support/usage-limit-api-calls).
 Market-data subscriptions have separate limits. The cache preserves response rate-limit headers. A successful cut
@@ -945,10 +950,10 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v3`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v4`. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
-precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v3 trading receipt
+precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v4 trading receipt
 is unchanged. `operatingCostCoverage` remains `INCOMPLETE` until invoice and other operating-cost evidence exists;
 tariff estimates cannot establish fully costed profitability.
 
@@ -1281,12 +1286,12 @@ Without that option, the command evaluates account history, which may span retir
 An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
 Native-only account history does not. A native scope without completed executions remains unqualified; successful
 configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v3`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command emits `bayn.forward-performance-report.v4`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
 `INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
 change the immutable per-generation receipt schema.
-Position episode evidence uses `bayn.position-episode-evidence.v3`. It replays gross fills together with posted,
+Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
 Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
@@ -1294,6 +1299,26 @@ the existing generation-scoped financial position count retains its current mean
 Missing coin-fee history, unmatched activities with only a trading date, ambiguous ordering, or inconsistent quantities
 leave episode counts `UNDETERMINED`. Fee receipt allocation does not establish an individual trade's origin.
 Measured episode counts do not remove financial settlement uncertainty or qualify profitability.
+
+Measured evidence includes `completed` position outcomes and `bySymbol` aggregates for complete episodes wholly in
+the selected authority generation. Cumulative account history establishes their boundaries, not the report's scope. Each completed outcome retains
+its opening and closing transaction IDs, actual first/last fill timestamps, elapsed holding time, buy/sell fill counts,
+buy notional, both-sided turnover and gross realized P&L. Partial fills remain one entry-to-flat episode; re-entry starts
+a new episode. Inherited and open positions do not enter these completed-outcome statistics. Holding time uses the
+original fill instants, including multi-hour and cross-date exits; no current policy deadline is imposed on history.
+Per-symbol gross win/loss/flat counts, worst episode and holding distributions expose loss concentration and churn
+without treating fill rows as separate trades or selecting a profitable subset after the fact.
+
+Per-episode cost attribution is deliberately narrower than the account fee bridge. Crypto outcomes report
+`ATTRIBUTED_ACCRUALS` only when every buy and sell maps uniquely to a posted native coin/cash accrual and each accrual
+belongs wholly to that episode. Fill fees and those accrual expenses are summed once; missing, malformed or pooled
+source linkage leaves per-episode net P&L null. `netPnlAfterAttributedCostsMicros` subtracts only those attributed costs.
+Final broker activity adjustments are excluded, final execution-cost coverage remains `UNDETERMINED`, and all-in
+profit remains null. Receipt matching never charges the same observed debit a second time. Equity broker activities
+lack the required per-position source attribution, so their per-episode net figures remain null. An asset-level
+after-attributed-cost total is emitted only when every completed episode has that attribution. These diagnostics
+do not allocate residual account fees, mark open inventory, assign operating costs or change financial receipt hashes.
+They run in the existing independent forward-performance command with its existing evidence reads, outside trading.
 
 The offline regression below constructs a synthetic `0.03305` ETH buy, `0.032967375` ETH sell and observed
 `0.000082625` ETH debit. It proves the reporting arithmetic only; it is not account or profitability evidence:
