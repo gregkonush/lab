@@ -81,6 +81,7 @@ const classifyAdvance = ({ observation, result }: AdvancePass): UnhashedAdvanceO
   }
   if (
     observation.outcome === 'WAITING' ||
+    observation.outcome === 'ADMISSION_WAITING' ||
     (result?.outcome === 'RECOVERED' && result.action === 'WAITING') ||
     observation.recoveryAction === 'WAITING'
   ) {
@@ -127,6 +128,9 @@ const hashOutcome = (
             ...(observation.recoveryAction === undefined ? {} : { recoveryAction: observation.recoveryAction }),
             ...(observation.waitReason === undefined ? {} : { waitReason: observation.waitReason }),
             ...(observation.readiness === undefined ? {} : { readiness: observation.readiness }),
+            ...(observation.admissionProtection === undefined
+              ? {}
+              : { admissionProtection: observation.admissionProtection }),
           }
         : {
             result: observation.result,
