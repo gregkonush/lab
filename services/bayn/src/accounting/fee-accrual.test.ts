@@ -35,6 +35,27 @@ const cash = {
   sourceTrades: [{ transactionId: 'd'.repeat(64), quantityAtoms: '32967375', priceAtoms: '2410100000000' }],
 }
 
+test('values a later buy-fee cohort against the existing weighted inventory', () => {
+  const input = {
+    ...coin,
+    symbol: 'SOL/USD',
+    projectedQuantityAtoms: '181888126111',
+    observedQuantityAtoms: '181794608107',
+    projectedCostMicros: '19180256218',
+    observedCostMicros: '19170394666',
+    sourceTrades: [
+      { transactionId: 'c'.repeat(64), quantityAtoms: '697183700', priceAtoms: '105429000000' },
+      { transactionId: 'd'.repeat(64), quantityAtoms: '13921000000', priceAtoms: '105400000000' },
+      { transactionId: 'e'.repeat(64), quantityAtoms: '27890000000', priceAtoms: '105400000000' },
+    ],
+  }
+  const result = Result.getOrThrow(prepareFeeAccrual(input, 7001))
+  expect(result.coinQuantityAtoms).toBe('93518004')
+  expect(result.expenseMicros).toBe('9861552')
+  expect(Result.isFailure(prepareFeeAccrual({ ...input, observedCostMicros: '19170394656' }, 7001))).toBe(true)
+  expect(Result.isFailure(prepareFeeAccrual({ ...input, observedQuantityAtoms: '181781855648' }, 7001))).toBe(true)
+})
+
 test('property: native crypto coin fees conserve observed inventory and replay the same ledger identity', () => {
   checkProperty(
     'crypto-coin-fee-conservation',
