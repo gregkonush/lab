@@ -146,7 +146,11 @@ describe('Jev trading signal input', () => {
     expect(state.candidate.eligible).toBeUndefined()
     expect(state.candidate.rank).toBeUndefined()
     expect(state.news).toBeUndefined()
-    expect(request.request.questions['setup_quality']?.type).toBe('score')
+    expect(Object.keys(request.request.questions)).toEqual(['action'])
+    expect(request.request.questions['action']?.type).toBe('choice')
+    expect(state.task.horizonMinutes).toBe(15)
+    expect(state.relativeSignals.lookbackMinutes).toBeGreaterThan(0)
+    expect(state.relativeSignals.horizonMinutes).toBeUndefined()
   })
 
   test('retains contradictory signals for Jev instead of filtering through the old momentum policy', () => {

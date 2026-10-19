@@ -84,9 +84,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31"
+              value: "1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b"
+              value: "3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY

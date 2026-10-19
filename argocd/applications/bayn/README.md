@@ -173,13 +173,13 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v10`, `bayn.jev.setup-action.behavior.v1`, batch v4 and the
+The active implementation uses `bayn.jev.protocol.v11`, `bayn.jev.focused-action.behavior.v1`, batch v4 and the
 pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
 account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
 action selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
-Migration 123 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
-rotates the previous PAPER generation through native OBSERVE recovery before a new v10 mandate can activate.
-The current strategy protocol hash is `48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d`.
+Migration 124 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
+rotates the previous PAPER generation through native OBSERVE recovery before a new v11 mandate can activate.
+The current strategy protocol hash is `9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7`.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -559,7 +559,7 @@ up to 30 minutes of actual context, expose gaps, and require fresh quotes and th
 
 Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
 settled orders, fresh exact reconciliation and complete fill accounting. The current hard cutover uses migration
-123 and the v10 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
+124 and the v11 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
 The broker account and order-risk limits remain the same.
 
 Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
