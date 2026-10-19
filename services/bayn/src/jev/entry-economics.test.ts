@@ -17,7 +17,7 @@ test('setup selection asks the model for its setup action without a second econo
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(request.request.questions['net_economics']).toBeUndefined()
   expect(request.request.questions['action']?.instructions).toBe(
-    'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
+    'Given `candidate`, `benchmark` and `relativeSignals`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Assess the setup from the supplied trading signals; code separately checks permission, sizing and risk.',
   )
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
