@@ -183,7 +183,8 @@ conservative entry/exit fees and execution allowance. These development paramete
 Migration 126 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It retires unused admissions and rotates prior PAPER authority through native OBSERVE recovery.
 The current strategy protocol hash is `b58904422ea4b1e53026d6bbb28bd1b0eae5468b60175ecfc639d43db3a6fba8`.
-The reviewed source removes the obsolete encrypted mandate and its lineage bindings and requests OBSERVE.
+The reviewed source carries a newly sealed same-account PAPER mandate and all three runtime build lineages.
+Its authored activation binds the published v13 image; strategy and risk-policy hashes must match before activation.
 
 Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
 then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
@@ -591,9 +592,9 @@ maximum holding time and protection interval. Portfolio reconstruction verifies 
 accounted fills and fresh reconciliation. Price exits reproduce their native liquidation quote and predicate;
 `JEV_EXIT` cannot enter the active exit codec. Offline research comparisons remain non-executable.
 
-The reviewed source requests OBSERVE without the obsolete prior-strategy encrypted mandate. After the immutable
-image is published and reconciled through Kargo, seal the same-account PAPER mandate with the reviewed sandbox risk policy against that verified
-v13 image through the existing rotation procedure. Restore its request, identity annotation and all three build
-lineages together. Migration 126 must pass before activation. Preserve account losses, peak equity and turnover.
+The cutover first requests OBSERVE without the obsolete prior-strategy mandate. After its immutable image is
+published and reconciled through Kargo, the reviewed source restores a same-account PAPER mandate under the current
+sandbox risk policy. Rotate its request, identity annotation and all three runtime build lineages together.
+Migration 126 must pass before activation. Preserve account losses, peak equity and turnover.
 Verify native recovery, sealed entry policies, actual broker fills, partial exits, ledger receipts and reconciliation.
 The entry policy is application-managed; it cannot trigger during a controller outage and does not establish a profitable entry strategy.
