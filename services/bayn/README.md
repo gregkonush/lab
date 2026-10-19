@@ -529,7 +529,9 @@ bounding the target; the target weight is applied once. Exposure-reducing closes
 The order cap reserves its full price allowance before sizing because it checks executable notional. Symbol, gross
 and net exposure caps retain their reference-price basis. Buy-limit rounding stays inside the reserved allowance.
 The reviewed sandbox mandate selects a $1,000,000 daily gross-turnover budget through its exact immutable policy hash.
-Retained sandbox mandates stay at $200,000 until explicitly rebound. Live and unspecified environments remain at $200,000.
+The sandbox cumulative drawdown cap is $10,000; its daily loss cap stays $5,000. This permits the next PAPER experiment
+without resetting historical losses or peak equity. Retained original mandates stay at $200,000 turnover and $5,000
+drawdown until explicitly rebound. Live and unspecified environments remain at $200,000 turnover and $5,000 drawdown.
 At $100,000 equity and a 20% target, the sandbox budget supports about 25 full-size round trips across the entry
 window. This is bounded research capacity, not a profitability assumption. All other sizing, cost and risk checks
 are unchanged. The paired research request binds the new strategy and policy hashes; historical requests and

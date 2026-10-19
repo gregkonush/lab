@@ -142,6 +142,8 @@ const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
     brokerEnvironment === BrokerEnvironment.Sandbox
       ? dollarsToMicros(1_000_000n)
       : observeRiskLimits.maxDailyTradedNotionalMicros,
+  maxDrawdownMicros:
+    brokerEnvironment === BrokerEnvironment.Sandbox ? dollarsToMicros(10_000n) : observeRiskLimits.maxDrawdownMicros,
 })
 
 const loadExecutionRiskPolicyDataFirst = (

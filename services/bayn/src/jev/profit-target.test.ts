@@ -98,17 +98,17 @@ test('the entry target seals the exit policy and rejects a rehashed policy subst
 })
 
 test('property: positive targets preserve their net margin across fee steps and position sizes', () => {
+  const base = held('BTC/USD')
+  const first = base.entryFills[0]
+  if (first === undefined) throw new Error('Expected an entry fill')
   checkProperty(
     'native-profit-target',
     fc.property(
       fc.bigInt({ min: quantityScale, max: 1000n * quantityScale }),
       fc.integer({ min: 1, max: 500 }),
       (quantity, profitBps) => {
-        const base = held('BTC/USD')
         const debit = (quantity * 25n + 9999n) / 10000n
         const received = quantity - debit
-        const first = base.entryFills[0]
-        if (first === undefined) throw new Error('Expected an entry fill')
         const protocol = { ...defaultJevProtocolDocument, profitTargetNetBps: profitBps }
         const portfolio = {
           ...base,
