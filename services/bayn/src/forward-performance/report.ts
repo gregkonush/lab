@@ -7,7 +7,7 @@ import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { measurePositionEpisodes, type PositionEpisodeEvidence } from './position-episodes'
 
 export interface ForwardPerformanceReport {
-  readonly schemaVersion: 'bayn.forward-performance-report.v3'
+  readonly schemaVersion: 'bayn.forward-performance-report.v4'
   readonly receipt: ForwardPerformanceReceipt
   readonly positionEpisodes: PositionEpisodeEvidence
   readonly inferenceExpenses: readonly ForwardInferenceExpenseSession[]
@@ -31,7 +31,7 @@ export const makeForwardPerformanceReport = (
       ),
     )
     const material = {
-      schemaVersion: 'bayn.forward-performance-report.v3' as const,
+      schemaVersion: 'bayn.forward-performance-report.v4' as const,
       receipt,
       positionEpisodes,
       inferenceExpenses,

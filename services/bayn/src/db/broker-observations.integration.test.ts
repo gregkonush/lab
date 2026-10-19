@@ -371,6 +371,58 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.read).toEqual(snapshot(current))
       }),
     ))
+
+  test('interrupting the owned unfinished capture fences its old cut without releasing unknown HTTP debt', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const previous = yield* claim(store)
+        yield* advanceToTicket(previous)
+        expect(yield* store.publish(previous, snapshot(previous), 0)).toBe(true)
+        const [{ deadline }] = yield* sql<{
+          deadline: number
+        }>`SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision + 180000 AS deadline`
+        if (deadline === undefined) throw new Error('Missing database clock')
+        const reservedUntil = Math.ceil(deadline)
+        const captureId = randomUUID()
+        const captured = yield* store.begin(captureId, reservedUntil)
+        if (captured.status !== BrokerObservationClaimStatus.Reserved) throw new Error('Missing capture')
+        yield* advanceToTicket(captured.ticket)
+        expect(yield* store.read).toEqual(snapshot(previous))
+        yield* store.interrupt(captureId)
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.publish(captured.ticket, snapshot(captured.ticket), 0)).toBe(false)
+        expect(yield* store.begin(randomUUID(), reservedUntil)).toEqual({
+          status: BrokerObservationClaimStatus.QuotaWait,
+          nextPollNotBeforeMs: reservedUntil,
+        })
+      }),
+    ))
+
+  test.each(['newer-capture', 'newer-revision', 'published', 'unclaimed'] as const)(
+    'an interrupted poll preserves the successful %s observation',
+    async (change) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          yield* store.activate(0)
+          const captureId = randomUUID()
+          const predecessor = yield* claim(store, captureId)
+          let currentStore = store
+          let current = predecessor
+          if (change === 'newer-revision') {
+            currentStore = makeBrokerObservationStore(sql, accountId, 'f'.repeat(40), 60_000, cacheFixture.cache)
+            yield* currentStore.activate(0)
+          }
+          if (change === 'newer-capture' || change === 'newer-revision') current = yield* claim(currentStore)
+          yield* advanceToTicket(current)
+          expect(yield* currentStore.publish(current, snapshot(current), 0)).toBe(true)
+          yield* store.interrupt(change === 'unclaimed' ? randomUUID() : captureId)
+          expect(yield* currentStore.read).toEqual(snapshot(current))
+          expect(yield* currentStore.readState).toEqual(observedBrokerState(snapshot(current)))
+        }),
+      ),
+  )
+
   test('latest poll failure closes a previously fresh projection and cannot overwrite a newer poll', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {
