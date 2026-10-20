@@ -138,7 +138,9 @@ export const prepareFeeActivities = (
     const seen = new Set<string>()
     const coinAdjustments = new Map<string, { quantity: bigint; cost: bigint }>()
     const prepared = yield* Effect.forEach(
-      [...observed].sort((a, b) => a.value.activityId.localeCompare(b.value.activityId)),
+      [...observed].sort(
+        (a, b) => a.value.date.localeCompare(b.value.date) || a.value.activityId.localeCompare(b.value.activityId),
+      ),
       (observation) =>
         Effect.gen(function* () {
           const readEvidence = yield* fromResult(

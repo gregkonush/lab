@@ -1232,11 +1232,19 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'delayed', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = [
+    'crypto',
+    'delayed',
+    'ordered',
+    'regulatory',
+    'retained',
+    'partial',
+    'overreleased',
+  ] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto' && scenario !== 'delayed'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'delayed' && scenario !== 'ordered'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1695,6 +1703,64 @@ describePostgres('PostgreSQL execution persistence', () => {
           expect(journalControl.postCount).toBe(finalPosts)
           return
         }
+        if (scenario === 'ordered') {
+          const laterAt = '2026-08-31T14:31:00.000Z'
+          const laterBuy = makeFill('later-buy', OrderSide.Buy, '33050000', '2425310000', laterAt)
+          const laterOrder = yield* retain(laterBuy)
+          const sourceHash = hash('later-fee-position')
+          const laterPosition = { ...position, observedAt: laterAt }
+          const laterPositionEvent = {
+            ...positionInput,
+            sourceEventId: `position:${sourceHash}:${laterAt}:ETH/USD`,
+            contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash, position: laterPosition })),
+            occurredAt: laterAt,
+            observedAt: laterAt,
+            position: laterPosition,
+          }
+          const laterPositions = yield* events.ingestPositions({
+            ...positionSnapshot(sourceHash, [laterPositionEvent]),
+            observedAt: laterAt,
+          })
+          const laterCash = (BigInt(cashAccount.cashMicros) - 80156496n).toString()
+          const laterAccount = {
+            ...acct,
+            cashMicros: laterCash,
+            equityMicros: (BigInt(laterCash) + 79956104n).toString(),
+            observedAt: laterAt,
+          }
+          const laterAccountReceipt = yield* events.ingest({
+            ...opening,
+            sourceEventId: 'later-buy-account',
+            contentHash: Result.getOrThrow(canonicalHashV1Result(laterAccount)),
+            occurredAt: laterAt,
+            observedAt: laterAt,
+            account: laterAccount,
+          })
+          const laterValuation = yield* valuations.value({
+            accountEventId: laterAccountReceipt.eventId,
+            positionSnapshotId: laterPositions.snapshotId,
+          })
+          yield* fence.transaction(
+            prepareObservedCoinFees(
+              sql,
+              {
+                ...snapshot,
+                account: laterAccount,
+                accountEventId: laterAccountReceipt.eventId,
+                positions: [laterPosition],
+                positionsObservedAt: laterAt,
+                positionSnapshotId: laterPositions.snapshotId,
+                orders: [laterOrder],
+                ordersObservedAt: laterAt,
+                fills: [laterBuy.fill],
+                valuation: laterValuation,
+                reconciledAt: laterAt,
+              },
+              config.tigerBeetle,
+            ),
+          )
+          yield* fence.transaction(postBrokerFeePlans(sql, journal(journalControl), accountId, config.tigerBeetle))
+        }
         const fees: Observed<FeeActivity>[] = [
           {
             value: {
@@ -1727,6 +1793,16 @@ describePostgres('PostgreSQL execution persistence', () => {
             },
           },
         ]
+        if (scenario === 'ordered') {
+          const first = fees[0]
+          if (first === undefined) throw new Error('Missing coin receipt')
+          fees[0] = { ...first, value: { ...first.value, activityId: 'z-earlier-coin-fee' } }
+          fees.push({
+            ...first,
+            value: { ...first.value, activityId: 'a-later-coin-fee', date: '2026-08-31' },
+            evidence: { ...first.evidence, observedAt: '2026-09-01T07:00:00.000Z' },
+          })
+        }
         if (scenario === 'delayed')
           fees.splice(
             0,
@@ -1774,6 +1850,14 @@ describePostgres('PostgreSQL execution persistence', () => {
             '2026-08-31',
             '2026-08-31',
           ])
+        if (scenario === 'ordered') {
+          const coinAccruals = (yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).filter(
+            (row) => row.data.kind === 'COIN',
+          )
+          expect(coinAccruals.map((row) => row.matched_coin_quantity_atoms)).toEqual(['82625', '82625'])
+          expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual([6046n])
+          return
+        }
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
