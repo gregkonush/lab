@@ -1,5 +1,5 @@
 import { jevProfitTargetCrossed } from './profit-target'
-import { maximumAllocatedBuyQuantities } from './entry-sizing'
+import { maximumFundedBuyQuantities } from './entry-sizing'
 import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
 import { jevMarketForCycle, jevCycleCandidates } from './markets'
@@ -298,7 +298,8 @@ export const compileJevEntry = (
     const planningTargetWeights = jevPlanningTargetWeights(decision)
     const quotePrices = yield* adverseQuotePrices(pricingSnapshot, symbols)
     const maximumBuyQuantityAtoms = {
-      ...(yield* maximumAllocatedBuyQuantities({
+      ...(yield* maximumFundedBuyQuantities({
+        plans: decision.exitPolicy.plans,
         askPriceMicros: quotePrices.askPriceMicros,
         targetWeights: planningTargetWeights,
         capitalMicros: decision.evidence.observation.portfolio.brokerState.account.equityMicros,
@@ -325,9 +326,6 @@ export const compileJevEntry = (
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )
-      const allocated = BigInt(maximumBuyQuantityAtoms[symbol] ?? '0')
-      const maximumQuantity = BigInt(plan.maximumQuantityAtoms)
-      maximumBuyQuantityAtoms[symbol] = (allocated < maximumQuantity ? allocated : maximumQuantity).toString()
       entryQuotes[symbol] = {
         eventAt: quote.eventAt,
         maximumAgeMs: jevEntryQuoteMaximumAgeMs(decision, quote.eventAt, pricingSnapshot.manifest.maximumQuoteAgeMs),

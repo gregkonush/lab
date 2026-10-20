@@ -64,7 +64,10 @@ regular-session eligibility again at final transmission.
 Nested Alpaca responses establish the generated child identities. Their account, parent, symbol, side, duration,
 prices and quantities are checked against the original intent. Children and their fills enter the same reconciliation
 and accounting path as ordinary orders. Partial take-profit fills reduce remaining stop coverage without repricing it.
-Posted coin fees and accounted protective disposals remain distinct inventory facts.
+Posted coin fees and accounted protective disposals remain distinct inventory facts. Once native protection fully
+exits the account, settled protective intents, receipts and fresh exact flat reconciliation complete the cycle and
+permit the next normal admission. Conditional price evidence hashes the sealed plan and current reconciliation;
+it does not fabricate a current executable quote.
 
 Before an application target, stop or deadline close, the controller cancels outstanding protective sells. A durable
 per-order cancellation command records that decision before the broker call and latches the exit. Ambiguous responses

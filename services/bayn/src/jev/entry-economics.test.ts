@@ -8,6 +8,7 @@ import { jevObservationForSnapshot, nativeJevDecisionEvidence, nativeJevFixture 
 import { JevPurpose } from './portfolio'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
+import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
 import { jevEntryEconomics } from './entry-economics'
 import { defaultJevProtocolDocument } from './protocol'
 
@@ -96,4 +97,40 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
       },
     ),
   )
+})
+
+test('a cheaper refreshed crypto ask preserves the funded cap used by durable reproduction', () => {
+  const end = '2026-10-19T15:00:00.000Z'
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      protocol: defaultJevProtocolDocument,
+      symbol: 'BTC/USD',
+      bidMicros: 99990000n,
+      askMicros: 100000000n,
+      capitalMicros: '100000000000',
+      sourceEndAt: end,
+      bars: Array.from({ length: 15 }, (_, index) => ({
+        symbol: 'BTC/USD',
+        eventAt: new Date(Date.parse(end) - (15 - index) * 60000).toISOString(),
+        open: 100,
+        close: 100,
+        high: 101,
+        low: 99,
+        final: true,
+      })),
+    }),
+  )
+  if (economics === null) throw new Error('Expected a funded synthetic setup')
+  const input = {
+    askPriceMicros: { 'BTC/USD': '99990000' },
+    targetWeights: { 'BTC/USD': economics.maximumTargetWeight },
+    capitalMicros: '100000000000',
+    precision: defaultJevProtocolDocument.executionModel.precision,
+  }
+  const allocated = Result.getOrThrow(maximumAllocatedBuyQuantities(input))
+  expect(BigInt(allocated['BTC/USD'] ?? '0')).toBeGreaterThan(BigInt(economics.exitPlan.maximumQuantityAtoms))
+  expect(
+    Result.getOrThrow(maximumFundedBuyQuantities({ ...input, plans: { 'BTC/USD': economics.exitPlan } }))['BTC/USD'],
+  ).toBe(economics.exitPlan.maximumQuantityAtoms)
+  expect(Result.isFailure(maximumFundedBuyQuantities({ ...input, plans: {} }))).toBe(true)
 })

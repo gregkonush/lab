@@ -13,7 +13,7 @@ import {
 import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { JevCandidatePlanStatus } from './jev/batch'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
@@ -1197,7 +1197,8 @@ const jevEntryEvidenceIssues = (
     document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
     document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
   ) {
-    const expected = maximumAllocatedBuyQuantities({
+    const expected = maximumFundedBuyQuantities({
+      plans: target.exitPolicy.plans,
       askPriceMicros: document.plannerInput.referencePrices.askPriceMicros,
       targetWeights: jevPlanningTargetWeights(target),
       capitalMicros: observation.portfolio.brokerState.account.equityMicros,
@@ -1209,7 +1210,7 @@ const jevEntryEvidenceIssues = (
       issues.push({
         path: ['plannerInput', 'executionTerms', 'maximumBuyQuantityAtoms'],
         issue:
-          'Jev entry quantity limits must reproduce the recorded capital, selected weights and instrument precision',
+          'Jev entry quantity limits must reproduce the recorded capital, selected weights, funded strategy ceiling and instrument precision',
       })
     for (const symbol of target.selectedSymbols) {
       const candidate = batchPlan.candidates.find((entry) => entry.symbol === symbol)

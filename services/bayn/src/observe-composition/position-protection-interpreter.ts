@@ -214,6 +214,21 @@ export const advancePositionProtection = (request: {
           } as const)
         : wait('PROTECTION_CANCEL_PENDING')
     }
+    if (action._tag === 'Complete') {
+      if (state.positions.some((position) => BigInt(position.quantityAtoms) !== 0n))
+        return yield* mutationRunnerError({
+          message: 'Native protection cannot complete with inventory outside its entry plan',
+          failure: 'contract',
+        })
+      if (
+        state.reconciliation.status !== 'EXACT' ||
+        !reconciliation.report.metrics.accountingExact ||
+        reconciliation.riskContext.unknownMutationCount !== 0 ||
+        state.unknownOrderCount !== 0
+      )
+        return wait('PROTECTION_AWAITING_RECONCILIATION')
+      return { _tag: 'Step', step: { _tag: 'Complete', observedAt } } as const
+    }
     if (action._tag === 'Block')
       return yield* mutationRunnerError({
         message: `Strategy protection blocked: ${action.reason}`,
@@ -263,6 +278,13 @@ export const advancePositionProtection = (request: {
         message: 'Conditional protection has no current authority evidence',
         failure: 'contract',
       })
+    const generation = yield* Effect.fromResult(
+      canonicalHashV1Result({
+        entryDecisionHash: document.contentHash,
+        reconciliationId: state.reconciliation.reconciliationId,
+        protection: protectionTerms,
+      }),
+    )
     const riskState: State = {
       ...facts.state,
       brokerMode: BrokerMode.Execution,
@@ -279,7 +301,8 @@ export const advancePositionProtection = (request: {
       dailyTradedNotionalMicros: reconciliation.riskContext.dailyTradedNotionalMicros,
       dayStartEquityMicros: reconciliation.riskContext.dayStartEquityMicros,
       peakEquityMicros: reconciliation.riskContext.peakEquityMicros,
-      marketDataHash: state.reconciliation.observedHash,
+      marketDataHash: generation,
+      executionMarketDataHash: generation,
       marketDataObservedAt: state.positionsObservedAt,
       // A conditional sell is priced against its sealed trigger, rather than the present spot price.
       referencePriceMicros: action.method === 'OCO' ? limit.toString() : plan.levels.stopPriceMicros,
@@ -290,18 +313,7 @@ export const advancePositionProtection = (request: {
       closeOnly: true,
       closeOnlyExpiresAt: request.closeExpiresAt,
     }
-    const {
-      entryQuote: _entryQuote,
-      executionMarketDataHash: _executionMarketDataHash,
-      ...conditionalState
-    } = riskState
-    const generation = yield* Effect.fromResult(
-      canonicalHashV1Result({
-        entryDecisionHash: document.contentHash,
-        reconciliationId: state.reconciliation.reconciliationId,
-        protection: protectionTerms,
-      }),
-    )
+    const { entryQuote: _entryQuote, ...conditionalState } = riskState
     const intent = yield* planExecutionIntent(
       {
         schemaVersion: intentPlanSchemaVersion,

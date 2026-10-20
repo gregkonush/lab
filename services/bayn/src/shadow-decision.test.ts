@@ -1,4 +1,4 @@
-import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { nativeJevFixture, nativeJevDecisionEvidence, nativeJevBatchResult } from './jev/native.test-support'
 import { makeJevObservation } from './jev/observation'
 import { decodeJevPortfolio, JevPurpose } from './jev/portfolio'
@@ -410,7 +410,8 @@ const fixture = (
       maximumBuyQuantityAtoms:
         compiledDecision.schemaVersion === 'bayn.jev-entry-target.v3'
           ? value(
-              maximumAllocatedBuyQuantities({
+              maximumFundedBuyQuantities({
+                plans: compiledDecision.exitPolicy.plans,
                 askPriceMicros,
                 targetWeights: jevPlanningTargetWeights(compiledDecision),
                 capitalMicros: broker.account.equityMicros,

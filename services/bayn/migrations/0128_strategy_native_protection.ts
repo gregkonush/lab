@@ -112,6 +112,19 @@ export default Effect.gen(function* () {
       OR (order_type = 'LIMIT' AND limit_price_micros IS NOT NULL AND stop_price_micros IS NULL AND notional_micros IS NULL)
       OR (order_type = 'STOP_LIMIT' AND limit_price_micros IS NOT NULL AND stop_price_micros > 0 AND notional_micros IS NULL)
     )`
+  yield* sql`DO $completion$
+    DECLARE
+      definition text := pg_get_functiondef('paper_cycle_completion_evidence_matches(text,text,timestamptz)'::regprocedure);
+      needle constant text := 'AND NOT (paper.ordered_intent_ids ? extra.intent_id)';
+    BEGIN
+      IF (length(definition) - length(replace(definition, needle, ''))) <> length(needle) THEN
+        RAISE EXCEPTION 'expected one extra-intent completion guard' USING ERRCODE = '55000';
+      END IF;
+      EXECUTE replace(definition, needle, needle || $guard$
+        AND NOT (extra.state = 'TERMINAL' AND extra.protection ->> '_tag' IN ('Oco','StopLimit')
+          AND extra.protection ->> 'entryDecisionHash' = decision.document ->> 'contentHash')
+      $guard$);
+    END $completion$`
   yield* sql`CREATE TABLE native_protection_cancel_commands (
     intent_id text NOT NULL, account_id text NOT NULL, broker_order_id text NOT NULL, requested_at timestamptz NOT NULL,
     PRIMARY KEY (intent_id, broker_order_id, requested_at),

@@ -7303,9 +7303,11 @@ test('cycle-free protection keeps reconciliation and projection checks on the ex
 })
 
 // Native orders remain owned by the same account controller, including after an entry parent settles.
-test.each([false, true])(
-  'native protection cancellation waits for reconciliation when broker outcome is unknown=%s',
-  async (unknown) => {
+test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
+  'native protection resolves cancellation or a completed disposal: %s',
+  async (mode) => {
+    const unknown = mode === 'unknown'
+    const flat = mode === 'filled' || mode === 'unaccounted'
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const decision = fixture.document.strategyDecision
@@ -7350,7 +7352,9 @@ test.each([false, true])(
         },
       ),
     )
-    const held = storedIntent(intent, IntentState.Acknowledged, observedAt)
+    const held = flat
+      ? storedIntent(intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
+      : storedIntent(intent, IntentState.Acknowledged, observedAt)
     const root = storedIntent(fixture.intent, IntentState.Terminal, observedAt, TerminalOutcome.Filled)
     const order: Order = {
       schemaVersion: 'bayn.order.v3',
@@ -7363,10 +7367,10 @@ test.each([false, true])(
       orderType: OrderType.StopLimit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: intent.quantityAtoms,
-      filledQuantityAtoms: '0',
+      filledQuantityAtoms: flat ? intent.quantityAtoms : '0',
       limitPriceMicros: intent.limitPriceMicros,
       stopPriceMicros: levels.stopPriceMicros,
-      status: OrderStatus.New,
+      status: flat ? OrderStatus.Filled : OrderStatus.New,
       observedAt,
     }
     const submit: MutationEvent = {
@@ -7408,7 +7412,12 @@ test.each([false, true])(
           document: fixture.document,
           protocol: currentIntradayProtocol,
           policy: fixture.policy,
-          reconciliation: reconciliationResultAt(observedAt, 0, 0, [], [order]),
+          reconciliation: (() => {
+            const facts = reconciliationResultAt(observedAt, 0, 0, [], [order])
+            return mode !== 'unaccounted'
+              ? facts
+              : { ...facts, report: { ...facts.report, metrics: { ...facts.report.metrics, accountingExact: false } } }
+          })(),
           capability: { _tag: 'Mutation', executionProgram: program },
           closeDue: false,
           closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
@@ -7439,7 +7448,18 @@ test.each([false, true])(
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(result._tag).toBe('PostMutationReconciliation')
-    expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
+    if (flat) {
+      expect(result).toEqual({
+        _tag: 'Step',
+        step:
+          mode === 'filled'
+            ? { _tag: 'Complete', observedAt }
+            : { _tag: 'Wait', observedAt, waitReason: 'PROTECTION_AWAITING_RECONCILIATION' },
+      })
+      expect(calls).toEqual([])
+    } else {
+      expect(result._tag).toBe('PostMutationReconciliation')
+      expect(calls).toEqual([`${intent.intentId}:${order.brokerOrderId}`])
+    }
   },
 )
