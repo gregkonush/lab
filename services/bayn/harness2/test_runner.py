@@ -65,7 +65,7 @@ class ResearchCLI:
         receipt = {
             "outcome": self.outcome,
             "responseText": content,
-            "factors": ["alpha001"],
+            "factors": ["alpha001"] if run.get("purpose") is None else [],
             "receiptHash": identity(run),
             "costPicoUsd": self.cost,
         }
@@ -83,6 +83,10 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(report["modelCalls"], 8)
             self.assertEqual(report["costPicoUsd"], "8000")
             self.assertEqual(report["qualification"], "UNQUALIFIED")
+            purposes = [request.get("purpose") for request in invoke.requests]
+            self.assertEqual(purposes.count(None), 4)
+            self.assertEqual(purposes.count("prompt-edit"), 3)
+            self.assertEqual(purposes.count("reflection"), 1)
             self.assertTrue(list((artifacts / "library").rglob("EXPERIENCE.md")))
             summaries = list((artifacts / "runs").rglob("summary.json"))
             self.assertEqual(len(summaries), 1)

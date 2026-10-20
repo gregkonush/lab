@@ -17,8 +17,11 @@ neither OpenCode nor Codex is launched.
 Every probe, editor, composer, and reflection request uses `bayn-research`. That command signs the exact run with
 the existing research approval key, submits through Restate, and verifies the receipt against the original SSE bytes.
 The existing research worker enforces its pinned Alpha-R1 serving identity and decoding policy, one in-flight model
-request, durable claims, deadlines, usage, allowed factor IDs, and expense projection. Editor and reflection responses
-must also contain a valid factor list. They additionally return the requested `<harness>` or experience tags.
+request, durable claims, deadlines, usage, and expense projection. Probes use the active `bayn.research-run.v1`
+factor-selection contract. Editors and reflection use `bayn.harness2-inference.v1` with an explicit `prompt-edit` or
+`reflection` purpose, bound into operator approval and the run identity. Their receipts contain no selected factors.
+Quoted factor-list tags in an edited prompt remain text. The editor must return exactly one bounded `<harness>` block;
+reflection uses the upstream experience format. Both roles retain the original complete response bytes.
 
 The study freezes one to four ordered tasks, 8–32 model-call reservations, and a 60–3,600-second wall-time budget.
 Each task contains an existing `bayn.research-run.v1` registration. Its original context must pass Bayn's validator
@@ -96,6 +99,9 @@ The research worker receives its existing Restate origin and 256 MiB of bounded 
 No additional credentials, database grants, broker access, or network permissions are introduced.
 
 Roll out through reviewed main, immutable image publication, `lab-delivery/bayn`, `kargo/bayn`, and Argo. Verify the
+additive migration 129 admits the two harness roles while preserving all existing immutable research evidence.
+The normal execution activation applies it before the research worker rolls out. No research database grant changes.
+Verify the
 exact deployed image and source, run one explicitly labeled engineering study through the installed command, inspect
 its native receipts and object-store artifacts, then repeat the completed study to verify no additional inference.
 Engineering fixtures establish transport and lifecycle behavior only. Real research still requires eligible original

@@ -178,10 +178,10 @@ class Calls:
             raise ValueError("Study differs from its retained registration")
         self.deadline = self.origin["startedAt"] + study["maximumWallSeconds"]
 
-    def call(self, task_id, label, prompt):
+    def call(self, task_id, label, prompt, purpose=None):
         with self.lock:
             scope = f"{task_id}/{label}"
-            prompt_hash = identity(prompt)
+            prompt_hash = identity({"prompt": prompt, "purpose": purpose})
             slots = [
                 self.storage.read(f"calls/{i}.json")
                 for i in range(self.study["maximumCalls"])
@@ -209,6 +209,10 @@ class Calls:
                     featureCutoff=instant(now),
                     deadlineAt=instant(min(now + 179, self.deadline)),
                 )
+                if purpose is not None:
+                    run.update(
+                        schemaVersion="bayn.harness2-inference.v1", purpose=purpose
+                    )
                 if (
                     not prompt.strip()
                     or len(prompt) > 100000
@@ -373,14 +377,12 @@ class Editor(Proposer):
         )
         instruction = (
             "Return the complete revised systemprompt.md inside exactly one <harness>...</harness> block, "
-            "followed by <notes>...</notes> and exactly one real <alpha_list> containing allowed factor IDs. "
-            "Do not put alpha_list tags or example output inside the harness block. Describe the required "
-            "factor-list format in plain text instead. The Bayn executor only receives prompt text and factor "
+            "followed by <notes>...</notes>. The Bayn executor only receives prompt text and factor "
             "descriptions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
             "References to those capabilities in the generic upstream mission do not apply to Bayn. "
             "Never instruct the executor to use them or invent a fallback path. "
             if kwargs.get("harvest")
-            else "Follow the mission's reflection format, then append exactly one real alpha_list of allowed factor IDs. "
+            else "Follow the mission's reflection format. "
         )
         try:
             receipt = self.adapter.calls.call(
@@ -391,6 +393,7 @@ class Editor(Proposer):
                 + evidence
                 + "\n\n# BAYN EXECUTION CONTRACT\n"
                 + instruction.strip(),
+                purpose="prompt-edit" if kwargs.get("harvest") else "reflection",
             )
         except (ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise ProposerError(type(error).__name__, attempts=1) from None

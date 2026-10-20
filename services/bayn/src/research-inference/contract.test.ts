@@ -4,6 +4,7 @@ import { sha256 } from '../hash'
 import {
   decodeResearchRun,
   hashResearch,
+  HarnessPurpose,
   maximumResearchStreamBytes,
   ResearchOutcome,
   researchRequest,
@@ -35,6 +36,38 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('binds the harness role and verifies its original bytes through the same receipt and expense path', () => {
+    const edit = Result.getOrThrow(
+      decodeResearchRun({ ...run, schemaVersion: 'bayn.harness2-inference.v1', purpose: HarnessPurpose.PromptEdit }),
+    )
+    const text = '<harness>Return IDs in <alpha_list> tags.</harness>'
+    const stream = streamFixture(text)
+    const {
+      receiptHash: _hash,
+      costPicoUsd: _cost,
+      schemaVersion: _version,
+      qualification: _qualification,
+      ...material
+    } = receipt()
+    const value = Result.getOrThrow(
+      sealResearchReceipt(edit, {
+        ...material,
+        runId: Result.getOrThrow(hashResearch(edit)),
+        requestHash: Result.getOrThrow(hashResearch(researchRequest(edit))),
+        responseText: text,
+        responseBase64: Buffer.from(stream).toString('base64'),
+        responseHash: sha256(stream),
+        factors: [],
+      }),
+    )
+    expect(Result.getOrThrow(verifyResearchReceipt(edit, value))).toEqual(value)
+    expect(Result.getOrThrow(researchExpensePlan(edit, value)).transfers[0]?.amount).toBe(1001000002n)
+    expect(Result.isFailure(verifyResearchReceipt(run, value))).toBe(true)
+    expect(Result.getOrThrow(hashResearch(edit))).not.toBe(id)
+    expect(researchRequest(edit).messages[0]?.content).not.toContain('Select at most')
+    expect(Result.isFailure(decodeResearchRun({ ...edit, purpose: 'trade' }))).toBe(true)
+    expect(Result.isFailure(decodeResearchRun({ ...run, purpose: HarnessPurpose.PromptEdit }))).toBe(true)
+  })
   test('verifies and prices an immutable receipt containing the full approved stream', () => {
     const value = receipt(ResearchOutcome.Complete, fullTokenBudgetStreamFixture(), 4096)
     expect(Result.getOrThrow(verifyResearchReceipt(run, value))).toEqual(value)
