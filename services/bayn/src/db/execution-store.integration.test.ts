@@ -1232,11 +1232,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = ['crypto', 'delayed', 'regulatory', 'retained', 'partial', 'overreleased'] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'delayed'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1727,6 +1727,15 @@ describePostgres('PostgreSQL execution persistence', () => {
             },
           },
         ]
+        if (scenario === 'delayed')
+          fees.splice(
+            0,
+            fees.length,
+            ...fees.map((fee) => ({
+              value: { ...fee.value, date: '2026-08-31' },
+              evidence: { ...fee.evidence, observedAt: '2026-09-01T07:00:00.000Z' },
+            })),
+          )
         if (hasRegulatory)
           fees.push({
             value: regulatory,
@@ -1760,6 +1769,11 @@ describePostgres('PostgreSQL execution persistence', () => {
           journalControl.failPosts = false
         }
         const result = yield* post
+        if (scenario === 'delayed')
+          expect((yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).map((row) => row.receipt_date)).toEqual([
+            '2026-08-31',
+            '2026-08-31',
+          ])
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
@@ -1827,6 +1841,13 @@ describePostgres('PostgreSQL execution persistence', () => {
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE autonomous_cycles ON COMMIT DROP AS SELECT * FROM public.autonomous_cycles`
             yield* sql`UPDATE autonomous_cycles SET state='COMPLETED',terminal_at=${sellAt},execution_close_at=${sellAt}`
+            if (scenario === 'delayed') {
+              yield* sql`CREATE TEMP TABLE authority_generations ON COMMIT DROP AS SELECT * FROM public.authority_generations`
+              yield* sql`UPDATE authority_generations SET maximum='PAPER',account_id=${accountId},activated_at=${start},research_plan_hash=(SELECT qualification_run_id FROM autonomous_cycles LIMIT 1)`
+              const scoped = yield* readForwardPerformancePostgres(sql, accountId, generationHash, fence)
+              expect(scoped.generationBrokerFeeIds).toContain('settled-cash-fee')
+              expect(scoped.ambiguousBrokerFeeCount).toBe(0)
+            }
             const report = yield* readForwardPerformancePostgres(sql, accountId, undefined, fence)
             expect(report.cashReportingPrecisionKnown).toBe(true)
             expect(report.cashYieldEvidence).toMatchObject({

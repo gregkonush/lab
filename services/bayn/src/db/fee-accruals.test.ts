@@ -49,6 +49,7 @@ const accrual = (kind: 'COIN' | 'CASH', cycle: string, amount: number, matched: 
     accrual_id: prepared.accrualId,
     data: prepared.data,
     settlement_date: prepared.data.date,
+    receipt_date: null,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,
@@ -76,6 +77,27 @@ test.each(['COIN', 'CASH'] as const)(
     expect(feeAccrualCohortSettled(a, [a, { ...partialB, data: { ...partialB.data, accountId: 'other-paper' } }])).toBe(
       true,
     )
+  },
+)
+
+test.each(['COIN', 'CASH'] as const)(
+  '%s delayed pooled receipts retain all eligible cohorts until fully settled',
+  (kind) => {
+    const previous: typeof StoredAccrual.Type = { ...accrual(kind, 'b', 100, 100), receipt_date: '2026-10-15' }
+    const current: typeof StoredAccrual.Type = {
+      ...accrual(kind, 'c', 200, 100),
+      settlement_date: '2026-10-15',
+      receipt_date: '2026-10-15',
+    }
+    expect(feeAccrualCohortSettled(previous, [previous, current])).toBe(false)
+    expect(feeAccrualCohortSettled(current, [previous, current])).toBe(false)
+    const settled = {
+      ...current,
+      matched_coin_quantity_atoms: kind === 'COIN' ? '200' : '0',
+      matched_cash_micros: kind === 'CASH' ? '200' : '0',
+    }
+    expect(feeAccrualCohortSettled(previous, [previous, settled])).toBe(true)
+    expect(feeAccrualCohortSettled(current, [previous, settled])).toBe(true)
   },
 )
 

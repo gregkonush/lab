@@ -68,6 +68,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
     accrual_id: prepared.accrualId,
     data: prepared.data,
     settlement_date: prepared.data.date,
+    receipt_date: null,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,

@@ -140,6 +140,7 @@ const cashAccrual = (
     accrual_id: prepared.accrualId,
     data: prepared.data,
     settlement_date: prepared.data.date,
+    receipt_date: null,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,
@@ -224,6 +225,36 @@ describe('position episodes', () => {
     expect(scoped.crossScopeCount).toBe(1)
     expect(scoped.completed.map((row) => row.grossRealizedPnlMicros)).toEqual(['1000'])
   })
+
+  test.each(['2026-09-17', '2026-09-21'])(
+    'matches crypto fee receipts dated %s against earlier accruals only',
+    (date) => {
+      const { fills, accrual } = coinRoundTrip()
+      const fee = coinActivity()
+      const input = evidence(fills, fills, {
+        accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt: '2026-09-22T12:00:00.000Z' },
+        accountFeeAccruals: [
+          { ...accrual, matched_coin_quantity_atoms: '82625' },
+          { ...cashAccrual(fills), matched_cash_micros: '10000' },
+        ],
+        accountBrokerFees: [
+          {
+            ...fee,
+            data: { ...fee.data, date },
+            read_evidence: { ...fee.read_evidence, observedAt: '2026-09-22T07:00:00.000Z' },
+          },
+        ],
+      })
+      const result = success(measurePositionEpisodes(input))
+      if (date < accrual.settlement_date)
+        expect(result).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.AmbiguousFeeOrder })
+      else {
+        assert(result.status === 'MEASURED')
+        expect(result.completedCount).toBe(1)
+        expect(result.completed[0]?.costs.attributedCostMicros).toBe('18262')
+      }
+    },
+  )
 
   test('attributes each complete crypto accrual once and leaves final and operating costs explicit', () => {
     const { fills, accrual } = coinRoundTrip()
