@@ -165,6 +165,14 @@ Migration 103 binds each cash accrual to the latest retained account report befo
 reports' actual precision. It rejects unbound cash-accrual records instead of rewriting financial evidence. Coin
 accrual evidence and ledger identities remain unchanged.
 
+Crypto fee receipts retain the provider's `created_at` timestamp in canonical UTC form without rounding. Migration 130 matches
+their UTC source date to the existing native accrual cohorts, independently of the activity's posting date. The
+timestamp belongs to immutable receipt evidence; the original fee content, posting date, hash, accruals and ledger
+plans stay intact. Future timestamps and changed source provenance fail closed. A final receipt settles an existing
+debit without charging it again, and every matched quantity remains bounded by both the receipt and its accrual.
+This day-level settlement does not establish individual trade origin or economic qualification.
+
+
 The active model-selected trade-plan contract is documented in [strategy protection](../../docs/bayn/strategy-protection.md).
 
 Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the

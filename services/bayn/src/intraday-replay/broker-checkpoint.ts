@@ -1,4 +1,4 @@
-import { FeeActivitySchema } from '../broker/fee-activity'
+import { ObservedFeeActivitySchema } from '../broker/fee-activity'
 import { NativeProtectionSchema } from '../execution/contracts'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { replayFeeActivity } from './broker-fees'
@@ -143,7 +143,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
         orderStatus: Schema.Enum(OrderStatus),
       }),
     ),
-    fees: Schema.Array(FeeActivitySchema),
+    fees: Schema.Array(ObservedFeeActivitySchema),
     sessionCloses: Schema.Array(
       Schema.Struct({
         sessionDate: IsoDateSchema,

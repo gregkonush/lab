@@ -328,12 +328,3 @@ Kafka cycle-failure telemetry records only a bounded invalidation reason and rec
 invalidation wins even when a later SDK/cleanup event follows. A recovery event links the prior and replacement
 epochs after required bootstrap barriers complete. Match these events to source freshness and controller progress;
 ready pods or a recovered transport alone do not prove a valid decision window.
-
-## Delayed crypto fee receipts
-
-Alpaca crypto fee activity dates can follow the underlying fills. Match a crypto receipt only against
-verified earlier-or-same-day accruals for its account and asset, in retained observation order. A receipt
-can settle multiple earlier UTC cohorts. Preserve the original fill, accrual, receipt and ledger identities;
-matching a receipt does not post the observed inventory or cash debit again. Future cohorts, excess matches
-and unrelated regulatory fees remain rejected. Episode reporting checks cumulative receipt coverage by asset
-and date while retaining source-linked cost attribution and incomplete-cost evidence.
