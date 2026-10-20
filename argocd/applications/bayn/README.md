@@ -182,13 +182,16 @@ unproven economic assumptions. Native children and protective disposals share or
 Migration 128 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e`.
-The source cutover removes the obsolete activation request and its lineage from all three runtimes. After the v14
-image publishes and migration 128 succeeds, seal a new same-account PAPER mandate against that immutable image,
-restore the request identity and build lineages together, and deliver through Kargo. Preserve every existing monetary
-limit; changing the order contract does not authorize additional capital or a risk-history reset.
+The v14 source cutover completed in OBSERVE with migration 128. The source now restores a same-account PAPER mandate,
+authored against reviewed source `e272a29ce5000b0d6486869b21fbc9a4e26597d9` and published image
+`sha256:6ccf4899c110e12314341c70c71970b86348b2bd26694204945331bf3e0734ba`. Request
+`9008d4680ded2b5f181a4ffbd037b82fa8be77ede9bbdf7959a92f9c5763c00d` binds the current strategy and risk policy;
+the sealed request identity, activation generation and all three runtime build lineages move together through Kargo.
+Preserve every existing monetary limit; changing the order contract does not authorize additional capital or a risk-history reset.
 
-Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
-then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
+Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
+through subsequent compatible image promotions; it does not require another rotation after each build. A future
+strategy or risk-policy change requires a fresh OBSERVE cutover and a new reviewed same-account mandate.
 The new mandate retains the reviewed $1,000,000 daily gross-turnover budget and exposure limits. The PAPER-only
 cumulative drawdown cap is $10,000 and the daily loss cap remains $5,000. Live limits remain unchanged. Account losses,
 peak equity and daily turnover are preserved when the mandate is rebound.
@@ -592,9 +595,10 @@ Protocol v14 / state v13 and entry/exit targets v3 replace the old fixed-percent
 a flat, settled and accounted cutover and installs native order terms, parent-child identity and durable protective
 cancellation commands. There is one executable protocol. Historical accounting evidence remains immutable.
 
-Request OBSERVE without the obsolete prior-strategy mandate. After its immutable image is published and reconciled
-through Kargo, restore a same-account PAPER mandate under the existing sandbox risk policy. Rotate its request,
-identity annotation and all three runtime build lineages together. Verify native recovery, pre-entry strategy prices,
-actual broker protection, partial disposals, ledger receipts and reconciliation. Application protection in extended
+The initial OBSERVE cutover completed with flat settled inventory, exact reconciliation and all historical fills and
+receipts preserved. The source now includes the reviewed same-account PAPER restoration described under
+[Jev protocol activation](#jev-protocol-activation). Kargo advances that request's build lineage while retaining its
+authored image and unchanged monetary limits. Verify native recovery, pre-entry strategy prices, actual broker
+protection, partial disposals, ledger receipts and reconciliation after restoration. Application protection in extended
 hours and application targets for standalone stops remain dependent on controller availability. Stop-limits can gap
 without filling, and bracket siblings can race at the venue. No source change establishes profitability.
