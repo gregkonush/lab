@@ -52,6 +52,13 @@ Missing or expired preflight evidence follows the existing admission and decisio
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
 
+A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
+supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
+pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
+contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
+rejection receipts cannot be relabeled as accepted evidence.
+
 Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
 including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion

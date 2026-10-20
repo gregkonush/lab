@@ -19,6 +19,7 @@ import { nativeArrivalEpochFixture } from './native-arrival.test-support'
 import { emptyStreamingProjection, incorporateMarketRecord } from './projection'
 import { kafkaCaptureDisposition } from './kafka'
 import { sha256 } from '../../hash'
+import { CaptureDisposition } from './transport-evidence'
 
 const fixture = () => {
   const { cut, query, snapshot, protocol } = streamingFixture()
@@ -263,3 +264,32 @@ test('incremental replay exceeds the whole-file limit while retaining bounded qu
   expect(cursor.projection.rejections.size).toBe(0)
   expect(cursor.projection.availabilityMode).toBe('simulated')
 }, 60_000)
+
+test('new capture receipts reproduce withdrawals while prior rejection receipts cannot be reclassified', () => {
+  const equity = fixture()
+  const event = (offset: number) => {
+    const original = equity.event(offset)
+    const envelope = JSON.parse(original.record.value)
+    return {
+      ...original,
+      record: {
+        ...original.record,
+        value: JSON.stringify({ ...envelope, payload: { ...envelope.payload, ap: 0, as: 0 } }),
+      },
+    }
+  }
+  const { empty, deliveries } = interleavedOriginalFixture([0], { ...equity, event })
+  const arrival = deliveries[0]
+  if (arrival === undefined) throw new Error('Missing withdrawal delivery')
+  expect(arrival.receipt.disposition).toBe(CaptureDisposition.Accepted)
+  const replayed = Result.getOrThrow(advanceHistoricalMarketCursor(empty, arrival))
+  expect(replayed.projection.quotes.get(equity.symbol)?.value.askPrice).toBe(0)
+  expect(replayed.projection.rejections.size).toBe(0)
+  const rejected = advanceHistoricalMarketCursor(empty, {
+    ...arrival,
+    receipt: { ...arrival.receipt, disposition: CaptureDisposition.Rejected },
+  })
+  expect(Result.isFailure(rejected)).toBe(true)
+  if (Result.isFailure(rejected))
+    expect(rejected.failure.message).toContain('does not reproduce its captured reducer disposition')
+})
