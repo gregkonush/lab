@@ -1232,11 +1232,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = ['crypto', 'delayed', 'regulatory', 'retained', 'partial', 'overreleased'] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'delayed'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1727,6 +1727,15 @@ describePostgres('PostgreSQL execution persistence', () => {
             },
           },
         ]
+        if (scenario === 'delayed')
+          fees.splice(
+            0,
+            fees.length,
+            ...fees.map((fee) => ({
+              value: { ...fee.value, date: '2026-08-31' },
+              evidence: { ...fee.evidence, observedAt: '2026-09-01T07:00:00.000Z' },
+            })),
+          )
         if (hasRegulatory)
           fees.push({
             value: regulatory,

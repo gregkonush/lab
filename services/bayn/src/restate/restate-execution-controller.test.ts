@@ -1745,7 +1745,7 @@ describe('native Restate execution controller', () => {
       await object.tick(context, tick)
       const recovery = deliveries.shift()
       if (recovery === undefined) throw new Error(`recovery window ${recoveryWindow} was not scheduled`)
-      expect(recovery.delay).toBe(executionControllerRecoveryDelayMs(recoveryWindow))
+      expect(recovery.delay).toBe(executionControllerRecoveryTickDelayMs)
       expect(recovery.parameter).toMatchObject({ recoveryWindow })
       tick = {
         ...(recovery.parameter as object),
