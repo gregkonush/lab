@@ -839,8 +839,8 @@ describe('position episodes', () => {
     expect(first.receipt.profitability).toBe('UNDETERMINED')
     expect(first.reportHash).not.toBe(second.reportHash)
     const { reportHash, ...material } = first
-    expect(canonicalHashV1(material)).toBe(reportHash)
-    expect(canonicalHashV1({ ...material, scope: second.scope })).not.toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...material, scope: second.scope }))).not.toBe(reportHash)
   })
 
   test('declares an account scope when no generation was requested', () => {
