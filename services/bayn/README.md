@@ -172,7 +172,6 @@ plans stay intact. Future timestamps and changed source provenance fail closed. 
 debit without charging it again, and every matched quantity remains bounded by both the receipt and its accrual.
 This day-level settlement does not establish individual trade origin or economic qualification.
 
-
 The active model-selected trade-plan contract is documented in [strategy protection](../../docs/bayn/strategy-protection.md).
 
 Failed autonomous cycle passes reach GlitchTip before their durable status projection, including failures the
