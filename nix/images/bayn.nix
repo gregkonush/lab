@@ -34,6 +34,27 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
   '';
+  harnessPython = pkgs.python312.withPackages (ps: [
+    ps.boto3
+    (ps.buildPythonPackage {
+      pname = "harness2";
+      version = "0.1.0";
+      pyproject = true;
+      src = pkgs.fetchurl {
+        url = "https://github.com/google-research/harness2/archive/1cfe254e8d25b15f37048c3730134686abe60335.tar.gz";
+        hash = "sha256-Izf5G3GhMOBV2N+5nq0mZ6Rgh8Kd+TnU1PCjw1e1dI8=";
+      };
+      build-system = [ ps.setuptools ps.wheel ];
+      pythonImportsCheck = [ "harness2.core.schedule" ];
+      doCheck = false;
+    })
+  ]);
+  harnessCommand = pkgs.writeShellScriptBin "bayn-harness2" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${harnessPython}/bin/python "$root/app/services/bayn/harness2/runner.py" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
@@ -77,6 +98,8 @@ let
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
+    mkdir -p "$out/app/services/bayn/harness2"
+    cp "$TMPDIR/work/services/bayn/harness2/runner.py" "$out/app/services/bayn/harness2/runner.py"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -125,6 +148,8 @@ import ./bun-workspace-service.nix {
     forwardPerformanceCommand
     inferenceCostCommand
     researchCommand
+    harnessCommand
+    harnessPython
   ];
   exposedPorts = {
     "8080/tcp" = { };

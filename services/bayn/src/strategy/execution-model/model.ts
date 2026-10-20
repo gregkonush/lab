@@ -1,7 +1,6 @@
 import type { UnsignedRoundHalfUpFailure } from '../../unsigned-round-half-up'
 
 export const MICROS = 1_000_000n
-export const PPM = 1_000_000n
 export const BPS = 10_000n
 export const WEIGHT_SCALE = 1_000_000_000_000n
 
@@ -20,13 +19,6 @@ export type ExecutionModelFailure =
       readonly value: number
       readonly scale: number
       readonly reason: FixedPointFailureReason
-    }
-  | {
-      readonly _tag: 'InvalidIntegerNumber'
-      readonly field: string
-      readonly value: number
-      readonly minimum: number
-      readonly maximum: number
     }
   | {
       readonly _tag: 'InvalidCeilingDivision'

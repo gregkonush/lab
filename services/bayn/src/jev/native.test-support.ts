@@ -18,7 +18,7 @@ import {
   type Position,
   type Order,
 } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
@@ -193,7 +193,7 @@ export const nativeJevFixture = (
       accountId,
       expectedHash: stateHash,
       observedHash: stateHash,
-      contentHash: canonicalHashV1(material),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(material)),
       status: ReconciliationStatus.Exact,
       discrepancies: [],
       reconciledAt: at,
@@ -261,7 +261,7 @@ export const nativeJevFixture = (
           makeStrategyProtocolHashResult({
             name: 'jev',
             behaviorHash: jevBehaviorHash,
-            parameterHash: canonicalHashV1(protocol),
+            parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
             parameterSchemaVersion: protocol.schemaVersion,
           }),
         ),
@@ -325,7 +325,13 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
   const response = Result.getOrThrow(
     decodeJevResponse(request, { model: request.model, answers, usage: { input_tokens: 100, output_tokens: 25 } }),
   )
-  return { requestHash, responseHash: canonicalHashV1(response), startedAt: at, completedAt: at, response }
+  return {
+    requestHash,
+    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+    startedAt: at,
+    completedAt: at,
+    response,
+  }
 }
 
 export const nativeJevDecisionEvidence = (

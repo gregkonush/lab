@@ -6,7 +6,6 @@
  */
 export const legacyObserveAuthorityToken = 'OBSERVE' as const
 export const legacyExecutionAuthorityToken = 'PAPER' as const
-export type LegacyAuthorityToken = typeof legacyObserveAuthorityToken | typeof legacyExecutionAuthorityToken
 
 export const legacyAccountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v1' as const
 export const legacyOrderV2SchemaVersion = 'bayn.order.v3' as const

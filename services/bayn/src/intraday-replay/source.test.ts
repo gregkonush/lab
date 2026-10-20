@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
 import { gzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
-import { Clock, Deferred, Effect, Fiber, FileSystem } from 'effect'
+import { Clock, Deferred, Effect, Fiber, FileSystem, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { makeReplayTimeline } from './session'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { retainedReplayFixture as fixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import {
   openBacktestSource,
@@ -13,7 +13,6 @@ import {
   validateBacktestSourceManifest,
   validateBacktestSourceReceipt,
 } from './source'
-import { Result } from 'effect'
 import { cryptoMarketProfile } from '../jev/markets'
 import { backtestSourcePartitions } from './source'
 import { emptyStreamingProjection, incorporateMarketRecord } from '../market-data/streaming/projection'
@@ -280,7 +279,7 @@ test('retained source preflights its bytes and advances only available records a
       const path = yield* fs.makeTempFileScoped()
       yield* fs.writeFile(path, gzipSync(data.body))
       const source = yield* openBacktestSource(path, data.manifest, data.input.source.runId, data.capture)
-      expect(source.source.sourceManifestHash).toBe(canonicalHashV1(data.manifest))
+      expect(source.source.sourceManifestHash).toBe(Result.getOrThrow(canonicalHashV1Result(data.manifest)))
       yield* source.advanceTo(data.manifest.firstAvailableAtMs - 1)
       expect((yield* source.cursor).processedRecords).toBe(0)
       yield* source.advanceTo(data.manifest.lastAvailableAtMs)

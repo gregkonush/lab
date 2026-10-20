@@ -5,7 +5,7 @@ import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
 import {
   AccountStatus,
@@ -112,7 +112,7 @@ type ExecutionSession = State['executionSession']
 type ExecutionSessionWithoutHash = Omit<ExecutionSession, 'bindingHash'>
 const rehashExecutionSession = (material: ExecutionSessionWithoutHash): ExecutionSession => ({
   ...material,
-  bindingHash: canonicalHashV1(material),
+  bindingHash: Result.getOrThrow(canonicalHashV1Result(material)),
 })
 const changeExecutionWindow = (
   binding: ExecutionSession,
@@ -218,7 +218,7 @@ const baseState = (): State => {
   const executionSession = rehashExecutionSession({
     schemaVersion: 'bayn.execution-session-binding.v3',
     planningBrokerState: { observedAt, contentHash: reconciledStateHashValue },
-    calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+    calendar: { ...calendar, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
     executionSession: calendar.sessions[0],
     submissionOpenAt: observedAt,
     submissionCutoffAt: '2026-07-21T20:00:00.000Z',
@@ -314,7 +314,7 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
     strategyName: 'risk-balanced-trend',
     cycleId: hash('7'),
     decisionHash: hash('8'),
-    policyHash: canonicalHashV1(makePolicy()),
+    policyHash: Result.getOrThrow(canonicalHashV1Result(makePolicy())),
     accountId: 'paper-account-1',
     clientOrderId: 'risk-test-order-1',
     symbol: 'NVDA',
@@ -449,13 +449,13 @@ describe('entry risk properties', () => {
         const policy = makePolicy({ maxOrderNotionalMicros: String(notional) })
         const intent = makeIntent({
           quantityAtoms: String(BigInt(quantity) * 1000n),
-          policyHash: canonicalHashV1(policy),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
         const stricter = makePolicy({ maxOrderNotionalMicros: String(notional - 1n) })
         expectBlocked(
           Reason.OrderNotionalExceeded,
-          { ...intent, policyHash: canonicalHashV1(stricter) },
+          { ...intent, policyHash: Result.getOrThrow(canonicalHashV1Result(stricter)) },
           state,
           stricter,
         )
@@ -616,7 +616,7 @@ describe('bounded execution risk', () => {
       ...current,
       decision: {
         ...legacyDecisionMaterial,
-        decisionId: canonicalHashV1(legacyDecisionMaterial),
+        decisionId: Result.getOrThrow(canonicalHashV1Result(legacyDecisionMaterial)),
       },
       gates: current.gates.map((gate) =>
         gate.name === Gate.Authority ? { ...gate, reason: Reason.LegacyAuthorityNotGranted } : gate,
@@ -702,7 +702,7 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Sell,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -740,7 +740,7 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -779,7 +779,7 @@ describe('bounded execution risk', () => {
         closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
       })
       const close = makeIntent({
-        policyHash: canonicalHashV1(policy),
+        policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         symbol,
         side: OrderSide.Sell,
         orderType: OrderType.Limit,
@@ -1540,7 +1540,7 @@ test('property: fractional LIMIT buys honor a spending ceiling and sells honor a
           quantityAtoms: String(quantity),
           notionalLimitMicros: String(pricing.notionalLimitMicros),
           limitPriceMicros: String(pricing.expectedExecutionPriceMicros),
-          policyHash: canonicalHashV1(policy),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         const state = makeState({
           marketDataSymbol: symbol,

@@ -3,7 +3,7 @@ import { Cause, Effect, Exit, Fiber, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { operationalError } from '../errors'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevClient, JevError } from './client'
 import { JevFailure } from './contract'
 import {
@@ -165,7 +165,7 @@ describe('durable Jev evaluation', () => {
           status: JevOutcome.Failed,
           failure: JevFailure.Response,
           httpStatus: null,
-          responseHash: canonicalHashV1(rejected),
+          responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
           rejectedResponse: rejected,
         })
         expect(Result.isFailure(yield* evaluateJevOnce(request).pipe(Effect.result))).toBe(true)
@@ -182,7 +182,7 @@ describe('durable Jev evaluation', () => {
                   new JevError({
                     failure: JevFailure.Response,
                     message: 'invalid probability total',
-                    responseHash: canonicalHashV1(rejected),
+                    responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
                     rejectedResponse: Redacted.make(rejected),
                   }),
                 ),

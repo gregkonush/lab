@@ -52,12 +52,6 @@ export const evaluateJevBatch = (input: unknown) =>
     return yield* store.finish(plan.batchId)
   })
 
-export const recoverJevBatch = (batchId: string) =>
-  Effect.gen(function* () {
-    const store = yield* JevBatchStore
-    return yield* store.finish(batchId)
-  })
-
 export const recoverPendingJevBatches = (cycleId: string, authorityGenerationHash: string) =>
   Effect.gen(function* () {
     const store = yield* JevBatchStore

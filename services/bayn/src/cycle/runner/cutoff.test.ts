@@ -3,7 +3,7 @@ import { Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { nativeJevFixture } from '../../jev/native.test-support'
 import { executionMarketDataBinding } from '../../observe-composition/intraday-market-data'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
@@ -63,7 +63,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           reconciliationId: '5'.repeat(64),
           reconciliationHash: '6'.repeat(64),
         },
-        targetPlan: { ...targetMaterial, outputHash: canonicalHashV1(targetMaterial) },
+        targetPlan: { ...targetMaterial, outputHash: Result.getOrThrow(canonicalHashV1Result(targetMaterial)) },
         deltaRisk: [],
         createdAt: beforeCutoff,
         submissionCutoffAt: cutoffAt,

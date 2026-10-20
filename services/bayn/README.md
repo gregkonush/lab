@@ -4,6 +4,14 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Internal construction and canonical hashing use the typed `Result` APIs. Eager
+validation stays in `Result`; runtime callers lift failures into their owning
+Effect error channel and retain the cause. Tests assert expected success locally
+with `Result.getOrThrow`. Production throwing compatibility exports and test-only
+Effect decoder wrappers have been removed; tests decode the shared schemas with
+the same strict parse options. Immutable historical documents and the decoders
+used to read them remain supported.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
@@ -42,7 +50,7 @@ Missing or expired preflight evidence follows the existing admission and decisio
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
 
-Migration 129 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
+Migration 131 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v15 strategy identity.
 
@@ -113,7 +121,7 @@ above the inference-bound ceiling is rejected before decision construction and a
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v15 and trading-signal input v14 replace their executable predecessors. Migration 129 requires flat,
+Protocol v15 and trading-signal input v14 replace their executable predecessors. Migration 131 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting new Jev
 authority generations to v15. Create a new same-account PAPER mandate against the verified published v15 image through
 its sealed GitOps path after cutover. Historical evidence remains immutable. Retired model exits and fixed-percentage
@@ -311,6 +319,12 @@ rather than fetching and decoding the full history six times. The next pass reva
 failed cut is memoized across passes. Unprojected broker health retains its independent endpoint probes. Final submission reads account, positions and orders from one payload and performs zero broker GETs.
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
+
+Order history uses descending submission timestamps with an exclusive `until` cursor. A full page retains only
+the complete newer timestamp groups and rereads its entire oldest group on the next page, including any siblings
+hidden beyond the provider's page boundary. Original timestamp precision and response evidence remain intact.
+A full page containing only one timestamp fails closed because timestamp pagination cannot establish its completeness.
+The 10,000-order budget, duplicate checks and both stability scans still apply; boundary overlap can add requests.
 
 Stable snapshots collect all currently available fee pages without an activity-creation `until` filter. Alpaca can
 exclude an already reported settlement from that filter while its cash effect is visible. Both history scans must
@@ -958,7 +972,10 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v4`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v5`. Its hashed `scope` records the requested
+`AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
+account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
+bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v4 trading receipt
@@ -969,7 +986,9 @@ tariff estimates cannot establish fully costed profitability.
 
 The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
 coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
-`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Verified gross trading P&L and fees remain visible.
+`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
+unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
+Verified gross trading P&L and fees remain visible when the required financial boundary exists.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1290,14 +1309,14 @@ Read-only diagnostics retain their independent repeatable-read, read-only transa
 Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
 evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 
-Without that option, the command evaluates account history, which may span retired strategies and mandates.
-An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
-Native-only account history does not. A native scope without completed executions remains unqualified; successful
-configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v4`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command always requires `--authority-generation`; omitting `--persist-receipt` keeps that same generation scope
+read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
+Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
+history does not. A scope without completed executions remains unqualified.
+The command emits `bayn.forward-performance-report.v5`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
-`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
+`INCOMPLETE` while other operating charges are unknown. `reportHash` binds the requested scope and all report content. The report does not
 change the immutable per-generation receipt schema.
 Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
@@ -1747,6 +1766,10 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Alpha-R1 research
 
+The [Harness2 adapter](../../docs/bayn/harness2.md) refines factor-selection prompts through the existing signed
+research API and retains probes, compositions, and lessons in the private research bucket. The installed
+`bayn-harness2` command produces unqualified research artifacts. It does not change the trading strategy or its authority.
+
 `BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
 The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
 original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
@@ -1908,7 +1931,7 @@ per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. 
 quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 129 owns the
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 131 owns the
 current model-selected v15 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
 reconciliation before activating a new same-account v15 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.

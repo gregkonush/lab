@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevCandidatePlanStatus } from './batch'
 import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
 import { decideJevEntry, JevEntryTargetSchema } from './decision'
@@ -109,7 +109,7 @@ test('the retired geometric protocol and exit caps are rejected rather than used
   ).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumCapitalRiskBps: 10 }))).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumStopBps: 500 }))).toBe(true)
-  expect(canonicalHashV1(defaultJevProtocolDocument)).not.toBe(
+  expect(Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument))).not.toBe(
     '7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de',
   )
 })

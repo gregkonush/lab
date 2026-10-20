@@ -25,7 +25,7 @@ import {
 } from './broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './execution/contracts'
 import {
   BrokerEventStore,
@@ -52,10 +52,11 @@ import {
   readStableBrokerSnapshot,
 } from './simulation-reconciliation/broker-history'
 import { decideAccountBaseline } from './simulation-reconciliation/broker-normalization'
+import { normalizeTimestamp } from './simulation-reconciliation/broker-reconciler-model'
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
-const hash = (value: unknown): string => canonicalHashV1(value)
+const hash = (value: unknown): string => Result.getOrThrow(canonicalHashV1Result(value))
 
 const evidence = (identity: string): ReadEvidence => ({
   requestId: `request-${identity}`,
@@ -258,6 +259,21 @@ const emptyRead = (): BrokerReadShape => ({
   marketCalendar: unusedMarketCalendar,
 })
 
+const descendingOrderPage = (orders: readonly BrokerOrder[], until: string | undefined, limit = 500) => {
+  const cutoff =
+    until === undefined ? undefined : Result.getOrThrow(normalizeTimestamp('order-timestamp', 'until', until))
+  return orders
+    .toReversed()
+    .filter((row) => {
+      if (row.submittedAt === undefined) throw new Error('Order fixture requires its original submission timestamp')
+      return (
+        cutoff === undefined ||
+        Result.getOrThrow(normalizeTimestamp('order-timestamp', row.brokerOrderId, row.submittedAt)) < cutoff
+      )
+    })
+    .slice(0, limit)
+}
+
 const fence: WriterFenceService = {
   check: Effect.void,
   transaction: (effect) => effect,
@@ -359,9 +375,78 @@ describe('reconciliation pure decisions', () => {
     })
     const next = Result.getOrThrow(decideOrderPage(state, 2, { value: [first, last], evidence: pageEvidence }))
     if (next._tag !== 'Continue') throw new Error('Full order page must retain its exclusive cursor')
-    expect(decideOrderPage(next.state, 2, { value: [last], evidence: pageEvidence })).toMatchObject({
+    expect(next.state.rows.map(({ value }) => value.brokerOrderId)).toEqual([first.brokerOrderId])
+    expect(HashSet.has(next.state.ids, last.brokerOrderId)).toBe(false)
+    expect(decideOrderPage(next.state, 2, { value: [first], evidence: pageEvidence })).toMatchObject({
       _tag: 'Failure',
       failure: { failure: { _tag: 'Pagination', reason: 'OrderTimestampCursorDidNotAdvance' } },
+    })
+    expect(decideOrderPage(next.state, 2, { value: [last], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Success',
+      success: { _tag: 'Complete', read: { rows: [{ value: first }, { value: last }] } },
+    })
+    expect(decideOrderPage(state, 3, { value: [first, last, last], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Pagination', reason: 'DuplicateOrder' } },
+    })
+  })
+
+  test('defers the entire oldest order group using normalized nanosecond precision', () => {
+    const newest = { ...order(2), submittedAt: '2026-10-19T12:00:00.000000030Z' }
+    const firstSibling = { ...order(1), submittedAt: '2026-10-19T12:00:00.000000020Z' }
+    const secondSibling = { ...order(0), submittedAt: '2026-10-19T12:00:00.00000002Z' }
+    const pageEvidence = evidence('nanosecond-order-page')
+    const next = Result.getOrThrow(
+      decideOrderPage(
+        {
+          rows: [],
+          ids: HashSet.empty(),
+          cursor: undefined,
+          previousSubmittedAt: undefined,
+          observedAt: undefined,
+        },
+        3,
+        { value: [newest, firstSibling, secondSibling], evidence: pageEvidence },
+      ),
+    )
+    if (next._tag !== 'Continue') throw new Error('The whole boundary group must be reread')
+    expect(next.state.cursor).toBe(newest.submittedAt)
+    expect(next.state.previousSubmittedAt).toBe(newest.submittedAt)
+    expect(next.state.rows).toEqual([{ value: newest, evidence: pageEvidence }])
+    expect(HashSet.has(next.state.ids, firstSibling.brokerOrderId)).toBe(false)
+    expect(HashSet.has(next.state.ids, secondSibling.brokerOrderId)).toBe(false)
+    expect(decideOrderPage(next.state, 3, { value: [firstSibling, secondSibling], evidence: pageEvidence })).toEqual(
+      Result.succeed({
+        _tag: 'Complete',
+        read: {
+          rows: [newest, firstSibling, secondSibling].map((value) => ({ value, evidence: pageEvidence })),
+          observedAt,
+        },
+      }),
+    )
+  })
+
+  test('validates the entire order page against the row budget before deferring its boundary', () => {
+    const pageEvidence = evidence('order-row-budget')
+    const existing = Array.from({ length: 9_999 }, (_, index) => ({
+      ...order(index),
+      submittedAt: utcInstantFromEpochMillis(index + 2),
+    })).toReversed()
+    const state = {
+      rows: existing.map((value) => ({ value, evidence: pageEvidence })),
+      ids: HashSet.fromIterable(existing.map((value) => value.brokerOrderId)),
+      cursor: utcInstantFromEpochMillis(2),
+      previousSubmittedAt: utcInstantFromEpochMillis(2),
+      observedAt,
+    }
+    const lastAllowed = { ...order(9_999), submittedAt: utcInstantFromEpochMillis(1) }
+    const excess = { ...order(10_000), submittedAt: utcInstantFromEpochMillis(0) }
+    const complete = Result.getOrThrow(decideOrderPage(state, 2, { value: [lastAllowed], evidence: pageEvidence }))
+    if (complete._tag !== 'Complete') throw new Error('A short in-budget page completes the history')
+    expect(complete.read.rows).toHaveLength(10_000)
+    expect(decideOrderPage(state, 2, { value: [lastAllowed, excess], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Failure',
+      failure: { failure: { _tag: 'Pagination', reason: 'OrderHistoryTooLarge' } },
     })
   })
 
@@ -497,14 +582,7 @@ describe('execution reconciliation loop', () => {
       orders: (query = {}) => {
         requests.push(query)
         const pageObservedAt = utcInstantFromEpochMillis(Date.parse(cut) + requests.length * 100)
-        const value =
-          query.after === newest.submittedAt
-            ? [{ ...newest, submittedAt: '2026-10-18T21:27:20.865652Z' }]
-            : query.until === allOrders[0]?.submittedAt
-              ? []
-              : query.direction === SortDirection.Descending
-                ? allOrders.toReversed()
-                : allOrders
+        const value = descendingOrderPage(allOrders, query.until, query.limit)
         return Effect.succeed({
           value: value.map((row) => ({ ...row, observedAt: pageObservedAt })),
           evidence: { ...evidence(`precision-page-${requests.length}`), observedAt: pageObservedAt },
@@ -517,7 +595,7 @@ describe('execution reconciliation loop', () => {
     expect(snapshot.history.orders.rows.map(({ value }) => value.brokerOrderId).toSorted()).toEqual(
       allOrders.map((value) => value.brokerOrderId).toSorted(),
     )
-    expect(snapshot.history.orders.observedAt).toBe(utcInstantFromEpochMillis(Date.parse(cut) + 300))
+    expect(snapshot.history.orders.observedAt).toBe(utcInstantFromEpochMillis(Date.parse(cut) + 400))
     expect(snapshot.history.orders.observedAt).toBe(
       snapshot.history.orders.rows.reduce(
         (latest, row) => (row.value.observedAt > latest ? row.value.observedAt : latest),
@@ -530,10 +608,66 @@ describe('execution reconciliation loop', () => {
     )
     expect(requests.map((query) => query.until)).toEqual([
       cut,
-      allOrders[0]?.submittedAt,
+      allOrders[1]?.submittedAt,
       cut,
-      allOrders[0]?.submittedAt,
+      allOrders[1]?.submittedAt,
     ])
+  })
+
+  test.each([2, 3])(
+    'captures hidden order siblings when a %s-order timestamp group crosses a full page',
+    async (groupSize) => {
+      const cut = utcInstantFromEpochMillis(1_000)
+      const allOrders = Array.from({ length: 501 }, (_, index) => ({
+        ...order(index),
+        submittedAt: utcInstantFromEpochMillis(index < groupSize ? 1 : index),
+        status: BrokerOrderStatus.Canceled,
+        filledQuantityAtoms: '0',
+      }))
+      const orderCursors: Array<string | undefined> = []
+      const read: BrokerReadShape = {
+        ...emptyRead(),
+        orders: (query = {}) => {
+          orderCursors.push(query.until)
+          return Effect.succeed({
+            value: descendingOrderPage(allOrders, query.until, query.limit),
+            evidence: evidence(`hidden-sibling-page-${orderCursors.length}`),
+          })
+        },
+      }
+      const snapshot = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(cut)))
+      expect(snapshot.history.orders.rows.map(({ value }) => value.brokerOrderId).toSorted()).toEqual(
+        allOrders.map((value) => value.brokerOrderId).toSorted(),
+      )
+      expect(orderCursors).toEqual([cut, allOrders[groupSize]?.submittedAt, cut, allOrders[groupSize]?.submittedAt])
+    },
+  )
+
+  test.each([500, 501])('fails closed when a %s-order timestamp group fills the provider page', async (count) => {
+    const cut = utcInstantFromEpochMillis(1_000)
+    const allOrders = Array.from({ length: count }, (_, index) => ({
+      ...order(index),
+      submittedAt: utcInstantFromEpochMillis(1),
+      status: BrokerOrderStatus.Canceled,
+      filledQuantityAtoms: '0',
+    }))
+    let reads = 0
+    const read: BrokerReadShape = {
+      ...emptyRead(),
+      orders: (query = {}) => {
+        reads += 1
+        return Effect.succeed({
+          value: descendingOrderPage(allOrders, query.until, query.limit),
+          evidence: evidence(`ambiguous-order-page-${reads}`),
+        })
+      },
+    }
+    const failure = await Effect.runPromise(readStableBrokerSnapshot(read, Effect.succeed(cut)).pipe(Effect.flip))
+    expect(failure).toMatchObject({
+      operation: 'pagination',
+      failure: { _tag: 'Pagination', reason: 'OrderCursorDidNotAdvance' },
+    })
+    expect(reads).toBe(1)
   })
 
   test('reads every broker page before persisting and binds fills to their orders', async () => {
@@ -549,7 +683,7 @@ describe('execution reconciliation loop', () => {
       orders: (query = {}) => {
         orderCursors.push(query.until)
         return Effect.succeed({
-          value: query.until === cut ? allOrders.toReversed().slice(0, 500) : allOrders.toReversed().slice(500),
+          value: descendingOrderPage(allOrders, query.until, query.limit),
           evidence: evidence(`orders-${orderCursors.length}`),
         })
       },
@@ -571,7 +705,7 @@ describe('execution reconciliation loop', () => {
       provide(read, makeStore(control)).pipe(Effect.provideService(ReconciliationClock, Effect.succeed(cut))),
     )
 
-    expect(orderCursors).toEqual([cut, allOrders[1].submittedAt, cut, allOrders[1].submittedAt])
+    expect(orderCursors).toEqual([cut, allOrders[2].submittedAt, cut, allOrders[2].submittedAt])
     expect(fillCursors).toEqual([undefined, allFills[99].activityId, undefined, allFills[99].activityId])
     expect(control.reconciliations).toHaveLength(1)
     expect(control.reconciliations[0].orders).toHaveLength(501)

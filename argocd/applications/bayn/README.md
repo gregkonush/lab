@@ -36,6 +36,11 @@ command is **not** run automatically from the trading service at startup.
 
 ## Isolated Alpha-R1 research
 
+The same immutable image includes `bayn-harness2` for bounded prompt refinement. Use the
+[Harness2 runbook](../../../docs/bayn/harness2.md) for frozen manifests, durable object-store evidence, restart behavior,
+and deployed verification. It uses the worker's existing research API and storage identity. It needs no broker access
+or additional network/database grants.
+
 `research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
 inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
 The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
@@ -179,7 +184,7 @@ from supplied observed prices before execution. The funded plan binds those choi
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 129 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 131 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59`.
 This source cutover carries OBSERVE authority. PAPER restoration requires a reviewed same-account mandate authored
@@ -406,7 +411,7 @@ no capital authority. The migration clamps the previous PAPER authority. After t
 129, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
 containing this migration and the current Jev v15 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 129, the source-bound controller plan v3
+while the OBSERVE rollout finishes; hold the activation merge until migration 131, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -590,7 +595,7 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 ### Jev-selected trade-plan cutover
 
 Protocol v15 / state v14 and entry/exit targets v4 replace the geometric exit policy and momentum gate.
-Migration 129 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+Migration 131 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
 retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
 published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
 existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,

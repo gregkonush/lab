@@ -1,5 +1,5 @@
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca/model'
@@ -23,7 +23,17 @@ import {
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
 
-const currentIsoTime = currentUtcInstant
+const hashCalendar = (hours: MarketHours) =>
+  Effect.fromResult(canonicalHashV1Result(hours)).pipe(
+    Effect.mapError((cause) =>
+      runnerError({
+        operation: 'build-cycle',
+        failure: 'contract',
+        message: 'market calendar cannot be canonicalized',
+        cause,
+      }),
+    ),
+  )
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
@@ -36,7 +46,7 @@ export const discoverAutonomousCyclePass = <R>(
     executionPolicy: context.executionPolicy,
   }
   return Effect.gen(function* () {
-    const observedAt = yield* currentIsoTime
+    const observedAt = yield* currentUtcInstant
     const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
       Effect.mapError(calendarQueryFailureError),
     )
@@ -68,7 +78,7 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
     let hours: MarketHours = continuousMarketHours
-    let hoursReadHash = canonicalHashV1(continuousMarketHours)
+    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
     // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
     if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
       const broker = yield* BrokerRead
@@ -172,7 +182,7 @@ export const discoverAutonomousCyclePass = <R>(
       outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
       executionSessionDate: executionSession.date,
       observedAt,
-      calendarResponseHash: canonicalHashV1(hours),
+      calendarResponseHash: yield* hashCalendar(hours),
       calendarReadContentHash: hoursReadHash,
       receipt,
     } as const
@@ -253,7 +263,7 @@ const recoverCycle = <R>(
         Effect.matchEffect({
           onFailure: (cause) =>
             cause.failure === 'not-ready'
-              ? currentIsoTime.pipe(
+              ? currentUtcInstant.pipe(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
@@ -285,7 +295,7 @@ const recoverCycle = <R>(
               ),
               Effect.flatMap((evidence) =>
                 pipe(
-                  currentIsoTime,
+                  currentUtcInstant,
                   Effect.flatMap((bindObservedAt) =>
                     pipe(
                       CycleStore,
@@ -352,7 +362,7 @@ const recoverCycle = <R>(
         ),
         Effect.flatMap((document) =>
           pipe(
-            currentIsoTime,
+            currentUtcInstant,
             Effect.flatMap((decisionObservedAt) =>
               pipe(
                 chooseRecovery({
@@ -390,7 +400,7 @@ export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   cycle: AutonomousCycle | undefined,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  currentIsoTime.pipe(
+  currentUtcInstant.pipe(
     Effect.flatMap((observedAt) =>
       chooseRecovery({
         cycleBindingId: context.cycleBindingId,

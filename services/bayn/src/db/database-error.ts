@@ -104,6 +104,3 @@ export const runDatabase = <A, E, R>(
     withObservedStage('bayn.postgres.operation', { dependency: 'postgresql', operation, slowAfterMs: 1_000 }),
     Effect.annotateLogs({ operation }),
   )
-
-export const ensure = (condition: boolean, operation: string, message: string): Effect.Effect<void, DatabaseError> =>
-  condition ? Effect.void : Effect.fail(databaseError({ failure: 'invariant', operation, message }))

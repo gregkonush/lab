@@ -16,7 +16,7 @@ import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
-import { canonicalHashV1OrThrow } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
 
@@ -449,7 +449,7 @@ describe('runtime configuration loading', () => {
 
   test('keeps strategy and controller identities independent of stale historical settings', async () => {
     const environment = new Map(runtimeEnvironment)
-    const parameterHash = canonicalHashV1OrThrow(Result.getOrThrow(loadActiveStrategyProtocol()))
+    const parameterHash = Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(loadActiveStrategyProtocol())))
     environment.set('BAYN_PROVENANCE_MODE', 'development')
     environment.set('BAYN_STRATEGY_BEHAVIOR_HASH', activeStrategyBehaviorHash)
     environment.set('BAYN_STRATEGY_PARAMETER_HASH', parameterHash)

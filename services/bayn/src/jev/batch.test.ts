@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   decodeJevBatchPlan,
   decodeJevBatchResult,
@@ -33,12 +33,14 @@ const planMaterial = {
   observedAt: request.observedAt,
   expiresAt: request.expiresAt,
   benchmarkSymbol: 'SPY',
-  questionSetHash: canonicalHashV1(
-    [request, second].map((entry) => ({
-      symbol: entry.symbol,
-      model: entry.request.model,
-      questions: entry.request.questions,
-    })),
+  questionSetHash: Result.getOrThrow(
+    canonicalHashV1Result(
+      [request, second].map((entry) => ({
+        symbol: entry.symbol,
+        model: entry.request.model,
+        questions: entry.request.questions,
+      })),
+    ),
   ),
   candidates: [
     { symbol: 'AAPL', status: JevCandidatePlanStatus.Requested, request },
@@ -98,7 +100,7 @@ describe('complete Jev batch evidence', () => {
       unfavorable: 0.46,
       unclear: 0.08,
     }
-    tied.responseHash = canonicalHashV1(tied.response)
+    tied.responseHash = Result.getOrThrow(canonicalHashV1Result(tied.response))
     const result = Result.getOrThrow(
       makeJevBatchResult(
         plan,
@@ -147,7 +149,7 @@ describe('complete Jev batch evidence', () => {
         ...planMaterial,
         schemaVersion: JevBatchPlanVersion.V5,
         candidates,
-        questionSetHash: canonicalHashV1([]),
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
@@ -157,7 +159,7 @@ describe('complete Jev batch evidence', () => {
         ...planMaterial,
         schemaVersion: JevBatchPlanVersion.V5,
         candidates,
-        questionSetHash: canonicalHashV1([]),
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),
     )
     const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
@@ -192,9 +194,11 @@ describe('complete Jev batch evidence', () => {
       [{ symbol: 'AAPL', status: JevCandidateResultStatus.Excluded }, ...material.candidates.slice(1)],
     ]) {
       const changed = { ...material, candidates }
-      expect(Result.isFailure(decodeJevBatchResult(plan, { ...changed, resultHash: canonicalHashV1(changed) }))).toBe(
-        true,
-      )
+      expect(
+        Result.isFailure(
+          decodeJevBatchResult(plan, { ...changed, resultHash: Result.getOrThrow(canonicalHashV1Result(changed)) }),
+        ),
+      ).toBe(true)
     }
   })
 

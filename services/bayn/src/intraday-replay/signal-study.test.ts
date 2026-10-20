@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { OrderSide, OrderType } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { makeJevObservation } from '../jev/observation'
@@ -47,7 +47,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 100,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: atMs, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const roundTrip = () => ({
   symbol: 'AAPL',

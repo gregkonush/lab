@@ -41,7 +41,6 @@ import {
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   reconciledPositionLiquidationBindingSchemaVersion,
-  type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
@@ -1024,5 +1023,3 @@ export const buildExecutionDecision = (
       ),
     ),
   ).pipe(withObservedStage('bayn.execution.decision-build', { operation: Authority.Execution }))
-
-export type DurableCycleDecisionDocument = CycleDecisionDocument

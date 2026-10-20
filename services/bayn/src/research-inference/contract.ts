@@ -43,7 +43,7 @@ export const ResearchPolicySchema = Schema.Struct({
   maximumFactors: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(82)),
 })
 const Evidence = Schema.Struct({ sha256: Sha256Schema, availableAt: UtcInstantSchema })
-export const ResearchRunSchema = Schema.Struct({
+const FactorResearchRunSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-run.v1'),
   sourceRevision: GitSourceRevisionSchema,
   studyHash: Sha256Schema,
@@ -85,6 +85,18 @@ export const ResearchRunSchema = Schema.Struct({
     }),
   ),
 })
+export enum HarnessPurpose {
+  PromptEdit = 'prompt-edit',
+  Reflection = 'reflection',
+}
+export const ResearchRunSchema = Schema.Union([
+  FactorResearchRunSchema,
+  Schema.Struct({
+    ...FactorResearchRunSchema.fields,
+    schemaVersion: Schema.Literal('bayn.harness2-inference.v1'),
+    purpose: Schema.Enum(HarnessPurpose),
+  }),
+])
 export type ResearchRun = typeof ResearchRunSchema.Type
 export type ResearchPolicy = typeof ResearchPolicySchema.Type
 export const ResearchServingIdentitySchema = Schema.Struct({
@@ -179,6 +191,12 @@ export const researchRequest = (run: ResearchRun) => {
     max_tokens,
     stop,
   } = run.policy
+  const outputInstruction =
+    run.schemaVersion === 'bayn.research-run.v1'
+      ? `Select at most ${run.policy.maximumFactors} factors. Return their exact IDs inside <alpha_list>...</alpha_list>.`
+      : run.purpose === HarnessPurpose.PromptEdit
+        ? 'Return the complete revised prompt inside exactly one <harness>...</harness> block, with at most 8000 characters. Explain the change in <notes>...</notes>.'
+        : 'Return only evidence-supported edits and experience in the requested reflection format, or NO_ENTRY when no lesson is supported.'
   return {
     model,
     temperature,
@@ -198,7 +216,7 @@ export const researchRequest = (run: ResearchRun) => {
     messages: [
       {
         role: 'user',
-        content: `${run.promptTemplate}\n\n${run.context.memory.text}\n\n${run.context.factors.map((factor) => `${factor.id}\n${factor.description}`).join('\n\n')}\n\nSelect at most ${run.policy.maximumFactors} factors. Return their exact IDs inside <alpha_list>...</alpha_list>.`,
+        content: `${run.promptTemplate}\n\n${run.context.memory.text}\n\n${run.context.factors.map((factor) => `${factor.id}\n${factor.description}`).join('\n\n')}\n\n${outputInstruction}`,
       },
     ],
   }
@@ -265,12 +283,23 @@ export const sealResearchReceipt = (
     return { ...receipt, receiptHash: yield* hashResearch(receipt) }
   })
 
-export const parseResearchFactors = (run: ResearchRun, output: string) =>
+export const parseResearchOutput = (run: ResearchRun, output: string) =>
   Result.gen(function* () {
     const visible = output.replace(/<think>[\s\S]*?<\/think>/g, '')
+    if (visible.trim() === '' || visible.includes('<think>'))
+      return yield* Result.fail(new ResearchError({ message: 'Research output is empty or has incomplete reasoning' }))
+    if (run.schemaVersion === 'bayn.harness2-inference.v1') {
+      if (run.purpose === HarnessPurpose.PromptEdit) {
+        const proposals = [...visible.matchAll(/<harness>([\s\S]*?)<\/harness>/g)]
+        const prompt = proposals[0]?.[1]?.trim()
+        if (proposals.length !== 1 || prompt === undefined || prompt.length === 0 || prompt.length > 8000)
+          return yield* Result.fail(new ResearchError({ message: 'Harness editor must return one bounded prompt' }))
+      }
+      return []
+    }
     const lists = [...visible.matchAll(/<alpha_list>([\s\S]*?)<\/alpha_list>/g)]
     const list = lists[0]?.[1]
-    if (lists.length !== 1 || list === undefined || visible.includes('<think>'))
+    if (lists.length !== 1 || list === undefined)
       return yield* Result.fail(
         new ResearchError({ message: 'Research output must have one complete factor list outside reasoning' }),
       )

@@ -11,12 +11,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-
-export const cycleTimeZone = 'America/New_York' as const
 export const maximumSubmissionDurationMs = 86_400_000
-export const SubmissionWindowMsSchema = PositiveIntegerSchema.check(
-  Schema.isLessThanOrEqualTo(maximumSubmissionDurationMs),
-)
 const SessionBoundaryOffsetMsSchema = NonNegativeIntegerSchema.check(
   Schema.isLessThanOrEqualTo(maximumSubmissionDurationMs),
 )
@@ -129,7 +124,6 @@ export const ExecutionCalendarObservationSchema = ExecutionCalendarObservationBa
   Schema.makeFilter(executionCalendarObservationIssues),
 )
 export type ExecutionCalendarObservation = typeof ExecutionCalendarObservationSchema.Type
-export type SelectedExecutionCalendarSession = typeof SelectedExecutionCalendarSessionSchema.Type
 
 export const CycleExecutionPolicyMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.autonomous-cycle-execution-policy.v3'),
@@ -137,8 +131,6 @@ export const CycleExecutionPolicyMaterialSchema = Schema.Struct({
   warmupAfterOpenMs: SessionBoundaryOffsetMsSchema,
   submissionCutoffBeforeCloseMs: SessionBoundaryOffsetMsSchema,
 })
-
-export type CycleExecutionPolicyMaterial = typeof CycleExecutionPolicyMaterialSchema.Type
 const CycleExecutionPolicyBase = Schema.Struct({
   ...CycleExecutionPolicyMaterialSchema.fields,
   executionPolicyHash: Sha256Schema,
@@ -178,8 +170,6 @@ export const CycleIdentityMaterialSchema = Schema.Struct({
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinalSchema,
   executionPolicy: CycleExecutionPolicySchema,
 })
-
-export type CycleIdentityMaterial = typeof CycleIdentityMaterialSchema.Type
 const CycleIdentityBase = Schema.Struct({ ...CycleIdentityMaterialSchema.fields, cycleId: Sha256Schema })
 export const CycleIdentitySchema = CycleIdentityBase.check(
   Schema.makeFilter((identity) => {
@@ -256,7 +246,6 @@ const CycleBindingsSchema = Schema.Struct({
   snapshotId: Schema.optionalKey(Sha256Schema),
   decisionHash: Schema.optionalKey(Sha256Schema),
 })
-export type CycleBindings = typeof CycleBindingsSchema.Type
 
 const AutonomousCycleBase = Schema.Struct({
   ...CycleDraftBase.fields,
@@ -330,48 +319,6 @@ export const AutonomousCycleSchema = AutonomousCycleBase.check(
 )
 export type AutonomousCycle = typeof AutonomousCycleSchema.Type
 
-type AutonomousCycleVariantBase = Omit<AutonomousCycle, 'bindings' | 'state' | 'terminalAt' | 'terminalReason'>
-type PendingCycleBindings =
-  | { readonly snapshotId?: undefined; readonly decisionHash?: undefined }
-  | { readonly snapshotId: string; readonly decisionHash?: undefined }
-type TerminalCycleBindings = PendingCycleBindings | { readonly snapshotId: string; readonly decisionHash: string }
-export type PendingCycle = AutonomousCycleVariantBase & {
-  readonly state: CycleState.Pending
-  readonly bindings: PendingCycleBindings
-  readonly terminalReason?: undefined
-  readonly terminalAt?: undefined
-}
-export type ActiveUnboundCycle = AutonomousCycleVariantBase & {
-  readonly state: CycleState.Active
-  readonly bindings: PendingCycleBindings
-  readonly terminalReason?: undefined
-  readonly terminalAt?: undefined
-}
-export type ActiveDecisionBoundCycle = AutonomousCycleVariantBase & {
-  readonly state: CycleState.Active
-  readonly bindings: { readonly snapshotId: string; readonly decisionHash: string }
-  readonly terminalReason?: undefined
-  readonly terminalAt?: undefined
-}
-export type CompletedCycle = AutonomousCycleVariantBase & {
-  readonly state: CycleCompletionState
-  readonly bindings: { readonly snapshotId: string; readonly decisionHash: string }
-  readonly terminalReason?: undefined
-  readonly terminalAt: string
-}
-export type BlockedCycle = AutonomousCycleVariantBase & {
-  readonly state: CycleState.Blocked
-  readonly bindings: TerminalCycleBindings
-  readonly terminalReason: CycleTerminalReason
-  readonly terminalAt: string
-}
-export type CorrelatedAutonomousCycle =
-  | PendingCycle
-  | ActiveUnboundCycle
-  | ActiveDecisionBoundCycle
-  | CompletedCycle
-  | BlockedCycle
-
 export const SelectedExecutionCalendarSessionSchema = Schema.Struct({
   schemaVersion: Schema.Literals(['bayn.alpaca-market-calendar-observation.v2', 'bayn.continuous-market-hours.v1']),
   source: Schema.Literals(['alpaca-v2-calendar', 'alpaca-crypto-us']),
@@ -384,7 +331,6 @@ export const CycleWindowPolicyInputSchema = Schema.Union([
   CycleExecutionPolicySchema,
   Schema.Struct({ warmupAfterOpenMs: Schema.Finite, submissionCutoffBeforeCloseMs: Schema.Finite }),
 ])
-export type CycleWindowPolicyInput = typeof CycleWindowPolicyInputSchema.Type
 
 export const decodeExecutionCalendarMaterialResult = Schema.decodeUnknownResult(
   ExecutionCalendarObservationMaterialSchema,
@@ -422,10 +368,4 @@ export const decodeCycleWindowResult = Schema.decodeUnknownResult(CycleWindowSch
 
 export const decodeCycleDraftResult = Schema.decodeUnknownResult(CycleDraftSchema, strictParseOptions)
 
-export const decodeCycleIdentity = Schema.decodeUnknownEffect(CycleIdentitySchema, strictParseOptions)
-
-export const decodeCycleWindow = Schema.decodeUnknownEffect(CycleWindowSchema, strictParseOptions)
-
 export const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
-
-export const decodeAutonomousCycle = Schema.decodeUnknownEffect(AutonomousCycleSchema, strictParseOptions)

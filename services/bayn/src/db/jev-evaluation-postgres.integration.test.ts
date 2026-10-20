@@ -10,7 +10,7 @@ import resolutionMigration from '../../migrations/0077_jev_evaluation_resolution
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { Authority } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { IsoDateSchema } from '../schemas'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { JevFailure } from '../jev/contract'
@@ -212,7 +212,11 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         const nextPrompt = { ...request.request, state: { changed: 'different inference' } }
         const { requestId: _, ...material } = request
         const changed = Result.getOrThrow(
-          makeJevEvaluationRequest({ ...material, request: nextPrompt, requestHash: canonicalHashV1(nextPrompt) }),
+          makeJevEvaluationRequest({
+            ...material,
+            request: nextPrompt,
+            requestHash: Result.getOrThrow(canonicalHashV1Result(nextPrompt)),
+          }),
         )
         expect(Result.isFailure(yield* store.begin(changed).pipe(Effect.result))).toBe(true)
         expect(yield* store.begin(request)).toEqual({ status: JevClaim.Pending })
@@ -230,7 +234,11 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
           { ...request.request, questions: { changed: { type: 'noul', instructions: 'Is this favorable?' } } },
         ]) {
           const substituted = Result.getOrThrow(
-            makeJevEvaluationRequest({ ...material, request: payload, requestHash: canonicalHashV1(payload) }),
+            makeJevEvaluationRequest({
+              ...material,
+              request: payload,
+              requestHash: Result.getOrThrow(canonicalHashV1Result(payload)),
+            }),
           )
           expect(Result.isFailure(yield* store.begin(substituted).pipe(Effect.result))).toBe(true)
         }

@@ -7,13 +7,13 @@ import { prepareAccounting } from '../accounting/domain'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
-import { makeForwardPerformanceReport } from './report'
+import { ForwardPerformanceScopeKind, makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
@@ -36,7 +36,7 @@ const transaction = (
   const quantityAtoms = BigInt(quantity) * 1_000_000n
   return success(
     prepareAccounting(
-      canonicalHashV1({ index, side, quantity, symbol }),
+      Result.getOrThrow(canonicalHashV1Result({ index, side, quantity, symbol })),
       {
         schemaVersion: 'bayn.fill.v2',
         accountId: 'episode-account',
@@ -806,28 +806,64 @@ describe('position episodes', () => {
     }
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))
     const { reportHash, ...material } = report
-    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...material,
-        inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...material,
+          inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
+        }),
+      ),
     ).not.toBe(reportHash)
+  })
+
+  test('binds an empty financial report to the requested generation without supplying financial identity', () => {
+    const input = evidence([])
+    const firstGeneration = '1'.repeat(64)
+    const secondGeneration = '2'.repeat(64)
+    const first = success(makeForwardPerformanceReport(input, [], firstGeneration))
+    const second = success(makeForwardPerformanceReport(input, [], secondGeneration))
+
+    expect(first.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: firstGeneration,
+    })
+    expect(second.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: secondGeneration,
+    })
+    expect(first.receipt).toEqual(second.receipt)
+    expect(first.receipt.bindings.source).toBeNull()
+    expect(first.receipt.bindings.strategy).toBeNull()
+    expect(Object.values(first.receipt.totals).every((total) => total === null)).toBe(true)
+    expect(first.receipt.profitability).toBe('UNDETERMINED')
+    expect(first.reportHash).not.toBe(second.reportHash)
+    const { reportHash, ...material } = first
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...material, scope: second.scope }))).not.toBe(reportHash)
+  })
+
+  test('declares an account scope when no generation was requested', () => {
+    const report = success(makeForwardPerformanceReport(evidence([]), []))
+    expect(report.scope).toEqual({ kind: ForwardPerformanceScopeKind.Account })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v4')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
-    expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...reportFields,
-        receipt,
-        positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...reportFields,
+          receipt,
+          positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
+        }),
+      ),
     ).not.toBe(reportHash)
     const envelope = success(
       makeForwardPerformanceReceiptEnvelope({
@@ -842,14 +878,17 @@ describe('position episodes', () => {
     expect(success(decodeForwardPerformanceReceiptEnvelopeResult(envelope))).toEqual(envelope)
     const { receiptHash: _, ...receiptMaterial } = receipt
     const changedMaterial = { ...receiptMaterial, positionEpisodes: report.positionEpisodes }
-    const changedReceipt = { ...changedMaterial, receiptHash: canonicalHashV1(changedMaterial) }
+    const changedReceipt = {
+      ...changedMaterial,
+      receiptHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+    }
     const { contentHash: _contentHash, ...envelopeMaterial } = envelope
     const changedEnvelope = { ...envelopeMaterial, receiptHash: changedReceipt.receiptHash, receipt: changedReceipt }
     expect(
       Result.isFailure(
         decodeForwardPerformanceReceiptEnvelopeResult({
           ...changedEnvelope,
-          contentHash: canonicalHashV1(changedEnvelope),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(changedEnvelope)),
         }),
       ),
     ).toBe(true)

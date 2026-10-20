@@ -1,4 +1,5 @@
-import { canonicalHashV1 } from '../hash'
+import { Result } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 import { intradayMomentumBehaviorHash } from '../strategy/intraday-momentum/decision'
 import { streamingFixture, streamingFixtureFromRaw } from './streaming-market-fixture'
 
@@ -70,7 +71,7 @@ export const historicalStreamingFixture = (returns?: Readonly<Record<string, num
   }))
   const input = {
     schemaVersion: 'bayn.historical-streaming-strategy-input.v1',
-    protocolHash: canonicalHashV1(protocol),
+    protocolHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
     behaviorHash: intradayMomentumBehaviorHash,
     sessionDate: '2026-09-04',
     calendar: [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],

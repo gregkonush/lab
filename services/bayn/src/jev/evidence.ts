@@ -58,7 +58,6 @@ export const JevEvaluationReceiptSchema = Schema.Struct({
   receiptHash: Sha256Schema,
 })
 export type JevEvaluationReceipt = typeof JevEvaluationReceiptSchema.Type
-export type JevRecordedOutcome = typeof OutcomeSchema.Type
 
 export class JevEvidenceError extends Data.TaggedError('JevEvidenceError')<{
   readonly message: string

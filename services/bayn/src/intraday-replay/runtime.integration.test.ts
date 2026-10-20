@@ -33,7 +33,7 @@ import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { Journal, JournalLive } from '../ledger'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { config as baseConfig, fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { makeActiveStrategyRuntime } from '../strategy'
@@ -279,7 +279,10 @@ durableTest.each(
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const strategyRuntime = makeActiveStrategyRuntime(protocol, {
       ...fixtureRuntime.provenance,
-      strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
+      strategy: {
+        ...fixtureRuntime.provenance.strategy,
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
+      },
     })
     const closeAtMs =
       scenario === 'fill' || scenario === 'fallback'
@@ -305,17 +308,19 @@ durableTest.each(
         record: { ...arrival.record, offset: String(BigInt(arrival.record.offset) + 1_000_000n) },
       }))
       .toSorted((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
-    const runId = canonicalHashV1({ attempt: randomUUID() })
+    const runId = Result.getOrThrow(canonicalHashV1Result({ attempt: randomUUID() }))
     const source = {
       ...fixture.source,
       runId,
-      sourceManifestHash: canonicalHashV1({
-        ...fixture.input,
-        arrivals: {
-          ...fixture.input.arrivals,
-          events: [...fixture.input.arrivals.events, ...lifecycleArrivals, ...closeArrivals],
-        },
-      }),
+      sourceManifestHash: Result.getOrThrow(
+        canonicalHashV1Result({
+          ...fixture.input,
+          arrivals: {
+            ...fixture.input.arrivals,
+            events: [...fixture.input.arrivals.events, ...lifecycleArrivals, ...closeArrivals],
+          },
+        }),
+      ),
     }
     const accountId = `replay-${runId}`
     const config: RuntimeConfig = {
@@ -786,7 +791,7 @@ durableTest.each(
           expect(yield* sql`SELECT count(*)::int AS cycles FROM autonomous_cycles`).toEqual([{ cycles: 0 }])
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           yield* runtime.store.authorityRestriction.restrictAuthority(
-            `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
+            `reconciliation discrepancy ${Result.getOrThrow(canonicalHashV1Result({ transient: true }))}`,
             yield* currentUtcInstant,
           )
           yield* advanceMarketTo(initialMs + 1000)
@@ -818,7 +823,7 @@ durableTest.each(
           yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1)
           if (scenario === 'operator-after-system-replay') {
             yield* runtime.store.authorityRestriction.restrictAuthority(
-              `reconciliation discrepancy ${canonicalHashV1({ transient: true })}`,
+              `reconciliation discrepancy ${Result.getOrThrow(canonicalHashV1Result({ transient: true }))}`,
               yield* currentUtcInstant,
             )
             yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
@@ -1705,7 +1710,7 @@ durableTest.each(
                 return yield* new JevError({
                   failure: JevFailure.Response,
                   message: 'Response has billed usage but no valid decision answers',
-                  responseHash: canonicalHashV1(rejected),
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
                   rejectedResponse: Redacted.make(rejected),
                 })
               }

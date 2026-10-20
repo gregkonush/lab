@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -63,10 +63,12 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   ].sort((a, b) => a.cycleId.localeCompare(b.cycleId))
   const receipt = {
     schemaVersion: 'bayn.jev-study-export.v1',
-    accountBindingHash: canonicalHashV1({
-      schemaVersion: 'bayn.jev-study-account.v1',
-      accountId: batch.observation.portfolio.brokerState.account.accountId,
-    }),
+    accountBindingHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.jev-study-account.v1',
+        accountId: batch.observation.portfolio.brokerState.account.accountId,
+      }),
+    ),
     sessionDate,
     asOf: '2026-09-12T00:00:00.000Z',
     cycleCount: cycles.length,
@@ -82,7 +84,7 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   }
   return {
     schemaVersion: 'bayn.jev-study-inventory.v1',
-    receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+    receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
     cycles,
     batches,
   }
@@ -200,20 +202,22 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, max
   }
   const registration = {
     schemaVersion: 'bayn.matched-entry-registration.v2',
-    definitionHash: canonicalHashV1(matchedEntryDefinition),
+    definitionHash: Result.getOrThrow(canonicalHashV1Result(matchedEntryDefinition)),
     sourceRevision: 'a'.repeat(40),
-    protocolHash: canonicalHashV1(base.protocol),
+    protocolHash: Result.getOrThrow(canonicalHashV1Result(base.protocol)),
     registeredAt: '2026-09-03T00:00:00.000Z',
     dataRole: MatchedDataRole.Development,
     sessionDates: dates,
     latencyMs: 100,
-    executionAssumptionsHash: canonicalHashV1({
-      instruments: replayTestInstruments,
-      latencyMs: 100,
-      slippageBps: 0,
-      availableLiquidityPpm: 1000000,
-      feeMultiplierPpm: 1000000,
-    }),
+    executionAssumptionsHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 0,
+        availableLiquidityPpm: 1000000,
+        feeMultiplierPpm: 1000000,
+      }),
+    ),
     latencyEvidenceHash: null,
     capacityEvidenceHash: null,
   }
@@ -417,7 +421,7 @@ test.each([
               ...retained,
               cycles,
               schemaVersion: scenario === 'unsupported' ? 'bayn.jev-study-inventory.v0' : retained.schemaVersion,
-              receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+              receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
               batches: scenario === 'pending' ? batchRows.map((batch) => ({ ...batch, resultHash: null })) : batchRows,
             },
       )
@@ -544,7 +548,7 @@ test('native inventories round-trip pending entry and management batches with no
         ...retained,
         cycles,
         batches: batchRows,
-        receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+        receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
       })
       const evidenceHash = sha256(bytes)
       const path = `${directory}/inventory.json`
@@ -799,7 +803,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(report.summary.completion).toBe('INCOMPLETE')
       expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
       const { reportHash, ...material } = report
-      expect(canonicalHashV1(material)).toBe(reportHash)
+      expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
       expect(JSON.parse(yield* fs.readFileString(outputPath))).toEqual(report)
       expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
       expect(
@@ -812,12 +816,14 @@ test('offline command reproduces native observations, prices shared lifecycle on
         dataRole: MatchedDataRole.Prospective,
         registeredAt: '2026-09-04T13:30:00.000Z',
       }
-      const oldDefinitionHash = canonicalHashV1({
-        ...matchedEntryDefinition,
-        schemaVersion: 'bayn.matched-entry-definition.v5',
-        lifecycle:
-          'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
-      })
+      const oldDefinitionHash = Result.getOrThrow(
+        canonicalHashV1Result({
+          ...matchedEntryDefinition,
+          schemaVersion: 'bayn.matched-entry-definition.v5',
+          lifecycle:
+            'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
+        }),
+      )
       const oldRegistration = { ...data.registration, definitionHash: oldDefinitionHash }
       const oldResult = yield* runMatchedEntryStudy(data.input, oldRegistration, arrivals, data.receipt).pipe(
         Effect.result,
@@ -850,7 +856,11 @@ test('offline command reproduces native observations, prices shared lifecycle on
       const slow = { ...data.input, study: { ...data.input.study, assumptions: slowAssumptions } }
       const slowReport = yield* runMatchedEntryStudy(
         slow,
-        { ...data.registration, latencyMs: 20000, executionAssumptionsHash: canonicalHashV1(slowAssumptions) },
+        {
+          ...data.registration,
+          latencyMs: 20000,
+          executionAssumptionsHash: Result.getOrThrow(canonicalHashV1Result(slowAssumptions)),
+        },
         arrivals,
         data.receipt,
       )
@@ -895,7 +905,7 @@ test.each([
           {
             ...data.registration,
             latencyMs: assumptions.latencyMs,
-            executionAssumptionsHash: canonicalHashV1(assumptions),
+            executionAssumptionsHash: Result.getOrThrow(canonicalHashV1Result(assumptions)),
           },
           arrivals,
           data.receipt,

@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Clock, Effect, FileSystem, Layer, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
@@ -25,12 +25,16 @@ const fixture = {
   ...originalFixture,
   observation: Result.getOrThrow(
     makeJevObservation({
-      cycleId: canonicalHashV1({ runId, sessionDate: originalFixture.snapshot.manifest.sessionDate }),
-      authorityGenerationHash: canonicalHashV1({
-        runId,
-        scope: 'SIMULATED_CONTROL',
-        protocol: originalFixture.protocol,
-      }),
+      cycleId: Result.getOrThrow(
+        canonicalHashV1Result({ runId, sessionDate: originalFixture.snapshot.manifest.sessionDate }),
+      ),
+      authorityGenerationHash: Result.getOrThrow(
+        canonicalHashV1Result({
+          runId,
+          scope: 'SIMULATED_CONTROL',
+          protocol: originalFixture.protocol,
+        }),
+      ),
       protocol: originalFixture.protocol,
       portfolio: originalFixture.portfolio,
       snapshot: originalFixture.snapshot,
@@ -63,7 +67,10 @@ const run = <A, E>(
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))))
 const seed = (journal: Effect.Success<typeof setup>['journal']) =>
   Effect.gen(function* () {
-    yield* journal.observations.record({ contentHash: canonicalHashV1(observation), payload: observation })
+    yield* journal.observations.record({
+      contentHash: Result.getOrThrow(canonicalHashV1Result(observation)),
+      payload: observation,
+    })
     yield* journal.batches.begin(plan)
   })
 const receipt = (evaluationRequest = request) =>

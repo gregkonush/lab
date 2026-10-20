@@ -10,7 +10,7 @@ import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
 import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
@@ -100,7 +100,12 @@ const simulate = (
               bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
               askSize: options.canceledEntries === true ? 0 : (options.entrySize ?? 1000),
             }
-            return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+            return {
+              value,
+              sequence: 1,
+              availableAtMs: atMs,
+              recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
+            }
           }),
         snapshot: (query) =>
           Effect.sync(() => {
@@ -630,7 +635,7 @@ test('missing observations retain zero-trade sessions as incomplete instead of i
   expect(report.missingDecisions).toBe(snapshots)
   expect(report.orders).toHaveLength(0)
   expect(report.completedEpisodes).toBe(0)
-  expect(canonicalHashV1(report)).toHaveLength(64)
+  expect(Result.getOrThrow(canonicalHashV1Result(report))).toHaveLength(64)
 })
 
 test('missing exit prices retain the position and missing marks through close', async () => {
@@ -824,7 +829,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
         expect(session.ledger.cashMicros).toBe(input.backtest.openingCashMicros)
       }
       const { reportHash, ...material } = report
-      expect(canonicalHashV1(material)).toBe(reportHash)
+      expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
       const falsificationInput = {
         ...input,
         repeatedTargetWeightPpm: residualShockDefinition.targetWeightPpm,

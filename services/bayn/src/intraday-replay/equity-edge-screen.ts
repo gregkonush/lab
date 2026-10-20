@@ -2,7 +2,7 @@ import { Data, Result } from 'effect'
 
 import { calculateSessionFees, type FeeInput } from '../strategy/execution-model/fees'
 import { intradayExecutionModel } from '../strategy/intraday-market'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 
 export enum EquityScreenSignal {
   Momentum = 'RELATIVE_MOMENTUM',
@@ -53,7 +53,7 @@ export const equityScreenDefinition = Object.freeze({
   flattenMinutesBeforeClose: 5,
   maximumExitWaitMinutes: 3,
   feePolicy: 'native-intraday-execution-model',
-  executionModelHash: canonicalHashV1(intradayExecutionModel),
+  executionModelHash: Result.getOrThrow(canonicalHashV1Result(intradayExecutionModel)),
   feeAggregation:
     'Cumulative native session-by-fee-type deltas; one fill per simulated order preserves per-order TAF caps',
   sizing:

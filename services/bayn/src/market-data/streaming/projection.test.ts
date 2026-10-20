@@ -13,7 +13,7 @@ import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
 import { IntradaySnapshotPurpose, type IntradayQuote, type IntradaySnapshotQuery } from '../intraday/model'
-import { canonicalHashV1, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import { checkProperty } from '../../testing/property-test-support'
 import {
   captureKafkaTransport,
@@ -311,7 +311,7 @@ describe('streaming raw and rolling feature projection', () => {
           value: JSON.stringify({
             ...feature,
             material,
-            featureId: canonicalHashV1(material),
+            featureId: Result.getOrThrow(canonicalHashV1Result(material)),
             computedAtMs: feature.computedAtMs + shiftMs,
           }),
         },
@@ -399,7 +399,7 @@ describe('streaming raw and rolling feature projection', () => {
       inputs,
       values: { ...feature.material.values, referencePriceMicros: '100500000' },
     }
-    const replacement = { ...feature, material, featureId: canonicalHashV1(material) }
+    const replacement = { ...feature, material, featureId: Result.getOrThrow(canonicalHashV1Result(material)) }
     const corrected = incorporateMarketRecord(initial, correctedRecord, universe, end + 4000)
     expect(Result.getOrThrow(select(corrected, end + 3000)).feature.value.featureId).toBe(feature.featureId)
     const previousCut = Result.getOrThrow(constructStreamingSnapshot(cutFor(corrected), query))
@@ -583,7 +583,7 @@ const calendarMaterial = withProviderSessions({
 })
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
-  calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+  calendar: { ...calendarMaterial, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)) },
   rangeStartAt: new Date(start).toISOString(),
   rangeEndAt: new Date(end).toISOString(),
   observedAt: new Date(end + 3000).toISOString(),
@@ -915,8 +915,8 @@ describe('verified streaming decision snapshot', () => {
     expect(snapshot.manifest.streaming.records).toHaveLength(32)
     expect(snapshot.manifest.streaming.features[0]?.value.featureId).toBe(feature.featureId)
     const { snapshotId, contentHash, ...material } = snapshot.manifest
-    expect(contentHash).toBe(canonicalHashV1(material))
-    expect(snapshotId).toBe(canonicalHashV1({ ...material, contentHash }))
+    expect(contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
+    expect(snapshotId).toBe(Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })))
   })
 
   test('selects quote state as of observation even when a newer quote is incorporated before the request executes', () => {

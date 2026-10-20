@@ -411,13 +411,6 @@ export const statusFacts = (
   } as const
 }
 
-export const statusResponseDecision = (
-  state: RuntimeState,
-  execution: ExecutionPolicy,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
-
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
 

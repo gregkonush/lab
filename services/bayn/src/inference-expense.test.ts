@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { InferenceCostError, InferenceUsageStatus } from './inference-costs'
 import { provideTestLayer } from './effect-test-support'
 import {
@@ -41,9 +41,11 @@ describe('inference expense quote and deterministic plan', () => {
       { rateHash: 'a'.repeat(64) },
     ]) {
       const { quoteHash: _hash, ...material } = { ...priced, line: { ...priced.line, ...change } }
-      expect(Result.isFailure(decodeInferenceExpenseQuote({ ...material, quoteHash: canonicalHashV1(material) }))).toBe(
-        true,
-      )
+      expect(
+        Result.isFailure(
+          decodeInferenceExpenseQuote({ ...material, quoteHash: Result.getOrThrow(canonicalHashV1Result(material)) }),
+        ),
+      ).toBe(true)
     }
   })
 
@@ -134,7 +136,11 @@ describe('inference expense quote and deterministic plan', () => {
     const valid = quote()
     const { quoteHash: _hash, ...material } = valid
     const forged = { ...material, line: { ...material.line, estimatedCostPicoUsd: '84000' } }
-    expect(Result.isFailure(decodeInferenceExpenseQuote({ ...forged, quoteHash: canonicalHashV1(forged) }))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeInferenceExpenseQuote({ ...forged, quoteHash: Result.getOrThrow(canonicalHashV1Result(forged)) }),
+      ),
+    ).toBe(true)
     expect(
       Result.isFailure(makeInferenceExpenseQuote({ ...expenseSourceFixture(), receipt: {} }, expenseRateFixture)),
     ).toBe(true)

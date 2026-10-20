@@ -4,12 +4,12 @@ import { Result } from 'effect'
 
 import { AuthorizationError, ConnectionError, SqlError } from 'effect/sql/SqlError'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { type SnapshotRequest } from './market-data/model'
 
 import { marketDataOperationError } from './market-data/errors'
-import { verifyFinalizedCalendar } from './market-data/verification/calendar'
-import { verifyFinalizedManifest } from './market-data/verification/manifest'
+import { verifyCalendar } from './market-data/verification/calendar'
+import { verifyManifest } from './market-data/verification/manifest'
 
 import { verifyFinalizedSnapshot } from './market-data/verification/snapshot'
 import { type SnapshotRows } from './market-data/rows'
@@ -228,7 +228,7 @@ describe('finalized Signal snapshot reader', () => {
 
   test('checks the finalized publication identity without loading sessions or bars', () => {
     const fixture = makeFixture()
-    const publication = verificationSuccess(verifyFinalizedManifest(fixture.rows.manifests, fixture.request))
+    const publication = verificationSuccess(verifyManifest(fixture.rows.manifests, fixture.request)).finalizedSnapshot
 
     expect(publication).toMatchObject({
       snapshotId,
@@ -239,7 +239,7 @@ describe('finalized Signal snapshot reader', () => {
       rowCount: 4,
       sessionCount: 2,
     })
-    expect(verificationFailure(verifyFinalizedManifest([], fixture.request))).toMatchObject({
+    expect(verificationFailure(verifyManifest([], fixture.request))).toMatchObject({
       _tag: 'ManifestCountMismatch',
       snapshotId,
       count: 0,
@@ -249,13 +249,13 @@ describe('finalized Signal snapshot reader', () => {
   test('precommits the exact input manifest from manifest and calendar rows without bars', () => {
     const fixture = makeFixture()
     const inspection = verificationSuccess(
-      verifyFinalizedCalendar({ manifests: fixture.rows.manifests, sessions: fixture.rows.sessions }, fixture.request),
+      verifyCalendar(fixture.rows.sessions, fixture.rows.manifests, fixture.request),
     )
     const snapshot = verificationSuccess(verifyFinalizedSnapshot(fixture.rows, fixture.request))
 
-    expect(inspection.manifest).toEqual(snapshot.manifest)
-    expect(inspection.sessionDates).toEqual(['2025-01-02', '2025-01-03'])
-    expect(inspection.signalSession).toEqual({
+    expect(inspection.inputManifest).toEqual(snapshot.manifest)
+    expect(inspection.boundedSessions.map((session) => session.session_date)).toEqual(['2025-01-02', '2025-01-03'])
+    expect(inspection.boundedSessions.at(-1)).toMatchObject({
       calendar_version: 'alpaca-us-equity-calendar-v1',
       session_date: '2025-01-03',
       close_time: '16:00',
@@ -325,22 +325,26 @@ describe('finalized Signal snapshot reader', () => {
     }
 
     const degenerateBars = [{ ...fixture.rows.bars[0], adjusted_close: 'NaN' }, ...fixture.rows.bars.slice(1)]
-    const barsContentHash = canonicalHashV1(degenerateBars.map(({ snapshot_id: _, ...bar }) => bar))
+    const barsContentHash = Result.getOrThrow(
+      canonicalHashV1Result(degenerateBars.map(({ snapshot_id: _, ...bar }) => bar)),
+    )
     const sourceManifest = fixture.rows.manifests[0]
-    const degenerateSnapshotId = canonicalHashV1({
-      schemaVersion: sourceManifest.schema_version,
-      provider: sourceManifest.provider,
-      feed: sourceManifest.source_feed,
-      adjustment: sourceManifest.adjustment,
-      calendarVersion: sourceManifest.calendar_version,
-      requestedStart: sourceManifest.requested_start,
-      publicationAsOf: sourceManifest.publication_asof,
-      symbols,
-      barsContentHash,
-      sessionsContentHash: sourceManifest.sessions_content_hash,
-      universeId: sourceManifest.universe_id,
-      universeSymbolHash: sourceManifest.universe_symbol_hash,
-    })
+    const degenerateSnapshotId = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: sourceManifest.schema_version,
+        provider: sourceManifest.provider,
+        feed: sourceManifest.source_feed,
+        adjustment: sourceManifest.adjustment,
+        calendarVersion: sourceManifest.calendar_version,
+        requestedStart: sourceManifest.requested_start,
+        publicationAsOf: sourceManifest.publication_asof,
+        symbols,
+        barsContentHash,
+        sessionsContentHash: sourceManifest.sessions_content_hash,
+        universeId: sourceManifest.universe_id,
+        universeSymbolHash: sourceManifest.universe_symbol_hash,
+      }),
+    )
     const { manifest_content_hash: _, ...sourceManifestMaterial } = sourceManifest
     const degenerateManifestMaterial = {
       ...sourceManifestMaterial,
@@ -353,7 +357,7 @@ describe('finalized Signal snapshot reader', () => {
       manifests: [
         {
           ...degenerateManifestMaterial,
-          manifest_content_hash: canonicalHashV1(degenerateManifestMaterial),
+          manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(degenerateManifestMaterial)),
         },
       ],
     }

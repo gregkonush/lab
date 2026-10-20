@@ -5,7 +5,7 @@ import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -55,7 +55,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         makeStrategyProtocolHashResult({
           name: 'jev',
           behaviorHash: jevBehaviorHash,
-          parameterHash: canonicalHashV1(protocol),
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
           parameterSchemaVersion: protocol.schemaVersion,
         }),
       )
@@ -154,12 +154,12 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
         strategyName: 'jev',
         cycleId: cycle.identity.cycleId,
-        decisionHash: canonicalHashV1(compiledDecision),
-        policyHash: canonicalHashV1(policy),
+        decisionHash: Result.getOrThrow(canonicalHashV1Result(compiledDecision)),
+        policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         accountId: broker.account.accountId,
         signalDate: snapshot.manifest.sessionDate,
         targetWeights,
-        referencePrices: { ...reference, contentHash: canonicalHashV1(reference) },
+        referencePrices: { ...reference, contentHash: Result.getOrThrow(canonicalHashV1Result(reference)) },
         brokerState: broker,
         precision: protocol.executionModel.precision,
         allocationCapitalMicros: allocationCapitalMicros.toString(),

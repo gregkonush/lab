@@ -1,6 +1,6 @@
 import { equityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { historicalStreamingFixture } from './historical-streaming-fixture'
 import {
   advanceHistoricalMarketCursor,
@@ -28,7 +28,7 @@ export const simulationFixture = (
   }
   const source = {
     runId: input.arrivals.runId,
-    sourceManifestHash: canonicalHashV1(input),
+    sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(input)),
     deliveryModel: {
       ...input.arrivals.deliveryModel,
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,

@@ -83,7 +83,7 @@ make its remaining children disappear. Unknown submissions are recovered by thei
 
 ## Hard cutover
 
-Migration 129 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+Migration 131 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
 immutable financial and model history, restricts new Jev authority to v15, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.

@@ -359,7 +359,6 @@ const ShadowDecisionBindingsSchema = Schema.Struct({
   decisionMarketData: Schema.optionalKey(ExecutionMarketDataBindingSchema),
   executionMarketData: Schema.optionalKey(ExecutionMarketDataBindingSchema),
 })
-export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 
 const DeltaRiskEvaluationSchema = Schema.Struct({
   protection: Schema.optionalKey(NativeProtectionSchema),

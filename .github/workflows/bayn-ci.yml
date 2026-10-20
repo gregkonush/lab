@@ -123,6 +123,19 @@ jobs:
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 
+  harness2:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install -r services/bayn/harness2/requirements.txt
+      - run: python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
+
   effect-runtime-compatibility:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
@@ -348,6 +361,7 @@ jobs:
     needs:
       - changes
       - pr-checks
+      - harness2
       - effect-runtime-compatibility
       - broker-sandbox-contract
       - postgres-integration
@@ -362,6 +376,7 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
+          HARNESS2_RESULT: ${{ needs.harness2.result }}
           EFFECT_RESULT: ${{ needs.effect-runtime-compatibility.result }}
           BROKER_RESULT: ${{ needs.broker-sandbox-contract.result }}
           POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
@@ -380,6 +395,7 @@ jobs:
           fi
           for result_name in \
             PR_CHECKS_RESULT \
+            HARNESS2_RESULT \
             EFFECT_RESULT \
             BROKER_RESULT \
             POSTGRES_RESULT \

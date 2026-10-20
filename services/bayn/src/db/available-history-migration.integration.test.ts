@@ -1,4 +1,4 @@
-import modelSelectedTradePlanMigration from '../../migrations/0129_model_selected_trade_plan'
+import modelSelectedTradePlanMigration from '../../migrations/0131_model_selected_trade_plan'
 import strategyNativeProtectionMigration from '../../migrations/0128_strategy_native_protection'
 import entryBoundExitsMigration from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgmentMigration from '../../migrations/0125_market_management_judgment'
@@ -37,7 +37,7 @@ const makeRuntime = () =>
 for (const { label, id, protocol, migration } of [
   {
     label: 'model-selected-trade-plan',
-    id: 129,
+    id: 131,
     protocol: 'bayn.jev.protocol.v15',
     migration: modelSelectedTradePlanMigration,
   },
@@ -119,9 +119,9 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 124 || id === 125 || id === 129) {
+    if (id === 124 || id === 125 || id === 131) {
       const retired =
-        id === 129
+        id === 131
           ? {
               protocol: 'bayn.jev.protocol.v14' as const,
               behavior: '9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29',
