@@ -303,7 +303,8 @@ const makeMaterial = (
     reasons.add('CASH_YIELD_EVIDENCE_GAP')
   }
   if (input.transactions.length === 0) reasons.add('ZERO_COMPLETED_EXECUTIONS')
-  if (input.brokerFeeAccruals?.some((accrual) => !accrual.settled)) reasons.add('BROKER_FEE_SETTLEMENT_PENDING')
+  if (input.brokerFeeAccruals?.some((accrual) => !accrual.settled) === true)
+    reasons.add('BROKER_FEE_SETTLEMENT_PENDING')
 
   const cycleIds = new Set(cycles.map((cycle) => cycle.cycleId))
   if (input.transactions.some((transaction) => !cycleIds.has(transaction.cycleId))) reasons.add('CYCLE_IDENTITY_DRIFT')

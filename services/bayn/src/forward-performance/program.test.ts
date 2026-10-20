@@ -30,6 +30,7 @@ import {
   runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
+import { ForwardPerformanceScopeKind } from './report'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
@@ -770,8 +771,8 @@ describe('forward performance read program', () => {
       expect(expenseGeneration).toBe(authorityGenerationHash)
       expect(report.scope).toEqual(
         authorityGenerationHash === undefined
-          ? { kind: 'ACCOUNT' }
-          : { kind: 'AUTHORITY_GENERATION', authorityGenerationHash },
+          ? { kind: ForwardPerformanceScopeKind.Account }
+          : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash },
       )
       expect(expenseWriterFence).toBe(writerFence)
       expect(fencedReport).toEqual(report)

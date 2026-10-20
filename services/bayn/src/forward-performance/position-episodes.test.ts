@@ -13,7 +13,7 @@ import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
-import { makeForwardPerformanceReport } from './report'
+import { ForwardPerformanceScopeKind, makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
@@ -822,8 +822,14 @@ describe('position episodes', () => {
     const first = success(makeForwardPerformanceReport(input, [], firstGeneration))
     const second = success(makeForwardPerformanceReport(input, [], secondGeneration))
 
-    expect(first.scope).toEqual({ kind: 'AUTHORITY_GENERATION', authorityGenerationHash: firstGeneration })
-    expect(second.scope).toEqual({ kind: 'AUTHORITY_GENERATION', authorityGenerationHash: secondGeneration })
+    expect(first.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: firstGeneration,
+    })
+    expect(second.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: secondGeneration,
+    })
     expect(first.receipt).toEqual(second.receipt)
     expect(first.receipt.bindings.source).toBeNull()
     expect(first.receipt.bindings.strategy).toBeNull()
@@ -837,7 +843,7 @@ describe('position episodes', () => {
 
   test('declares an account scope when no generation was requested', () => {
     const report = success(makeForwardPerformanceReport(evidence([]), []))
-    expect(report.scope).toEqual({ kind: 'ACCOUNT' })
+    expect(report.scope).toEqual({ kind: ForwardPerformanceScopeKind.Account })
     expect(report.receipt.profitability).toBe('UNDETERMINED')
   })
 
