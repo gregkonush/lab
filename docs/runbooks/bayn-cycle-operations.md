@@ -201,6 +201,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
+  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
+  recovery timer into the new epoch.
+
 - `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
   `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
