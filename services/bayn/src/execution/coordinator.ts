@@ -32,7 +32,7 @@ import { IntentStore, type IntentStoreError, type StoredIntent } from './intents
 import { MutationStore, MutationStoreError, type MutationEvent } from './mutations/model'
 import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { Pipeable } from '../pipeable'
+
 import { withObservedStage } from '../telemetry'
 import { SubmissionDenialReason } from './submission-denial'
 
@@ -312,7 +312,7 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
+export const submit = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
@@ -321,11 +321,6 @@ const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly
     withObservedStage('bayn.execution.submit', { operation: closeOnly ? 'close' : 'entry' }),
     Effect.annotateLogs({ intentId, closeOnly }),
   )
-
-export const submit = Pipeable.by<
-  (consistencyDelayMs: number, closeOnly?: boolean) => (intentId: string) => ReturnType<typeof submitDataFirst>,
-  typeof submitDataFirst
->((arguments_) => typeof arguments_[0] === 'string', submitDataFirst)
 
 const persistCancelDecision = (
   services: MutationServices,
@@ -418,13 +413,11 @@ const runCancel = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-const cancelDataFirst = (intentId: string, consistencyDelayMs: number) =>
+export const cancel = (intentId: string, consistencyDelayMs: number) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
   }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
-
-export const cancel = Pipeable.dual(2, cancelDataFirst)
 
 const markInterruptedStart = (mutations: MutationStore['Service'], event: MutationEvent, occurredAt: string) =>
   Match.value(decideInterruptedStart(event, occurredAt)).pipe(
@@ -543,10 +536,8 @@ const runRecovery = (services: RecoveryServices, intentId: string, operation: Mu
     ),
   )
 
-const recoverDataFirst = (intentId: string, operation: MutationOperation) =>
+export const recover = (intentId: string, operation: MutationOperation) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerRead,
   }).pipe(Effect.flatMap((services) => runRecovery(services, intentId, operation)))
-
-export const recover = Pipeable.dual(2, recoverDataFirst)

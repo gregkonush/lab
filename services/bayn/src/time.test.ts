@@ -39,7 +39,7 @@ describe('Bayn UTC clock boundary', () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-07-26T06:23:57.295Z'))
         return yield* Effect.all([currentUtcInstant, currentUtcDate])
-      }).pipe(provideTestLayer(TestClock.layer())),
+      }).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
 
     expect(instant).toBe('2026-07-26T06:23:57.295Z')

@@ -29,7 +29,7 @@ import {
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
 import { WriterFenceError, type WriterFenceService } from './writer-fence'
-import { Pipeable } from '../pipeable'
+
 import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
 import { withObservedStage } from '../telemetry'
 
@@ -186,7 +186,7 @@ const validateFinalSubmitTime = (
     return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
   })
 
-const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
+export const authorizeFinalBrokerSubmit = <A, E, R>(
   authority: MutationExecutionAuthority,
   intent: Intent,
   transmit: Effect.Effect<A, E, R>,
@@ -224,15 +224,6 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
     )
 }
 
-export const authorizeFinalBrokerSubmit = Pipeable.generic<
-  <A, E, R>(
-    intent: Intent,
-    transmit: Effect.Effect<A, E, R>,
-    dependencies: ExecutionProgramDependencies,
-  ) => (authority: MutationExecutionAuthority) => Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R>,
-  typeof authorizeFinalBrokerSubmitDataFirst
->(4, authorizeFinalBrokerSubmitDataFirst)
-
 const provideCoordinatorDependencies = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   dependencies: ExecutionProgramDependencies,
@@ -264,7 +255,7 @@ const scopeSubmitDeadline = (
   }
 }
 
-const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
+export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
     return Result.fail({
       _tag: 'ExecutionProgramRequiresMutationAuthority' as const,
@@ -325,7 +316,5 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
       ),
   })
 }
-
-export const makeExecutionProgram = Pipeable.dual(2, makeExecutionProgramDataFirst)
 
 export type ExecutionProgram = Result.Result.Success<ReturnType<typeof makeExecutionProgram>>

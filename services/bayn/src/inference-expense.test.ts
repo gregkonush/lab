@@ -270,7 +270,7 @@ describe('scoped inference expense background loop', () => {
           yield* Deferred.await(entered)
           yield* Fiber.interrupt(fiber)
         }),
-      ).pipe(provideTestLayer(TestClock.layer())),
+      ).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
     expect(starts).toBe(2)
     expect(releases).toBe(1)

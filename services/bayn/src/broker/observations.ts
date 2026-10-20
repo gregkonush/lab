@@ -34,7 +34,6 @@ import {
   type ReadEvidence,
   type ReadResult,
 } from './alpaca/model'
-import { Pipeable } from '../pipeable'
 
 const CommonEventInput = {
   broker: Schema.Literal(Broker.Alpaca),
@@ -376,7 +375,7 @@ const duplicatePosition = (positions: readonly AlpacaPosition[]): BrokerObservat
   return duplicateSymbol === undefined ? undefined : { _tag: 'DuplicatePositionSymbol', symbol: duplicateSymbol.symbol }
 }
 
-const positionSnapshotDataFirst = (
+export const positionSnapshot = (
   accountId: string,
   result: ReadResult<readonly AlpacaPosition[]>,
 ): Result.Result<PositionSnapshotInput, BrokerObservationError> => {
@@ -402,8 +401,6 @@ const positionSnapshotDataFirst = (
           ),
         )
 }
-
-export const positionSnapshot = Pipeable.dual(2, positionSnapshotDataFirst)
 
 type ValidatedOrder = Omit<AlpacaOrder, 'updatedAt'> & {
   readonly updatedAt: string
@@ -441,7 +438,7 @@ const validateOrderShape = (
   )
 }
 
-const orderObservationDataFirst = (
+export const orderObservation = (
   value: AlpacaOrder,
   evidence: ReadEvidence,
   intentId?: string,
@@ -502,15 +499,7 @@ const orderObservationDataFirst = (
     ),
   )
 
-export const orderObservation = Pipeable.by<
-  (evidence: ReadEvidence, intentId?: string) => (value: AlpacaOrder) => ReturnType<typeof orderObservationDataFirst>,
-  typeof orderObservationDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'brokerOrderId' in arguments_[0],
-  orderObservationDataFirst,
-)
-
-const fillObservationDataFirst = (
+export const fillObservation = (
   activity: FillActivity,
   order: AlpacaOrder,
   evidence: ReadEvidence,
@@ -570,18 +559,6 @@ const fillObservationDataFirst = (
         brokerOrderId: order.brokerOrderId,
       })
 }
-
-export const fillObservation = Pipeable.by<
-  (
-    order: AlpacaOrder,
-    evidence: ReadEvidence,
-    options?: { readonly intentId?: string; readonly feeMicros?: string },
-  ) => (activity: FillActivity) => ReturnType<typeof fillObservationDataFirst>,
-  typeof fillObservationDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'activityId' in arguments_[0],
-  fillObservationDataFirst,
-)
 
 export const renderBrokerObservationError = (error: BrokerObservationError): string => {
   switch (error._tag) {

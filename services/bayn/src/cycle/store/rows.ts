@@ -1,6 +1,5 @@
-import { Effect, Result, Schema } from 'effect'
+import { Effect, Schema } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import {
   IsoDateSchema,
   NonNegativeIntegerSchema,
@@ -105,64 +104,43 @@ const StoredDecisionDocumentRowsSchema = Schema.Array(
   }),
 )
 
-const decodeCycleIdDataFirst = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
+export const decodeCycleId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 
-export const decodeCycleId = Pipeable.dual(1, (input: unknown) => decodeCycleIdDataFirst(input))
-const decodeCycleIdInputDataFirst = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
+export const decodeCycleIdInput = Schema.decodeUnknownEffect(CycleIdInputSchema, strictParseOptions)
 
-export const decodeCycleIdInput = Pipeable.dual(1, (input: unknown) => decodeCycleIdInputDataFirst(input))
-const decodeCycleAuthoritySlotDataFirst = Schema.decodeUnknownEffect(CycleAuthoritySlotSchema, strictParseOptions)
+export const decodeCycleAuthoritySlot = Schema.decodeUnknownEffect(CycleAuthoritySlotSchema, strictParseOptions)
 
-export const decodeCycleAuthoritySlot = Pipeable.dual(1, (input: unknown) => decodeCycleAuthoritySlotDataFirst(input))
-const decodeCycleRecoveryScopeDataFirst = Schema.decodeUnknownEffect(CycleRecoveryScopeSchema, strictParseOptions)
+export const decodeCycleRecoveryScope = Schema.decodeUnknownEffect(CycleRecoveryScopeSchema, strictParseOptions)
 
-export const decodeCycleRecoveryScope = Pipeable.dual(1, (input: unknown) => decodeCycleRecoveryScopeDataFirst(input))
-const decodeDecisionInputDataFirst = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
+export const decodeDecisionInput = Schema.decodeUnknownEffect(DecisionInputSchema, strictParseOptions)
 
-export const decodeDecisionInput = Pipeable.dual(1, (input: unknown) => decodeDecisionInputDataFirst(input))
-const decodeBlockInputDataFirst = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
+export const decodeBlockInput = Schema.decodeUnknownEffect(BlockInputSchema, strictParseOptions)
 
-export const decodeBlockInput = Pipeable.dual(1, (input: unknown) => decodeBlockInputDataFirst(input))
-const decodeFinishInputDataFirst = Schema.decodeUnknownEffect(FinishInputSchema, strictParseOptions)
+export const decodeFinishInput = Schema.decodeUnknownEffect(FinishInputSchema, strictParseOptions)
 
-export const decodeFinishInput = Pipeable.dual(1, (input: unknown) => decodeFinishInputDataFirst(input))
-const decodeCycleDraftDataFirst = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
+export const decodeCycleDraft = Schema.decodeUnknownEffect(CycleDraftSchema, strictParseOptions)
 
-export const decodeCycleDraft = Pipeable.dual(1, (input: unknown) => decodeCycleDraftDataFirst(input))
-const decodeObservedAtDataFirst = Schema.decodeUnknownEffect(UtcInstantSchema, strictParseOptions)
+export const decodeObservedAt = Schema.decodeUnknownEffect(UtcInstantSchema, strictParseOptions)
 
-export const decodeObservedAt = Pipeable.dual(1, (input: unknown) => decodeObservedAtDataFirst(input))
-const decodeMutationRowsDataFirst = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
+export const decodeMutationRows = Schema.decodeUnknownEffect(MutationRowsSchema, strictParseOptions)
 
-export const decodeMutationRows = Pipeable.dual(1, (input: unknown) => decodeMutationRowsDataFirst(input))
-const decodeDecisionEvidenceMatchDataFirst = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
-
-export const decodeDecisionEvidenceMatch = Pipeable.dual(1, (input: unknown) =>
-  decodeDecisionEvidenceMatchDataFirst(input),
-)
+export const decodeDecisionEvidenceMatch = Schema.decodeUnknownEffect(DecisionEvidenceMatchSchema, strictParseOptions)
 export const decodeDecisionEvidenceMismatch = Schema.decodeUnknownEffect(
   DecisionEvidenceMismatchSchema,
   strictParseOptions,
 )
-const decodeStoredDecisionDocumentRowsDataFirst = Schema.decodeUnknownEffect(
+
+export const decodeStoredDecisionDocumentRows = Schema.decodeUnknownEffect(
   StoredDecisionDocumentRowsSchema,
   strictParseOptions,
 )
 
-export const decodeStoredDecisionDocumentRows = Pipeable.dual(1, (input: unknown) =>
-  decodeStoredDecisionDocumentRowsDataFirst(input),
-)
-
 const decodeAutonomousCycleResult = Schema.decodeUnknownEffect(AutonomousCycleSchema, strictParseOptions)
-const decodeStoredCycleRowValuesResult = Schema.decodeUnknownResult(
+
+export const decodeStoredCycleRowValues = Schema.decodeUnknownResult(
   Schema.Array(StoredCycleRowSchema),
   strictParseOptions,
 )
-
-export const decodeStoredCycleRowValues = (
-  rows: unknown,
-): Result.Result<readonly (typeof StoredCycleRowSchema.Type)[], Schema.SchemaError> =>
-  decodeStoredCycleRowValuesResult(rows)
 
 const storedExecutionPolicy = (row: typeof StoredCycleRowSchema.Type) => ({
   schemaVersion: row.execution_policy_schema_version,

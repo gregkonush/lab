@@ -26,7 +26,6 @@ import {
   ReconciliationError,
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
-import { Pipeable } from '../pipeable'
 
 interface OrderPaginationState {
   readonly rows: readonly Observed<BrokerOrder>[]
@@ -70,7 +69,7 @@ const initialOrderPaginationState = (): OrderPaginationState => ({
 
 const initialFillPaginationState = (): FillPaginationState => ({ rows: [], ids: HashSet.empty(), cursor: undefined })
 
-const decideOrderPageDataFirst = (
+export const decideOrderPage = (
   state: OrderPaginationState,
   limit: number,
   page: ReadResult<readonly BrokerOrder[]>,
@@ -163,9 +162,7 @@ const decideOrderPageDataFirst = (
   })
 }
 
-export const decideOrderPage = Pipeable.dual(3, decideOrderPageDataFirst)
-
-const decideFillPageDataFirst = (
+export const decideFillPage = (
   state: FillPaginationState,
   pageSize: number,
   page: ReadResult<{ readonly items: readonly FillActivity[]; readonly nextPageToken?: string }>,
@@ -200,8 +197,6 @@ const decideFillPageDataFirst = (
     state: { rows, ids: pageResult.success.ids, cursor: next },
   })
 }
-
-export const decideFillPage = Pipeable.dual(3, decideFillPageDataFirst)
 
 const readOrderPages = (
   read: BrokerReadShape,
@@ -317,7 +312,7 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
     ),
   )
 
-const decideStableHistoryDataFirst = (
+export const decideStableHistory = (
   before: BrokerHistory,
   after: BrokerHistory,
 ): Result.Result<BrokerHistory, ReconciliationError> =>
@@ -349,9 +344,7 @@ const decideStableHistoryDataFirst = (
     return after
   })
 
-export const decideStableHistory = Pipeable.dual(2, decideStableHistoryDataFirst)
-
-const readStableBrokerSnapshotDataFirst = (
+export const readStableBrokerSnapshot = (
   read: BrokerReadShape,
   now: Effect.Effect<string, ReconciliationError>,
 ): Effect.Effect<StableBrokerSnapshot, BrokerReadError | ReconciliationError> =>
@@ -374,5 +367,3 @@ const readStableBrokerSnapshotDataFirst = (
         (cause.failure.reason === 'HistoryChanged' || cause.failure.reason === 'FillActivitiesPending'),
     }),
   )
-
-export const readStableBrokerSnapshot = Pipeable.dual(2, readStableBrokerSnapshotDataFirst)

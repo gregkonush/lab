@@ -1666,16 +1666,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
-    effect.pipe(Effect.provideService(IntentStore, intentStore), provideTestLayer(TestClock.layer()))
+    effect.pipe(Effect.provideService(IntentStore, intentStore), (self) => provideTestLayer(self, TestClock.layer()))
   const provideRecovery = <A, E>(effect: Effect.Effect<A, E, IntentStore | MutationStore | BrokerRead>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
   return {

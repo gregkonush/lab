@@ -20,7 +20,6 @@ import {
 import { legacyOrderV2SchemaVersion } from '../execution/legacy-wire'
 import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
 import type { PlannedTargetQuantity } from '../target-planner/index'
-import { Pipeable } from '../pipeable'
 
 const quantityScale = 1_000_000_000n
 
@@ -119,14 +118,13 @@ export const decideExecutionIntentTerminalDisposition = (
     : 'UNSUCCESSFUL'
 }
 
-const executionClosePlanNeedsResidualReplanDataFirst = (
+export const executionClosePlanNeedsResidualReplan = (
   intents: readonly Pick<Intent, 'state'>[],
   openPositionCount: number,
 ): boolean =>
   intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
 
 /** A settled close plan must be replaced when authoritative positions remain open. */
-export const executionClosePlanNeedsResidualReplan = Pipeable.dual(2, executionClosePlanNeedsResidualReplanDataFirst)
 
 const comparePositionSymbol = (left: Position, right: Position): number =>
   left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
@@ -164,7 +162,7 @@ const projectMutationPosition = (
   return [...retained, projected].sort(comparePositionSymbol)
 }
 
-const projectWorstCasePendingMutationPositionDataFirst = (
+export const projectWorstCasePendingMutationPosition = (
   positions: readonly Position[],
   target: PlannedTargetQuantity,
   accountId: string,
@@ -177,11 +175,6 @@ const projectWorstCasePendingMutationPositionDataFirst = (
     ? positions
     : projectMutationPosition(positions, target, accountId, observedAt)
 }
-
-export const projectWorstCasePendingMutationPosition = Pipeable.dual(
-  4,
-  projectWorstCasePendingMutationPositionDataFirst,
-)
 
 export type PreparedMutationIntentDecision =
   | { readonly _tag: 'Submit' }
@@ -196,7 +189,7 @@ export type PreparedMutationIntentDecisionFailure = {
   readonly eventType?: MutationEventType
 }
 
-const decidePreparedMutationIntentDataFirst = (
+export const decidePreparedMutationIntent = (
   intent: Intent,
   latest: MutationEvent | undefined,
 ): Result.Result<PreparedMutationIntentDecision, PreparedMutationIntentDecisionFailure> => {
@@ -272,8 +265,6 @@ const decidePreparedMutationIntentDataFirst = (
   }
 }
 
-export const decidePreparedMutationIntent = Pipeable.dual(2, decidePreparedMutationIntentDataFirst)
-
 export type PendingMutationObservationDecision =
   | { readonly _tag: 'StableOpen'; readonly order: Order }
   | { readonly _tag: 'Recover'; readonly reason: 'missing' | 'terminal'; readonly order?: Order }
@@ -298,7 +289,7 @@ const pendingOrderIdentityMatches = (expected: Order, observed: Order): boolean 
   observed.notionalMicros === expected.notionalMicros &&
   observed.limitPriceMicros === expected.limitPriceMicros
 
-const decidePendingMutationObservationDataFirst = (
+export const decidePendingMutationObservation = (
   expected: Order,
   observedOrders: readonly Order[],
 ): Result.Result<PendingMutationObservationDecision, PreparedMutationIntentDecisionFailure> => {
@@ -326,8 +317,6 @@ const decidePendingMutationObservationDataFirst = (
     : Result.succeed({ _tag: 'StableOpen', order: observed })
 }
 
-export const decidePendingMutationObservation = Pipeable.dual(2, decidePendingMutationObservationDataFirst)
-
 export type PreparedMutationIntentAdmissionFailure = {
   readonly _tag: 'PreparedMutationIntentAdmissionFailure'
   readonly reason:
@@ -340,7 +329,7 @@ export type PreparedMutationIntentAdmissionFailure = {
   readonly message: string
 }
 
-const decidePreparedMutationIntentAdmissionDataFirst = (
+export const decidePreparedMutationIntentAdmission = (
   prepared: PreparedMutationIntentDecision,
   effectiveAuthority: Authority,
   observedAt: string,
@@ -396,22 +385,6 @@ const decidePreparedMutationIntentAdmissionDataFirst = (
   return Result.succeed(undefined)
 }
 
-export const decidePreparedMutationIntentAdmission = Pipeable.by<
-  (
-    effectiveAuthority: Authority,
-    observedAt: string,
-    expiresAt: string,
-    unknownMutationCount: number,
-    reconciliationStatus?: ReconciliationStatus,
-    accountingExact?: boolean,
-    unknownOrderCount?: number,
-  ) => (prepared: PreparedMutationIntentDecision) => ReturnType<typeof decidePreparedMutationIntentAdmissionDataFirst>,
-  typeof decidePreparedMutationIntentAdmissionDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
-  decidePreparedMutationIntentAdmissionDataFirst,
-)
-
 export const decidePreparedCloseIntentAdmission = (
   prepared: PreparedMutationIntentDecision,
   observedAt: string,
@@ -460,12 +433,10 @@ export const decidePreparedCloseIntentAdmission = (
   return Result.succeed(undefined)
 }
 
-const appendPendingMutationOrderDataFirst = (orders: readonly Order[], pending: Order): readonly Order[] =>
+export const appendPendingMutationOrder = (orders: readonly Order[], pending: Order): readonly Order[] =>
   orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)
     ? orders
     : [...orders, pending]
-
-export const appendPendingMutationOrder = Pipeable.dual(2, appendPendingMutationOrderDataFirst)
 
 export interface ExecutionCycleIntentTerminalEvidence {
   readonly state: IntentState
@@ -491,7 +462,7 @@ export type ExecutionPhaseCompletionDecision =
       readonly reason: CycleCompletionWaitReason
     }
 
-const decideExecutionPhaseCompletionDataFirst = (
+export const decideExecutionPhaseCompletion = (
   phase: 'ENTRY' | 'CLOSE',
   documentCreatedAt: string,
   intents: readonly ExecutionCycleIntentTerminalEvidence[],
@@ -533,8 +504,6 @@ const decideExecutionPhaseCompletionDataFirst = (
   return { _tag: 'Complete' }
 }
 
-export const decideExecutionPhaseCompletion = Pipeable.dual(4, decideExecutionPhaseCompletionDataFirst)
-
 export type PreparedMutationRecoveryDecision =
   | { readonly _tag: 'NoRecovery' }
   | { readonly _tag: 'ObservePending'; readonly event: MutationEvent }
@@ -544,7 +513,7 @@ export type PreparedMutationRecoveryDecision =
       readonly event: MutationEvent
     }
 
-const decidePreparedMutationRecoveryDataFirst = (
+export const decidePreparedMutationRecovery = (
   intent: Intent,
   latestSubmit: MutationEvent | undefined,
   latestCancel: MutationEvent | undefined,
@@ -609,8 +578,6 @@ const decidePreparedMutationRecoveryDataFirst = (
   return Result.succeed({ _tag: 'Recover', operation: MutationOperation.Submit, event: latestSubmit })
 }
 
-export const decidePreparedMutationRecovery = Pipeable.dual(3, decidePreparedMutationRecoveryDataFirst)
-
 export type PreparedMutationCycleStep =
   | { readonly _tag: 'RunCycle' }
   | {
@@ -639,17 +606,13 @@ export type PreparedMutationCycleStep =
 
 export type BoundMutationCycleOutcome = Exclude<PreparedMutationCycleStep, { readonly _tag: 'Execute' }>
 
-const mutationRecoveryIsDueDataFirst = (event: MutationEvent, observedAt: string): boolean =>
+export const mutationRecoveryIsDue = (event: MutationEvent, observedAt: string): boolean =>
   Date.parse(observedAt) >= Date.parse(event.occurredAt) + event.consistencyDelayMs
 
-export const mutationRecoveryIsDue = Pipeable.dual(2, mutationRecoveryIsDueDataFirst)
-
-const executionSubmitExpiresAtDataFirst = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
+export const executionSubmitExpiresAt = (documentExpiresAt: string, riskDecisionExpiresAt: string): string =>
   riskDecisionExpiresAt < documentExpiresAt ? riskDecisionExpiresAt : documentExpiresAt
 
-export const executionSubmitExpiresAt = Pipeable.dual(2, executionSubmitExpiresAtDataFirst)
-
-const expiredExecutionPlanTerminalReasonDataFirst = (
+export const expiredExecutionPlanTerminalReason = (
   observedAt: string,
   submitExpiresAt: string,
   submissionCutoffAt: string,
@@ -659,8 +622,6 @@ const expiredExecutionPlanTerminalReasonDataFirst = (
     : observedAt >= submissionCutoffAt
       ? CycleTerminalReason.MissedSubmission
       : CycleTerminalReason.Risk
-
-export const expiredExecutionPlanTerminalReason = Pipeable.dual(3, expiredExecutionPlanTerminalReasonDataFirst)
 
 export type MutationIntentSettlementDecision =
   | {

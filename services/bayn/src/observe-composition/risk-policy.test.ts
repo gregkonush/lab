@@ -101,8 +101,8 @@ test('unknown, foreign-account and live increased-policy hashes fail closed', as
 test('pipeable policy loaders preserve explicit sandbox selection', async () => {
   const [quote, execution] = await Effect.runPromise(
     Effect.all([
-      loadExecutionRiskPolicy(fixtureProtocol.universe, BrokerEnvironment.Sandbox)('test-account'),
-      loadExecutionRiskPolicy(fixtureProtocol.universe, BrokerEnvironment.Sandbox)('test-account'),
+      loadExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
+      loadExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
     ]),
   )
   expect(quote.maxDailyTradedNotionalMicros).toBe('1000000000000')

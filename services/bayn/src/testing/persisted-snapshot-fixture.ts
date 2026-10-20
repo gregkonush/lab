@@ -1,9 +1,13 @@
+import type { SnapshotRequest } from '../market-data/model'
 import { canonicalHashV1, sha256 } from '../hash'
-import type { MarketDataContract } from '../market-data/model'
+
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../types'
 import { fixtureProtocol } from './runtime-fixtures'
 
-export const persistedMarketDataContract: MarketDataContract = {
+export const persistedMarketDataContract: Pick<
+  SnapshotRequest,
+  'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
+> = {
   universeId: 'cross-asset-taa-v1',
   universeSymbolHash: sha256(fixtureProtocol.universe.join(',')),
   universe: fixtureProtocol.universe,

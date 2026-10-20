@@ -145,7 +145,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
           WITH admitted AS (
             INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
             VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
-            ON CONFLICT (batch_id) DO NOTHING
+            ON CONFLICT DO NOTHING
             RETURNING batch_id
           )
           INSERT INTO jev_batch_results (batch_id, result_hash, payload)
@@ -155,7 +155,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
         yield* sql`
         INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
         VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
-        ON CONFLICT (batch_id) DO NOTHING
+        ON CONFLICT DO NOTHING
       `
       }
       const saved = yield* read(plan.batchId)

@@ -1,6 +1,5 @@
 import { Data, Schema } from 'effect'
 import { HttpClientError } from 'effect/http'
-import { Pipeable } from '../../pipeable'
 
 export enum BrokerReadErrorKind {
   Configuration = 'CONFIGURATION',
@@ -187,7 +186,7 @@ export const invalidResponse = (input: InvalidResponseInput): BrokerReadError =>
     ...(input.cause === undefined ? {} : { cause: safeCause({ cause: input.cause }) }),
   })
 
-const invalidRequestDataFirst = (operation: BrokerReadOperation, message: string, cause: unknown): BrokerReadError =>
+export const invalidRequest = (operation: BrokerReadOperation, message: string, cause: unknown): BrokerReadError =>
   new BrokerReadError({
     operation,
     kind: BrokerReadErrorKind.InvalidRequest,
@@ -196,9 +195,7 @@ const invalidRequestDataFirst = (operation: BrokerReadOperation, message: string
     cause: safeCause({ cause }),
   })
 
-export const invalidRequest = Pipeable.dual(3, invalidRequestDataFirst)
-
-const transportErrorDataFirst = (
+export const transportError = (
   operation: BrokerReadOperation,
   cause: unknown,
   sensitiveValues: readonly string[],
@@ -211,9 +208,7 @@ const transportErrorDataFirst = (
     cause: safeCause({ cause, sensitiveValues }),
   })
 
-export const transportError = Pipeable.dual(3, transportErrorDataFirst)
-
-const statusErrorDataFirst = (
+export const statusError = (
   operation: BrokerReadOperation,
   status: number,
   requestId: string,
@@ -246,9 +241,7 @@ const statusErrorDataFirst = (
   })
 }
 
-export const statusError = Pipeable.dual(7, statusErrorDataFirst)
-
-const timeoutErrorDataFirst = (
+export const timeoutError = (
   operation: BrokerReadOperation,
   timeoutMs: number,
   cause: unknown,
@@ -261,5 +254,3 @@ const timeoutErrorDataFirst = (
     retryable: true,
     cause: safeCause({ cause, sensitiveValues }),
   })
-
-export const timeoutError = Pipeable.dual(4, timeoutErrorDataFirst)

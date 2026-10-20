@@ -35,7 +35,6 @@ import { loadStrategyExecutionRiskPolicy } from '../observe-composition/startup'
 import { type ReconciliationPassError, type ReconciliationPassResult } from '../reconciler'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import type { RuntimeState } from '../runtime-state'
-import { Pipeable } from '../pipeable'
 
 export type ReadOnlyExecutionPolicy = Extract<ExecutionPolicy, { readonly brokerAccess: BrokerAccess.ReadOnly }>
 
@@ -378,7 +377,7 @@ interface CapitalActivationReconciliationObservation {
   }
 }
 
-export const refreshResearchCapitalActivationReconciliationDataFirst = <
+export const refreshResearchCapitalActivationReconciliation = <
   A extends CapitalActivationReconciliationObservation,
   E,
   R,
@@ -406,15 +405,6 @@ export const refreshResearchCapitalActivationReconciliationDataFirst = <
           ),
     ),
   )
-
-export const refreshResearchCapitalActivationReconciliation = Pipeable.generic<
-  (
-    operationTimeoutMs: number,
-  ) => <A extends CapitalActivationReconciliationObservation, E, R>(
-    reconcile: Effect.Effect<A, E, R>,
-  ) => Effect.Effect<A, OperationalError, R>,
-  typeof refreshResearchCapitalActivationReconciliationDataFirst
->(2, refreshResearchCapitalActivationReconciliationDataFirst)
 
 export const prepareOrRecoverResearchCapitalActivation = (
   plan: ApplicationPlan,
