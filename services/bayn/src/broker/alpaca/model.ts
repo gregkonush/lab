@@ -323,6 +323,7 @@ export interface Order {
 }
 
 export interface FeeActivity {
+  readonly sourceCreatedAt?: string
   readonly cryptoCashFee?: true
   readonly coinDebit?: { readonly symbol: string; readonly quantityAtoms: string; readonly priceAtoms: string }
   readonly accountId: string
@@ -624,6 +625,7 @@ export const FeeActivityResponseSchema = Schema.Union([
   Schema.Struct({
     ...FeeActivityResponseBase,
     activity_type: Schema.Literal('CFEE'),
+    created_at: Timestamp,
     symbol: ResponseSymbol,
     qty: Decimal,
     price: Decimal,
@@ -631,6 +633,7 @@ export const FeeActivityResponseSchema = Schema.Union([
   Schema.Struct({
     ...FeeActivityResponseBase,
     activity_type: Schema.Literal('CFEE'),
+    created_at: Timestamp,
     symbol: Schema.optionalKey(Schema.Literal('USD')),
     qty: Schema.optionalKey(Schema.Never),
     price: Schema.optionalKey(Schema.Never),

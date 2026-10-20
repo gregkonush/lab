@@ -1322,6 +1322,7 @@ describe('Alpaca paper reads', () => {
       activity_type: 'CFEE',
       id: `20261015000000000::${orderId}`,
       date: '2026-10-15',
+      created_at: '2026-10-14T23:59:58.123456Z',
       net_amount: '-0.23',
       status: 'executed',
       description: 'Coin Pair Transaction Fee (USD)',
@@ -1343,6 +1344,7 @@ describe('Alpaca paper reads', () => {
       accountId,
       activityId: raw.id,
       date: raw.date,
+      sourceCreatedAt: '2026-10-14T23:59:58.123456000Z',
       netAmountMicros: '-230000',
     })
     expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()

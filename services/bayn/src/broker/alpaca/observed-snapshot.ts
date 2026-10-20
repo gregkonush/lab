@@ -1,4 +1,4 @@
-import { FeeActivitySchema } from '../fee-activity'
+import { ObservedFeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
@@ -153,7 +153,7 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
     history: Schema.Struct({
       orders: Schema.Struct({ rows: Schema.Array(observed(order)), observedAt: UtcInstantSchema }),
       fills: Schema.Array(observed(fill)),
-      fees: Schema.Array(observed(FeeActivitySchema)),
+      fees: Schema.Array(observed(ObservedFeeActivitySchema)),
     }),
   }),
   configuration: observed(configuration),

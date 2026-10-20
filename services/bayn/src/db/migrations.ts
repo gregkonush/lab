@@ -1,3 +1,4 @@
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
 import harness2Research from '../../migrations/0129_harness2_research'
 import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
 import currentJevCycles from '../../migrations/0127_current_jev_cycles'
@@ -135,6 +136,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '126_entry_bound_exits': entryBoundExits,
   '128_strategy_native_protection': strategyNativeProtection,
   '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,
   '125_market_management_judgment': marketManagementJudgment,
