@@ -114,23 +114,37 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
               },
             } satisfies RecoveryFirstCycleAdvance
           }
+          if (input.mode === 'CloseOnly') {
+            const recovery = yield* advanceRestrictedGenerationRecovery(
+              Effect.void,
+              input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
+            )
+            const current = yield* readAuthority
+            const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, current.generationHash)
+            if (step._tag !== 'Waiting') {
+              yield* Deferred.succeed(rebind, undefined)
+              return {
+                observation: { result: 'SUCCESS', observedAt: yield* currentUtcInstant, outcome: 'RECOVERED' },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+            if (disposition(current) === 'Hold') {
+              yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
+              return {
+                observation: {
+                  result: 'FAILURE',
+                  observedAt: yield* currentUtcInstant,
+                  operation: 'read-authority-slot',
+                  failure: 'context',
+                  message: 'execution generation remains restricted by operator or authority policy',
+                },
+              } satisfies RecoveryFirstCycleAdvance
+            }
+          }
           cycleInProgress = true
           const advanced = yield* driver.advance
           cycleInProgress = false
           const after = disposition(yield* readAuthority)
           if (after === 'Rebind') yield* Deferred.succeed(rebind, undefined)
-          if (after !== 'Continue' || input.mode !== 'CloseOnly') return advanced
-          const recovery = yield* advanceRestrictedGenerationRecovery(
-            Effect.succeed(advanced),
-            input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
-          )
-          if (recovery._tag === 'RolledOver') {
-            yield* Deferred.succeed(rebind, undefined)
-            return advanced
-          }
-          const current = yield* readAuthority
-          const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, current.generationHash)
-          if (step._tag !== 'Waiting') yield* Deferred.succeed(rebind, undefined)
           return advanced
         }),
         driver.timeoutMs,
