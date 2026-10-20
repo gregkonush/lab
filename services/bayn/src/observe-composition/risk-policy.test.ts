@@ -7,8 +7,9 @@ import { executionMandateAllocationCapitalMicros } from '../execution/mandate'
 import { fixtureProtocol, fixtureRuntime } from '../testing/runtime-fixtures'
 import { loadExecutionRiskPolicy } from './decision-builder'
 import { loadStrategyExecutionRiskPolicy } from './startup'
+import { accountEntryProtectionReasons, accountLossMicros, Reason } from '../risk'
 
-test('raises only sandbox daily turnover and preserves the complete live policy', async () => {
+test('raises sandbox turnover and cumulative drawdown budgets while preserving the complete live policy', async () => {
   const [legacy, live, paper] = await Effect.runPromise(
     Effect.all([
       loadExecutionRiskPolicy('build-contract', fixtureProtocol.universe),
@@ -21,7 +22,29 @@ test('raises only sandbox daily turnover and preserves the complete live policy'
     '9d97ea59475004b664b745683932addeb687ab16ca4f627f93825becad334f12',
   )
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
-  expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000' })
+  expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000', maxDrawdownMicros: '10000000000' })
+})
+
+test('PAPER rebinding retains historical losses and enforces its new drawdown and unchanged daily cap', async () => {
+  const policy = await Effect.runPromise(
+    loadExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
+  )
+  const facts = {
+    accountEquityMicros: 94_900_000_000n,
+    dayStartEquityMicros: 95_000_000_000n,
+    peakEquityMicros: 100_000_000_000n,
+  }
+  expect(accountLossMicros(facts)).toEqual({ dailyLossMicros: 100_000_000n, drawdownMicros: 5_100_000_000n })
+  expect(accountEntryProtectionReasons(facts, { ...policy, maxDrawdownMicros: '5000000000' })).toEqual([
+    Reason.DrawdownExceeded,
+  ])
+  expect(accountEntryProtectionReasons(facts, policy)).toEqual([])
+  expect(accountEntryProtectionReasons({ ...facts, accountEquityMicros: 90_000_000_000n }, policy)).toEqual([])
+  expect(accountEntryProtectionReasons({ ...facts, accountEquityMicros: 89_999_999_999n }, policy)).toEqual([
+    Reason.DailyLossExceeded,
+    Reason.DrawdownExceeded,
+  ])
+  expect(accountLossMicros(facts).drawdownMicros).toBe(5_100_000_000n)
 })
 
 test('strategy startup and quote-bound loaders select the same environment-specific policy', async () => {

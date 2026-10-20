@@ -1,6 +1,6 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'
 import {

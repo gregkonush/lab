@@ -16,14 +16,7 @@ import {
 } from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import {
-  AutonomousCycleSchema,
-  CycleState,
-  cycleAuthoritySessionDate,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
-  type AutonomousCycle,
-} from './cycle'
+import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle/model'
 import {
   intentIdForPlan,
   clientOrderIdForIntentId,
@@ -33,7 +26,7 @@ import {
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
 import { withObservedStage } from './telemetry'
-import type { PersistedIntradaySnapshotRows } from './market-data'
+import type { PersistedIntradaySnapshotRows } from './market-data/intraday/verification'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
   Authority,
@@ -48,7 +41,7 @@ import {
   type ReferenceIntent,
 } from './execution/contracts'
 import { legacyExecutionAuthorityToken } from './execution/legacy-wire'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
   ExecutionMarketDataBindingSchema,
@@ -67,7 +60,6 @@ import {
   runtimeDecisionMatchesStrategy,
   type RuntimeStrategyDecision,
 } from './strategy/runtime-decision'
-import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
@@ -76,7 +68,7 @@ import {
   type PlannedTargetQuantity,
   type TargetPlannerInput,
   type TargetPlanResult,
-} from './target-planner'
+} from './target-planner/index'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -299,12 +291,7 @@ const validateBindings = (
   if (cycle.state !== CycleState.Active) {
     return Result.fail(error('binding', 'shadow planning requires an active autonomous cycle'))
   }
-  if (
-    (isLegacyAutonomousCycle(cycle) && cycle.bindings.snapshotId !== snapshot.snapshotId) ||
-    (isIntradayAutonomousCycle(cycle) &&
-      cycle.bindings.snapshotId !== undefined &&
-      cycle.bindings.snapshotId !== snapshot.snapshotId)
-  ) {
+  if (cycle.bindings.snapshotId !== undefined && cycle.bindings.snapshotId !== snapshot.snapshotId) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
   const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
@@ -312,7 +299,7 @@ const validateBindings = (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
-    plannerInput.signalDate !== cycleAuthoritySessionDate(cycle.identity) ||
+    plannerInput.signalDate !== cycle.identity.executionSessionDate ||
     plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
@@ -341,10 +328,8 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry =
-    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' ||
-    decision.schemaVersion === 'bayn.jev-entry-target.v1'
-  const intradayClose = isFlatExecutionTarget(decision) && ['intraday-momentum', 'jev'].includes(decision.strategyName)
+  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v2'
+  const intradayClose = isFlatExecutionTarget(decision)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
   const executionMarketData = input.executionMarketData
@@ -356,7 +341,7 @@ const validateBindings = (
       : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
   if (intradayEntry) {
     const expected =
-      decision.schemaVersion === 'bayn.jev-entry-target.v1' && decisionMarketData !== undefined
+      decision.schemaVersion === 'bayn.jev-entry-target.v2' && decisionMarketData !== undefined
         ? canonicalHashV1Result(decisionMarketData.calendar)
         : Result.succeed(cycle.window.executionCalendarHash)
     if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
@@ -366,28 +351,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
   }
   if (intradayEntry && !isSnapshotExecutionMarketDataBinding(executionMarketData)) {
-    return Result.fail(
-      error('binding', 'intraday-momentum entry requires a verified execution market-data snapshot binding'),
-    )
-  }
-  if (
-    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' &&
-    isSnapshotExecutionMarketDataBinding(decisionMarketData)
-  ) {
-    const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
-    const decisionSymbols = [
-      ...decision.signals.map(({ symbol }) => symbol),
-      ...excludedSymbols,
-      decision.benchmark.symbol,
-    ].toSorted()
-    const bindsDecisionSignals =
-      decisionMarketData.symbols.length === decisionSymbols.length &&
-      decisionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
-    if (!bindsDecisionSignals) {
-      return Result.fail(
-        error('binding', 'intraday entry requires complete market-data evidence for the decision universe'),
-      )
-    }
+    return Result.fail(error('binding', 'Jev entry requires a verified execution market-data snapshot binding'))
   }
   if (intradayClose && executionMarketData?.purpose !== IntradaySnapshotPurpose.Liquidation) {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
@@ -451,7 +415,6 @@ const validateBindings = (
         executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
     (intradayEntry && decisionMarketData?.snapshotId !== decision.snapshotId) ||
     (intradayEntry &&
-      isIntradayAutonomousCycle(cycle) &&
       (snapshot.snapshotId !== decisionMarketData?.snapshotId ||
         snapshot.contentHash !== decisionMarketData.contentHash ||
         snapshot.finalizedAt !== decisionMarketData.observedAt))
@@ -459,21 +422,9 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.intraday-momentum.target.v3'
-      ? intradayMomentumPlanningTargetWeights(
-          input.compiledDecision,
-          plannerInput.brokerState.positions
-            .filter(
-              (position) =>
-                BigInt(position.quantityAtoms) !== 0n &&
-                isSnapshotExecutionMarketDataBinding(executionMarketData) &&
-                executionMarketData.universe.includes(position.symbol),
-            )
-            .map((position) => position.symbol),
-        )
-      : input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
-        ? jevPlanningTargetWeights(input.compiledDecision)
-        : input.compiledDecision.targetWeights
+    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
+      ? jevPlanningTargetWeights(input.compiledDecision)
+      : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
     expectedPlanningWeights,
     'contract',
@@ -526,7 +477,7 @@ const validateRiskState = (
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
       state.entryQuote.maximumAgeMs !==
-        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
           ? jevEntryQuoteMaximumAgeMs(
               input.compiledDecision,
               state.entryQuote.eventAt,
@@ -542,7 +493,7 @@ const validateRiskState = (
   ) {
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
-  if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined)
+  if (input.executionMarketData === undefined)
     return Result.fail(error('binding', 'execution binding requires the verified current market snapshot'))
   if (
     state.executionSession.executionSession.date !== cycle.identity.executionSessionDate ||

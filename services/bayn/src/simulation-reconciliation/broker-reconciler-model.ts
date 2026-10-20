@@ -1,6 +1,7 @@
 import { Cause, Data, Result, pipe } from 'effect'
 
-import type { BrokerReadError, Observed } from '../broker/alpaca'
+import type { BrokerReadError } from '../broker/alpaca/failures'
+import type { Observed } from '../broker/alpaca/model'
 import {
   renderBrokerObservationError,
   sourceTimestamp,
@@ -14,7 +15,7 @@ import { reconciliationIncompleteRestrictionReason } from '../execution/authorit
 import type { BrokerSnapshot, ReconciliationReport } from '../db/reconciliation'
 import type { WriterFenceError } from '../execution/writer-fence'
 import type { CanonicalHashFailure } from '../hash'
-import type { ReconciledBrokerState, ReconciliationRiskContext } from '../reconciliation'
+import type { ReconciledBrokerState, ReconciliationRiskContext } from './broker-model'
 import { Pipeable } from '../pipeable'
 import type { CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 
@@ -34,7 +35,7 @@ export interface NormalizedBrokerSnapshot {
   readonly positions: PositionSnapshotInput
   readonly orderEvents: readonly OrderEventInput[]
   readonly fillEvents: readonly FillEventInput[]
-  readonly fees: readonly Observed<import('../broker/alpaca').FeeActivity>[]
+  readonly fees: readonly Observed<import('../broker/alpaca/model').FeeActivity>[]
 }
 
 export interface ReconciliationWriteDecision {

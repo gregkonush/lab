@@ -4,18 +4,16 @@ import { Result, Schema } from 'effect'
 
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { decideJevEntry, jevEntryQuoteMaximumAgeMs, JevEntryTargetSchema } from './decision'
 import {
-  decideJevEntry,
   decideJevManagement,
-  jevEntryQuoteMaximumAgeMs,
-  JevEntryTargetSchema,
   JevManagementAction,
   JevManagementDecisionSchema,
-} from './decision'
+} from '../intraday-replay/research-management'
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1 } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { makeJevObservation, reproduceJevCandidateObservation } from './observation'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -60,6 +58,35 @@ describe('native Jev entry and position observations', () => {
     const target = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(undefined, action, 0.42)))
     expect(target.selectedSymbols).toEqual([])
     expect(Object.values(target.targetWeights).every((weight) => weight === 0)).toBe(true)
+  })
+
+  test('sunk entry cash fees cannot change the management judgment input', () => {
+    const fixture = nativeJevFixture(JevPurpose.Manage)
+    const portfolio = fixture.portfolio
+    if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected management fixture')
+    const changed = Result.getOrThrow(
+      makeJevObservation({
+        ...fixture.input,
+        portfolio: {
+          ...portfolio,
+          entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: '1000000' })),
+        },
+      }),
+    )
+    expect(changed.contentHash).not.toBe(fixture.observation.contentHash)
+    const original = batchFor(fixture)
+    const other = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: changed.payload,
+        expiresAt: original.expiresAt,
+        planVersion: JevBatchPlanVersion.V4,
+      }),
+    )
+    const a = original.candidates[0]
+    const b = other.candidates[0]
+    if (a?.status !== JevCandidatePlanStatus.Requested || b?.status !== JevCandidatePlanStatus.Requested)
+      throw new Error('Expected management requests')
+    expect(a.request.request).toEqual(b.request.request)
   })
 
   test('entry cannot reuse expired, partial, or another portfolio decision evidence', () => {
@@ -126,6 +153,7 @@ describe('native Jev entry and position observations', () => {
       'bayn.jev.protocol.v8',
       'bayn.jev.protocol.v9',
       'bayn.jev.protocol.v10',
+      'bayn.jev.protocol.v11',
     ])
       expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
     expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, minimumEntryProbability: 0.65 }))).toBe(
@@ -222,14 +250,14 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v10',
+        schemaVersion: 'bayn.jev-trading-signal-state.v12',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })
     }
   })
 
-  test('management uses actual partial fills, cost, held time and remaining horizon for the held symbol', () => {
+  test('management uses actual partial fills and remaining horizon for the held symbol', () => {
     const fixture = nativeJevFixture(JevPurpose.Manage)
     const batch = batchFor(fixture)
     expect(batch.candidates.map(({ symbol }) => symbol)).toEqual(['AAPL'])
@@ -240,12 +268,8 @@ describe('native Jev entry and position observations', () => {
       position: {
         symbol: 'AAPL',
         quantityUnits: 5,
-        costBasisUsd: 500,
-        averageEntryPriceUsd: 100,
         heldForMinutes: 3,
         remainingHoldingMinutes: 12,
-        unrealizedPnlAtBidUsd: 9.95,
-        unrealizedPnlAtBidBps: 199,
       },
     })
     expect(candidate.request.request.questions['action']?.criteria).toHaveProperty('hold')

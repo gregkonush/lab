@@ -13,9 +13,9 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
+import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
@@ -39,7 +39,7 @@ import {
   type Intent,
   type RiskDecision,
 } from './contracts'
-import type { StoredIntent } from './intents'
+import type { StoredIntent } from './intents/domain'
 import {
   authorizeFinalBrokerSubmit as authorizeCachedFinalBrokerSubmit,
   makeExecutionProgram,

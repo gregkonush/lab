@@ -6,4 +6,4 @@ resources:
 - deployment.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/bumba
-  digest: sha256:f3549f3f43ccc0eaf5793f29a0cdb00b1e8a677c4259e85b8ae8a16f3d580437
+  digest: sha256:41e48bdbc219089532918eb8afd1383e58d8e7d33b70d9730ae0fa51a4e8c7c5

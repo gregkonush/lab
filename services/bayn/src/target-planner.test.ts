@@ -24,7 +24,7 @@ import {
   type Position,
   type Reconciliation,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   TargetPlanStatus,
@@ -37,7 +37,7 @@ import {
   type TargetPlanResult,
   type TargetPlannerInput,
   type TargetPlannerInputV1,
-} from './target-planner'
+} from './target-planner/index'
 
 const hash = (digit: string): string => digit.repeat(64)
 const accountId = 'paper-account-1'

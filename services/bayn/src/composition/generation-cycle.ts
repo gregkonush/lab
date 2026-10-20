@@ -13,7 +13,7 @@ import type {
   RecoveryFirstCycleAdvance,
   RecoveryFirstCycleDriver,
   RecoveryFirstCycleDriverOwner,
-} from '../observe-composition'
+} from '../observe-composition/model'
 import { currentUtcInstant } from '../time'
 import { withObservedStage } from '../telemetry'
 import { runRestateAdvanceWithinTimeout } from '../observe-composition/recovery-driver'

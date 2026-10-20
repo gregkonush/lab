@@ -13,6 +13,7 @@ import type { JevProtocol } from './protocol'
 interface LiquidationInput {
   readonly protocol: JevProtocol
   readonly symbol: string
+  readonly costMultiplierMicros?: bigint
   readonly quantityAtoms: bigint
 }
 
@@ -32,7 +33,7 @@ export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicr
     const fees = yield* calculateSessionFees(
       [{ symbol: input.symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceedsMicros }],
       input.protocol.executionModel,
-      1_000_000n,
+      input.costMultiplierMicros ?? 1_000_000n,
     )
     const schedule = input.protocol.executionModel.fees
     const crypto = instrumentMarket(input.symbol) === MarketKind.Crypto
@@ -46,7 +47,10 @@ export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicr
         BigInt(Number(schedule.commissionBps > 0) + Number(schedule.secSellBps > 0))
     const fixedFees = crypto ? 0n : fees.cashMicros - fees.commissionMicros - fees.secMicros
     // One combined linear rate plus rounding reserves bounds stepped fees without making net cash decrease.
-    const conservativeFees = fixedFees + (proceedsMicros * variableRate) / 10_000_000_000n + roundingReserve
+    const conservativeFees =
+      fixedFees +
+      (proceedsMicros * variableRate * (input.costMultiplierMicros ?? 1_000_000n)) / 10_000_000_000_000_000n +
+      roundingReserve
     return {
       proceedsMicros,
       feesMicros: fees.cashMicros,
