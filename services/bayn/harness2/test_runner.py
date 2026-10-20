@@ -52,6 +52,8 @@ class ResearchCLI:
         if args[0] == "--validate":
             return
         run = json.loads(Path(args[1]).read_text())
+        if run["promptTemplate"] != run["promptTemplate"].strip():
+            raise RuntimeError("Bayn rejects surrounding prompt whitespace")
         self.requests.append(run)
         prompt = run["promptTemplate"]
         content = "<alpha_list>alpha001</alpha_list>"

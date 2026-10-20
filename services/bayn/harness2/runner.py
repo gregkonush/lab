@@ -390,7 +390,7 @@ class Editor(Proposer):
                 + "\n"
                 + evidence
                 + "\n\n# BAYN EXECUTION CONTRACT\n"
-                + instruction,
+                + instruction.strip(),
             )
         except (ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
             raise ProposerError(type(error).__name__, attempts=1) from None
