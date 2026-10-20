@@ -11,12 +11,6 @@ import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 
-export enum JevEntryEconomicsAssessment {
-  Supported = 'supported',
-  NotSupported = 'not_supported',
-  Uncertain = 'uncertain',
-}
-
 export const jevMaximumEntryAskMicros = (protocol: JevProtocol, observedAsk: bigint): bigint =>
   (observedAsk * BigInt(10_000 + protocol.maximumEntryQuoteDriftBps)) / 10_000n
 

@@ -37,9 +37,14 @@ complete original prefix.
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
 Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
-Database writes run in a scoped background fiber. Overflow or a failed write permanently marks the epoch incomplete;
-the warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
-delivery counts. Shutdown retries an interrupted chunk by exact content and records `native_arrival_ends` only after
+Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
+writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
+chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
+A failed write, invalid delivery or individually oversized chunk permanently marks the epoch incomplete; the
+warning/error retains its capture ID and the periodic projection log reports its observed and acknowledged
+delivery counts. Native capture failures also use the error-only GlitchTip boundary; collector failures do not
+interrupt journal finalization. Shutdown drains queued chunks before flushing its remaining observed tail, retries an interrupted
+chunk by exact content and records `native_arrival_ends` only after
 the stored prefix is confirmed. An unsealed or incomplete epoch cannot assert complete capture coverage.
 `readNativeArrivalEpoch` and bounded `readNativeArrivalChunks` verify stored identities and original bytes for research.
 These native records still require interval, source-cut and strategy qualification. They do not recover missing older

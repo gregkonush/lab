@@ -40,21 +40,31 @@ describePostgres('cash reporting residuals at historical cuts', () => {
                 transaction_id text,posted_at timestamptz
               ) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE account_cash_reporting (
-                account_event_id text,quantum_micros numeric
+                account_event_id text PRIMARY KEY,quantum_micros numeric
               ) ON COMMIT DROP`
-              yield* sql`CREATE TEMP TABLE account_snapshots (event_id text,account_id text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE account_snapshots (event_id text PRIMARY KEY,account_id text) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE broker_events (
-                event_id text PRIMARY KEY,observed_at timestamptz,source_sequence numeric
+                event_id text PRIMARY KEY,account_id text,event_kind text,
+                observed_at timestamptz,source_sequence numeric
               ) ON COMMIT DROP`
+              yield* sql`CREATE INDEX cash_count_account_clock ON broker_events
+                (account_id,observed_at DESC,source_sequence DESC,event_id DESC) WHERE event_kind='ACCOUNT'`
               yield* sql`INSERT INTO broker_events
-                SELECT 'event-' || n,'2026-10-18T13:00:00Z'::timestamptz+n*interval '1 second',n
+                SELECT 'event-' || n,'account','ACCOUNT',
+                  '2026-10-18T13:00:00Z'::timestamptz+n*interval '1 second',n
                 FROM generate_series(1,512) n`
               yield* sql`INSERT INTO account_snapshots SELECT event_id,'account' FROM broker_events`
               yield* sql`INSERT INTO account_cash_reporting SELECT event_id,10000 FROM broker_events`
               yield* sql`INSERT INTO broker_events VALUES
-                ('foreign','2026-10-18T13:59:59Z',1),('future','2026-10-18T14:01:00Z',1)`
+                ('foreign','foreign','ACCOUNT','2026-10-18T13:59:59Z',1),
+                ('future','account','ACCOUNT','2026-10-18T14:01:00Z',1)`
               yield* sql`INSERT INTO account_snapshots VALUES ('foreign','foreign'),('future','account')`
               yield* sql`INSERT INTO account_cash_reporting VALUES ('foreign',1),('future',1)`
+              yield* sql`UPDATE broker_events SET observed_at='2026-10-18T13:08:32Z' WHERE event_id='event-511'`
+              yield* sql`UPDATE account_cash_reporting SET quantum_micros=1 WHERE account_event_id='event-511'`
+              yield* sql`INSERT INTO broker_events
+                SELECT 'order-' || n,'account','ORDER','2026-10-18T13:59:59Z',1000+n
+                FROM generate_series(1,8192) n`
               yield* sql`INSERT INTO accounting_transactions
                 SELECT 'tx-' || n,'account','2026-10-18T13:20:00Z',10001
                 FROM generate_series(1,512) n`
@@ -87,7 +97,7 @@ describePostgres('cash reporting residuals at historical cuts', () => {
       )
       expect(result.count).toBe(510)
       expect(result.foreign).toBe(0)
-      expect(result.reportingRowsVisited).toBeLessThan(2048)
+      expect(result.reportingRowsVisited).toBeLessThan(16)
     } finally {
       await runtime.dispose()
     }
