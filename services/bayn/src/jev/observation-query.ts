@@ -2,7 +2,7 @@ import { equityFeatureSegmentStartMs } from '../equity-hours'
 import { jevMarketForSymbol, jevBenchmarkSymbol } from './markets'
 import { exchangeSessions, isContinuousMarket, type MarketHours } from '../market-hours'
 
-import type { IntradaySnapshotQuery } from '../market-data'
+import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 

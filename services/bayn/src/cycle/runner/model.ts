@@ -2,7 +2,7 @@ import { Data, Effect } from 'effect'
 
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import type { AutonomousCycle, CycleExecutionPolicy } from '../model'
-import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store'
+import type { CycleAcquireReceipt, CycleDecisionBindingEvidence } from '../store/model'
 import type { CycleWaitingDetails, DecisionReadiness, DecisionReadinessReason } from './readiness'
 import type { AdmissionProtectionEvidence } from './pass-observation'
 
@@ -17,7 +17,7 @@ export class CycleDecisionBuildError extends Data.TaggedError('CycleDecisionBuil
 
 export interface CycleRunContext<R = never> {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum' | 'jev'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly authorityGenerationHash?: string

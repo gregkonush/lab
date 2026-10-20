@@ -17,7 +17,8 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
+import { MICROS } from '../strategy/execution-model/model'
+import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
 import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'

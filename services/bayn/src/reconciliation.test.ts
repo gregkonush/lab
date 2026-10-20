@@ -19,13 +19,13 @@ import {
   type Position,
   type Valuation,
 } from './execution/contracts'
+import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type ReconciliationDecisionError,
   type ReconciliationSnapshot,
-} from './reconciliation'
+} from './simulation-reconciliation/broker-model'
 
 const successOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): A => Result.getOrThrow(result)
 const failureOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): ReconciliationDecisionError => {

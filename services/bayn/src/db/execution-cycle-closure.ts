@@ -85,12 +85,3 @@ const decodeExecutionCycleClosureResultDataFirst = Schema.decodeUnknownResult(
 export const decodeExecutionCycleClosureResult = Pipeable.dual(1, (input: unknown) =>
   decodeExecutionCycleClosureResultDataFirst(input),
 )
-
-const decodeExecutionCycleClosureMaterialResultDataFirst = Schema.decodeUnknownResult(
-  ExecutionCycleClosureMaterialSchema,
-  strictParseOptions,
-)
-
-export const decodeExecutionCycleClosureMaterialResult = Pipeable.dual(1, (input: unknown) =>
-  decodeExecutionCycleClosureMaterialResultDataFirst(input),
-)

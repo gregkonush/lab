@@ -1,7 +1,7 @@
 import { Cause, Data, Effect, Exit } from 'effect'
 
 import { CycleState } from '../cycle/model'
-import type { CycleRunnerError } from '../cycle/runner'
+import type { CycleRunnerError } from '../cycle/runner/model'
 import type { CycleRunResult } from '../cycle/runner/model'
 import { canonicalHashV1Result } from '../hash'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
