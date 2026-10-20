@@ -550,7 +550,16 @@ test('relative momentum preserves candidate quote freshness while using a real o
 })
 
 test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {
-  const later = nativeJevFixture(undefined, new Date(at + 30_000).toISOString())
+  const later = nativeJevFixture(
+    undefined,
+    new Date(at + 30_000).toISOString(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+  )
   const observedAtMs = Date.parse(later.snapshot.manifest.observedAt)
   const snapshot = {
     ...later.snapshot,

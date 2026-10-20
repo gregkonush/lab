@@ -1,3 +1,4 @@
+import modelSelectedTradePlan from '../../migrations/0129_model_selected_trade_plan'
 import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
 import currentJevCycles from '../../migrations/0127_current_jev_cycles'
 import entryBoundExits from '../../migrations/0126_entry_bound_exits'
@@ -133,6 +134,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
   '128_strategy_native_protection': strategyNativeProtection,
+  '129_model_selected_trade_plan': modelSelectedTradePlan,
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,
   '125_market_management_judgment': marketManagementJudgment,

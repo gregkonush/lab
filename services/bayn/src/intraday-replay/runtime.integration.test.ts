@@ -103,7 +103,7 @@ durableTest.each(
       'fallback',
       'missing-benchmark',
       'no-trade',
-      'no-signal-missing-source',
+      'no-trade-with-excluded-source',
       'no-trade-finalization',
       'missing-calendar',
       'failed-model-response',
@@ -148,9 +148,9 @@ durableTest.each(
     const slippedExit = scenario === 'measured-slipped-exit-reentry'
     const partialEntryReentry = scenario === 'measured-partial-entry-reentry' || clockDelay || slippedExit
     const noTrade =
-      scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-signal-missing-source'
-    // Only these two symbols have positive own and benchmark-relative fixture momentum.
-    const eligibleEntrySymbols = ['AAPL', 'AMZN']
+      scenario === 'no-trade' || scenario === 'no-trade-finalization' || scenario === 'no-trade-with-excluded-source'
+    // Every quote-eligible symbol reaches Jev; the fixture model only enters AAPL or AMZN.
+    const eligibleEntrySymbols = [...equityMarketProfile.candidateSymbols]
     const finalizationAtMs = Date.parse('2026-09-04T19:54:15Z')
     let managementCalls = 0
     const measuredCalls: ReplayJevCall[] = []
@@ -166,7 +166,10 @@ durableTest.each(
       scenario === 'measured-submit-expired-reentry'
     const restingDayLifecycle =
       measured || ['fill', 'fallback', 'early-exit', 'partial-exit-reentry'].includes(scenario)
-    const fixture = { ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined), protocol }
+    const fixture = {
+      ...simulationFixture(undefined, undefined, noTrade || admissionRace ? {} : undefined, true),
+      protocol,
+    }
     const initialAtMs = Date.parse(fixture.query.observedAt)
     const cryptoAdmissionAtMs = initialAtMs + 120_000
     const reentryAtMs = initialAtMs + 240_100
@@ -242,10 +245,17 @@ durableTest.each(
         })
         const raw = {
           ...original,
-          bars: original.bars.map(shiftOffset),
+          bars: original.bars.map((bar) =>
+            shiftOffset(
+              bar.eventAt === original.bars[0]?.eventAt && bar.symbol !== 'SPY'
+                ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+                : bar,
+            ),
+          ),
           quotes: original.quotes.map((row) => ({
             ...shiftOffset(row),
-            askSize: !restingDayLifecycle || at <= initialAtMs + 200 || at === reentryAtMs ? 100 : 0,
+            askSize:
+              !restingDayLifecycle || at <= initialAtMs + (measured ? 2000 : 200) || at === reentryAtMs ? 100 : 0,
           })),
           trades: original.trades.map(shiftOffset),
         }
@@ -983,7 +993,7 @@ durableTest.each(
         if (
           scenario === 'missing-benchmark' ||
           scenario === 'no-trade' ||
-          scenario === 'no-signal-missing-source' ||
+          scenario === 'no-trade-with-excluded-source' ||
           scenario === 'failed-model-response'
         ) {
           if (scenario === 'no-trade') yield* advanceMarketTo(initialMs + 1)
@@ -1018,16 +1028,11 @@ durableTest.each(
               unknownMutationCount: reconciliation.riskContext.unknownMutationCount,
             },
           })
-          if (scenario !== 'no-trade') {
+          if (!noTrade) {
             expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
             expect(assessment).toEqual({ completion: 'INCOMPLETE', issues: [BacktestIssue.MissingDecisionData] })
             if (scenario === 'failed-model-response') {
               expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeGreaterThan(0)
-              expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
-            }
-            if (scenario === 'no-signal-missing-source') {
-              expect(schedule.readinessCounts[DecisionReadinessReason.SnapshotUnavailable]).toBeGreaterThan(0)
-              expect(schedule.readinessCounts[DecisionReadinessReason.InferenceUnavailable]).toBeUndefined()
               expect(schedule.readinessCounts[DecisionReadinessReason.NoEligibleCandidate]).toBeUndefined()
             }
           } else {
@@ -1035,9 +1040,19 @@ durableTest.each(
             expect(schedule.unavailableDecisionPassCount).toBe(0)
             expect(assessment).toEqual({ completion: 'COMPLETE', issues: [] })
           }
-          if (scenario === 'no-trade' || scenario === 'no-signal-missing-source') {
-            expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([{ calls: 0 }])
+          if (scenario === 'no-trade' || scenario === 'no-trade-with-excluded-source') {
+            const requestedCount =
+              scenario === 'no-trade' ? eligibleEntrySymbols.length : fixture.snapshot.manifest.candidateSymbols?.length
+            expect(yield* sql`SELECT count(*)::int AS calls FROM jev_evaluation_requests`).toEqual([
+              { calls: requestedCount },
+            ])
             expect(yield* sql`SELECT count(*)::int AS batches FROM jev_batch_results`).toEqual([{ batches: 1 }])
+            if (scenario === 'no-trade-with-excluded-source')
+              expect(
+                yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans p,
+                  jsonb_array_elements(p.payload -> 'candidates') c
+                  WHERE c ->> 'status' = 'EXCLUDED' AND c ->> 'reason' IN ('not-ready', 'freshness')`,
+              ).toEqual([{ count: eligibleEntrySymbols.length - (requestedCount ?? 0) }])
           }
           return { _tag: 'Coverage' as const }
         }
@@ -1377,7 +1392,17 @@ durableTest.each(
           scenario === 'measured-exit' ||
           partialEntryReentry
         ) {
-          expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
+          const initialState = yield* broker.snapshot
+          expect(
+            initialState.fills.map((fill) => fill.side),
+            JSON.stringify(
+              initialState.orders.map(({ order, executions }) => ({
+                symbol: order.symbol,
+                submittedAt: order.submittedAt,
+                lastExecution: executions.at(-1),
+              })),
+            ),
+          ).toEqual([OrderSide.Buy])
           for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
@@ -1489,9 +1514,10 @@ durableTest.each(
                   ? ((quotedMicros + 9999n) / 10000n) * 10000n
                   : (quotedMicros / 10000n) * 10000n
               expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
-              if (order.order.parentBrokerOrderId === undefined)
-                expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
-              else expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
+              const conditional =
+                order.order.parentBrokerOrderId !== undefined || order.order.nativeProtection?._tag === 'Oco'
+              if (conditional) expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
+              else expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
             }
           }
           if (scenario === 'partial-exit-reentry') {
@@ -1656,6 +1682,10 @@ durableTest.each(
             Effect.gen(function* () {
               const started = yield* Clock.currentTimeMillis
               const { request } = Result.getOrThrow(prepareJevRequest(raw))
+              const { candidate } = yield* Schema.decodeUnknownEffect(
+                Schema.Struct({ candidate: Schema.Struct({ symbol: Schema.String }) }),
+              )(request.state)
+              const symbol = candidate.symbol
               const action = request.questions['action']
               const managing = action?.type === 'choice' && 'exit' in action.criteria
               if (managing) {
@@ -1680,7 +1710,11 @@ durableTest.each(
                 })
               }
               return {
-                ...nativeJevInference(raw, utcInstantFromEpochMillis(now), noTrade ? 'wait' : 'enter'),
+                ...nativeJevInference(
+                  raw,
+                  utcInstantFromEpochMillis(now),
+                  noTrade || !['AAPL', 'AMZN'].includes(symbol) ? 'wait' : 'enter',
+                ),
                 startedAt: utcInstantFromEpochMillis(started),
               }
             }),

@@ -43,7 +43,7 @@ const plan = Result.getOrThrow(
     expiresAt: new Date(
       Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
     ).toISOString(),
-    planVersion: JevBatchPlanVersion.V4,
+    planVersion: JevBatchPlanVersion.V5,
   }),
 )
 const candidate = plan.candidates[0]
@@ -66,16 +66,16 @@ const seed = (journal: Effect.Success<typeof setup>['journal']) =>
     yield* journal.observations.record({ contentHash: canonicalHashV1(observation), payload: observation })
     yield* journal.batches.begin(plan)
   })
-const receipt = () =>
+const receipt = (evaluationRequest = request) =>
   Result.getOrThrow(
-    makeJevEvaluationReceipt(request, {
+    makeJevEvaluationReceipt(evaluationRequest, {
       schemaVersion: 'bayn.jev-evaluation-receipt.v1',
-      requestId: request.requestId,
+      requestId: evaluationRequest.requestId,
       startedAt: observation.observedAt,
       completedAt: observation.observedAt,
       outcome: {
         status: JevOutcome.Received,
-        inference: nativeJevInference(request.request, observation.observedAt, 'enter'),
+        inference: nativeJevInference(evaluationRequest.request, observation.observedAt, 'enter'),
       },
     }),
   )
@@ -110,7 +110,9 @@ test('native entry commits source and request before inference, reproduces its r
       expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
       const repeated = yield* Effect.result(evaluation)
       expect(Result.isFailure(repeated) && repeated.failure._tag).toBe('JevAwaitingFreshWindow')
-      expect(calls).toBe(1)
+      expect(calls).toBe(
+        plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested).length,
+      )
       expect((yield* journal.batches.read(plan.batchId))?.result?.resultHash).toBe(evidence.batchResult.resultHash)
       expect(
         Option.getOrNull(
@@ -172,6 +174,12 @@ test('exclusive directories reject a restarted experiment and corrupted receipts
       yield* seed(journal)
       yield* journal.evaluations.begin(request)
       yield* journal.evaluations.record(request, receipt())
+      for (const candidate of plan.candidates) {
+        if (candidate.status !== JevCandidatePlanStatus.Requested || candidate.request.requestId === request.requestId)
+          continue
+        yield* journal.evaluations.begin(candidate.request)
+        yield* journal.evaluations.record(candidate.request, receipt(candidate.request))
+      }
       yield* journal.batches.finish(plan.batchId)
       yield* fs.writeFileString(`${directory}/terminal-${request.requestId}.json`, '{}')
       expect(Result.isFailure(yield* Effect.result(journal.batches.read(plan.batchId)))).toBeTrue()

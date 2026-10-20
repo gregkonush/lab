@@ -23,7 +23,7 @@ const batchFor = (fixture: ReturnType<typeof nativeJevFixture>) =>
       expiresAt: new Date(
         Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
       ).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
 
@@ -77,7 +77,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation: changed.payload,
         expiresAt: original.expiresAt,
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     const a = original.candidates[0]
@@ -111,7 +111,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(observed + 10_000).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     const decidedAt = new Date(observed + 7_000).toISOString()
@@ -211,11 +211,11 @@ describe('native Jev entry and position observations', () => {
       batch.candidates
         .filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
         .map((candidate) => candidate.symbol),
-    ).toEqual(['AAPL', 'AMZN'])
+    ).toEqual([...equityMarketProfile.candidateSymbols])
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v13',
+        schemaVersion: 'bayn.jev-trading-signal-state.v14',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })
@@ -275,7 +275,7 @@ describe('native Jev entry and position observations', () => {
           expiresAt: new Date(
             Date.parse(payload.observedAt) + fixture.protocol.inferenceValidityMs + 1000,
           ).toISOString(),
-          planVersion: JevBatchPlanVersion.V4,
+          planVersion: JevBatchPlanVersion.V5,
         }),
       ),
     ).toBe(true)
@@ -331,7 +331,7 @@ describe('native Jev entry and position observations', () => {
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: '2026-09-04T14:30:12.000Z',
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     expect(batch.candidates.find((entry) => entry.symbol === 'AAPL')?.status).toBe(JevCandidatePlanStatus.Requested)

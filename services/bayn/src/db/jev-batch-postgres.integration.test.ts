@@ -1,3 +1,6 @@
+import { jevBatchQuestionSetHash } from '../jev/batch'
+import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
+import { makeJevMarketTestSnapshot } from '../testing/jev-market-fixture'
 import { equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
@@ -94,11 +97,11 @@ const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-    planVersion: JevBatchPlanVersion.V4,
+    planVersion: JevBatchPlanVersion.V5,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-const excludedFixture = nativeJevFixture(
+const excludedBase = nativeJevFixture(
   JevPurpose.Entry,
   undefined,
   'jev-native-test',
@@ -106,11 +109,23 @@ const excludedFixture = nativeJevFixture(
   'a'.repeat(64),
   Object.fromEntries(equityMarketProfile.candidateSymbols.map((symbol) => [symbol, -0.02])),
 )
+const excludedFixture = (() => {
+  const raw = makeJevMarketTestSnapshot(excludedBase.protocol, { ...excludedBase.query, archiveWatermarks: [] })
+  const { snapshot } = streamingFixtureFromRaw(
+    { ...raw, quotes: raw.quotes.map((quote) => ({ ...quote, askPrice: quote.bidPrice * 1.01 })) },
+    excludedBase.query,
+  )
+  return {
+    ...excludedBase,
+    snapshot,
+    observation: Result.getOrThrow(makeJevObservation({ ...excludedBase.input, snapshot })),
+  }
+})()
 const excludedPlan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: excludedFixture.observation.payload,
     expiresAt: plan.expiresAt,
-    planVersion: JevBatchPlanVersion.V4,
+    planVersion: JevBatchPlanVersion.V5,
   }),
 )
 const first = requested[0]
@@ -508,7 +523,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     const foreignFirst = foreignPlan.candidates.find(
@@ -596,14 +611,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: nextObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     const foreignPlan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     await runtime.runPromise(
@@ -635,7 +650,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  for (const planVersion of [JevBatchPlanVersion.V4, JevBatchPlanVersion.V4]) {
+  for (const planVersion of [JevBatchPlanVersion.V5]) {
     test(`persists ${planVersion} under the expanded database constraint`, async () => {
       const { batchId: _, ...material } = plan
       const versioned = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: planVersion }))
@@ -789,7 +804,10 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         for (const change of [
           { observationHash: 'f'.repeat(64) },
           { protocolHash: 'f'.repeat(64) },
-          { candidates: plan.candidates.slice(1) },
+          {
+            candidates: plan.candidates.slice(1),
+            questionSetHash: Result.getOrThrow(jevBatchQuestionSetHash(plan.candidates.slice(1))),
+          },
         ]) {
           const altered = Result.getOrThrow(makeJevBatchPlan({ ...material, ...change }))
           expect(Result.isFailure(yield* store.begin(altered).pipe(Effect.result))).toBe(true)
@@ -801,7 +819,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             makeJevTradingSignalBatch({
               observation: fixture.observation.payload,
               expiresAt: utcInstantFromEpochMillis(observed + 6000),
-              planVersion: JevBatchPlanVersion.V4,
+              planVersion: JevBatchPlanVersion.V5,
             }),
           ),
         ).toBe(true)

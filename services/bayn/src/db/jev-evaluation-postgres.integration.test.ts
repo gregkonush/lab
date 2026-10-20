@@ -81,7 +81,7 @@ const batch = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: request.expiresAt,
-    planVersion: JevBatchPlanVersion.V4,
+    planVersion: JevBatchPlanVersion.V5,
   }),
 )
 const recorded = Result.getOrThrow(

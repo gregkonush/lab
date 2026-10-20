@@ -16,7 +16,7 @@ test('setup selection asks the model for its setup action without a second econo
   const fixture = nativeJevFixture()
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(request.request.questions['net_economics']).toBeUndefined()
-  expect(request.request.questions['action']?.instructions).toContain('entryEconomics.profitTargetExitBidUsd')
+  expect(request.request.questions['action']?.instructions).toContain('stop_loss')
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
@@ -32,13 +32,14 @@ test('an unfunded whole-equity target abstains even when the model chooses enter
 })
 
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
-  '%s excludes a real source window whose range cannot cover its estimated execution costs',
+  '%s passes fee context to Jev without precomputing a geometric exit plan',
   (symbol) => {
     const { snapshot } = cryptoMarketFixture(symbol)
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const request = Result.getOrThrow(makeJevTradingSignalRequest(native, symbol))
     const state = JSON.parse(request.body).state
-    expect(state.entryEconomics).toBeNull()
+    expect(state.entryEconomics).not.toBeNull()
+    expect(request.request.questions['action']).toBeDefined()
     expect(request.request.questions['net_economics']).toBeUndefined()
   },
 )
@@ -51,8 +52,6 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
       fc.bigInt({ min: 1_000_000_000n, max: 1_000_000_000_000n }),
       (ask, capital) => {
         const protocol = defaultJevProtocolDocument
-        const end = Date.parse('2026-10-19T15:00:00.000Z')
-        const price = Number(ask) / 1_000_000
         const economics = Result.getOrThrow(
           jevEntryEconomics({
             protocol,
@@ -60,24 +59,11 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
             askMicros: ask,
             bidMicros: ask,
             capitalMicros: String(capital),
-            sourceEndAt: new Date(end).toISOString(),
-            bars: Array.from({ length: 15 }, (_, i) => ({
-              symbol: 'BTC/USD',
-              eventAt: new Date(end - (15 - i) * 60_000).toISOString(),
-              final: true,
-              open: price,
-              close: price,
-              low: price * 0.99,
-              high: price * 1.02,
-            })),
           }),
         )
         if (economics === null) throw new Error('Funded crypto fixture requires a positive allocation')
         const entryPrice = BigInt(Math.round(economics.maximumEntryPriceUsd * 1_000_000))
-        const quantity = BigInt(economics.exitPlan.maximumQuantityAtoms)
-        expect(
-          BigInt(economics.exitPlan.acquisitionCostMicros) - BigInt(economics.exitPlan.estimatedStopNetMicros),
-        ).toBeLessThanOrEqual(BigInt(economics.exitPlan.capitalRiskBudgetMicros))
+        const quantity = BigInt(economics.maximumQuantityAtoms)
         const received = quantity - (quantity * 25n + 9999n) / 10_000n
         const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
         const net = (bid: bigint) => {
@@ -100,7 +86,6 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
 })
 
 test('a cheaper refreshed crypto ask preserves the funded cap used by durable reproduction', () => {
-  const end = '2026-10-19T15:00:00.000Z'
   const economics = Result.getOrThrow(
     jevEntryEconomics({
       protocol: defaultJevProtocolDocument,
@@ -108,16 +93,6 @@ test('a cheaper refreshed crypto ask preserves the funded cap used by durable re
       bidMicros: 99990000n,
       askMicros: 100000000n,
       capitalMicros: '100000000000',
-      sourceEndAt: end,
-      bars: Array.from({ length: 15 }, (_, index) => ({
-        symbol: 'BTC/USD',
-        eventAt: new Date(Date.parse(end) - (15 - index) * 60000).toISOString(),
-        open: 100,
-        close: 100,
-        high: 101,
-        low: 99,
-        final: true,
-      })),
     }),
   )
   if (economics === null) throw new Error('Expected a funded synthetic setup')
@@ -128,9 +103,34 @@ test('a cheaper refreshed crypto ask preserves the funded cap used by durable re
     precision: defaultJevProtocolDocument.executionModel.precision,
   }
   const allocated = Result.getOrThrow(maximumAllocatedBuyQuantities(input))
-  expect(BigInt(allocated['BTC/USD'] ?? '0')).toBeGreaterThan(BigInt(economics.exitPlan.maximumQuantityAtoms))
+  expect(BigInt(allocated['BTC/USD'] ?? '0')).toBeGreaterThan(BigInt(economics.maximumQuantityAtoms))
   expect(
-    Result.getOrThrow(maximumFundedBuyQuantities({ ...input, plans: { 'BTC/USD': economics.exitPlan } }))['BTC/USD'],
-  ).toBe(economics.exitPlan.maximumQuantityAtoms)
+    Result.getOrThrow(
+      maximumFundedBuyQuantities({
+        ...input,
+        plans: {
+          'BTC/USD': {
+            schemaVersion: 'bayn.jev-funded-exit-plan.v2',
+            maximumQuantityAtoms: economics.maximumQuantityAtoms,
+            acquisitionCostMicros: economics.acquisitionCostMicros,
+            estimatedStopNetMicros: '1',
+            estimatedTargetNetMicros: String(BigInt(economics.acquisitionCostMicros) + 1n),
+            levels: {
+              schemaVersion: 'bayn.jev-strategy-exit-plan.v2',
+              rule: 'model-selected-observed-prices',
+              symbol: 'BTC/USD',
+              sourceStartAt: '2026-10-19T14:59:00.000Z',
+              sourceEndAt: '2026-10-19T15:00:00.000Z',
+              maximumHoldingMinutes: 15,
+              maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+              stopPriceMicros: '99000000',
+              stopLimitPriceMicros: '98900000',
+              profitLimitPriceMicros: '110000000',
+            },
+          },
+        },
+      }),
+    )['BTC/USD'],
+  ).toBe(economics.maximumQuantityAtoms)
   expect(Result.isFailure(maximumFundedBuyQuantities({ ...input, plans: {} }))).toBe(true)
 })

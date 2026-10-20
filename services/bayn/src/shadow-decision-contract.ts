@@ -1187,7 +1187,7 @@ const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v3' || document.plannerInput === undefined)
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v4' || document.plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
@@ -1315,7 +1315,7 @@ const jevEntryEvidenceIssues = (
 }
 
 const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
-  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
+  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v4'
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
@@ -1323,7 +1323,7 @@ const jevExitEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-exit-target.v3') return []
+  if (target?.schemaVersion !== 'bayn.jev-exit-target.v4') return []
   const evidence = target.evidence
   const input = document.plannerInput
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
@@ -1776,7 +1776,7 @@ const executionMaterialIssues = (
       target.symbol,
       target.quantityAtoms,
       target.createdAt,
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v4'
         ? document.strategyDecision.exitPolicy.plans[target.symbol]
         : undefined,
     )

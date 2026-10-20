@@ -467,7 +467,7 @@ describe('runtime configuration loading', () => {
       environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
     const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
 
-    expect(stale.parameterHash).toBe('7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de')
+    expect(stale.parameterHash).toBe('563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d')
     expect(stale.parameterHash).toBe(baseline.parameterHash)
     expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
     const firstController = Result.getOrThrow(executionControllerConfig(baseline))

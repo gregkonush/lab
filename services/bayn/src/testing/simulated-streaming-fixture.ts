@@ -12,8 +12,9 @@ export const simulationFixture = (
   regeneratedAtMs?: number,
   technicalFeatureTopic?: string,
   returns?: Readonly<Record<string, number>>,
+  observedTradePrices = false,
 ) => {
-  const fixture = historicalStreamingFixture(returns)
+  const fixture = historicalStreamingFixture(returns, observedTradePrices)
   const { input, protocol } = fixture
   const universe = {
     universeId: equityMarketProfile.universeId,

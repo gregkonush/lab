@@ -1,3 +1,4 @@
+import { momentumControlCandidates } from './momentum-control'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
@@ -23,12 +24,7 @@ import {
 import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
-import {
-  jevMomentumEntryCandidates,
-  jevBenchmarkSignalFor,
-  jevSignalFor,
-  reproduceJevTradingSignalBatchEvidence,
-} from '../jev/trading-signals'
+import { jevBenchmarkSignalFor, jevSignalFor, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
@@ -181,7 +177,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]: (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]: (yield* momentumControlCandidates(snapshot))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }
