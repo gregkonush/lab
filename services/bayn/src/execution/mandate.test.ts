@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { defaultExecutionModel, desiredQuantityAtoms, notionalMicros } from '../execution-model'
+import { defaultExecutionModel } from '../strategy/execution-model/model'
+import { desiredQuantityAtoms, notionalMicros } from '../strategy/execution-model/fixed-point'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,

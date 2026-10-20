@@ -11,7 +11,7 @@ import { JevClient } from '../jev/client'
 import { decideJevEntry } from '../jev/decision'
 import type { JevExitTarget } from '../jev/exit'
 import { decodeJevProtocol } from '../jev/protocol'
-import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
+import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
   compileJevEntry,
   evaluateJevObservationFromSnapshot,
@@ -25,18 +25,15 @@ import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contrac
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type MarketCalendarQuery } from '../broker/alpaca'
+import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
-import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
+import { type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import { reportCyclePassFailure } from '../error-tracking'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import {
-  CycleDecisionBuildError,
-  CycleRunnerError,
-  marketCalendarQueryFromSession,
-  type CyclePassObservation,
-} from '../cycle/runner'
+import { CycleDecisionBuildError, CycleRunnerError, type CyclePassObservation } from '../cycle/runner/model'
+import { marketCalendarQueryFromSession } from '../cycle/runner/calendar-decisions'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
 import { DecisionReadinessReason, snapshotReadiness, type DecisionReadiness } from '../cycle/runner/readiness'
 import {
@@ -46,7 +43,8 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
+import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
@@ -65,8 +63,9 @@ import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import {
+  accountEntryProtectionReasons,
   BrokerMode,
   decodePolicy,
   executionRiskPolicySchemaVersion,
@@ -104,7 +103,7 @@ import {
   type TargetPlannerInput,
   type TargetPlannerFailure,
   type TargetPlanResult,
-} from '../target-planner'
+} from '../target-planner/index'
 import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { DecisionPlan, IsoDate } from '../types'
@@ -141,6 +140,8 @@ const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
     brokerEnvironment === BrokerEnvironment.Sandbox
       ? dollarsToMicros(1_000_000n)
       : observeRiskLimits.maxDailyTradedNotionalMicros,
+  maxDrawdownMicros:
+    brokerEnvironment === BrokerEnvironment.Sandbox ? dollarsToMicros(10_000n) : observeRiskLimits.maxDrawdownMicros,
 })
 
 const loadExecutionRiskPolicyDataFirst = (
@@ -271,7 +272,7 @@ export type ObserveDecisionInput<R = never> = {
   /** Refresh before pricing when the pass cache lacks quote headroom, preserving broker-risk freshness. */
   readonly reconcileForPricing?: PricingReconciliationRead<R>
   readonly strategy: ObserveStrategy
-  readonly intradayMarketData?: import('../market-data').IntradayMarketDataService
+  readonly intradayMarketData?: import('../market-data/intraday/model').IntradayMarketDataService
   /** Worst-case delay required to run and durably bind one final decision before the submission cutoff. */
   readonly decisionFinalizationHeadroomMs?: number
 }
@@ -656,9 +657,6 @@ const reconciledPositionReferencePrices = (
 export const prepareObserveDecisionReads = <R>(
   input: ObserveDecisionInput<R>,
 ): Result.Result<ObserveDecisionReadPreparation, CycleCalendarQueryFailure | ObserveDecisionCompositionFailure> => {
-  if (!isIntradayAutonomousCycle(input.cycle)) {
-    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
-  }
   return Result.map(
     marketCalendarQueryFromSession(input.cycle.identity.executionSessionDate),
     (marketCalendarQuery) => ({
@@ -668,11 +666,94 @@ export const prepareObserveDecisionReads = <R>(
   )
 }
 
+type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
+
+const validateEntryDecisionContext = <R>(
+  input: ObserveDecisionInput<R>,
+  facts: Pick<ObserveDecisionFacts, 'reconciliation' | 'evaluatedAt'>,
+): Result.Result<void, ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal> => {
+  if (
+    facts.reconciliation.riskContext.tradingDate !==
+    (input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+      ? accountTradingDate(facts.evaluatedAt)
+      : input.cycle.identity.executionSessionDate)
+  ) {
+    return Result.fail(
+      compositionFailure(
+        'cycle-binding',
+        'same-pass reconciliation risk context is not from the execution session date',
+      ),
+    )
+  }
+  if (Date.parse(facts.evaluatedAt) >= unusedEntryExpiresAt(input.cycle)) {
+    return Result.fail(
+      new ObserveDecisionAwaitingSignal({
+        message: 'Entry admission expired during reconciliation',
+        readiness: {
+          reason: DecisionReadinessReason.NoEligibleCandidate,
+          message: 'The unused entry lease has expired',
+        },
+        observedAt: facts.evaluatedAt,
+        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+      }),
+    )
+  }
+  return Result.succeed(undefined)
+}
+
 export const readObserveDecisionFacts = <R>(
   input: ObserveDecisionInput<R>,
   preparation: ObserveDecisionReadPreparation,
-): Effect.Effect<ObserveDecisionFacts, OperationalError, BrokerRead | R> =>
+  requiredAuthority: DecisionAuthorityRequirement,
+): Effect.Effect<
+  { readonly facts: ObserveDecisionFacts; readonly portfolio: JevPortfolio },
+  OperationalError | ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal,
+  BrokerRead | R
+> =>
   Effect.gen(function* () {
+    const reconciliation = yield* input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))
+    const evaluatedAt = yield* currentUtcInstant
+    yield* Effect.fromResult(
+      requireDecisionAuthority(reconciliation, input.policy, input.authorityGenerationHash, requiredAuthority),
+    )
+    yield* Effect.fromResult(validateEntryDecisionContext(input, { reconciliation, evaluatedAt }))
+    if (reconciliation.riskContext.unknownMutationCount !== 0)
+      return yield* operationalError({
+        component: 'strategy',
+        operation: 'current-decision',
+        message: 'Unresolved broker mutations prevent Jev entry',
+      })
+    const portfolio = yield* Effect.fromResult(
+      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: reconciliation.brokerState }),
+    ).pipe(
+      Effect.mapError((cause) =>
+        operationalError({
+          component: 'strategy',
+          operation: 'current-decision',
+          message: 'Native Jev decision could not be constructed',
+          cause,
+        }),
+      ),
+    )
+    if (requiredAuthority === Authority.Execution) {
+      const reasons = accountEntryProtectionReasons(
+        {
+          accountEquityMicros: BigInt(portfolio.brokerState.account.equityMicros),
+          dayStartEquityMicros: BigInt(reconciliation.riskContext.dayStartEquityMicros),
+          peakEquityMicros: BigInt(reconciliation.riskContext.peakEquityMicros),
+        },
+        input.policy,
+      )
+      if (reasons.length > 0) {
+        const message = `Existing account limits block new entries: ${reasons.join(', ')}`
+        return yield* new ObserveDecisionAwaitingSignal({
+          message,
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message },
+          observedAt: evaluatedAt,
+          submissionCutoffAt: input.cycle.window.submissionCutoffAt,
+        })
+      }
+    }
     const brokerRead = yield* BrokerRead
     const readCalendar: Effect.Effect<{ readonly value: MarketHours }, OperationalError> =
       input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
@@ -687,20 +768,17 @@ export const readObserveDecisionFacts = <R>(
               }),
             ),
           )
-    const [calendar, reconciliation] = yield* Effect.all(
-      [readCalendar, input.reconcile.pipe(Effect.mapError(reconciliationOperationalError))],
-      { concurrency: 2 },
-    )
-    const evaluatedAt = yield* currentUtcInstant
+    const calendar = yield* readCalendar
     return {
-      schemaVersion: 'bayn.observe-decision-facts.v2' as const,
-      calendar,
-      reconciliation,
-      evaluatedAt,
+      facts: {
+        schemaVersion: 'bayn.observe-decision-facts.v2' as const,
+        calendar,
+        reconciliation,
+        evaluatedAt: yield* currentUtcInstant,
+      },
+      portfolio,
     }
   })
-
-type DecisionAuthorityRequirement = Authority.Observe | Authority.Execution
 
 const requireDecisionAuthority = (
   result: ReconciliationPassResult,
@@ -757,32 +835,8 @@ const prepareExecutionSessionBinding = <R>(
   ExecutionSessionBinding,
   ExecutionSessionBindingFailure | ObserveDecisionCompositionFailure | ObserveDecisionAwaitingSignal
 > => {
-  if (
-    facts.reconciliation.riskContext.tradingDate !==
-    (input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-      ? accountTradingDate(facts.evaluatedAt)
-      : input.cycle.identity.executionSessionDate)
-  ) {
-    return Result.fail(
-      compositionFailure(
-        'cycle-binding',
-        'same-pass reconciliation risk context is not from the execution session date',
-      ),
-    )
-  }
-  if (Date.parse(facts.evaluatedAt) >= unusedEntryExpiresAt(input.cycle)) {
-    return Result.fail(
-      new ObserveDecisionAwaitingSignal({
-        message: 'Entry admission expired during reconciliation',
-        readiness: {
-          reason: DecisionReadinessReason.NoEligibleCandidate,
-          message: 'The unused entry lease has expired',
-        },
-        observedAt: facts.evaluatedAt,
-        submissionCutoffAt: input.cycle.window.submissionCutoffAt,
-      }),
-    )
-  }
+  const context = validateEntryDecisionContext(input, facts)
+  if (Result.isFailure(context)) return Result.fail(context.failure)
   const stateHash = reconciledStateHash(facts.reconciliation.brokerState)
   if (Result.isFailure(stateHash)) {
     return Result.fail(
@@ -801,9 +855,6 @@ const prepareExecutionSessionBinding = <R>(
     },
     calendar: facts.calendar.value,
     executionModel: input.executionModel,
-  }
-  if (!isIntradayAutonomousCycle(input.cycle)) {
-    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
   }
   return bindCycleExecutionSession({
     ...common,
@@ -880,6 +931,7 @@ const compileObserveStrategyDecision = <R>(
   initialFacts: ObserveDecisionFacts,
   executionSession: ExecutionSessionBinding,
   requiredAuthority: DecisionAuthorityRequirement,
+  portfolio: JevPortfolio,
 ): Effect.Effect<
   { readonly compiled: CompiledObserveStrategyDecision; readonly facts: ObserveDecisionFacts },
   OperationalError | ObserveDecisionAwaitingSignal | ObserveDecisionCompositionFailure,
@@ -894,15 +946,6 @@ const compileObserveStrategyDecision = <R>(
         message: 'Jev requires the native market-data reader',
       })
     const protocol = yield* Effect.fromResult(nativeJevProtocol(input.strategy))
-    if (initialFacts.reconciliation.riskContext.unknownMutationCount !== 0)
-      return yield* operationalError({
-        component: 'strategy',
-        operation: 'current-decision',
-        message: 'Unresolved broker mutations prevent Jev entry',
-      })
-    const portfolio = yield* Effect.fromResult(
-      decodeJevPortfolio({ purpose: JevPurpose.Entry, brokerState: initialFacts.reconciliation.brokerState }),
-    )
     const query = yield* Effect.fromResult(
       jevObservationQuery(input.cycle, protocol, executionSession.calendar, initialFacts.evaluatedAt, JevPurpose.Entry),
     )
@@ -1002,7 +1045,7 @@ const compileObserveStrategyDecision = <R>(
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
-      compiled: { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) },
+      compiled: { ...compiled, signalDate: input.cycle.identity.executionSessionDate },
       facts: { ...initialFacts, reconciliation, evaluatedAt },
     }
   }).pipe(
@@ -1298,14 +1341,10 @@ function buildCycleDecision<R>(
 ): Effect.Effect<CycleDecisionDocument, ObserveDecisionFailure, BrokerRead | JevDecisionServices | R> {
   return Effect.gen(function* () {
     const readPreparation = yield* Effect.fromResult(prepareObserveDecisionReads(input))
-    const initialFacts = yield* readObserveDecisionFacts(input, readPreparation)
-    yield* Effect.fromResult(
-      requireDecisionAuthority(
-        initialFacts.reconciliation,
-        input.policy,
-        input.authorityGenerationHash,
-        requirements.authorityRequirement,
-      ),
+    const { facts: initialFacts, portfolio } = yield* readObserveDecisionFacts(
+      input,
+      readPreparation,
+      requirements.authorityRequirement,
     )
     const initialSession = yield* Effect.fromResult(prepareExecutionSessionBinding(input, initialFacts))
     const { compiled, facts } = yield* compileObserveStrategyDecision(
@@ -1313,6 +1352,7 @@ function buildCycleDecision<R>(
       initialFacts,
       initialSession,
       requirements.authorityRequirement,
+      portfolio,
     )
     const executionAuthority = yield* Effect.fromResult(
       requireDecisionAuthority(
@@ -1481,11 +1521,7 @@ const recoverExecutionSession = (
       compositionFailure('cycle-binding', 'execution-session binding does not match its cycle', cause),
     )
   const persistedSession = entryDocument.executionSession
-  if (
-    persistedSession === undefined ||
-    persistedSession.schemaVersion !== 'bayn.execution-session-binding.v3' ||
-    !isIntradayAutonomousCycle(cycle)
-  ) {
+  if (persistedSession === undefined || persistedSession.schemaVersion !== 'bayn.execution-session-binding.v3') {
     return Result.fail(
       compositionFailure('cycle-binding', 'intraday close requires its persisted v3 execution-session binding'),
     )
@@ -1549,7 +1585,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const executionModel = preparation.executionModel
-    if (executionModel.schemaVersion !== 'bayn.execution-model.v6' || !isIntradayAutonomousCycle(cycle)) {
+    if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
       return yield* mutationRunnerError({
         message: 'execution close requires the active intraday execution contract',
         failure: 'contract',

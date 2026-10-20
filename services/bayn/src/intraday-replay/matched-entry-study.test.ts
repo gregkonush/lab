@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { Effect, FileSystem, Result } from 'effect'
+import { Effect, FileSystem, Result, Schema } from 'effect'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { canonicalHashV1, sha256 } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
@@ -18,10 +18,11 @@ import {
   summarizeMatchedPairs,
   type MatchedPair,
   type MatchedRegistration,
+  MatchedRegistrationSchema,
 } from './matched-entry-study'
 
 const registration: MatchedRegistration = {
-  schemaVersion: 'bayn.matched-entry-registration.v1',
+  schemaVersion: 'bayn.matched-entry-registration.v2',
   definitionHash: canonicalHashV1(matchedEntryDefinition),
   sourceRevision: 'a'.repeat(40),
   protocolHash: 'b'.repeat(64),
@@ -302,4 +303,15 @@ test('original capture admission preserves independent receipt identity, coverag
       ).toBeTrue()
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
+})
+
+test('matched registration v2 rejects the retired pre-profit-target contract', () => {
+  expect(
+    Result.isFailure(
+      Schema.decodeUnknownResult(MatchedRegistrationSchema)({
+        ...registration,
+        schemaVersion: 'bayn.matched-entry-registration.v1',
+      }),
+    ),
+  ).toBe(true)
 })

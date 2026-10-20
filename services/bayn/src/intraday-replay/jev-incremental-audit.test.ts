@@ -218,7 +218,7 @@ const replay = (symbol: string, decidedAtMs: number, missingPoll = false) => {
 }
 
 const registration: MatchedRegistration = {
-  schemaVersion: 'bayn.matched-entry-registration.v1',
+  schemaVersion: 'bayn.matched-entry-registration.v2',
   definitionHash: canonicalHashV1(matchedEntryDefinition),
   sourceRevision: 'a'.repeat(40),
   protocolHash: canonicalHashV1(fixture.protocol),

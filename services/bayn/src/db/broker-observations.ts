@@ -359,7 +359,17 @@ export const makeBrokerObservationStore = (
         return validated
       }),
     )
-  return { activate, begin, publish, failed, invalidate, read, readState: readState(null), readForSubmit: readState }
+  return {
+    activate,
+    begin,
+    publish,
+    failed,
+    interrupt: recoverUnfinished,
+    invalidate,
+    read,
+    readState: readState(null),
+    readForSubmit: readState,
+  }
 }
 
 export const BrokerObservationsLive = (accountId: string, sourceRevision: string, maximumAgeMs: number) =>

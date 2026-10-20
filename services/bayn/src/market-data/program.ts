@@ -6,13 +6,13 @@ import type { HistoricalMarketDataConfig } from '../config/historical-signal'
 import {
   selectCyclePublicationManifests,
   selectPublicationManifest,
-  verifyFinalizedCalendar,
-  verifyFinalizedManifest,
-  verifyFinalizedSnapshot,
   verifyBoundFinalizedPublication,
   verifyCyclePublications,
-  type MarketDataVerificationError,
-} from '../market-data-verification'
+} from './verification/publications'
+import { verifyFinalizedCalendar } from './verification/calendar'
+import { verifyFinalizedManifest } from './verification/manifest'
+import { verifyFinalizedSnapshot } from './verification/snapshot'
+import { type MarketDataVerificationError } from './verification/errors'
 import { currentUtcInstant } from '../time'
 import { marketDataOperationError } from './errors'
 import {

@@ -5,8 +5,8 @@ import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { MutationEventType } from '../execution/mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { MutationEventType } from '../execution/mutations/model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
 import {
@@ -34,8 +34,8 @@ import {
   legacyReconciliationIdSchemaVersion,
   legacyReconciliationSchemaVersion,
 } from '../execution/legacy-wire'
+import { compareReconciliation } from '../simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type DurableFill,
@@ -44,7 +44,7 @@ import {
   type ReconciliationComparison,
   type ReconciliationDecisionError,
   type ReconciliationRiskContext,
-} from '../reconciliation'
+} from '../simulation-reconciliation/broker-model'
 import { strictParseOptions, type IsoDate } from '../schemas'
 import { Pipeable } from '../pipeable'
 import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
@@ -417,7 +417,7 @@ export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
-  readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
+  readonly fees?: readonly import('../broker/alpaca/model').FeeActivity[]
   readonly brokerFeeAccruals: readonly FeeAccrual[]
   readonly cashReportingOffsetMicros: string
   readonly cashSettlementDeltaMicros: string

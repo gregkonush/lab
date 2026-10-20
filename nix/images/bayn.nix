@@ -9,55 +9,25 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.focused-action.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af";
-  # Canonical hash of the compiled bayn.jev.protocol.v11 document.
-  strategyParameterHash = "3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6";
+  # SHA-256 identity for bayn.jev.entry-bound-exits.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "a9205de6b18592ce2aa3697720eefaf45c555d34a1df80bd7ef9ac3650de9c74";
+  # Canonical hash of the compiled bayn.jev.protocol.v13 document.
+  strategyParameterHash = "e8efe1ed01ca88afb5ca016a48027b0d04dd54af91ee8024d5a23eee8822ecaf";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7";
+  strategyProtocolHash = "b58904422ea4b1e53026d6bbb28bd1b0eae5468b60175ecfc639d43db3a6fba8";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "3e3748bb0c9f614a82b03076a57cefd51711524639d400f6559d5a8ee954e75d";
+  executionRiskPolicyHash = "09d88572adc29a83d155fcf46db99aa28daf12f3b353f8b889be09882bc4cc8b";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/forward-performance-command.js" "$@"
   '';
-  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
-  '';
-  controlStudyCommand = pkgs.writeShellScriptBin "bayn-control-study" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
-  '';
-  jevStudyExportCommand = pkgs.writeShellScriptBin "bayn-jev-study-export" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-study-export-command.js" "$@"
-  '';
-  equityEdgeScreenCommand = pkgs.writeShellScriptBin "bayn-equity-edge-screen" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/equity-edge-screen.js" "$@"
-  '';
   inferenceCostCommand = pkgs.writeShellScriptBin "bayn-inference-cost" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/inference-cost-command.js" "$@"
-  '';
-  gapRecoveryCommand = pkgs.writeShellScriptBin "bayn-gap-recovery" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/gap-recovery-command.js" "$@"
-  '';
-  ridgeTrainingCommand = pkgs.writeShellScriptBin "bayn-ridge-training" ''
-    set -eu
-    root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/ridge-training-command.js" "$@"
   '';
   researchCommand = pkgs.writeShellScriptBin "bayn-research" ''
     set -eu
@@ -73,8 +43,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     (
-      "bun --cwd=services/bayn build src/index.ts src/glitchtip-smoke-command.ts src/verify-build-contract.ts src/forward-performance-command.ts src/inference-cost-command.ts src/jev-study-export-command.ts src/backtest-command.ts src/control-study-command.ts src/gap-recovery-command.ts src/ridge-training-command.ts src/streaming-diagnostics-command.ts src/restate/restate-execution-server.ts src/restate/restate-execution-activate.ts src/restate/restate-research-server.ts src/research-command.ts src/valkey-command.ts tools/equity-edge-screen.ts --target=node "
-      + "--external tigerbeetle-node --external @platformatic/kafka --entry-naming '[name].js' --outdir=dist "
+      "bun --cwd=services/bayn run build "
       + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
       + " "
       + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
@@ -90,16 +59,10 @@ let
       + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
     )
     "node services/bayn/dist/verify-build-contract.js"
-    "node services/bayn/dist/gap-recovery-command.js --help"
-    "node services/bayn/dist/ridge-training-command.js --help"
-    "node services/bayn/dist/control-study-command.js --help"
-    "node services/bayn/dist/jev-study-export-command.js --help"
-    "node services/bayn/dist/equity-edge-screen.js --help"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/backtest-command.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-server.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-execution-activate.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/restate-research-server.js"
@@ -108,25 +71,11 @@ let
     "grep -F -- ${lib.escapeShellArg strategyName} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg strategyProtocolHash} services/bayn/dist/verify-build-contract.js"
     "grep -F -- ${lib.escapeShellArg executionRiskPolicyHash} services/bayn/dist/verify-build-contract.js"
+    "rm services/bayn/dist/verify-build-contract.js"
   ];
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
-    cp "$TMPDIR/work/services/bayn/dist/index.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/glitchtip-smoke-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/forward-performance-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/inference-cost-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/backtest-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/control-study-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/jev-study-export-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/equity-edge-screen.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/gap-recovery-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/ridge-training-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/streaming-diagnostics-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-execution-server.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-execution-activate.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/restate-research-server.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/valkey-command.js" "$out/app/services/bayn/dist/"
-    cp "$TMPDIR/work/services/bayn/dist/research-command.js" "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
@@ -176,12 +125,6 @@ import ./bun-workspace-service.nix {
     forwardPerformanceCommand
     inferenceCostCommand
     researchCommand
-    backtestCommand
-    controlStudyCommand
-    jevStudyExportCommand
-    equityEdgeScreenCommand
-    gapRecoveryCommand
-    ridgeTrainingCommand
   ];
   exposedPorts = {
     "8080/tcp" = { };

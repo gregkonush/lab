@@ -31,7 +31,7 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -602,6 +602,28 @@ const decodeRiskEvaluationResult = Schema.decodeUnknownResult(EvaluationSchema, 
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const positiveDifference = (left: bigint, right: bigint): bigint => (left > right ? left - right : 0n)
+
+export const accountLossMicros = (facts: {
+  readonly accountEquityMicros: bigint
+  readonly dayStartEquityMicros: bigint
+  readonly peakEquityMicros: bigint
+}) => ({
+  dailyLossMicros: positiveDifference(facts.dayStartEquityMicros, facts.accountEquityMicros),
+  drawdownMicros: positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros),
+})
+
+/** The existing entry limits retain exact micros and permit equality at either boundary. */
+export const accountEntryProtectionReasons = (
+  facts: Parameters<typeof accountLossMicros>[0],
+  limits: Pick<Policy, 'maxDailyLossMicros' | 'maxDrawdownMicros'>,
+): readonly (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] => {
+  const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
+  const reasons: (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] = []
+  if (dailyLossMicros > BigInt(limits.maxDailyLossMicros)) reasons.push(Reason.DailyLossExceeded)
+  if (drawdownMicros > BigInt(limits.maxDrawdownMicros)) reasons.push(Reason.DrawdownExceeded)
+  return reasons
+}
+
 const divideUp = (numerator: bigint, denominator: bigint): bigint =>
   numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator
 const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
@@ -764,8 +786,7 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   const aggregateBuyingPowerMicros =
     facts.reservedBuyingPowerMicros + (facts.intent.side === OrderSide.Buy ? orderNotionalMicros : 0n)
   const dailyTradedNotionalMicros = facts.priorDailyTradedNotionalMicros + orderNotionalMicros
-  const dailyLossMicros = positiveDifference(facts.dayStartEquityMicros, facts.accountEquityMicros)
-  const drawdownMicros = positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros)
+  const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
   const adversePriceDifference =
     facts.intent.side === OrderSide.Buy
       ? positiveDifference(facts.expectedExecutionPriceMicros, facts.referencePriceMicros)

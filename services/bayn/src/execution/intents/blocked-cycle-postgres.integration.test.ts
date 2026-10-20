@@ -1,4 +1,4 @@
-import { orderRequestBody } from '../../broker/alpaca-mutations'
+import { orderRequestBody } from '../../broker/alpaca-mutations/decisions'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
 import { makeObserveAuthorityInterpreter } from '../../db/execution-store/observe-authority'
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
@@ -15,18 +15,17 @@ import shadowDecisionGenerationIndex from '../../../migrations/0104_shadow_decis
 import { canRearmUnusedCycle } from '../../cycle/runner/calendar-decisions'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../../broker/identity'
+import { CycleState, CycleTerminalReason } from '../../cycle/model'
 import {
-  CycleState,
-  CycleTerminalReason,
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicy,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-} from '../../cycle'
-import { CycleStore, CycleStoreLive } from '../../cycle/store'
+} from '../../cycle/construction'
+import { CycleStore } from '../../cycle/store/model'
+import { CycleStoreLive } from '../../cycle/store/postgres'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
   strategyProtocolCutoverRestrictionReason,
@@ -41,7 +40,7 @@ import { canonicalHashV1 } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { restrictAuthority } from '../../db/reconciliation'
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { makeMutationEventPostgres } from '../mutations/postgres/events'
 import { makeMutationStartPostgres } from '../mutations/postgres/start'
 import { makeMutationOutcomePostgres } from '../mutations/postgres/outcome'
@@ -49,10 +48,8 @@ import { SubmissionDenialReason } from '../submission-denial'
 import { WriterFence, WriterFenceLive } from '../writer-fence'
 import { recoverTerminalGenerationToObserve } from '../../blocked-generation-recovery'
 import { operationalError } from '../../errors'
-import {
-  defaultIntradayMomentumProtocolDocument,
-  intradayMomentumExecutionModel,
-} from '../../strategy/intraday-momentum/protocol'
+import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
+import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { BlockedCycleIntentStore } from './blocked-cycle'
 import { BlockedCycleIntentStoreLive } from './blocked-cycle-postgres'
 
@@ -107,10 +104,11 @@ const makeFixture = (openSession = false) => {
     : executionPolicy
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'intraday-momentum',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: 'jev',
       qualificationRunId: planHash,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'intraday-momentum', version: 2 }),
+      strategyProtocolHash: canonicalHashV1({ strategy: 'jev', version: 2 }),
       accountId,
       executionSessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
@@ -120,11 +118,10 @@ const makeFixture = (openSession = false) => {
     }),
   )
   const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, sessionPolicy))))
-  if (!isIntradayCycleDraft(cycle)) throw new Error('expected an intraday cycle')
   return {
     cycle,
     generationActivatedAt: instant(now - 5 * 60_000),
-    acquiredAt: instant(now - 4 * 60_000),
+    acquiredAt: instant(now - 3 * 60_000 - 5_000),
     cycleActivatedAt: instant(now - 3 * 60_000),
     restrictedAt: instant(now - 2 * 60_000),
     reconciledAt: instant(now - 60_000),
@@ -162,7 +159,6 @@ const makeExpiredNativeFixture = () => {
     }),
   )
   const cycle = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, policy))))
-  if (!isIntradayCycleDraft(cycle)) throw new Error('Expected native cycle')
   return {
     ...original,
     cycle,
@@ -213,8 +209,8 @@ const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<type
         ${executionGenerationHash}, 'bayn.authority-generation-history.v1',
         'bayn.paper-authority-generation.v3', ${observeGenerationHash}, 'PAPER', 2,
         ${'2'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'3'.repeat(64)}`},
-        'intraday-momentum', ${'4'.repeat(64)}, ${'5'.repeat(64)},
-        ${defaultIntradayMomentumProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
+        'jev', ${'4'.repeat(64)}, ${'5'.repeat(64)},
+        ${defaultJevProtocolDocument.schemaVersion}, ${fixture.cycle.identity.strategyProtocolHash}, ${accountId},
         'bayn.broker-identity.v2', ${brokerIdentity.identityHash}, 'alpaca', 'sandbox', ${'7'.repeat(64)},
         ${planHash}, ${reconciliationId}, ${reconciliationHash}, ${planHash},
         ${fixture.generationActivatedAt}
@@ -363,7 +359,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             result.first,
             {
               cycleBindingId: planHash,
-              strategyName: 'intraday-momentum',
+              strategyName: 'jev',
               strategyProtocolHash: fixture.cycle.identity.strategyProtocolHash,
               accountId,
               executionPolicy: policy,
@@ -415,8 +411,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.intraday-momentum.protocol.v3')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.intraday-momentum.protocol.v3')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
+    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
@@ -520,7 +516,14 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
   )
 
   test('retains capital-sizing cutover authority when a cycle already has decision evidence', async () => {
-    const fixture = makeFixture(true)
+    const now = Date.now()
+    const fixture = {
+      ...makeFixture(true),
+      acquiredAt: instant(now - 5_000),
+      cycleActivatedAt: instant(now - 4_000),
+      restrictedAt: instant(now - 2_000),
+      reconciledAt: instant(now - 1_000),
+    }
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -927,7 +930,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
           quantity_atoms, notional_limit_micros, limit_price_micros, state, state_version, created_at, updated_at
         ) VALUES (
-          ${intentId}, 'bayn.execution-intent.v4', ${executionHash}, NULL, 'intraday-momentum',
+          ${intentId}, 'bayn.execution-intent.v4', ${executionHash}, NULL, 'jev',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
           'AAPL', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000000, 1000000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
         )`
@@ -1401,7 +1404,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(Option.getOrThrow(result.cycle).bindings.decisionHash).toBeUndefined()
   })
 
-  test('concurrent repairs reopen an untouched session once and leave its lifecycle trigger enabled', async () => {
+  test('retired repair cannot reopen a current native terminal cycle and leaves its lifecycle trigger enabled', async () => {
     const fixture = makeFixture(true)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1417,8 +1420,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { before, first, repeated: yield* cycles.read(fixture.cycle.identity.cycleId), triggers }
       }),
     )
-    expect(Option.getOrThrow(result.first).state).toBe(CycleState.Active)
-    expect(Option.getOrThrow(result.first).stateVersion).toBe(Option.getOrThrow(result.before).stateVersion + 1)
+    expect(result.first).toEqual(result.before)
     expect(result.repeated).toEqual(result.first)
     expect(result.triggers).toEqual([{ tgenabled: 'O' }])
   })
@@ -1439,7 +1441,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(Option.getOrThrow(result).state).toBe(CycleState.Blocked)
   })
 
-  test('repairs one clear, flat, reconciled cycle that was blocked by authority before its window', async () => {
+  test('retired repair preserves a current native cycle blocked by authority before its window', async () => {
     const fixture = makeFixture()
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1454,9 +1456,9 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     )
 
     const repaired = Option.getOrThrow(result.repaired)
-    expect(repaired.state).toBe(CycleState.Active)
-    expect(repaired.terminalReason).toBeUndefined()
-    expect(repaired.terminalAt).toBeUndefined()
+    expect(repaired.state).toBe(CycleState.Blocked)
+    expect(repaired.terminalReason).toBe(CycleTerminalReason.Authority)
+    expect(repaired.terminalAt).toBe(fixture.restrictedAt)
     expect(result.replayed).toEqual(result.repaired)
   })
 
@@ -1601,7 +1603,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE FUNCTION execution_account_now(text) RETURNS timestamptz LANGUAGE sql STABLE
     AS 'SELECT ''2026-08-28T14:30:09Z''::timestamptz'`
   yield* sql`INSERT INTO authority_generations VALUES (
-    ${expiryFixture.generationHash}, ${accountId}, 'PAPER', ${expiryFixture.policyHash}, 'intraday-momentum'
+    ${expiryFixture.generationHash}, ${accountId}, 'PAPER', ${expiryFixture.policyHash}, 'jev'
   )`
   yield* sql`INSERT INTO authority_state VALUES (
     true, ${expiryFixture.generationHash}, 'PAPER', 'PAPER', 'CLEAR', NULL, 1, ${expiryFixture.createdAt}
@@ -1620,7 +1622,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   for (const intentId of expiryFixture.intentIds) {
     yield* sql`INSERT INTO intents VALUES (
       ${intentId}, ${expiryFixture.generationHash}, ${expiryFixture.cycleId}, ${accountId}, ${expiryFixture.policyHash},
-      'intraday-momentum', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId},
+      'jev', 'BUY', 'APPROVED', NULL, 1, ${expiryFixture.createdAt}, ${intentId},
       ${'b1_' + 'A'.repeat(43)}, 'AAPL', 'LIMIT', 'DAY', 1000000000, 100000000, 100000000
     )`
     yield* sql`INSERT INTO risk_decisions VALUES (
