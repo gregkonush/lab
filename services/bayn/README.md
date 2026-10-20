@@ -23,7 +23,9 @@ accepts those completed decisions only when every generation-bound decision matc
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
 no intents or active cycles. Native recovery settles and reconciles a restricted generation before running another cycle.
 An already settled, flat account rotates through clear OBSERVE and resumes the approved PAPER mandate without an extra
-close-only cycle pass. Unsettled broker work continues through close-only recovery. Operator holds remain restricted.
+close-only cycle pass. Unsettled broker work continues through close-only recovery. The same settlement check runs
+after an actual close-only cycle pass, so newly resolved broker work can finish its generation handoff immediately.
+Operator holds remain restricted.
 A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
