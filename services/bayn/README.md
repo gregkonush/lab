@@ -332,6 +332,12 @@ failed cut is memoized across passes. Unprojected broker health retains its inde
 Individual order recovery, filtered historical queries, asset metadata and calendar requests retain direct read access.
 There is no refresh-on-miss path for normal submission.
 
+Order history uses descending submission timestamps with an exclusive `until` cursor. A full page retains only
+the complete newer timestamp groups and rereads its entire oldest group on the next page, including any siblings
+hidden beyond the provider's page boundary. Original timestamp precision and response evidence remain intact.
+A full page containing only one timestamp fails closed because timestamp pagination cannot establish its completeness.
+The 10,000-order budget, duplicate checks and both stability scans still apply; boundary overlap can add requests.
+
 Stable snapshots collect all currently available fee pages without an activity-creation `until` filter. Alpaca can
 exclude an already reported settlement from that filter while its cash effect is visible. Both history scans must
 still agree, and pagination budgets, duplicate detection, response hashes and fee date validation remain enforced.
@@ -981,7 +987,10 @@ Historical SIP verification retains its explicit evaluation start; intraday arch
 identities keep their existing contracts. Replay/backtest and historical acquisition tools retain their separate
 `BAYN_BACKTEST_*` and `BAYN_HISTORY_*` settings.
 
-The forward-performance command emits `bayn.forward-performance-report.v4`. Its `inferenceExpenses` section joins
+The forward-performance command emits `bayn.forward-performance-report.v5`. Its hashed `scope` records the requested
+`AUTHORITY_GENERATION` and `authorityGenerationHash`, including when no eligible financial cycle exists. Programmatic
+account-history reports declare `ACCOUNT` scope. Requested scope does not supply missing financial source or strategy
+bindings; those remain null until eligible evidence exists. Its `inferenceExpenses` section joins
 all claimed requests, including no-trade cycles, to frozen quotes and verifies the complete account/session set in
 TigerBeetle ledger 7002 before attributing estimates to the requested authority generation. Amounts retain USD_PICO
 precision. Missing quotes, usage gaps and unverified acknowledgements remain explicit. The stored v4 trading receipt
@@ -992,7 +1001,9 @@ tariff estimates cannot establish fully costed profitability.
 
 The forward-performance ledger reader verifies trading transfers and broker fees. It has no operating-expense
 coverage: `otherChargedCostsMicros`, `netRealizedPnlAfterCostsMicros`, and `netRealizedReturn` remain null, with
-`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Verified gross trading P&L and fees remain visible.
+`OPERATING_COST_EVIDENCE_GAP` and profitability `UNDETERMINED`. Independently known cost-coverage, missing-ledger and
+unsettled-fee gaps remain explicit when starting capital is unavailable; unavailable financial totals remain null.
+Verified gross trading P&L and fees remain visible when the required financial boundary exists.
 Exact trading reconciliation does not prove inference, data, infrastructure, or research expenses are zero.
 Complete implementation shortfall also remains unresolved without explicit cost evidence. Existing immutable
 receipts keep their original bytes and hashes; this correction applies to newly computed reports.
@@ -1313,14 +1324,14 @@ Read-only diagnostics retain their independent repeatable-read, read-only transa
 Persistence is append-only and idempotent for unchanged evidence; the creation timestamp comes from the fixed
 evidence cut, not invocation time. A conflicting receipt for the same authority generation fails closed.
 
-Without that option, the command evaluates account history, which may span retired strategies and mandates.
-An account-history report that includes legacy daily SIP evidence requires the historical settings described above.
-Native-only account history does not. A native scope without completed executions remains unqualified; successful
-configuration loading is not a profitability result.
-The command emits `bayn.forward-performance-report.v4`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
+The command always requires `--authority-generation`; omitting `--persist-receipt` keeps that same generation scope
+read-only. Programmatic account-history reports may span retired strategies and mandates and declare `ACCOUNT` scope.
+Account history that includes legacy daily SIP evidence requires the historical settings described above; native-only
+history does not. A scope without completed executions remains unqualified.
+The command emits `bayn.forward-performance-report.v5`. Its `receipt` contains the v4 financial receipt with explicit broker cash settlement rounding;
 `positionEpisodes` measures completed entry-to-flat episodes separately from fill transactions. `inferenceExpenses`
 attributes ledger-verified session estimates to the requested generation, and `operatingCostCoverage` remains
-`INCOMPLETE` while other operating charges are unknown. `reportHash` binds all four fields. The report does not
+`INCOMPLETE` while other operating charges are unknown. `reportHash` binds the requested scope and all report content. The report does not
 change the immutable per-generation receipt schema.
 Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
