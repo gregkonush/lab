@@ -1781,6 +1781,10 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Alpha-R1 research
 
+The [Harness2 adapter](../../docs/bayn/harness2.md) refines factor-selection prompts through the existing signed
+research API and retains probes, compositions, and lessons in the private research bucket. The installed
+`bayn-harness2` command produces unqualified research artifacts. It does not change the trading strategy or its authority.
+
 `BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
 The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
 original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
