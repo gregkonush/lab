@@ -231,7 +231,7 @@ const policy = (account = accountId): Policy =>
     maxBrokerStateAgeMs: 120_000,
     maxMarketDataAgeMs: 120_000,
     maxAdverseSlippageBps: 100,
-    maxOpenOrders: 2,
+    maxOpenOrders: 5,
     decisionTtlMs: 120_000,
   })
 
@@ -400,7 +400,7 @@ const fixture = (
       ...intradayMomentumExecutionModel.precision,
       quantityIncrementAtoms: '1000000000',
     },
-    allocationCapitalMicros: '2000000000',
+    allocationCapitalMicros: '10000000000',
     executionTerms: {
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -854,7 +854,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v13', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v14', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -943,7 +943,16 @@ describe('intraday shadow decision', () => {
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
       expect(document.riskBlock).toBeUndefined()
       const buy = document.deltaRisk[0]
-      if (buy === undefined) throw new Error('missing Jev entry risk')
+      if (buy === undefined)
+        throw new Error(
+          JSON.stringify({
+            targetPlan: document.targetPlan,
+            selected:
+              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
+                ? document.strategyDecision.selectedSymbols
+                : [],
+          }),
+        )
       const runtime = ManagedRuntime.make(
         CycleStoreLive.pipe(
           Layer.provideMerge(
@@ -1210,6 +1219,7 @@ describe('intraday shadow decision', () => {
       }
       for (const [index, target] of document.targetPlan.intentTargets.entries()) {
         const risk = document.deltaRisk[index]?.evaluation.decision
+        const protection = document.deltaRisk[index]?.protection
         const notional = document.deltaRisk[index]?.notionalLimitMicros
         const limitPriceMicros = document.deltaRisk[index]?.limitPriceMicros
         if (risk === undefined || notional === undefined || limitPriceMicros === undefined)
@@ -1221,6 +1231,7 @@ describe('intraday shadow decision', () => {
               ...target,
               notionalLimitMicros: notional,
               limitPriceMicros,
+              ...(protection === undefined ? {} : { protection }),
               createdAt: document.createdAt,
             },
             { authority },

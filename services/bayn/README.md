@@ -1470,10 +1470,9 @@ batch and committed decision, and advances market time through measured provider
 order pricing. It retains costs for abstentions and incomplete model work. This is an independent policy comparison;
 it does not reuse historical model answers or establish profitability. A new evidence directory is required.
 
-`entry: "DETERMINISTIC"` with `management: "MECHANICAL"` creates no provider client. Selecting `management: "JEV"`
-instead gives each repeated deterministic portfolio its own actual-position management observations. Entry and
-management comparisons remain separate. All portfolios share native IOC fills, finite liquidity, fees, turnover,
-loss/drawdown, stop, holding and close rules. None opens a broker account or supplies capital authority.
+`entry: "DETERMINISTIC"` with `management: "MECHANICAL"` creates no provider client. Jev is available only for
+entry selection. Independent controls share their explicit IOC execution, finite liquidity, fees, turnover,
+loss/drawdown, stop, holding and close rules. They do not qualify the v14 native broker lifecycle or grant authority.
 
 `turnoverPolicy: "ENTRY_AND_EXPECTED_EXIT"` reserves both entry notional and a modeled exit allowance;
 `IMMEDIATE_ADJUSTMENT` uses immediate entry admission. These scenario choices cannot block mandatory reducing exits

@@ -1623,6 +1623,25 @@ durableTest.each(
             brokerState.orders.map((entry) => ({ order: entry.order, execution: entry.executions.at(-1) })),
           ),
         ).toHaveLength(0)
+        const entryOrder = brokerState.orders.find(({ order }) => order.side === OrderSide.Buy)?.order
+        expect(entryOrder?.nativeProtection?._tag).toBe('Bracket')
+        expect(
+          brokerState.orders.filter(({ order }) => order.parentBrokerOrderId === entryOrder?.brokerOrderId),
+        ).toHaveLength(2)
+        expect(
+          brokerState.orders.every(({ order }) =>
+            [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(
+              order.status,
+            ),
+          ),
+        ).toBe(true)
+        const [nativeEvidence] = yield* sql<{ matches: boolean }>`SELECT bool_and(
+          i.protection ->> '_tag' = 'Bracket' AND m.request_body ->> 'order_class' = 'bracket'
+          AND m.request_body #>> '{stop_loss,stop_price}' IS NOT NULL
+          AND m.request_body #>> '{take_profit,limit_price}' IS NOT NULL) AS matches
+          FROM intents i JOIN mutation_events m USING (intent_id)
+          WHERE i.side = 'BUY' AND i.account_id = ${accountId} AND m.event_type = 'SUBMIT_STARTED'`
+        expect(nativeEvidence?.matches).toBe(true)
         expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,
