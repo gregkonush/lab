@@ -137,7 +137,6 @@ describePostgres('cash reporting residuals at historical cuts', () => {
             accrual_id: prepared.accrualId,
             data: prepared.data,
             settlement_date: '2026-10-15',
-            receipt_date: null,
             content_hash: prepared.contentHash,
             coin_quantity_atoms: null,
             cash_debit_micros: prepared.cashDebitMicros,

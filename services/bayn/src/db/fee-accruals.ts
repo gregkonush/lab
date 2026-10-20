@@ -15,7 +15,6 @@ export const StoredAccrual = Schema.Struct({
   accrual_id: Sha256Schema,
   data: FeeAccrualSchema,
   settlement_date: IsoDateSchema,
-  receipt_date: Schema.NullOr(IsoDateSchema),
   content_hash: Sha256Schema,
   coin_quantity_atoms: Schema.NullOr(integer),
   cash_debit_micros: Schema.NullOr(integer),
@@ -60,8 +59,7 @@ export const feeAccrualCohortSettled = (
         candidate.data.accountId === record.data.accountId &&
         candidate.data.kind === record.data.kind &&
         candidate.data.symbol === record.data.symbol &&
-        (candidate.settlement_date === record.settlement_date ||
-          (record.receipt_date !== null && candidate.settlement_date <= record.receipt_date)),
+        candidate.settlement_date === record.settlement_date,
     )
     .every(
       (candidate) =>
@@ -91,10 +89,7 @@ export const readStoredFeeAccruals = (sql: PgClient.PgClient, accountId: string)
         strictParseOptions,
       )(
         yield* sql`
-    SELECT a.accrual_id,a.data,cohort.settlement_date,
-      (SELECT max(f.fee_date)::text FROM broker_fee_accrual_matches m JOIN broker_fee_accounting f
-        ON f.account_id=m.account_id AND f.activity_id=m.activity_id WHERE m.accrual_id=a.accrual_id) AS receipt_date,
-      a.content_hash,a.coin_quantity_atoms::text,a.cash_debit_micros::text,a.expense_micros::text,
+    SELECT a.accrual_id,a.data,cohort.settlement_date,a.content_hash,a.coin_quantity_atoms::text,a.cash_debit_micros::text,a.expense_micros::text,
       COALESCE((SELECT sum(m.coin_quantity_atoms) FROM broker_fee_accrual_matches m WHERE m.accrual_id=a.accrual_id),0)::text AS matched_coin_quantity_atoms,
       (COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.accrual_id=a.accrual_id),0)-COALESCE((SELECT sum(c.cash_debit_micros) FROM broker_fee_match_corrections c WHERE c.accrual_id=a.accrual_id),0))::text AS matched_cash_micros,
       a.ledger_plan_hash,a.tigerbeetle_cluster_id::text,a.tigerbeetle_ledger::integer,a.posted_at IS NOT NULL AS posted
