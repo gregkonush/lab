@@ -73,7 +73,9 @@ upstream artifacts, and terminal result. `studyId` is the SHA-256 of compact, so
 Object creation uses `If-None-Match: *`; a conflict must read back identical evidence. Call slots are reserved before
 transmission. A restart reuses the original registration and its native Workflow identity, including an ambiguous
 claim. It cannot generate a new model request for that call. Use the same output path when resuming an interrupted
-study. Completed studies return their retained result without model work. A terminal inconclusive study requires an
+study, and run it with its original Bayn image revision. An unfinished study cannot migrate to changed adapter
+instructions: a reserved call's prompt hash stays frozen, and a mismatch fails closed. Register a new study to use
+a different adapter revision. Completed studies return their retained result without model work. A terminal inconclusive study requires an
 explicit new registration for a new experiment.
 
 The top-level result records exact integer `costPicoUsd` only when every reserved attempt has priced evidence.
