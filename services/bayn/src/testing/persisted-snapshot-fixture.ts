@@ -1,5 +1,6 @@
+import { Result } from 'effect'
 import type { SnapshotRequest } from '../market-data/model'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../types'
 import { fixtureProtocol } from './runtime-fixtures'
@@ -73,5 +74,5 @@ export const makePersistedSnapshotFixture = (): InputManifest => {
       lastSession: session,
     })),
   }
-  return { ...material, hash: canonicalHashV1(material) }
+  return { ...material, hash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }

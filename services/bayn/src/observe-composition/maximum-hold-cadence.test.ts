@@ -1,8 +1,9 @@
+import { strictParseOptions } from '../schemas'
 import { expect, test } from 'bun:test'
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleState, decodeAutonomousCycle } from '../cycle/model'
+import { CycleState, AutonomousCycleSchema } from '../cycle/model'
 import { type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { advanceExecutionOnce } from '../execution/advance'
@@ -23,7 +24,10 @@ const observedAt = native.query.observedAt
 const observedMs = Date.parse(observedAt)
 const instant = (offset: number) => new Date(observedMs + offset).toISOString()
 const cycle = Effect.runSync(
-  decodeAutonomousCycle({
+  Schema.decodeUnknownEffect(
+    AutonomousCycleSchema,
+    strictParseOptions,
+  )({
     ...native.draft,
     state: CycleState.Active,
     bindings: {},

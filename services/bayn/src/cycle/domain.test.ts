@@ -1,7 +1,8 @@
+import { strictParseOptions } from '../schemas'
 import { describe, expect, test } from 'bun:test'
-import { Effect, Exit, Result } from 'effect'
+import { Effect, Exit, Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import {
   makeCycleDraft,
@@ -11,7 +12,7 @@ import {
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
 } from './construction'
-import { CycleState, decodeCycleDraft, decodeCycleIdentity, decodeCycleWindow, type CycleDraft } from './model'
+import { CycleState, decodeCycleDraft, type CycleDraft, CycleIdentitySchema, CycleWindowSchema } from './model'
 import { cycleDraftMatches, isCycleStateTransitionAllowed } from './transitions'
 
 const value = Result.getOrThrow
@@ -75,7 +76,7 @@ describe('current Jev cycle contracts', () => {
   test('binds account, attempt, calendar and policy into immutable cycle identity', () => {
     const input = material()
     const identity = value(makeCycleIdentity(input))
-    expect(identity.cycleId).toBe(canonicalHashV1(input))
+    expect(identity.cycleId).toBe(Result.getOrThrow(canonicalHashV1Result(input)))
     expect(value(makeCycleIdentity(structuredClone(input)))).toEqual(identity)
     for (const change of [
       { accountId: 'other-account' },
@@ -132,11 +133,23 @@ describe('current Jev cycle contracts', () => {
       expect(Exit.isFailure(await Effect.runPromiseExit(decodeCycleDraft({ ...input, window })))).toBe(true)
     }
     expect(
-      Exit.isFailure(await Effect.runPromiseExit(decodeCycleIdentity({ ...input.identity, cycleId: 'e'.repeat(64) }))),
+      Exit.isFailure(
+        await Effect.runPromiseExit(
+          Schema.decodeUnknownEffect(
+            CycleIdentitySchema,
+            strictParseOptions,
+          )({ ...input.identity, cycleId: 'e'.repeat(64) }),
+        ),
+      ),
     ).toBe(true)
     expect(
       Exit.isFailure(
-        await Effect.runPromiseExit(decodeCycleWindow({ ...input.window, executionCalendarHash: 'e'.repeat(64) })),
+        await Effect.runPromiseExit(
+          Schema.decodeUnknownEffect(
+            CycleWindowSchema,
+            strictParseOptions,
+          )({ ...input.window, executionCalendarHash: 'e'.repeat(64) }),
+        ),
       ),
     ).toBe(true)
   })

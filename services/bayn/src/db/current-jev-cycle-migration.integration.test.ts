@@ -6,7 +6,7 @@ import { expect, test } from 'bun:test'
 import { migrationLoader } from './migrations'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { nativeJevFixture } from '../jev/native.test-support'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { makeCycleDraft, makeCycleIdentity } from '../cycle/construction'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 
@@ -28,7 +28,7 @@ const insertRetired = (native: ReturnType<typeof nativeJevFixture>, binding: str
       ...(version === 'v4' ? { entryAttemptOrdinal: 1 } : {}),
       strategyName: 'intraday-momentum',
     }
-    const oldId = canonicalHashV1(identity)
+    const oldId = Result.getOrThrow(canonicalHashV1Result(identity))
     const changed = {
       cycle_id: oldId,
       qualification_run_id: binding,

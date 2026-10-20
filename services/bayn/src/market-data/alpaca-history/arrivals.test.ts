@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { advanceHistoricalMarketCursor, createHistoricalMarketCursor } from '../streaming/historical'
 import { decodeRawMarketRecord, RawMarketEventKind } from '../streaming/raw-events'
 import { restCaptureArrivals } from './arrivals'
@@ -8,7 +8,7 @@ import type { StoredHistoricalCapture, VendorHistoricalProvenance } from './mode
 
 const universe = {
   universeId: 'rest-fixture',
-  universeSymbolHash: canonicalHashV1(['AAPL', 'SPY']),
+  universeSymbolHash: Result.getOrThrow(canonicalHashV1Result(['AAPL', 'SPY'])),
   symbols: ['AAPL', 'SPY'],
   topics: {
     bars: 'bars',

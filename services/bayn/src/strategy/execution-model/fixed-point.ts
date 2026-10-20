@@ -33,16 +33,6 @@ export const scaledNumber = (value: number, field: string, scale = Number(MICROS
     : Result.succeed(BigInt(rounded))
 }
 
-export const integerNumber = (
-  value: number,
-  field: string,
-  minimum: number,
-  maximum: number,
-): ExecutionResult<bigint> =>
-  Number.isSafeInteger(value) && value >= minimum && value <= maximum
-    ? Result.succeed(BigInt(value))
-    : fail({ _tag: 'InvalidIntegerNumber', field, value, minimum, maximum })
-
 export const ceilDiv = (numerator: bigint, denominator: bigint): ExecutionResult<bigint> => {
   if (numerator < 0n || denominator <= 0n) {
     return fail({
@@ -70,12 +60,6 @@ export const quantizeDown = (value: bigint, increment: bigint): ExecutionResult<
         minimumIncrement: 1n,
       })
     : Result.succeed((value / increment) * increment)
-
-export const quantizeUp = (value: bigint, increment: bigint): ExecutionResult<bigint> =>
-  pipe(
-    ceilDiv(value, increment),
-    Result.map((quotient) => quotient * increment),
-  )
 
 export const priceNumberToMicros = (
   value: number,

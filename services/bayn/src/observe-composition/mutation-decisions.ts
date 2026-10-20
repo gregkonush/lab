@@ -19,9 +19,6 @@ import {
 } from '../execution/contracts'
 import { legacyOrderV2SchemaVersion } from '../execution/legacy-wire'
 import { MutationEventType, type MutationEvent } from '../execution/mutations/model'
-import type { PlannedTargetQuantity } from '../target-planner/index'
-
-const quantityScale = 1_000_000_000n
 
 export const countOpenPositions = (positions: readonly Pick<Position, 'quantityAtoms'>[]): number =>
   positions.filter((position) => BigInt(position.quantityAtoms) !== 0n).length
@@ -116,64 +113,6 @@ export const decideExecutionIntentTerminalDisposition = (
   return filledQuantity > 0n && filledQuantity < BigInt(input.intent.quantityAtoms)
     ? 'PARTIAL_FILL_LIMIT'
     : 'UNSUCCESSFUL'
-}
-
-export const executionClosePlanNeedsResidualReplan = (
-  intents: readonly Pick<Intent, 'state'>[],
-  openPositionCount: number,
-): boolean =>
-  intents.length > 0 && intents.every((intent) => intent.state === IntentState.Terminal) && openPositionCount > 0
-
-/** A settled close plan must be replaced when authoritative positions remain open. */
-
-const comparePositionSymbol = (left: Position, right: Position): number =>
-  left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0
-
-const divideAwayFromZero = (numerator: bigint): bigint => {
-  const magnitude = numerator < 0n ? -numerator : numerator
-  const rounded = magnitude === 0n ? 0n : (magnitude + quantityScale - 1n) / quantityScale
-  return numerator < 0n ? -rounded : rounded
-}
-
-const projectMutationPosition = (
-  positions: readonly Position[],
-  target: PlannedTargetQuantity,
-  accountId: string,
-  observedAt: string,
-): readonly Position[] => {
-  const retained = positions.filter((position) => position.symbol !== target.symbol)
-  const quantity = BigInt(target.targetQuantityAtoms)
-  if (quantity === 0n) return retained
-  const previous = positions.find((position) => position.symbol === target.symbol)
-  const referencePrice = BigInt(target.referencePriceMicros)
-  const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
-  const projected: Position = {
-    schemaVersion: 'bayn.position.v2',
-    costBasisMicros: divideAwayFromZero(quantity * averageEntryPrice).toString(),
-    accountId: previous?.accountId ?? accountId,
-    symbol: target.symbol,
-    quantityAtoms: target.targetQuantityAtoms,
-    averageEntryPriceMicros: averageEntryPrice.toString(),
-    marketPriceMicros: target.referencePriceMicros,
-    marketValueMicros: divideAwayFromZero(quantity * referencePrice).toString(),
-    unrealizedPnlMicros: divideAwayFromZero(quantity * (referencePrice - averageEntryPrice)).toString(),
-    observedAt: previous?.observedAt ?? observedAt,
-  }
-  return [...retained, projected].sort(comparePositionSymbol)
-}
-
-export const projectWorstCasePendingMutationPosition = (
-  positions: readonly Position[],
-  target: PlannedTargetQuantity,
-  accountId: string,
-  observedAt: string,
-): readonly Position[] => {
-  const current = positions.find((position) => position.symbol === target.symbol)
-  const currentQuantity = current === undefined ? 0n : BigInt(current.quantityAtoms)
-  const targetQuantity = BigInt(target.targetQuantityAtoms)
-  return targetQuantity <= currentQuantity
-    ? positions
-    : projectMutationPosition(positions, target, accountId, observedAt)
 }
 
 export type PreparedMutationIntentDecision =
@@ -432,11 +371,6 @@ export const decidePreparedCloseIntentAdmission = (
   }
   return Result.succeed(undefined)
 }
-
-export const appendPendingMutationOrder = (orders: readonly Order[], pending: Order): readonly Order[] =>
-  orders.some((order) => order.brokerOrderId === pending.brokerOrderId || order.clientOrderId === pending.clientOrderId)
-    ? orders
-    : [...orders, pending]
 
 export interface ExecutionCycleIntentTerminalEvidence {
   readonly state: IntentState

@@ -160,9 +160,6 @@ export const loadExecutionRiskPolicy = (
     ...executionRiskLimits(brokerEnvironment),
   })
 
-export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
-  loadExecutionRiskPolicy(accountId, allowedSymbols)
-
 type ObserveStrategy = StrategyRuntime
 
 export class ReconciliationPassTimeoutError extends Data.TaggedError('ReconciliationPassTimeoutError')<{
@@ -1935,9 +1932,6 @@ export const prepareClosingExecutionCycleDecision = <R>(request: BuildClosingExe
       ),
     ),
   )
-
-export const buildClosingExecutionCycleDecision = <R>(request: BuildClosingExecutionCycleDecisionInput<R>) =>
-  prepareClosingExecutionCycleDecision(request).pipe(Effect.map(({ document }) => document))
 
 export const observePass = (
   recordPass: Parameters<AutonomousCycleStartup>[0]['recordPass'],

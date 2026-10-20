@@ -27,7 +27,7 @@ import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { Authority, KillState, OrderSide } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   JevBatchPlanVersion,
   JevCandidatePlanStatus,
@@ -58,7 +58,7 @@ import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/ru
 import { JevExitReason } from '../jev/exit'
 import { equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
-import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
+import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { CandidateObservationStore, recordJevObservation } from '../observe-composition/candidate-observation'
 import {
@@ -89,15 +89,17 @@ const fixture = nativeJevFixture()
 // Persist and recover retained v1 cycles with their original identity even after active composition changes.
 const retainedRuntime = {
   definition: makeJevDefinition(fixture.protocol),
-  provenance: makeRuntimeProvenance({
-    ...fixtureRuntime.provenance,
-    strategy: {
-      name: 'jev',
-      behaviorHash: jevBehaviorHash,
-      parameterHash: canonicalHashV1(fixture.protocol),
-      parameterSchemaVersion: fixture.protocol.schemaVersion,
-    },
-  }),
+  provenance: Result.getOrThrow(
+    makeRuntimeProvenanceResult({
+      ...fixtureRuntime.provenance,
+      strategy: {
+        name: 'jev',
+        behaviorHash: jevBehaviorHash,
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(fixture.protocol)),
+        parameterSchemaVersion: fixture.protocol.schemaVersion,
+      },
+    }),
+  ),
 }
 const observed = Date.parse(fixture.observation.payload.observedAt)
 const atObservation = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
@@ -301,7 +303,7 @@ const seedManagedPosition = (
     yield* sql.withTransaction(
       Effect.gen(function* () {
         for (const [index, fill] of portfolio.entryFills.entries()) {
-          const eventId = canonicalHashV1({ fillId: fill.fillId })
+          const eventId = Result.getOrThrow(canonicalHashV1Result({ fillId: fill.fillId }))
           const notional = ((BigInt(fill.quantityAtoms) * BigInt(fill.priceAtoms)) / 1_000_000_000_000n).toString()
           yield* sql`INSERT INTO broker_events (event_id, schema_version, content_hash, event_kind, broker, account_id,
         source_event_id, source_sequence, occurred_at, observed_at) VALUES (${eventId}, 'bayn.paper-broker-event.v1',
@@ -1003,7 +1005,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
         const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-        const parameterHash = canonicalHashV1(protocol)
+        const parameterHash = Result.getOrThrow(canonicalHashV1Result(protocol))
         const strategyProtocolHash = Result.getOrThrow(
           makeStrategyProtocolHashResult({
             name: 'jev',
@@ -1550,7 +1552,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* acquireEntryCycle(at)
         const reconciliation = {
           ...next.portfolio.brokerState.reconciliation,
-          reconciliationId: canonicalHashV1({ cadenceReconciliationAt: at }),
+          reconciliationId: Result.getOrThrow(canonicalHashV1Result({ cadenceReconciliationAt: at })),
         }
         const sql = yield* PgClient.PgClient
         yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash,
@@ -1622,13 +1624,17 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         }
         expect(
           Result.isFailure(
-            yield* store.record({ payload: altered, contentHash: canonicalHashV1(altered) }).pipe(Effect.result),
+            yield* store
+              .record({ payload: altered, contentHash: Result.getOrThrow(canonicalHashV1Result(altered)) })
+              .pipe(Effect.result),
           ),
         ).toBe(true)
         const wrongCycle = { ...payload, cycleId: '0'.repeat(64) }
         expect(
           Result.isFailure(
-            yield* store.record({ payload: wrongCycle, contentHash: canonicalHashV1(wrongCycle) }).pipe(Effect.result),
+            yield* store
+              .record({ payload: wrongCycle, contentHash: Result.getOrThrow(canonicalHashV1Result(wrongCycle)) })
+              .pipe(Effect.result),
           ),
         ).toBe(true)
         expect(
@@ -1848,7 +1854,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           Result.isFailure(
             Schema.decodeUnknownResult(ExecutionDecisionDocumentSchema)({
               ...substitutedSource,
-              contentHash: canonicalHashV1(substitutedSource),
+              contentHash: Result.getOrThrow(canonicalHashV1Result(substitutedSource)),
             }),
           ),
         ).toBe(true)
@@ -2086,7 +2092,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expectedHash: remainingHash,
           observedHash: remainingHash,
           reconciledAt: remainingAt,
-          contentHash: canonicalHashV1(remainingMaterial),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(remainingMaterial)),
         }
         yield* sql`INSERT INTO reconciliations (reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
         content_hash, status, discrepancies, reconciled_at) VALUES (${remainingReconciliation.reconciliationId},

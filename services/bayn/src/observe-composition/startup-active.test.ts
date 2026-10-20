@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
-import { canonicalHashV1 } from '../hash'
+import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
+import { canonicalHashV1Result } from '../hash'
 import { makeJevDefinition } from '../jev/decision'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import type { StrategyRuntime } from '../strategy'
@@ -40,10 +40,15 @@ test('a rehashed custom momentum protocol cannot substitute for the approved act
   )
   const changed: StrategyRuntime = {
     definition: makeJevDefinition(protocol),
-    provenance: makeRuntimeProvenance({
-      ...fixtureRuntime.provenance,
-      strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
-    }),
+    provenance: Result.getOrThrow(
+      makeRuntimeProvenanceResult({
+        ...fixtureRuntime.provenance,
+        strategy: {
+          ...fixtureRuntime.provenance.strategy,
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
+        },
+      }),
+    ),
   }
   expect(Result.isFailure(prepare(changed))).toBe(true)
 })

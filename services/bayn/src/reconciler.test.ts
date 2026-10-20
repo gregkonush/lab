@@ -25,7 +25,7 @@ import {
 } from './broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './execution/contracts'
 import {
   BrokerEventStore,
@@ -56,7 +56,7 @@ import { normalizeTimestamp } from './simulation-reconciliation/broker-reconcile
 
 const accountId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const observedAt = '1970-01-01T00:00:00.000Z'
-const hash = (value: unknown): string => canonicalHashV1(value)
+const hash = (value: unknown): string => Result.getOrThrow(canonicalHashV1Result(value))
 
 const evidence = (identity: string): ReadEvidence => ({
   requestId: `request-${identity}`,

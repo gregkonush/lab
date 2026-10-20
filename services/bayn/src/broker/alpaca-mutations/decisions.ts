@@ -2,7 +2,7 @@ import { cashSpotLimitTimeInForce } from '../../execution/order-terms'
 import { Data, Redacted, Result, Schema } from 'effect'
 import { SubmissionDenialReason } from '../../execution/submission-denial'
 
-import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { BrokerAccess, type ExecutionAuthority } from '../../execution/authority'
 import {
   IntentSchema,
@@ -414,9 +414,6 @@ export const prepareSubmit = (
     requestHash,
   }))
 }
-
-export const cancelRequestHash = (brokerOrderId: string): string =>
-  canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })
 
 export const prepareCancel = (input: unknown): Result.Result<PreparedCancel, BrokerMutationError> => {
   const decoded = decodeOrderId(input)

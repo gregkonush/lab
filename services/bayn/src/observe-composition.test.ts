@@ -1,3 +1,9 @@
+import { makeIntradayMomentumDefinition } from './strategy/intraday-momentum/test-support'
+import {
+  decodeIntradayMomentumProtocol,
+  defaultIntradayMomentumProtocolDocument,
+} from './strategy/intraday-momentum/protocol'
+import { strictParseOptions } from './schemas'
 import { BrokerMutationError, MutationFailure } from './broker/alpaca-mutations/model'
 import { advancePositionProtection } from './observe-composition/position-protection-interpreter'
 import { withProviderSessions } from './testing/market-calendar-fixture'
@@ -6,7 +12,7 @@ import { CandidateObservationStore } from './observe-composition/candidate-obser
 import { streamingFixtureFromRaw, fixtureStreamingReference } from './testing/streaming-market-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Semaphore } from 'effect'
+import { Cause, Clock, Deferred, Duration, Effect, Exit, Fiber, Option, Result, Semaphore, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import type { AutonomousCycleLoop } from './app'
@@ -15,7 +21,7 @@ import { fixtureProtocol, fixtureRuntime } from './testing/runtime-fixtures'
 import { JevBatchStore } from './jev/batch-evaluation'
 import { JevEvaluationStore } from './jev/evaluation'
 import { JevClient } from './jev/client'
-import { buildObserveCycleDecision, loadObserveRiskPolicy } from './observe-composition/decision-builder'
+import { buildObserveCycleDecision, loadExecutionRiskPolicy } from './observe-composition/decision-builder'
 import { JevPositionStore } from './jev/portfolio'
 import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.test-support'
 import { makeJevDefinition } from './jev/decision'
@@ -48,7 +54,7 @@ import { unusedAssetBySymbol } from './broker/alpaca-test-support'
 import { MutationOperation } from './broker/alpaca-mutations/model'
 import { orderRequestBody } from './broker/alpaca-mutations/decisions'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
-import { CycleState, CycleTerminalReason, decodeAutonomousCycle } from './cycle/model'
+import { CycleState, CycleTerminalReason, AutonomousCycleSchema } from './cycle/model'
 import {
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
@@ -92,7 +98,7 @@ import {
 } from './execution/mutations/model'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import {
   IntradaySnapshotPurpose,
   type IntradayMarketDataService,
@@ -104,18 +110,16 @@ import { marketDataOperationError } from './market-data/errors'
 import { unusedEntryExpiresAt } from './cycle/entry-admission'
 import { decideDecisionBinding } from './cycle/store/decisions'
 import { constructStreamingSnapshot } from './market-data/streaming/snapshot'
-import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
-import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
+import { intradayMomentumBehaviorHash } from './strategy/intraday-momentum/decision'
+
 import { makeIntradayMomentumTestSnapshot } from './strategy/intraday-momentum/test-support'
 
 import {
   buildMutationShadowCycleDecision,
-  buildClosingExecutionCycleDecision,
+  prepareClosingExecutionCycleDecision,
   makeClosingDecisionPlan,
-  loadExecutionRiskPolicy,
 } from './observe-composition/decision-builder'
 import {
-  appendPendingMutationOrder,
   countOpenPositions,
   decidePendingMutationObservation,
   decideExecutionPhaseCompletion,
@@ -130,8 +134,6 @@ import {
   mutationIntentReconciliationDelayMs,
   executionSubmitExpiresAt,
   executionCycleHasFilledIntent,
-  executionClosePlanNeedsResidualReplan,
-  projectWorstCasePendingMutationPosition,
 } from './observe-composition/mutation-decisions'
 import {
   blockedEntryRequiresCloseOnlyContainment,
@@ -356,7 +358,10 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
   async (executionMode) => {
     const observedAt = evaluatedAt
     const terminalCycle = Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...cycle,
         state: CycleState.Blocked,
         terminalReason: CycleTerminalReason.Authority,
@@ -542,12 +547,6 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
   expect(authorityRestrictions).toBe(0)
 })
 
-test('requires a bounded residual close replan after a settled close leaves a position open', () => {
-  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 1)).toBe(true)
-  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Acknowledged }], 1)).toBe(false)
-  expect(executionClosePlanNeedsResidualReplan([{ state: IntentState.Terminal }], 0)).toBe(false)
-})
-
 const calendarMaterial = withProviderSessions({
   schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
@@ -569,7 +568,7 @@ const calendarMaterial = withProviderSessions({
 
 const calendar: MarketCalendarObservation = {
   ...calendarMaterial,
-  normalizedResponseHash: canonicalHashV1(calendarMaterial),
+  normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
 }
 
 const currentIntradayProtocol = fixtureProtocol
@@ -627,7 +626,10 @@ if (Result.isFailure(draftResult)) {
 }
 const draft = draftResult.success
 const cycle = Effect.runSync(
-  decodeAutonomousCycle({
+  Schema.decodeUnknownEffect(
+    AutonomousCycleSchema,
+    strictParseOptions,
+  )({
     ...draft,
     state: CycleState.Active,
     bindings: {},
@@ -672,14 +674,16 @@ const reconciliation = (
     discrepancies: [],
     reconciledAt,
   }
-  const reconciliationId = canonicalHashV1({
-    schemaVersion: 'bayn.paper-reconciliation-id.v1',
-    material,
-  })
+  const reconciliationId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material,
+    }),
+  )
   return {
     ...material,
     reconciliationId,
-    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
   }
 }
 
@@ -1002,7 +1006,7 @@ const makeExactReconciliationServices = (maximum: Authority = Authority.Observe)
   const evidence = (identity: string): ReadEvidence => ({
     requestId: `exact-reconciliation-${identity}`,
     status: 200,
-    contentHash: canonicalHashV1({ identity }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ identity })),
     observedAt: reconciledAt,
   })
   const brokerAccount: BrokerAccount = {
@@ -1165,7 +1169,10 @@ const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Po
     }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
   )
   const boundCycle = Effect.runSync(
-    decodeAutonomousCycle({
+    Schema.decodeUnknownEffect(
+      AutonomousCycleSchema,
+      strictParseOptions,
+    )({
       ...cycle,
       bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
       stateVersion: cycle.stateVersion + 1,
@@ -1235,14 +1242,16 @@ const reconciliationResultAt = (
     observedHash: stateHash,
     reconciledAt: observedAt,
   }
-  const reconciliationId = canonicalHashV1({
-    schemaVersion: 'bayn.paper-reconciliation-id.v1',
-    material,
-  })
+  const reconciliationId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material,
+    }),
+  )
   const exact = {
     ...material,
     reconciliationId,
-    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
   }
   return {
     report: {
@@ -1622,7 +1631,7 @@ describe('OBSERVE runtime composition', () => {
         strategy: {
           name: currentDefinition.name,
           behaviorHash: jevBehaviorHash,
-          parameterHash: canonicalHashV1(currentDefinition.parameters),
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(currentDefinition.parameters)),
           parameterSchemaVersion: currentDefinition.parameters.schemaVersion,
         },
       },
@@ -1793,7 +1802,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(intent))),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(intent)))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'accepted-broker-order',
       occurredAt: evaluatedAt,
@@ -1811,9 +1820,6 @@ describe('OBSERVE runtime composition', () => {
       status: OrderStatus.New,
       filledQuantityAtoms: '0',
     })
-    const projected = appendPendingMutationOrder([], decision.order)
-    expect(projected).toEqual([decision.order])
-    expect(appendPendingMutationOrder(projected, decision.order)).toBe(projected)
 
     const reconciledOrder: Order = {
       ...decision.order,
@@ -1870,7 +1876,7 @@ describe('OBSERVE runtime composition', () => {
         sequence: 2,
         operation: MutationOperation.Submit,
         eventType: MutationEventType.SubmitAccepted,
-        requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+        requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(fixture.intent)))),
         consistencyDelayMs: 1000,
         brokerOrderId: 'stable-open-order',
         occurredAt: fixture.document.createdAt,
@@ -1914,7 +1920,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(fixture.intent)))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'entry-order-to-cancel',
       occurredAt: fixture.document.createdAt,
@@ -2126,8 +2132,8 @@ describe('OBSERVE runtime composition', () => {
     const fixture = await executionLifecycleFixture()
     const event = (operation: MutationOperation, eventType: MutationEventType): MutationEvent => ({
       schemaVersion: 'bayn.paper-mutation-event.v1',
-      eventId: canonicalHashV1({ operation, eventType, intentId: fixture.intent.intentId }),
-      mutationId: canonicalHashV1({ operation, intentId: fixture.intent.intentId }),
+      eventId: Result.getOrThrow(canonicalHashV1Result({ operation, eventType, intentId: fixture.intent.intentId })),
+      mutationId: Result.getOrThrow(canonicalHashV1Result({ operation, intentId: fixture.intent.intentId })),
       intentId: fixture.intent.intentId,
       sequence: 2,
       operation,
@@ -2159,7 +2165,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitUnknown,
-      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(fixture.intent)))),
       consistencyDelayMs: 1_000,
       occurredAt,
     }
@@ -2485,52 +2491,6 @@ describe('OBSERVE runtime composition', () => {
     })
   })
 
-  test('retains an unfilled sell while reserving a later buy in projected risk positions', () => {
-    const observedAt = '2026-07-28T13:45:00.000Z'
-    const existing: Position = {
-      schemaVersion: 'bayn.position.v2',
-      costBasisMicros: '10000000000',
-      accountId,
-      symbol: 'AAPL',
-      quantityAtoms: '100000000000',
-      averageEntryPriceMicros: '100000000',
-      marketPriceMicros: '100000000',
-      marketValueMicros: '10000000000',
-      unrealizedPnlMicros: '0',
-      observedAt,
-    }
-    const afterSell = projectWorstCasePendingMutationPosition(
-      [existing],
-      {
-        symbol: 'AAPL',
-        targetWeight: 0.2,
-        referencePriceMicros: '100000000',
-        currentQuantityAtoms: '100000000000',
-        targetQuantityAtoms: '20000000000',
-      },
-      accountId,
-      observedAt,
-    )
-    const afterLaterBuy = projectWorstCasePendingMutationPosition(
-      afterSell,
-      {
-        symbol: 'AMD',
-        targetWeight: 0.6,
-        referencePriceMicros: '50000000',
-        currentQuantityAtoms: '0',
-        targetQuantityAtoms: '60000000000',
-      },
-      accountId,
-      observedAt,
-    )
-
-    expect(afterSell).toEqual([existing])
-    expect(afterLaterBuy.map(({ symbol, quantityAtoms }) => ({ symbol, quantityAtoms }))).toEqual([
-      { symbol: 'AAPL', quantityAtoms: '100000000000' },
-      { symbol: 'AMD', quantityAtoms: '60000000000' },
-    ])
-  })
-
   test('settles terminal submit denials and broker rejections so later cycles can continue', () => {
     expect(decideMutationIntentSettlement(MutationEventType.SubmitRejected)).toEqual({
       _tag: 'Settled',
@@ -2587,8 +2547,8 @@ describe('OBSERVE runtime composition', () => {
     const laterIntentId = 'b'.repeat(64)
     const event = (intentId: string, eventType: MutationEventType) => ({
       schemaVersion: 'bayn.paper-mutation-event.v1' as const,
-      eventId: canonicalHashV1({ intentId, eventType }),
-      mutationId: canonicalHashV1({ intentId, operation: 'SUBMIT' }),
+      eventId: Result.getOrThrow(canonicalHashV1Result({ intentId, eventType })),
+      mutationId: Result.getOrThrow(canonicalHashV1Result({ intentId, operation: 'SUBMIT' })),
       intentId,
       sequence: 2,
       operation: MutationOperation.Submit,
@@ -2696,7 +2656,9 @@ describe('OBSERVE runtime composition', () => {
           recoveries.push(operation)
           return {
             ...(operation === MutationOperation.Submit ? accepted : cancelAccepted),
-            eventId: canonicalHashV1({ intentId, operation, eventType: MutationEventType.RecoveryFound }),
+            eventId: Result.getOrThrow(
+              canonicalHashV1Result({ intentId, operation, eventType: MutationEventType.RecoveryFound }),
+            ),
             eventType: MutationEventType.RecoveryFound,
           }
         }),
@@ -2817,7 +2779,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(fixture.intent)))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'accepted-past-cutoff',
       occurredAt: fixture.document.createdAt,
@@ -3044,7 +3006,7 @@ describe('OBSERVE runtime composition', () => {
       sequence: 2,
       operation: MutationOperation.Submit,
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(Result.getOrThrow(orderRequestBody(fixture.intent))),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(fixture.intent)))),
       consistencyDelayMs: 1_000,
       brokerOrderId: 'restricted-expiry-recovery-order',
       occurredAt,
@@ -3599,14 +3561,18 @@ describe('OBSERVE runtime composition', () => {
       observedHash: closeStateHash,
       reconciledAt: observedAt,
     }
-    const closeReconciliationId = canonicalHashV1({
-      schemaVersion: 'bayn.paper-reconciliation-id.v1',
-      material: closeReconciliationMaterial,
-    })
+    const closeReconciliationId = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.paper-reconciliation-id.v1',
+        material: closeReconciliationMaterial,
+      }),
+    )
     const closeReconciliation = {
       ...closeReconciliationMaterial,
       reconciliationId: closeReconciliationId,
-      contentHash: canonicalHashV1({ ...closeReconciliationMaterial, reconciliationId: closeReconciliationId }),
+      contentHash: Result.getOrThrow(
+        canonicalHashV1Result({ ...closeReconciliationMaterial, reconciliationId: closeReconciliationId }),
+      ),
     }
     const currentReconciliation: ReconciliationPassResult = {
       ...baseReconciliation,
@@ -3624,7 +3590,7 @@ describe('OBSERVE runtime composition', () => {
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(observedAt))
-          return yield* buildClosingExecutionCycleDecision({
+          return (yield* prepareClosingExecutionCycleDecision({
             input: fixture.input,
             preparation: fixture.preparation,
             policy: fixture.policy,
@@ -3632,7 +3598,7 @@ describe('OBSERVE runtime composition', () => {
             entryDocument,
             reconcile: Effect.succeed(closeReconciliationResult),
             closeExpiresAt,
-          })
+          })).document
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
           Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3875,7 +3841,7 @@ describe('OBSERVE runtime composition', () => {
       Effect.runPromise(
         Effect.gen(function* () {
           yield* TestClock.setTime(Date.parse(at))
-          return yield* buildClosingExecutionCycleDecision({
+          return (yield* prepareClosingExecutionCycleDecision({
             input: {
               ...fixture.input,
               intradayMarketData: { ...fixture.input.intradayMarketData, loadSnapshot: () => Effect.fail(failure) },
@@ -3887,7 +3853,7 @@ describe('OBSERVE runtime composition', () => {
             reconcile: Effect.succeed(reconciliation),
             ...(replanGenerationHash === undefined ? {} : { replanGenerationHash }),
             closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
-          })
+          })).document
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
           Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -4028,7 +3994,7 @@ describe('OBSERVE runtime composition', () => {
           const previousDocument =
             phase === 'initial'
               ? undefined
-              : yield* buildClosingExecutionCycleDecision({
+              : (yield* prepareClosingExecutionCycleDecision({
                   input: fixture.input,
                   preparation: fixture.preparation,
                   policy: fixture.policy,
@@ -4036,7 +4002,7 @@ describe('OBSERVE runtime composition', () => {
                   entryDocument: fixture.document,
                   closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
                   reconcile: Effect.succeed(reconciliationAt(utcInstantFromEpochMillis(startedAt))),
-                })
+                })).document
           for (const id of previousDocument?.orderedIntentIds ?? []) terminalIntentIds.add(id)
           const previousClosure =
             previousDocument === undefined
@@ -4255,7 +4221,7 @@ describe('OBSERVE runtime composition', () => {
     const close = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* buildClosingExecutionCycleDecision({
+        return (yield* prepareClosingExecutionCycleDecision({
           input: fixture.input,
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -4263,7 +4229,7 @@ describe('OBSERVE runtime composition', () => {
           entryDocument: fixture.document,
           reconcile: Effect.succeed(currentReconciliation),
           closeExpiresAt,
-        })
+        })).document
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -4556,7 +4522,7 @@ describe('OBSERVE runtime composition', () => {
         strategy: {
           name: definition.name,
           behaviorHash: jevBehaviorHash,
-          parameterHash: canonicalHashV1(definition.parameters),
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(definition.parameters)),
           parameterSchemaVersion: definition.parameters.schemaVersion,
         },
       },
@@ -4595,7 +4561,7 @@ describe('OBSERVE runtime composition', () => {
           strategy: {
             name: customDefinition.name,
             behaviorHash: jevBehaviorHash,
-            parameterHash: canonicalHashV1(customDefinition.parameters),
+            parameterHash: Result.getOrThrow(canonicalHashV1Result(customDefinition.parameters)),
             parameterSchemaVersion: customDefinition.parameters.schemaVersion,
           },
         },
@@ -4608,7 +4574,7 @@ describe('OBSERVE runtime composition', () => {
   })
 
   test('rejects retired momentum runtime identity even with its valid protocol and provenance', () => {
-    const protocol = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
+    const protocol = Result.getOrThrow(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
     const definition = makeIntradayMomentumDefinition(protocol)
     const prepared = prepareObserveStartup({
       accountId,
@@ -4623,7 +4589,7 @@ describe('OBSERVE runtime composition', () => {
           strategy: {
             name: definition.name,
             behaviorHash: intradayMomentumBehaviorHash,
-            parameterHash: canonicalHashV1(protocol),
+            parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
             parameterSchemaVersion: protocol.schemaVersion,
           },
         },
@@ -4786,9 +4752,9 @@ describe('OBSERVE runtime composition', () => {
     expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
     expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v3')
     if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v3') throw new Error('expected Jev entry')
-    expect(canonicalHashV1(document.strategyDecision.evidence.observation.portfolio.brokerState)).toBe(
-      canonicalHashV1(result.initial.brokerState),
-    )
+    expect(
+      Result.getOrThrow(canonicalHashV1Result(document.strategyDecision.evidence.observation.portfolio.brokerState)),
+    ).toBe(Result.getOrThrow(canonicalHashV1Result(result.initial.brokerState)))
     expect(document.deltaRisk[0]?.facts?.state.account).toEqual(result.refreshed?.brokerState.account)
     expect(document.deltaRisk[0]?.facts?.state.dailyTradedNotionalMicros).toBe('1000000')
     expect(document.deltaRisk[0]?.facts?.state.entryQuote).toEqual({
@@ -5121,7 +5087,7 @@ describe('OBSERVE runtime composition', () => {
     const close = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(observedAt))
-        return yield* buildClosingExecutionCycleDecision({
+        return (yield* prepareClosingExecutionCycleDecision({
           input: fixture.input,
           preparation: fixture.preparation,
           policy: fixture.policy,
@@ -5129,7 +5095,7 @@ describe('OBSERVE runtime composition', () => {
           entryDocument: fixture.document,
           reconcile: Effect.succeed(reconciliationResultAt(observedAt, 0, 0, [position])),
           closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
-        })
+        })).document
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
         Effect.provide(TestClock.layer()),
@@ -5151,7 +5117,12 @@ describe('OBSERVE runtime composition', () => {
       withoutSession,
     ]) {
       expect(
-        Result.isFailure(decodeExecutionDecisionDocument({ ...altered, contentHash: canonicalHashV1(altered) })),
+        Result.isFailure(
+          decodeExecutionDecisionDocument({
+            ...altered,
+            contentHash: Result.getOrThrow(canonicalHashV1Result(altered)),
+          }),
+        ),
       ).toBe(true)
     }
   })
@@ -5414,12 +5385,12 @@ describe('OBSERVE runtime composition', () => {
     })
     const ordinaryCalendar: MarketCalendarObservation = {
       ...calendarMaterial,
-      normalizedResponseHash: canonicalHashV1(calendarMaterial),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
     }
     const readEvidence = (identity: string): ReadEvidence => ({
       requestId: `bounded-pass-${identity}`,
       status: 200,
-      contentHash: canonicalHashV1({ identity }),
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ identity })),
       observedAt: reconciledAt,
     })
     const brokerAccount: BrokerAccount = {
@@ -5650,7 +5621,12 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
     let stored =
       kind === 'discovery'
         ? undefined
-        : Effect.runSync(decodeAutonomousCycle({ ...cycle, state: CycleState.Pending, stateVersion: 2 }))
+        : Effect.runSync(
+            Schema.decodeUnknownEffect(
+              AutonomousCycleSchema,
+              strictParseOptions,
+            )({ ...cycle, state: CycleState.Pending, stateVersion: 2 }),
+          )
     let bound: CycleDecisionDocument | undefined
     let unfinishedReads = 0
     const operations: string[] = []
@@ -5667,7 +5643,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           operations.push('acquire')
           expect(acquired.identity.cycleId).toBe(cycle.identity.cycleId)
           stored = Effect.runSync(
-            decodeAutonomousCycle({
+            Schema.decodeUnknownEffect(
+              AutonomousCycleSchema,
+              strictParseOptions,
+            )({
               ...acquired,
               state: CycleState.Pending,
               bindings: {},
@@ -5682,7 +5661,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         Effect.gen(function* () {
           operations.push('activate')
           if (stored === undefined) throw new Error('activation requires its acquired cycle')
-          stored = yield* decodeAutonomousCycle({
+          stored = yield* Schema.decodeUnknownEffect(
+            AutonomousCycleSchema,
+            strictParseOptions,
+          )({
             ...stored,
             state: kind === 'stalled' ? CycleState.Pending : CycleState.Active,
             stateVersion: stored.stateVersion + 1,
@@ -5696,7 +5678,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           operations.push('bind')
           if (stored === undefined) throw new Error('binding requires its active cycle')
           bound = document
-          stored = yield* decodeAutonomousCycle({
+          stored = yield* Schema.decodeUnknownEffect(
+            AutonomousCycleSchema,
+            strictParseOptions,
+          )({
             ...stored,
             bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
             stateVersion: stored.stateVersion + 1,
@@ -5713,7 +5698,10 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
         Effect.gen(function* () {
           operations.push('block')
           if (stored === undefined) throw new Error('blocking requires its current cycle')
-          stored = yield* decodeAutonomousCycle({
+          stored = yield* Schema.decodeUnknownEffect(
+            AutonomousCycleSchema,
+            strictParseOptions,
+          )({
             ...stored,
             state: CycleState.Blocked,
             terminalReason: reason,
@@ -6062,7 +6050,10 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
         expect(evidence?.streamingSnapshotReferences?.length).toBeGreaterThan(0)
         bound = document
         stored = Effect.runSync(
-          decodeAutonomousCycle({
+          Schema.decodeUnknownEffect(
+            AutonomousCycleSchema,
+            strictParseOptions,
+          )({
             ...stored,
             bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
             stateVersion: stored.stateVersion + 1,
@@ -6074,7 +6065,10 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
     finish: (_cycleId, state, observedAt) =>
       Effect.sync(() => {
         stored = Effect.runSync(
-          decodeAutonomousCycle({
+          Schema.decodeUnknownEffect(
+            AutonomousCycleSchema,
+            strictParseOptions,
+          )({
             ...stored,
             state,
             stateVersion: stored.stateVersion + 1,
@@ -6123,7 +6117,10 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
   const result = await Effect.runPromise(
     Effect.gen(function* () {
       const beforeOpenAt = utcInstantFromEpochMillis(Date.parse(cycle.window.submissionOpenAt) - 1_000)
-      stored = yield* decodeAutonomousCycle({ ...cycle, createdAt: beforeOpenAt, updatedAt: beforeOpenAt })
+      stored = yield* Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({ ...cycle, createdAt: beforeOpenAt, updatedAt: beforeOpenAt })
       yield* TestClock.setTime(Date.parse(beforeOpenAt))
       const beforeOpen = yield* runAutonomousCyclePass(
         {
@@ -6772,7 +6769,7 @@ test.each([
 test('account drawdown does not suppress read-only strategy observations', async () => {
   const fixture = await executionLifecycleFixture()
   const original = reconciliationResult(generationHash, Authority.Observe)
-  const policy = await Effect.runPromise(loadObserveRiskPolicy(accountId, fixtureProtocol.universe))
+  const policy = await Effect.runPromise(loadExecutionRiskPolicy(accountId, fixtureProtocol.universe))
   let snapshots = 0
   const result = await Effect.runPromise(
     Effect.gen(function* () {
