@@ -24,7 +24,8 @@ import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { CandidateObservationStore, recordJevObservation } from '../observe-composition/candidate-observation'
+import { CandidateObservationStore, candidateObservationLog } from '../observe-composition/candidate-observation'
+import { makeJevObservation } from './observation'
 import {
   adverseQuotePrices,
   executionMarketDataBinding,
@@ -162,9 +163,9 @@ export const jevPricingQuery = (
 // Admit the durable decision window before materializing expensive signal history.
 // The supplied effect stays lazy; position protection is evaluated by the caller first.
 export const evaluateJevObservationFromSnapshot = <E, R>(
-  input: Omit<Parameters<typeof recordJevObservation>[0], 'snapshot'>,
+  input: Omit<Parameters<typeof makeJevObservation>[0], 'snapshot'>,
   rangeEndAt: string,
-  loadSnapshot: Effect.Effect<Parameters<typeof recordJevObservation>[0]['snapshot'], E, R>,
+  loadSnapshot: Effect.Effect<Parameters<typeof makeJevObservation>[0]['snapshot'], E, R>,
 ) =>
   Effect.gen(function* () {
     if (!(yield* recoverPendingJevBatches(input.cycleId, input.authorityGenerationHash)))
@@ -193,7 +194,9 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         readiness: DecisionReadinessReason.SnapshotStale,
       })
     const inputAvailableAt = yield* currentUtcInstant
-    const observation = yield* recordJevObservation({ ...input, snapshot })
+    const observation = yield* Effect.fromResult(makeJevObservation({ ...input, snapshot })).pipe(
+      withObservedStage('bayn.jev.observation'),
+    )
     const batchPlan = yield* Effect.suspend(() =>
       Effect.fromResult(
         makeJevTradingSignalBatch({
@@ -219,7 +222,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
       ),
       withObservedStage('bayn.jev.batch-plan'),
     )
-    const saved = yield* evaluateJevBatch(batchPlan).pipe(
+    const saved = yield* evaluateJevBatch(batchPlan, observation.payload).pipe(
       Effect.catchTag('JevBatchExpired', (cause) =>
         Effect.logWarning('Jev observation expired before batch admission').pipe(
           Effect.annotateLogs({
@@ -241,6 +244,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
         ),
       ),
     )
+    yield* Effect.logInfo(candidateObservationLog(observation))
     const decidedAt = yield* currentUtcInstant
     if (
       saved.result === null ||
@@ -283,7 +287,7 @@ export const evaluateJevObservationFromSnapshot = <E, R>(
     }
   })
 
-export const evaluateJevObservation = (input: Parameters<typeof recordJevObservation>[0]) =>
+export const evaluateJevObservation = (input: Parameters<typeof makeJevObservation>[0]) =>
   evaluateJevObservationFromSnapshot(input, input.snapshot.manifest.rangeEndAt, Effect.succeed(input.snapshot)).pipe(
     Effect.map(({ evidence }) => evidence),
   )

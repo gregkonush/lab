@@ -295,7 +295,7 @@ describe('entry observation admission', () => {
           ),
           Effect.result,
           Effect.provideService(CandidateObservationStore, {
-            record: () => TestClock.adjust(fixture.protocol.inferenceValidityMs + 100),
+            record: () => Effect.die('Observation admission must be owned by the batch store'),
             latestJevWindowEnd: () => Effect.succeed(Option.none()),
           }),
           Effect.provideService(JevBatchStore, {
@@ -303,7 +303,8 @@ describe('entry observation admission', () => {
             read: () => Effect.die('No batch was recorded'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             begin: (plan) =>
-              Clock.currentTimeMillis.pipe(
+              TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
+                Effect.andThen(Clock.currentTimeMillis),
                 Effect.flatMap((now) =>
                   Effect.fail(
                     new JevBatchExpired({
@@ -357,7 +358,7 @@ describe('entry observation admission', () => {
       expect(planning?.attributes.get('bayn.entry_timing.observation_hash')).toBe(fixture.observation.contentHash)
       if (purpose === JevPurpose.Entry)
         expect(planning?.attributes.get('bayn.entry_timing.deterministic_selected_at')).toBe(
-          warning?.annotations['checkedAt'],
+          fixture.observation.payload.observedAt,
         )
       else expect(planning?.attributes.has('bayn.entry_timing.deterministic_selected_at')).toBe(false)
     },
