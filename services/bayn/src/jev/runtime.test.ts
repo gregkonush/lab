@@ -320,7 +320,7 @@ describe('entry observation admission', () => {
           }),
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('No request can exist'),
-            begin: () => Effect.die('No request can be claimed'),
+
             record: () => Effect.die('No inference can be recorded'),
             abandon: () => Effect.die('No inference can be abandoned'),
           }),

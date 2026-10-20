@@ -10,7 +10,7 @@ import { decideJevEntry } from '../jev/decision'
 import { makeJevObservation } from '../jev/observation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
-import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
+import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevResolutionStatus } from '../jev/resolution'
 import { evaluateJevObservation } from '../jev/runtime'
@@ -131,14 +131,7 @@ test('a durable pending claim forbids another call, expires once, and preserves 
     Effect.gen(function* () {
       const { journal } = yield* setup
       yield* seed(journal)
-      expect((yield* journal.evaluations.begin(request)).status).toBe(JevClaim.Acquired)
-      const duplicate = yield* Effect.result(
-        evaluateJevOnce(request).pipe(
-          Effect.provideService(JevEvaluationStore, journal.evaluations),
-          Effect.provideService(JevClient, { evaluate: () => Effect.die('Duplicate provider call') }),
-        ),
-      )
-      expect(Result.isFailure(duplicate) && duplicate.failure._tag).toBe('JevEvidenceError')
+      expect((yield* journal.batches.begin(plan, observation)).dispatches).toEqual([])
       expect((yield* journal.batches.finish(plan.batchId)).result).toBeNull()
       yield* TestClock.setTime(Date.parse(plan.expiresAt))
       const expired = yield* journal.batches.finish(plan.batchId)
@@ -147,7 +140,9 @@ test('a durable pending claim forbids another call, expires once, and preserves 
       expect(late.status).toBe(JevResolutionStatus.Abandoned)
       expect((yield* journal.evaluations.read(request.requestId))?.receipt).toEqual(receipt())
       expect((yield* journal.batches.read(plan.batchId))?.result?.resultHash).toBe(expired.result?.resultHash)
-      expect((yield* journal.evaluations.begin(request)).status).toBe(JevClaim.Abandoned)
+      expect((yield* journal.evaluations.read(request.requestId))?.resolution?.status).toBe(
+        JevResolutionStatus.Abandoned,
+      )
     }),
   ))
 
@@ -156,10 +151,11 @@ test('terminal receipt and resolution are atomic, idempotent and reject conflict
     Effect.gen(function* () {
       const { journal } = yield* setup
       yield* seed(journal)
-      yield* journal.evaluations.begin(request)
       const first = yield* journal.evaluations.record(request, receipt())
       expect(yield* journal.evaluations.record(request, receipt())).toEqual(first)
-      expect((yield* journal.evaluations.begin(request)).status).toBe(JevClaim.Recorded)
+      expect((yield* journal.evaluations.read(request.requestId))?.resolution?.status).toBe(
+        JevResolutionStatus.Recorded,
+      )
       const conflicting = { ...receipt(), receiptHash: 'a'.repeat(64) }
       expect(Result.isFailure(yield* Effect.result(journal.evaluations.record(request, conflicting)))).toBeTrue()
       yield* TestClock.setTime(Date.parse(request.expiresAt))
@@ -173,12 +169,10 @@ test('exclusive directories reject a restarted experiment and corrupted receipts
       const { fs, directory, journal } = yield* setup
       expect(Result.isFailure(yield* Effect.result(makeControlJevJournal(directory, '3'.repeat(64))))).toBeTrue()
       yield* seed(journal)
-      yield* journal.evaluations.begin(request)
       yield* journal.evaluations.record(request, receipt())
       for (const candidate of plan.candidates) {
         if (candidate.status !== JevCandidatePlanStatus.Requested || candidate.request.requestId === request.requestId)
           continue
-        yield* journal.evaluations.begin(candidate.request)
         yield* journal.evaluations.record(candidate.request, receipt(candidate.request))
       }
       yield* journal.batches.finish(plan.batchId)

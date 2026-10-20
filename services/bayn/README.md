@@ -21,8 +21,10 @@ reproduction, cost evidence and research limitations; this recovery does not est
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
-no intents or active cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE
-before the approved PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
+no intents or active cycles. Native recovery settles and reconciles a restricted generation before running another cycle.
+An already settled, flat account rotates through clear OBSERVE and resumes the approved PAPER mandate without an extra
+close-only cycle pass. Unsettled broker work continues through close-only recovery. Operator holds remain restricted.
+A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
@@ -50,10 +52,12 @@ Missing or expired preflight evidence follows the existing admission and decisio
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
 
-Native Jev admission commits the verified source observation and sealed batch plan in one PostgreSQL transaction
-before any provider call. A rejected or interrupted admission cannot strand a new observation without its plan.
-Candidate claims still commit before inference, and response receipts remain independently durable. The existing
-ten-second inference validity, quote freshness checks, complete-batch requirement and risk limits are unchanged.
+Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
+in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
+including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
+rolls back the new observation and plan. Each response receipt remains independently durable. If admission commits after
+expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
+quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
 Migration 131 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
