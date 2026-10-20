@@ -1,4 +1,4 @@
-import { executionIntentSchemaVersion } from './execution/contracts'
+import { executionIntentSchemaVersion, submittedBrokerOrderCount } from './execution/contracts'
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
@@ -985,11 +985,8 @@ const buildAuthorityAndStateGates = (
     makeGate(Gate.UnknownMutations, state.unknownMutationCount === 0, state.unknownMutationCount, 0),
     makeGate(
       Gate.UnresolvedOrders,
-      metrics.unresolvedOrderCount +
-        (intent.protection?._tag === 'Bracket' ? 3 : intent.protection?._tag === 'Oco' ? 2 : 1) <=
-        policy.maxOpenOrders,
-      metrics.unresolvedOrderCount +
-        (intent.protection?._tag === 'Bracket' ? 3 : intent.protection?._tag === 'Oco' ? 2 : 1),
+      metrics.unresolvedOrderCount + submittedBrokerOrderCount(intent.protection) <= policy.maxOpenOrders,
+      metrics.unresolvedOrderCount + submittedBrokerOrderCount(intent.protection),
       `<=${policy.maxOpenOrders}`,
     ),
   ]

@@ -21,7 +21,7 @@ import {
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
-import { OrderSide as IntentOrderSide, type Intent } from './contracts'
+import { submittedBrokerOrderCount, OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
 import type { CachedBrokerState } from './broker-state-cache'
 import {
@@ -738,11 +738,12 @@ const validateExecutionCapitalLimitsDataFirst = (
   const pendingSellCoverage = validatePendingSellCoverage(snapshot)
   if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
-  if (snapshot.openOrders.length >= limits.maxOpenOrders) {
+  const prospectiveOrderCount = snapshot.openOrders.length + submittedBrokerOrderCount(intent.protection)
+  if (prospectiveOrderCount > limits.maxOpenOrders) {
     return Result.fail({
       _tag: 'OpenOrderLimitExceeded',
       limit: limits.maxOpenOrders,
-      observed: snapshot.openOrders.length,
+      observed: prospectiveOrderCount,
     })
   }
 

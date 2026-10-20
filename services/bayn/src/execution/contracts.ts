@@ -120,6 +120,8 @@ export const NativeProtectionSchema = Schema.TaggedUnion({
   StopLimit: { stopPriceMicros: PositiveMicros, entryDecisionHash: Sha256 },
 })
 export type NativeProtection = typeof NativeProtectionSchema.Type
+export const submittedBrokerOrderCount = (protection: NativeProtection | undefined): number =>
+  protection?._tag === 'Bracket' ? 3 : protection?._tag === 'Oco' ? 2 : 1
 
 export enum TimeInForce {
   Day = 'DAY',
