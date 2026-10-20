@@ -74,9 +74,10 @@ const position = Schema.Struct({
   unrealizedPnlMicros: micros,
   observedAt: UtcInstantSchema,
 })
-const order = Schema.Struct({
+const orderLeaf = Schema.Struct({
   accountId: Schema.String,
   brokerOrderId: Schema.String,
+  parentBrokerOrderId: Schema.optionalKey(Schema.String),
   clientOrderId: Schema.String,
   createdAt: UtcSourceTimestampSchema,
   updatedAt: Schema.optionalKey(UtcSourceTimestampSchema),
@@ -107,6 +108,10 @@ const order = Schema.Struct({
   trailPriceMicros: Schema.optionalKey(micros),
   highWaterMarkMicros: Schema.optionalKey(micros),
   observedAt: UtcInstantSchema,
+})
+const order = Schema.Struct({
+  ...orderLeaf.fields,
+  legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
 const fill = Schema.Struct({
   accountId: Schema.String,

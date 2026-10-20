@@ -1,3 +1,5 @@
+import { entryBracketProtection } from './execution/position-protection'
+import { NativeProtectionSchema } from './execution/contracts'
 import { intentPlanSchemaVersion } from './execution/contracts'
 import { MarketSourcesSchema } from './market-data/streaming/raw-events'
 import { exchangeSessions } from './market-hours'
@@ -11,7 +13,7 @@ import {
 import { quantityFromNumber } from './quantity'
 import { makeStrategyProtocolHashResult } from './contracts'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { jevMaximumEntryAskMicros } from './jev/entry-economics'
 import { JevCandidatePlanStatus } from './jev/batch'
 import { defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
@@ -360,6 +362,7 @@ const ShadowDecisionBindingsSchema = Schema.Struct({
 export type ShadowDecisionBindings = typeof ShadowDecisionBindingsSchema.Type
 
 const DeltaRiskEvaluationSchema = Schema.Struct({
+  protection: Schema.optionalKey(NativeProtectionSchema),
   notionalLimitMicros: PositiveMicrosSchema,
   limitPriceMicros: PositiveMicrosSchema,
   facts: Schema.optionalKey(
@@ -420,6 +423,7 @@ const materialIssues = (document: ObserveShadowDecisionMaterial): readonly Schem
         ...target,
         notionalLimitMicros: risk.notionalLimitMicros,
         limitPriceMicros: risk.limitPriceMicros,
+        ...(risk.protection === undefined ? {} : { protection: risk.protection }),
       })
       if (Result.isFailure(identity)) {
         issues.push({
@@ -1183,7 +1187,7 @@ const jevEntryEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v2' || document.plannerInput === undefined)
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v3' || document.plannerInput === undefined)
     return [
       { path: ['strategyDecision'], issue: 'Jev entry requires its complete inference evidence and planner input' },
     ]
@@ -1193,7 +1197,8 @@ const jevEntryEvidenceIssues = (
     document.plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
     document.plannerInput.referencePrices.schemaVersion === 'bayn.intraday-snapshot-reference-prices.v1'
   ) {
-    const expected = maximumAllocatedBuyQuantities({
+    const expected = maximumFundedBuyQuantities({
+      plans: target.exitPolicy.plans,
       askPriceMicros: document.plannerInput.referencePrices.askPriceMicros,
       targetWeights: jevPlanningTargetWeights(target),
       capitalMicros: observation.portfolio.brokerState.account.equityMicros,
@@ -1205,7 +1210,7 @@ const jevEntryEvidenceIssues = (
       issues.push({
         path: ['plannerInput', 'executionTerms', 'maximumBuyQuantityAtoms'],
         issue:
-          'Jev entry quantity limits must reproduce the recorded capital, selected weights and instrument precision',
+          'Jev entry quantity limits must reproduce the recorded capital, selected weights, funded strategy ceiling and instrument precision',
       })
     for (const symbol of target.selectedSymbols) {
       const candidate = batchPlan.candidates.find((entry) => entry.symbol === symbol)
@@ -1310,7 +1315,7 @@ const jevEntryEvidenceIssues = (
 }
 
 const entryQuoteAgeLimit = (document: typeof ExecutionDecisionMaterialSchema.Type, eventAt: string, limit: number) =>
-  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v2'
+  document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
     ? jevEntryQuoteMaximumAgeMs(document.strategyDecision, eventAt, limit)
     : limit
 
@@ -1318,7 +1323,7 @@ const jevExitEvidenceIssues = (
   document: typeof ExecutionDecisionMaterialSchema.Type,
 ): readonly Schema.FilterIssue[] => {
   const target = document.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-exit-target.v2') return []
+  if (target?.schemaVersion !== 'bayn.jev-exit-target.v3') return []
   const evidence = target.evidence
   const input = document.plannerInput
   const position = evidence.portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
@@ -1767,11 +1772,25 @@ const executionMaterialIssues = (
     }
     const risk = document.deltaRisk[index]
     if (risk === undefined) continue
+    const expectedProtection = entryBracketProtection(
+      target.symbol,
+      target.quantityAtoms,
+      target.createdAt,
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
+        ? document.strategyDecision.exitPolicy.plans[target.symbol]
+        : undefined,
+    )
+    if (JSON.stringify(risk.protection) !== JSON.stringify(expectedProtection))
+      issues.push({
+        path: ['deltaRisk', index, 'protection'],
+        issue: 'must bind the strategy prices and supported entry protection',
+      })
     const plan = {
       schemaVersion: intentPlanSchemaVersion,
       ...target,
       notionalLimitMicros: risk.notionalLimitMicros,
       limitPriceMicros: risk.limitPriceMicros,
+      ...(risk.protection === undefined ? {} : { protection: risk.protection }),
       ...(document.replanGenerationHash === undefined ? {} : { replanGenerationHash: document.replanGenerationHash }),
     } as const
     const identity = executionIntentIdForDecodedPlan(plan, document.bindings.authorityGenerationHash)

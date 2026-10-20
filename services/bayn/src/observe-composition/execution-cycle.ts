@@ -1,3 +1,4 @@
+import { advancePositionProtection } from './position-protection-interpreter'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { Effect, Option, Result } from 'effect'
@@ -37,8 +38,6 @@ import { currentUtcInstant } from '../time'
 import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
 import { strategyDefinition } from '../strategy'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
-import { evaluateJevPositionManagement } from '../jev/runtime'
-import { JevContractError } from '../jev/contract'
 import type { JevExitTarget } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -474,7 +473,7 @@ export const ensureExecutionCycleClosure = <R>({
     if (
       observedAt < closeWindow.startAt &&
       exitTarget === undefined &&
-      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v2'
+      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v3'
     )
       return { _tag: 'Wait', observedAt, waitReason: 'AWAITING_CLOSE_WINDOW' } as const
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -595,7 +594,7 @@ export const ensureExecutionCycleClosure = <R>({
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
-      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v2'
+      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v3'
         ? { exitTarget: existing.document.strategyDecision }
         : {}),
     }).pipe(
@@ -817,7 +816,7 @@ const executeBoundExecutionCycle = (
         : yield* readExecutionCycleClosure(cycle.identity.cycleId, input.executionCycleClosureStore)
     const closeDue =
       observedAt >= closeWindow.startAt ||
-      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v2'
+      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v3'
     const closeOnlyContainmentReason =
       document.targetPlan.status === TargetPlanStatus.Blocked &&
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
@@ -843,7 +842,7 @@ const executeBoundExecutionCycle = (
       return { _tag: 'Wait', observedAt, waitReason: 'CLOSE_ONLY_UNTIL_CLOSE' }
     }
 
-    if (closeDue && !entryRequiresCloseOnlyContainment) {
+    if (step === undefined && closeDue && !entryRequiresCloseOnlyContainment) {
       const entryDrain = yield* prepareNextMutationIntent({
         input: entryPhaseInput,
         preparation,
@@ -865,46 +864,68 @@ const executeBoundExecutionCycle = (
       let closeDocument: ExecutionDecisionDocument | undefined
       let closeReconciliation: ReconciliationPassResult | undefined
       if (closeDue) {
-        const closure = yield* ensureExecutionCycleClosure({
+        const protectionFacts = yield* reconcile.pipe(Effect.mapError(reconciliationRunnerError))
+        const protection = yield* advancePositionProtection({
           input,
+          cycle,
+          document,
+          protocol,
+          policy,
+          reconciliation: protectionFacts,
+          capability,
+          closeDue: true,
+          closeExpiresAt: closeWindow.expiresAt,
+        })
+        if (protection._tag === 'PostMutationReconciliation') return protection
+        if (protection._tag === 'Step') {
+          if (protection.step._tag !== 'Execute') return protection.step
+          step = protection.step
+          closeOnly = true
+        }
+        if (step === undefined) {
+          const closure = yield* ensureExecutionCycleClosure({
+            input,
+            preparation,
+            policy,
+            cycle,
+            entryDocument: document,
+            closeWindow,
+            reconcile,
+            refreshReconciliation: reconciliation.refresh,
+            existing: committedClosure,
+          })
+          if (closure._tag !== 'Close') return closure
+          closeDocument = closure.document
+          closeReconciliation = closure.reconciliation
+        }
+      }
+      if (step === undefined) {
+        const boundCloseWindow =
+          closeDocument === undefined ? closeWindow : boundExecutionCycleCloseWindow(closeWindow, closeDocument)
+        closeOnly = closeDocument !== undefined
+        phaseInput = closeOnly
+          ? {
+              ...input,
+              mutationPhase: 'CLOSE',
+              executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
+              executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
+            }
+          : entryPhaseInput
+        step = yield* prepareNextMutationIntent({
+          input: phaseInput,
           preparation,
           policy,
           cycle,
-          entryDocument: document,
-          closeWindow,
-          reconcile,
-          refreshReconciliation: reconciliation.refresh,
-          existing: committedClosure,
+          document: closeDocument ?? document,
+          reconcile: closeReconciliation === undefined ? reconcile : Effect.succeed(closeReconciliation),
+          allowSubmit: executionMutationSubmissionAllowed({
+            capability: capability._tag,
+            phase: closeOnly ? 'CLOSE' : 'ENTRY',
+            submissionCutoffAt: closeOnly ? boundCloseWindow.submitCutoffAt : entrySubmissionCutoffAt,
+            observedAt,
+          }),
         })
-        if (closure._tag !== 'Close') return closure
-        closeDocument = closure.document
-        closeReconciliation = closure.reconciliation
       }
-      const boundCloseWindow =
-        closeDocument === undefined ? closeWindow : boundExecutionCycleCloseWindow(closeWindow, closeDocument)
-      closeOnly = closeDocument !== undefined
-      phaseInput = closeOnly
-        ? {
-            ...input,
-            mutationPhase: 'CLOSE',
-            executionCycleCloseSubmitCutoffAt: boundCloseWindow.submitCutoffAt,
-            executionCycleCloseExpiresAt: boundCloseWindow.expiresAt,
-          }
-        : entryPhaseInput
-      step = yield* prepareNextMutationIntent({
-        input: phaseInput,
-        preparation,
-        policy,
-        cycle,
-        document: closeDocument ?? document,
-        reconcile: closeReconciliation === undefined ? reconcile : Effect.succeed(closeReconciliation),
-        allowSubmit: executionMutationSubmissionAllowed({
-          capability: capability._tag,
-          phase: closeOnly ? 'CLOSE' : 'ENTRY',
-          submissionCutoffAt: closeOnly ? boundCloseWindow.submitCutoffAt : entrySubmissionCutoffAt,
-          observedAt,
-        }),
-      })
     }
     if (step._tag !== 'Execute') {
       if (step._tag !== 'Complete') return step
@@ -932,28 +953,26 @@ const executeBoundExecutionCycle = (
             })
           if (terminalFacts.riskContext.unknownMutationCount !== 0 || !terminalFacts.report.metrics.accountingExact)
             return { _tag: 'Wait', observedAt: step.observedAt, waitReason: 'JEV_POSITION_AWAITING_RECONCILIATION' }
-          const management = yield* evaluateJevPositionManagement({
+          const protection = yield* advancePositionProtection({
+            input,
             cycle,
-            entryDecisionHash: document.contentHash,
-            authorityGenerationHash: input.authorityGenerationHash,
+            document,
             protocol,
-            calendar: document.executionSession.calendar,
-            brokerState: terminalFacts.brokerState,
-            marketData: input.intradayMarketData,
-          }).pipe(
-            Effect.mapError((cause) =>
-              mutationRunnerError({
-                message:
-                  cause instanceof JevContractError && cause.observationCheck !== undefined
-                    ? `Jev position management failed [${cause.observationCheck}${cause.observationField === undefined ? '' : `:${cause.observationField}`}]`
-                    : 'Jev position management failed',
-                cause,
-                failure: 'operational',
-              }),
-            ),
-          )
-          if (management._tag === 'Wait')
-            return { _tag: 'Wait', observedAt: yield* currentUtcInstant, ...management.details }
+            policy,
+            reconciliation: terminalFacts,
+            capability,
+            closeDue: false,
+            closeExpiresAt: closeWindow.expiresAt,
+          })
+          if (protection._tag === 'PostMutationReconciliation') return protection
+          if (protection._tag === 'Step') {
+            if (protection.step._tag !== 'Execute') return protection.step
+            step = protection.step
+            closeOnly = true
+            break
+          }
+          if (protection.exitTarget === undefined)
+            return { _tag: 'Wait', observedAt: yield* currentUtcInstant, waitReason: 'JEV_POSITION_HELD' }
           const closure = yield* ensureExecutionCycleClosure({
             input,
             preparation,
@@ -964,7 +983,7 @@ const executeBoundExecutionCycle = (
             reconcile,
             refreshReconciliation: reconciliation.refresh,
             existing: committedClosure,
-            exitTarget: management.target,
+            exitTarget: protection.exitTarget,
           })
           if (closure._tag !== 'Close') return closure
           const boundCloseWindow = boundExecutionCycleCloseWindow(closeWindow, closure.document)

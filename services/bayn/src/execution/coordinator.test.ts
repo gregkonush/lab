@@ -86,7 +86,7 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const initialTime = '1969-12-31T23:59:59.000Z'
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -1371,6 +1371,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const intentStore: IntentStoreService = {
+    protectionForCycle: () => Effect.succeed([]),
+    beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
   }

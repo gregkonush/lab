@@ -25,6 +25,8 @@ export interface IntentExpectation {
   readonly submittedQuantityAtoms?: string
   readonly submittedNotionalMicros?: string
   readonly submittedLimitPriceMicros?: string
+  readonly submittedStopPriceMicros?: string
+  readonly parentBrokerOrderId?: string
   readonly timeInForce: Order['timeInForce']
   readonly quantityAtoms: string
   readonly state: IntentState

@@ -285,7 +285,7 @@ export const jevTradingQuestions = {
   action: {
     type: 'choice',
     instructions:
-      'Given `candidate`, `benchmark`, `relativeSignals` and `entryEconomics`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Enter only when the evidence supports reaching entryEconomics.profitTargetExitBidUsd before the holding deadline. That target includes estimated entry and exit fees, bounded adverse execution and the required net profit. Use wait or avoid when the target is unsupported or entryEconomics is null. Code owns the entry-bound stop, profit target, permission, sizing and risk.',
+      'Given `candidate`, `benchmark`, `relativeSignals` and `entryEconomics`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Enter only when the supplied evidence supports reaching entryEconomics.profitTargetExitBidUsd BEFORE entryEconomics.stopPriceUsd and before the holding deadline. These absolute levels come from the completed pre-entry price horizon and cannot move after entry. The plan includes conservative entry and exit fees, adverse execution and a bounded capital-loss budget. Use wait or avoid when the target-before-stop path is unsupported or entryEconomics is null. Code owns permission, sizing, broker protection and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
@@ -364,6 +364,8 @@ const requestFromSnapshot = (
                 bidMicros: candidate.prices.bid,
                 askMicros: candidate.prices.ask,
                 capitalMicros: native.portfolio.brokerState.account.equityMicros,
+                bars: snapshot.bars,
+                sourceEndAt: snapshot.manifest.rangeEndAt,
               })
             : null,
         execution: {
@@ -520,6 +522,22 @@ const batchFromObservation = (
         continue
       }
       const prepared = yield* prepareRequest()
+      const requestState = prepared.request.state
+      if (
+        observation.portfolio.purpose === JevPurpose.Entry &&
+        typeof requestState === 'object' &&
+        requestState !== null &&
+        'entryEconomics' in requestState &&
+        requestState['entryEconomics'] === null
+      ) {
+        candidates.push({
+          symbol,
+          status: JevCandidatePlanStatus.Excluded,
+          reason: JevEntryExclusion.ExitPlan,
+          message: 'No complete strategy exit plan can cover estimated execution costs within the capital risk budget',
+        })
+        continue
+      }
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,

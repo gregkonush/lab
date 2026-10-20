@@ -394,6 +394,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
           limitPriceMicros: lookup.riskBinding.limitPriceMicros,
+          ...(lookup.riskBinding.protection === undefined ? {} : { protection: lookup.riskBinding.protection }),
           ...(document.replanGenerationHash === undefined
             ? {}
             : { replanGenerationHash: document.replanGenerationHash }),
@@ -753,6 +754,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           if (observation._tag === 'StableOpen') {
             if (
               drainOpenOrders ||
+              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))

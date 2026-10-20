@@ -19,6 +19,15 @@ const held = (symbol: string, feeMicros = '0', debitPosted = true) => {
   const crypto = symbol.includes('/')
   return {
     ...original,
+    exitPolicy: {
+      ...original.exitPolicy,
+      plans: Object.fromEntries(
+        Object.values(original.exitPolicy.plans).map((plan) => [
+          symbol,
+          { ...plan, levels: { ...plan.levels, symbol } },
+        ]),
+      ),
+    },
     entryFills: original.entryFills.map((fill) => ({ ...fill, symbol, feeMicros })),
     entryInventoryDebit: {
       quantityAtoms: crypto && debitPosted ? '12500000' : '0',
@@ -40,11 +49,11 @@ for (const symbol of ['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD']) {
     const portfolio = held(symbol)
     const protocol = defaultJevProtocolDocument
     const target = Result.getOrThrow(jevPositionProfitTarget(protocol, portfolio))
-    const bid = Result.getOrThrow(jevProfitTargetBid(protocol, portfolio))
+    const bid = Result.getOrThrow(jevProfitTargetBid(portfolio))
     expect(target.profitMicros).toBeGreaterThan(0n)
-    expect(Result.getOrThrow(jevProfitTargetCrossed(protocol, portfolio, 100_000_000n))).toBe(false)
-    expect(Result.getOrThrow(jevProfitTargetCrossed(protocol, portfolio, bid - 1n))).toBe(false)
-    expect(Result.getOrThrow(jevProfitTargetCrossed(protocol, portfolio, bid))).toBe(true)
+    expect(Result.getOrThrow(jevProfitTargetCrossed(portfolio, 100_000_000n))).toBe(false)
+    expect(Result.getOrThrow(jevProfitTargetCrossed(portfolio, bid - 1n))).toBe(false)
+    expect(Result.getOrThrow(jevProfitTargetCrossed(portfolio, bid))).toBe(true)
     const liquidation = Result.getOrThrow(jevLiquidationValue({ protocol, ...target, bidMicros: bid }))
     expect(liquidation.netMicros - target.acquisitionCostMicros).toBeGreaterThanOrEqual(target.profitMicros)
   })
@@ -62,30 +71,24 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
   },
 )
 
-test('reported cash fees raise the target instead of turning a gross gain into a profit exit', () => {
+test('reported cash fees change the economic result and cannot move the pre-entry target', () => {
   const protocol = defaultJevProtocolDocument
   const portfolio = held('AAPL', '1000000')
   const target = Result.getOrThrow(jevPositionProfitTarget(protocol, portfolio))
   expect(target.acquisitionCostMicros).toBe(502_000_000n)
-  expect(Result.getOrThrow(jevProfitTargetBid(protocol, portfolio))).toBeGreaterThan(
-    Result.getOrThrow(jevProfitTargetBid(protocol, held('AAPL'))),
-  )
+  expect(Result.getOrThrow(jevProfitTargetBid(portfolio))).toBe(Result.getOrThrow(jevProfitTargetBid(held('AAPL'))))
 })
 
 test('the entry target seals the exit policy and rejects a rehashed policy substitution', () => {
   const entry = Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence()))
-  expect(entry.exitPolicy).toEqual({
-    schemaVersion: 'bayn.position-exit-policy.v1',
-    maximumPriceCheckIntervalMs: 5000,
-    protectiveStopBps: 50,
-    profitTargetNetBps: 100,
-    maximumHoldingMinutes: 15,
-  })
+  expect(entry.exitPolicy.schemaVersion).toBe('bayn.position-exit-policy.v2')
+  expect(entry.exitPolicy.maximumPriceCheckIntervalMs).toBe(5000)
+  expect(entry.exitPolicy.plans['AAPL']?.levels.stopPriceMicros).toBeDefined()
   expect(
     Result.isFailure(
       Schema.decodeUnknownResult(JevEntryTargetSchema)({
         ...entry,
-        exitPolicy: { ...entry.exitPolicy, profitTargetNetBps: 1 },
+        exitPolicy: { ...entry.exitPolicy, plans: {} },
       }),
     ),
   ).toBe(true)
@@ -97,7 +100,7 @@ test('the entry target seals the exit policy and rejects a rehashed policy subst
   ).toBe(true)
 })
 
-test('property: positive targets preserve their net margin across fee steps and position sizes', () => {
+test('property: position size and observed fees never reprice the immutable strategy target', () => {
   const base = held('BTC/USD')
   const first = base.entryFills[0]
   if (first === undefined) throw new Error('Expected an entry fill')
@@ -109,17 +112,17 @@ test('property: positive targets preserve their net margin across fee steps and 
       (quantity, profitBps) => {
         const debit = (quantity * 25n + 9999n) / 10000n
         const received = quantity - debit
-        const protocol = { ...defaultJevProtocolDocument, profitTargetNetBps: profitBps }
+        const protocol = defaultJevProtocolDocument
         const portfolio = {
           ...base,
-          exitPolicy: { ...base.exitPolicy, profitTargetNetBps: profitBps },
+          exitPolicy: base.exitPolicy,
           entryInventoryDebit: { quantityAtoms: String(debit), costBasisMicros: String(debit / 10n) },
           entryFills: [
             {
               ...first,
               quantityAtoms: String(quantity),
               symbol: 'BTC/USD',
-              feeMicros: '0',
+              feeMicros: String(profitBps),
               priceAtoms: '100000000000',
             },
           ],
@@ -129,7 +132,8 @@ test('property: positive targets preserve their net margin across fee steps and 
           },
         }
         const target = Result.getOrThrow(jevPositionProfitTarget(protocol, portfolio))
-        const bid = Result.getOrThrow(jevProfitTargetBid(protocol, portfolio))
+        const bid = Result.getOrThrow(jevProfitTargetBid(portfolio))
+        expect(bid).toBe(BigInt(base.exitPolicy.plans['BTC/USD']?.levels.profitLimitPriceMicros ?? '0'))
         for (const delta of [0n, 1n, 999n, 10_000n]) {
           const liquidation = Result.getOrThrow(jevLiquidationValue({ protocol, ...target, bidMicros: bid + delta }))
           expect(liquidation.netMicros - target.acquisitionCostMicros).toBeGreaterThanOrEqual(target.profitMicros)

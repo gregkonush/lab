@@ -129,7 +129,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v12',
+        inputDefinition: 'bayn.jev-trading-signal-state.v13',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',

@@ -218,7 +218,7 @@ const seedUnresolvedMutation = (cycleId: string, startedAt = '2026-08-28T14:32:0
         decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
         quantity_atoms, notional_limit_micros, limit_price_micros, state, terminal_outcome, state_version, created_at, updated_at
       ) VALUES (
-        ${intentId}, 'bayn.execution-intent.v4', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
+        ${intentId}, 'bayn.execution-intent.v5', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
         ${'7'.repeat(64)}, ${'8'.repeat(64)}, ${accountId}, 'bayn-observability-unresolved', 'SPY', 'BUY',
         'LIMIT', 'DAY', 1000000, 1000000, 1000000000, 'PLANNED', NULL, 1,
         '2026-08-28T14:32:00.000Z', '2026-08-28T14:32:00.000Z'

@@ -154,8 +154,8 @@ export const loadExecutionRiskPolicy = (
     accountId,
     brokerMode: BrokerMode.Execution,
     allowedSymbols: [...allowedSymbols].sort(),
-    allowedOrderTypes: [OrderType.Limit],
-    allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
+    allowedOrderTypes: [OrderType.Limit, OrderType.StopLimit],
+    allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled, TimeInForce.ImmediateOrCancel],
     maxOpenOrders: allowedSymbols.length,
     ...executionRiskLimits(brokerEnvironment),
   })

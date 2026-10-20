@@ -33,6 +33,7 @@ export enum JevEntryExclusion {
   Spread = 'spread',
   DisplayedSize = 'displayed-size',
   Momentum = 'momentum',
+  ExitPlan = 'exit-plan',
 }
 
 export enum JevBatchPlanVersion {
@@ -224,6 +225,7 @@ export const usableJevBatchInferences = (sourcePlan: JevBatchPlan, sourceResult:
           candidate.status === JevCandidatePlanStatus.Excluded &&
           (candidate.reason === JevEntryExclusion.Spread ||
             candidate.reason === JevEntryExclusion.DisplayedSize ||
+            candidate.reason === JevEntryExclusion.ExitPlan ||
             (plan.schemaVersion === JevBatchPlanVersion.V4 && candidate.reason === JevEntryExclusion.Momentum)),
       )
     )

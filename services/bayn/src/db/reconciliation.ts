@@ -22,6 +22,8 @@ import {
   type AccountSnapshot,
   type AccountingReceipt,
   type Fill,
+  NativeProtectionSchema,
+  type NativeProtection,
   type Order,
   type Position,
   type Reconciliation,
@@ -85,6 +87,9 @@ import { withObservedStage } from '../telemetry'
 export interface IntentBinding {
   readonly intentId: string
   readonly clientOrderId: string
+  readonly symbol?: string
+  readonly quantityAtoms?: string
+  readonly protection?: NativeProtection
 }
 
 export interface BrokerSnapshot {
@@ -143,7 +148,13 @@ export class ReconciliationStoreError extends Data.TaggedError('ReconciliationSt
   readonly cause?: unknown
 }> {}
 
-const IntentBindingRow = Schema.Struct({ intent_id: Sha256, client_order_id: NonEmptyString })
+const IntentBindingRow = Schema.Struct({
+  intent_id: Sha256,
+  client_order_id: NonEmptyString,
+  symbol: Schema.String,
+  quantity_atoms: Schema.String,
+  protection: Schema.NullOr(NativeProtectionSchema),
+})
 const IntentRow = Schema.Struct({
   intent_id: Sha256,
   client_order_id: NonEmptyString,
@@ -162,6 +173,17 @@ const IntentRow = Schema.Struct({
   submit_request_hash: Schema.NullOr(Sha256),
   submit_request_body: Schema.Unknown,
 })
+const ProtectionChildRow = Schema.Struct({
+  intent_id: Sha256,
+  broker_order_id: NonEmptyString,
+  client_order_id: NonEmptyString,
+  parent_broker_order_id: NonEmptyString,
+  symbol: Schema.String,
+  quantity_atoms: Schema.String,
+  order_type: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  protection: NativeProtectionSchema,
+})
+
 const DurableFillRow = Schema.Struct({
   fill_id: NonEmptyString,
   broker_order_id: NonEmptyString,
@@ -391,6 +413,8 @@ export const verifyBrokerStateVersion = (
         AND reconciled_at = ${version.reconciledAt}::timestamptz AND status = 'EXACT')
       AND EXISTS (SELECT 1 FROM authority_state WHERE generation_hash = ${version.authorityGenerationHash}
         AND version = ${version.authorityVersion}::bigint)
+      AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.account_id = ${accountId}
+        AND c.requested_at >= ${version.reconciledAt}::timestamptz)
       AND NOT EXISTS (
         SELECT 1 FROM mutation_events AS mutation JOIN intents AS intent USING (intent_id)
         WHERE intent.account_id = ${accountId} AND mutation.occurred_at >= ${version.reconciledAt}::timestamptz
@@ -434,13 +458,21 @@ export const makeReconciliation = (
     runStore(
       'bindings',
       sql<Record<string, unknown>>`
-        SELECT intent_id, client_order_id
+        SELECT intent_id, client_order_id, symbol, quantity_atoms::text, protection
         FROM intents
         WHERE account_id = ${accountId}
         ORDER BY client_order_id COLLATE "C"
       `.pipe(
         Effect.flatMap(decodeBindings),
-        Effect.map((rows) => rows.map((row) => ({ intentId: row.intent_id, clientOrderId: row.client_order_id }))),
+        Effect.map((rows) =>
+          rows.map((row) => ({
+            intentId: row.intent_id,
+            clientOrderId: row.client_order_id,
+            symbol: row.symbol,
+            quantityAtoms: row.quantity_atoms,
+            ...(row.protection === null ? {} : { protection: row.protection }),
+          })),
+        ),
       ),
     )
 
@@ -504,10 +536,51 @@ export const makeReconciliation = (
           WHERE intent.account_id = ${accountId}
           ORDER BY intent.client_order_id COLLATE "C"
         `.pipe(Effect.flatMap(decodeIntents))
-        const { intents, unknownMutationCount } = yield* fromDecision(
-          'reconcile',
-          projectIntentExpectations(intentRows),
+        const projected = yield* fromDecision('reconcile', projectIntentExpectations(intentRows))
+        const children = yield* Schema.decodeUnknownEffect(
+          Schema.Array(ProtectionChildRow),
+          strictParseOptions,
+        )(
+          yield* sql`
+          SELECT DISTINCT ON (o.broker_order_id)
+            o.intent_id, o.broker_order_id, o.client_order_id, o.parent_broker_order_id, o.symbol,
+            o.quantity_atoms::text, o.order_type, i.protection
+          FROM orders o JOIN intents i ON i.intent_id = o.intent_id JOIN broker_events e ON e.event_id = o.event_id
+          WHERE o.account_id = ${accountId} AND o.parent_broker_order_id IS NOT NULL
+          ORDER BY o.broker_order_id, e.source_sequence DESC
+        `,
         )
+        const childExpectations = yield* Effect.forEach(children, (child) =>
+          Effect.gen(function* () {
+            const terms = child.protection
+            if (terms._tag === 'StopLimit')
+              return yield* storeError(
+                'reconcile',
+                'invariant',
+                'a standalone stop cannot own broker-generated children',
+              )
+            return {
+              intentId: child.intent_id,
+              clientOrderId: child.client_order_id,
+              brokerOrderId: child.broker_order_id,
+              parentBrokerOrderId: child.parent_broker_order_id,
+              symbol: child.symbol,
+              side: OrderSide.Sell,
+              orderType: child.order_type,
+              submittedOrderType: child.order_type,
+              timeInForce: TimeInForce.Day,
+              quantityAtoms: child.quantity_atoms,
+              submittedQuantityAtoms: child.quantity_atoms,
+              submittedLimitPriceMicros:
+                child.order_type === OrderType.StopLimit ? terms.stopLimitPriceMicros : terms.profitLimitPriceMicros,
+              ...(child.order_type === OrderType.StopLimit ? { submittedStopPriceMicros: terms.stopPriceMicros } : {}),
+              state: IntentState.Acknowledged,
+              expectsBrokerOrder: true,
+            }
+          }),
+        )
+        const intents: readonly IntentExpectation[] = [...projected.intents, ...childExpectations]
+        const unknownMutationCount = projected.unknownMutationCount
 
         const transactionRows = yield* sql<Record<string, unknown>>`
           SELECT

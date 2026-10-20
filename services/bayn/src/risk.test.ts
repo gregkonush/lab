@@ -131,7 +131,7 @@ const changeExecutionWindow = (
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
-    schemaVersion: 'bayn.execution-risk-policy.v3',
+    schemaVersion: 'bayn.execution-risk-policy.v4',
     accountId: 'paper-account-1',
     brokerMode: BrokerMode.Execution,
     allowedSymbols: ['AMD', 'NVDA'],
@@ -308,7 +308,7 @@ const makeState = (overrides: Partial<State> = {}): State => {
 
 const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
   const value = {
-    schemaVersion: 'bayn.execution-intent.v4',
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: hash('6'),
     authorityGenerationHash: hash('4'),
     strategyName: 'risk-balanced-trend',
@@ -342,7 +342,7 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
 
 const makeReferenceIntent = (): ReferenceIntent => {
   const { authorityGenerationHash: _, ...intent } = makeIntent()
-  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.reference-intent.v3' })
+  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.reference-intent.v4' })
 }
 
 const evaluateSuccess = (
@@ -516,7 +516,7 @@ describe('bounded execution risk', () => {
   })
 
   test('strictly decodes complete policy and coherent state', () => {
-    expect(makePolicy().schemaVersion).toBe('bayn.execution-risk-policy.v3')
+    expect(makePolicy().schemaVersion).toBe('bayn.execution-risk-policy.v4')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
 
     const rawPolicy = { ...makePolicy() }
@@ -641,8 +641,8 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: '9a2622911cc023551e45280181d48a1357f43740445a3b323b504a234782b9f9',
-      decisionId: '215f247ecca441728bf73de8bfab2bb06e7a36c7780a3db393db2d5f096949eb',
+      inputHash: 'acb60a82ba11b214095ff908f3668cb6cd6a1f94923e8e54c26c7442d1604092',
+      decisionId: '6069b135c81daf3f3f3bb25f6dba37f57412d04c97f16a119114f3a8729a2c83',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({

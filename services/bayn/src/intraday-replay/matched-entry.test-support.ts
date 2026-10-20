@@ -31,7 +31,7 @@ export const matchedCommittedDecisionFixture = (
     const at = decision.decidedAt
     const cycle = { ...makeInitialCycle(native.draft, native.observation.payload.observedAt), state: CycleState.Active }
     const policy = yield* Schema.decodeUnknownEffect(PolicySchema)({
-      schemaVersion: 'bayn.execution-risk-policy.v3',
+      schemaVersion: 'bayn.execution-risk-policy.v4',
       accountId: broker.account.accountId,
       brokerMode: BrokerMode.Execution,
       allowedSymbols: equityMarketProfile.candidateSymbols,

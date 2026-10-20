@@ -489,6 +489,18 @@ export const normalizeOrderResult = (
       ...(notionalMicros === undefined ? {} : { notionalMicros }),
       filledQuantityAtoms,
       ...(filledAveragePriceMicros === undefined ? {} : { filledAveragePriceMicros }),
+      ...(raw.legs === null
+        ? {}
+        : {
+            legs: yield* Result.all(
+              raw.legs.map((leg) =>
+                Result.map(normalizeOrderResult(leg, accountId, observedAt), (child) => ({
+                  ...child,
+                  parentBrokerOrderId: raw.id,
+                })),
+              ),
+            ),
+          }),
       orderClass: raw.order_class === '' ? OrderClass.Simple : raw.order_class,
       orderType: raw.type,
       side: raw.side,

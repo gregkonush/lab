@@ -306,6 +306,8 @@ export interface Order {
   readonly notionalMicros?: string
   readonly filledQuantityAtoms: string
   readonly filledAveragePriceMicros?: string
+  readonly parentBrokerOrderId?: string
+  readonly legs?: readonly Order[]
   readonly orderClass: OrderClass
   readonly orderType: OrderType
   readonly side: OrderSide
@@ -571,7 +573,7 @@ export const AssetResponseSchema = Schema.Struct({
   attributes: Schema.optionalKey(Schema.NullOr(Schema.Array(NonEmptyString))),
 })
 
-export const OrderResponseSchema = Schema.Struct({
+const OrderLeafResponseSchema = Schema.Struct({
   id: Uuid,
   client_order_id: ExternalClientOrderId,
   created_at: Timestamp,
@@ -604,6 +606,11 @@ export const OrderResponseSchema = Schema.Struct({
   trail_percent: Schema.NullOr(Decimal),
   trail_price: Schema.NullOr(Decimal),
   hwm: Schema.NullOr(Decimal),
+})
+
+export const OrderResponseSchema = Schema.Struct({
+  ...OrderLeafResponseSchema.fields,
+  legs: Schema.NullOr(Schema.Array(OrderLeafResponseSchema).check(Schema.isMinLength(1), Schema.isMaxLength(2))),
 })
 
 const FeeActivityResponseBase = {

@@ -158,7 +158,7 @@ const projectedSession = (
 }
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId: 'a'.repeat(64),
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),

@@ -202,6 +202,8 @@ const orderType = (value: AlpacaOrderType): Result.Result<OrderType, BrokerObser
       return Result.succeed(OrderType.Market)
     case AlpacaOrderType.Limit:
       return Result.succeed(OrderType.Limit)
+    case AlpacaOrderType.StopLimit:
+      return Result.succeed(OrderType.StopLimit)
     default:
       return fail({ _tag: 'UnsupportedOrderType', value })
   }
@@ -457,6 +459,9 @@ export const orderObservation = (
             accountId: validated.accountId,
             brokerOrderId: validated.brokerOrderId,
             clientOrderId: validated.clientOrderId,
+            ...(validated.parentBrokerOrderId === undefined
+              ? {}
+              : { parentBrokerOrderId: validated.parentBrokerOrderId }),
             ...(intentId === undefined ? {} : { intentId }),
             symbol: validated.symbol,
             side: side(validated.side),
@@ -466,6 +471,7 @@ export const orderObservation = (
             ...(validated.notionalMicros === undefined ? {} : { notionalMicros: validated.notionalMicros }),
             filledQuantityAtoms: validated.filledQuantityAtoms,
             ...(validated.limitPriceMicros === undefined ? {} : { limitPriceMicros: validated.limitPriceMicros }),
+            ...(validated.stopPriceMicros === undefined ? {} : { stopPriceMicros: validated.stopPriceMicros }),
             status,
             observedAt: validated.observedAt,
           }

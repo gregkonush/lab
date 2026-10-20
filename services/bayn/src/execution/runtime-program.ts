@@ -293,6 +293,17 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
         ),
       )
     },
+    cancelProtectionOrder: (intentId: string, brokerOrderId: string) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const observedAt = yield* dependencies.currentUtcInstant
+            const allowed = yield* dependencies.intentStore.beginProtectionCancel(intentId, brokerOrderId, observedAt)
+            if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
+            return allowed
+          }),
+        ),
+      ),
     cancel: (intentId: string, consistencyDelayMs: number) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
