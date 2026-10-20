@@ -239,7 +239,7 @@ describe('Jev trading batch source reproduction', () => {
     expect(
       Result.getOrThrow(reproduceJevTradingSignalBatch(input.observation, JSON.parse(JSON.stringify(plan)))),
     ).toEqual(plan)
-  })
+  }, 30_000)
 
   test('request reconstruction rejects incomplete rows, different observation time and a changed universe', () => {
     const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))

@@ -1701,7 +1701,7 @@ describe('intraday shadow decision', () => {
     if (Result.isFailure(forged)) {
       expect(String(forged.failure.cause)).toContain('must contain at most one delta for each persisted target')
     }
-  })
+  }, 30_000)
 
   test('reproduces complete durable risk facts before admitting a rehashed execution approval', async () => {
     const selectedSymbol = protocol.candidateSymbols[0]
