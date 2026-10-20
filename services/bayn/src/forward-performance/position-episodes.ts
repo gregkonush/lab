@@ -53,8 +53,6 @@ type EpisodeEvent =
   | { readonly kind: 'FILL'; readonly occurredAt: string; readonly transaction: AccountingTransaction }
   | { readonly kind: 'COIN_FEE'; readonly occurredAt: string; readonly accrual: CoinAccrual }
 
-const feeCohort = (symbol: string, date: string): string => JSON.stringify([symbol, date])
-
 export const measurePositionEpisodes = (
   input: ForwardPerformanceEvidenceInput,
 ): Result.Result<PositionEpisodeEvidence, CanonicalHashFailure> =>
@@ -177,7 +175,7 @@ export const measurePositionEpisodes = (
     const accrualIds = new Set<string>()
     const feeSources = new Set<string>()
     const feeInstants = new Set<string>()
-    const matchedByCohort = new Map<string, bigint>()
+    const settlements: { symbol: string; date: string; quantityDelta: bigint }[] = []
     for (const accrual of input.accountFeeAccruals ?? []) {
       const data = accrual.data
       if (data.kind !== 'COIN') continue
@@ -214,12 +212,14 @@ export const measurePositionEpisodes = (
       if (sidesByInstant.has(instant) || feeInstants.has(instant))
         return unavailable(PositionEpisodeReason.AmbiguousFeeOrder, evidenceHash)
       feeInstants.add(instant)
-      const cohort = feeCohort(data.symbol, data.date)
-      matchedByCohort.set(cohort, (matchedByCohort.get(cohort) ?? 0n) + BigInt(accrual.matched_coin_quantity_atoms))
+      settlements.push({
+        symbol: data.symbol,
+        date: accrual.settlement_date,
+        quantityDelta: BigInt(accrual.matched_coin_quantity_atoms),
+      })
       events.push({ kind: 'COIN_FEE', occurredAt: data.observedAt, accrual })
     }
     const activityIds = new Set<string>()
-    const activitiesByCohort = new Map<string, bigint>()
     for (const fee of input.accountBrokerFees ?? []) {
       const coin = fee.data.coinDebit
       if (coin === undefined) continue
@@ -232,17 +232,16 @@ export const measurePositionEpisodes = (
       )
         return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       activityIds.add(fee.data.activityId)
-      const cohort = feeCohort(coin.symbol, fee.data.date)
-      activitiesByCohort.set(cohort, (activitiesByCohort.get(cohort) ?? 0n) + BigInt(coin.quantityAtoms))
+      settlements.push({ symbol: coin.symbol, date: fee.data.date, quantityDelta: -BigInt(coin.quantityAtoms) })
     }
-    for (const cohort of new Set([...matchedByCohort.keys(), ...activitiesByCohort.keys()])) {
-      // Receipts settle accrued debits; their trading date supplies no individual fee timestamp.
-      // An unmatched activity cannot be assigned to an episode, even if its account total is known.
-      const matched = matchedByCohort.get(cohort) ?? 0n
-      const received = activitiesByCohort.get(cohort) ?? 0n
-      if (received < matched) return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
-      if (received > matched) return unavailable(PositionEpisodeReason.AmbiguousFeeOrder, evidenceHash)
+    const unmatched = new Map<string, bigint>()
+    for (const settlement of settlements.sort((a, b) => a.date.localeCompare(b.date))) {
+      const remaining = (unmatched.get(settlement.symbol) ?? 0n) + settlement.quantityDelta
+      if (remaining < 0n) return unavailable(PositionEpisodeReason.AmbiguousFeeOrder, evidenceHash)
+      unmatched.set(settlement.symbol, remaining)
     }
+    if ([...unmatched.values()].some((quantity) => quantity > 0n))
+      return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
 
     const positions = new Map<string, PositionEpisode>()
     const completed: AccountingTransaction[][] = []

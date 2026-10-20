@@ -23,8 +23,6 @@ import {
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
-  executionControllerRecoveryDelayMs,
-  executionControllerRecoveryMaximumDelayMs,
   executionControllerRecoveryTickDelayMs,
   executionControllerRecoveryTickIdempotencyKey,
   executionControllerSourceCatchUpTickIdempotencyKey,
@@ -185,11 +183,6 @@ describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerRecoveryTickDelayMs).toBe(30_000)
-    expect(executionControllerRecoveryDelayMs(1)).toBe(30_000)
-    expect(executionControllerRecoveryDelayMs(2)).toBe(120_000)
-    expect(executionControllerRecoveryDelayMs(executionControllerMaximumRecoveryWindow)).toBe(
-      executionControllerRecoveryMaximumDelayMs,
-    )
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
     expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
@@ -1692,7 +1685,7 @@ describe('native Restate execution controller', () => {
     },
   )
 
-  test('backs off recovery windows and terminates after the durable recovery budget', async () => {
+  test('retries recovery windows at the controller cadence and terminates after the durable recovery budget', async () => {
     const state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,

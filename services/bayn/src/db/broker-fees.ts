@@ -177,7 +177,7 @@ export const prepareFeeActivities = (
               if (
                 accrual.data.kind !== 'COIN' ||
                 accrual.data.symbol !== coin.symbol ||
-                accrual.settlement_date !== fee.date
+                accrual.settlement_date > fee.date
               )
                 continue
               const available =
@@ -235,7 +235,7 @@ export const prepareFeeActivities = (
           if (fee.cryptoCashFee === true && existing === undefined && ledgerCashDelta < 0n) {
             let remaining = -ledgerCashDelta
             for (const accrual of accruals) {
-              if (accrual.data.kind !== 'CASH' || accrual.settlement_date !== fee.date) continue
+              if (accrual.data.kind !== 'CASH' || accrual.settlement_date > fee.date) continue
               const available =
                 BigInt(accrual.cash_debit_micros ?? '0') -
                 BigInt(accrual.matched_cash_micros) -

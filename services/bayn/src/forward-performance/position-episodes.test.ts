@@ -232,7 +232,10 @@ describe('position episodes', () => {
       const fee = coinActivity()
       const input = evidence(fills, fills, {
         accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt: '2026-09-22T12:00:00.000Z' },
-        accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+        accountFeeAccruals: [
+          { ...accrual, matched_coin_quantity_atoms: '82625' },
+          { ...cashAccrual(fills), matched_cash_micros: '10000' },
+        ],
         accountBrokerFees: [
           {
             ...fee,
@@ -243,11 +246,11 @@ describe('position episodes', () => {
       })
       const result = success(measurePositionEpisodes(input))
       if (date < accrual.settlement_date)
-        expect(result).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+        expect(result).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.AmbiguousFeeOrder })
       else {
         assert(result.status === 'MEASURED')
         expect(result.completedCount).toBe(1)
-        expect(result.completed[0]?.costs.attributedCostMicros).toBe('8262')
+        expect(result.completed[0]?.costs.attributedCostMicros).toBe('18262')
       }
     },
   )

@@ -201,6 +201,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
+  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
+  recovery timer into the new epoch.
+
 - `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
   `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation
@@ -324,3 +328,12 @@ Kafka cycle-failure telemetry records only a bounded invalidation reason and rec
 invalidation wins even when a later SDK/cleanup event follows. A recovery event links the prior and replacement
 epochs after required bootstrap barriers complete. Match these events to source freshness and controller progress;
 ready pods or a recovered transport alone do not prove a valid decision window.
+
+## Delayed crypto fee receipts
+
+Alpaca crypto fee activity dates can follow the underlying fills. Match a crypto receipt only against
+verified earlier-or-same-day accruals for its account and asset, in retained observation order. A receipt
+can settle multiple earlier UTC cohorts. Preserve the original fill, accrual, receipt and ledger identities;
+matching a receipt does not post the observed inventory or cash debit again. Future cohorts, excess matches
+and unrelated regulatory fees remain rejected. Episode reporting checks cumulative receipt coverage by asset
+and date while retaining source-linked cost attribution and incomplete-cost evidence.
