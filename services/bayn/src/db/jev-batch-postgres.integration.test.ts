@@ -256,6 +256,47 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
+  test('expiry during transactional observation work rolls back admission before inference', async () => {
+    let providerCalls = 0
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`ALTER TABLE intraday_candidate_observations DISABLE TRIGGER USER`
+        yield* sql`DELETE FROM intraday_candidate_observations WHERE content_hash=${plan.observationHash}`
+        yield* sql`ALTER TABLE intraday_candidate_observations ENABLE TRIGGER USER`
+        const expiring = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            return statement.compile()[0].includes('INSERT INTO intraday_candidate_observations')
+              ? statement.pipe(Effect.tap(() => TestClock.setTime(Date.parse(plan.expiresAt))))
+              : statement
+          },
+        })
+        const batches = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, expiring))
+        yield* TestClock.setTime(Date.parse(plan.expiresAt) - 1)
+        const rejected = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
+          Effect.provideService(JevBatchStore, batches),
+          Effect.result,
+        )
+        expect(Result.isFailure(rejected)).toBe(true)
+        if (Result.isFailure(rejected))
+          expect(rejected.failure).toMatchObject({ _tag: 'JevBatchExpired', checkedAt: plan.expiresAt })
+        expect(yield* sql`SELECT content_hash FROM intraday_candidate_observations`).toEqual([])
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([])
+        expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
+      }).pipe(
+        atObservation,
+        Effect.provideService(JevClient, {
+          evaluate: () =>
+            Effect.sync(() => {
+              providerCalls += 1
+            }).pipe(Effect.andThen(Effect.die('Expired admission must not call the provider'))),
+        }),
+      ),
+    )
+    expect(providerCalls).toBe(0)
+  })
+
   test('persists the complete plan before any request and replays a completed batch without reinference', async () => {
     let calls = 0
     await runtime.runPromise(

@@ -116,27 +116,33 @@ export const makeJevBatchStore = Effect.gen(function* () {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
         return existing
       }
-      const now = yield* Clock.currentTimeMillis
-      const checkedAt = utcInstantFromEpochMillis(now)
-      yield* Effect.annotateCurrentSpan({
-        'bayn.jev.admission.checked_at': checkedAt,
-        'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
-      })
-      if (now < Date.parse(plan.observedAt)) return yield* persistError('Jev batch clock regressed before observation')
-      if (now >= Date.parse(plan.expiresAt)) {
-        yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
-        return yield* new JevBatchExpired({
-          batchId: plan.batchId,
-          cycleId: plan.cycleId,
-          observedAt: plan.observedAt,
-          expiresAt: plan.expiresAt,
-          checkedAt,
+      const checkWindow = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const checkedAt = utcInstantFromEpochMillis(now)
+        yield* Effect.annotateCurrentSpan({
+          'bayn.jev.admission.checked_at': checkedAt,
+          'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
         })
-      }
-      yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
+        if (now < Date.parse(plan.observedAt))
+          return yield* persistError('Jev batch clock regressed before observation')
+        if (now >= Date.parse(plan.expiresAt)) {
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
+          return yield* new JevBatchExpired({
+            batchId: plan.batchId,
+            cycleId: plan.cycleId,
+            observedAt: plan.observedAt,
+            expiresAt: plan.expiresAt,
+            checkedAt,
+          })
+        }
+        return checkedAt
+      })
+      yield* checkWindow
       yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* recordCandidateObservation(sql, { contentHash: plan.observationHash, payload: suppliedObservation })
+          const checkedAt = yield* checkWindow
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
           if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {
             const result = yield* Effect.fromResult(
               makeJevBatchResult(plan, {
