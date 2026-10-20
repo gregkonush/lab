@@ -411,8 +411,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v14')
+    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v14')
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
@@ -930,7 +930,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
           quantity_atoms, notional_limit_micros, limit_price_micros, state, state_version, created_at, updated_at
         ) VALUES (
-          ${intentId}, 'bayn.execution-intent.v4', ${executionHash}, NULL, 'jev',
+          ${intentId}, 'bayn.execution-intent.v5', ${executionHash}, NULL, 'jev',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
           'AAPL', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000000, 1000000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
         )`
@@ -1588,7 +1588,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
     strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric, limit_price_micros numeric
+    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric, limit_price_micros numeric, protection jsonb
   )`
   yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz

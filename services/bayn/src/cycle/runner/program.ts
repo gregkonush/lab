@@ -297,7 +297,7 @@ const recoverCycle = <R>(
                           evidence,
                         )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
-                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v2') return binding
+                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v3') return binding
                         const timingAttributes = {
                           'bayn.entry_timing.decision_hash': document.contentHash,
                           'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,

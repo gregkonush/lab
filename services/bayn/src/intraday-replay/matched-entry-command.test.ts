@@ -88,10 +88,10 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   }
 }
 
-const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, profitTargetNetBps = 100) => {
+const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, maximumCapitalRiskBps = 10) => {
   const base = nativeJevFixture(JevPurpose.Entry, undefined, 'jev-native-test', {
     ...defaultJevProtocolDocument,
-    profitTargetNetBps,
+    maximumCapitalRiskBps,
   })
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(
@@ -788,7 +788,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v6')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v7')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
@@ -970,8 +970,8 @@ test.each(['timeout', 'interruption', 'defect'] as const)(
   },
 )
 
-test('matched studies reject a registered protocol with a different net-profit target', async () => {
-  const data = fixture(undefined, undefined, 99)
+test('matched studies reject a registered protocol with a different capital-risk budget', async () => {
+  const data = fixture(undefined, undefined, 9)
   const result = await Effect.runPromise(
     runMatchedEntryStudy(data.input, data.registration, '/unused-matched-arrivals', data.receipt).pipe(
       Effect.result,

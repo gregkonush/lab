@@ -7,7 +7,7 @@ import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { jevObservationForSnapshot } from './native.test-support'
-import { makeJevTradingSignalBatch } from './trading-signals'
+import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 
 const batch = (snapshot: ReturnType<typeof cryptoMarketFixture>['snapshot']) => {
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
@@ -24,10 +24,9 @@ test('BTC can use verified ETH benchmark bars without authorizing an ETH trade',
   const { snapshot } = cryptoMarketFixture('BTC/USD', { missingTradeSymbols: ['ETH/USD'] })
   const plan = batch(snapshot)
   expect(plan.candidates).toHaveLength(1)
-  expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
-  const request = plan.candidates[0]
-  if (request?.status !== JevCandidatePlanStatus.Requested) throw new Error('BTC must remain independent of ETH prints')
-  const state = request.request.request.state
+  expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Excluded)
+  const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+  const state = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'BTC/USD')).request.state
   expect(state).toHaveProperty('benchmark.pricingBasis', 'COMPLETED_BAR_CLOSE')
   expect(state).not.toHaveProperty('benchmark.latestTrade')
   expect(state).not.toHaveProperty('benchmark.quote')
@@ -46,7 +45,7 @@ test('a missing ETH candidate trade excludes ETH while BTC retains the same benc
   )
   const plan = batch(snapshot)
   expect(plan.candidates.find((candidate) => candidate.symbol === 'BTC/USD')?.status).toBe(
-    JevCandidatePlanStatus.Requested,
+    JevCandidatePlanStatus.Excluded,
   )
   expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
     status: 'EXCLUDED',
@@ -89,10 +88,8 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
 test('unused benchmark quote age does not change verified BTC relative momentum', () => {
   const baseline = batch(cryptoMarketFixture('BTC/USD').snapshot)
   const staleBenchmark = batch(cryptoMarketFixture('BTC/USD', { benchmarkQuoteLagMs: 600_000 }).snapshot)
-  const expected = baseline.candidates[0]
-  const actual = staleBenchmark.candidates[0]
-  if (expected?.status !== 'REQUESTED' || actual?.status !== 'REQUESTED') throw new Error('Expected BTC requests')
-  expect(actual.request.request.state).toEqual(expected.request.request.state)
+  expect(staleBenchmark.candidates).toEqual(baseline.candidates)
+  expect(staleBenchmark.candidates[0]).toMatchObject({ status: 'EXCLUDED', reason: 'exit-plan' })
 })
 
 test('BTC cannot use an ETH feature after its latest completed bar is missing', () => {

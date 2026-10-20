@@ -1,6 +1,7 @@
 import { Chunk, Effect, HashMap, HashSet, Option, Result, pipe } from 'effect'
 
 import type { FillActivity, Order as BrokerOrder } from '../broker/alpaca/model'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import {
   accountObservation,
   fillObservation,
@@ -149,8 +150,31 @@ const normalizeSnapshotDataFirst = (
   bindings: readonly IntentBinding[],
 ): Result.Result<NormalizedBrokerSnapshot, ReconciliationError> =>
   Result.gen(function* () {
-    const intentByClient = yield* indexBindings(bindings)
-    const orders = yield* normalizeOrders(snapshot.history.orders.rows, intentByClient)
+    const expandedBindings = [...bindings]
+    const rows: Observed<BrokerOrder>[] = []
+    for (const observed of snapshot.history.orders.rows) {
+      rows.push(observed)
+      const parent = observed.value
+      if (parent.legs === undefined) continue
+      const binding = bindings.find((item) => item.clientOrderId === parent.clientOrderId)
+      if (binding?.protection === undefined || binding.symbol === undefined || binding.quantityAtoms === undefined)
+        return yield* Result.fail(
+          validationFailure('UnexpectedOrderEvent', 'broker children have no immutable strategy protection intent'),
+        )
+      const children = verifyProtectionGroup(parent, {
+        symbol: binding.symbol,
+        quantityAtoms: binding.quantityAtoms,
+        protection: binding.protection,
+      })
+      if (Result.isFailure(children))
+        return yield* Result.fail(validationFailure('UnexpectedOrderEvent', children.failure))
+      for (const child of children.success) {
+        expandedBindings.push({ intentId: binding.intentId, clientOrderId: child.clientOrderId })
+        rows.push({ value: child, evidence: observed.evidence })
+      }
+    }
+    const intentByClient = yield* indexBindings(expandedBindings)
+    const orders = yield* normalizeOrders(rows, intentByClient)
     const fillEvents = yield* normalizeFills(snapshot.history.fills, orders, intentByClient)
     const account = yield* normalizeAccount(snapshot.account)
     const positions = yield* normalizePositions(snapshot.account.value.id, snapshot.positions)

@@ -79,7 +79,7 @@ import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
 import { readFinalExecutionRiskContext, verifyBrokerStateVersion } from '../db/reconciliation'
 import { grantedCapitalAuthority, makeExecutionAuthority } from '../execution/authority'
-import { Authority, KillState, OrderSide as IntentSide, ReconciliationStatus } from '../execution/contracts'
+import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { makeResearchCapitalActivationRequest, researchCapitalGrantProof } from '../execution/configuration'
 import { capitalGrantFromLegacyGeneration, capitalGrantKey } from '../execution/mandate'
 import { makeTradingEngine } from '../composition/trading-engine'
@@ -174,16 +174,16 @@ durableTest.each(
       ? [{ at: initialAtMs + 60_000, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 }]
       : scenario === 'partial-exit-reentry'
         ? [
-            { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 40, premium: 0.02 },
+            { at: initialAtMs + 1, fullWindow: false, offset: 1000n, bidSize: 10, premium: 0.02 },
             ...Array.from({ length: 25 }, (_, index) => ({
               at: initialAtMs + (index + 1) * 1000,
               fullWindow: (index + 1) % 5 === 0,
               offset: BigInt((index + 2) * 1000),
-              bidSize: 40,
-              premium: index >= 9 ? 0.035 : 0.02,
+              bidSize: 10,
+              premium: index >= 9 ? 0.06 : 0.02,
             })),
             { at: reentryAtMs, fullWindow: true, offset: 30_000n, bidSize: 100, premium: 0.02 },
-            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.035 },
+            { at: reentryAtMs + 13_000, fullWindow: true, offset: 60_000n, bidSize: 100, premium: 0.06 },
           ]
         : measured
           ? [
@@ -193,14 +193,14 @@ durableTest.each(
                 fullWindow: (index + 1) % 25 === 0,
                 offset: BigInt((index + 2) * 1000),
                 bidSize: 100,
-                premium: 0.02 + (index + 1) * 0.00002 + (index >= 49 ? 0.015 : 0),
+                premium: 0.02 + (index + 1) * 0.00002 + (index >= (partialEntryReentry ? 99 : 49) ? 0.04 : 0),
               })),
               ...(scenario === 'measured-zero-fill-reentry' ||
               scenario === 'measured-submit-expired-reentry' ||
               partialEntryReentry
                 ? [
                     { at: reentryAtMs, fullWindow: true, offset: 300_000n, bidSize: 100, premium: 0.02 },
-                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.035 },
+                    { at: reentryAtMs + 13_000, fullWindow: true, offset: 330_000n, bidSize: 100, premium: 0.06 },
                   ]
                 : []),
             ]
@@ -214,7 +214,7 @@ durableTest.each(
                     fullWindow: index % 5 === 0,
                     offset: BigInt((index + 1) * 1000),
                     bidSize: 100,
-                    premium: scenario === 'early-exit' && index >= 10 ? 0.035 : 0.02,
+                    premium: scenario === 'early-exit' && index >= 10 ? 0.06 : 0.02,
                   }))
                 : []
     const lifecycleArrivals = lifecycleObservations
@@ -450,7 +450,7 @@ durableTest.each(
               scenario === 'recovery' || scenario === 'measured-zero-fill-reentry'
                 ? 1
                 : partialEntryReentry
-                  ? 400000
+                  ? 100000
                   : 1000000,
             feeMultiplierPpm: 1000000,
           },
@@ -1286,23 +1286,13 @@ durableTest.each(
           >`SELECT (SELECT count(*)::int FROM intents WHERE account_id=${accountId}) AS intents, (SELECT count(*)::int FROM fills WHERE account_id=${accountId}) AS fills, (SELECT count(*)::int FROM accounting_transactions WHERE account_id=${accountId}) AS transactions`
           expect(counts).toEqual([
             scenario === 'recovery-filled'
-              ? { intents: 3, fills: 2, transactions: 2 }
+              ? { intents: 2, fills: 2, transactions: 2 }
               : { intents: 1, fills: 0, transactions: 0 },
           ])
-          if (scenario === 'recovery-filled')
-            expect(
-              yield* sql`SELECT intent.side, intent.terminal_outcome, event.denial_reason,
-                NOT EXISTS (SELECT 1 FROM orders WHERE intent_id=intent.intent_id) AS no_broker_order
-                FROM intents intent JOIN mutation_events event USING(intent_id)
-                WHERE intent.account_id=${accountId} AND event.event_type='SUBMIT_DENIED'`,
-            ).toEqual([
-              {
-                side: IntentSide.Sell,
-                terminal_outcome: 'REJECTED',
-                denial_reason: SubmissionDenialReason.ReconciliationStoreError,
-                no_broker_order: true,
-              },
-            ])
+          expect(
+            yield* sql`SELECT count(*)::int AS denied FROM mutation_events e JOIN intents i USING(intent_id)
+            WHERE i.account_id=${accountId} AND e.event_type='SUBMIT_DENIED'`,
+          ).toEqual([{ denied: 0 }])
           expect(final.brokerState.account.cashMicros).toBe((yield* broker.snapshot).ledger.cashMicros)
           return { _tag: 'Recovery' as const }
         }
@@ -1329,16 +1319,16 @@ durableTest.each(
           yield* completeCycle
           expect(pendingCompletionCount).toBeGreaterThan(0)
           const first = yield* broker.snapshot
-          expect(first.orders).toHaveLength(1)
+          expect(first.orders).toHaveLength(3)
           expect(first.orders[0]?.order.status).toBe(OrderStatus.Canceled)
           expect(first.fills).toHaveLength(0)
           expect(first.ledger.positions).toHaveLength(0)
           yield* runtime.advance
-          expect((yield* broker.snapshot).orders).toHaveLength(1)
+          expect((yield* broker.snapshot).orders).toHaveLength(3)
           yield* passUnavailableCryptoAdmission(runtime)
           yield* completeCycle
           const final = yield* broker.snapshot
-          expect(final.orders).toHaveLength(2)
+          expect(final.orders).toHaveLength(6)
           expect(final.orders.every(({ order }) => order.status === OrderStatus.Canceled)).toBe(true)
           expect(final.fills).toHaveLength(0)
           expect(final.ledger.positions).toHaveLength(0)
@@ -1388,7 +1378,7 @@ durableTest.each(
           partialEntryReentry
         ) {
           expect((yield* broker.snapshot).fills.map((fill) => fill.side)).toEqual([OrderSide.Buy])
-          for (let attempt = 0; attempt < 20; attempt++) {
+          for (let attempt = 0; attempt < 40; attempt++) {
             const advanced = yield* runtime.advance
             if (advanced.result?.outcome === 'RECOVERED' && advanced.result.action === 'COMPLETED') break
             const next = (yield* Clock.currentTimeMillis) + 1000
@@ -1396,21 +1386,21 @@ durableTest.each(
           }
           const state = yield* broker.snapshot
           expect(managementCalls).toBe(0)
-          expect(state.fills.map((fill) => fill.side)).toEqual(
-            scenario === 'partial-exit-reentry'
-              ? [OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell]
-              : [OrderSide.Buy, OrderSide.Sell],
-          )
+          expect(state.fills[0]?.side).toBe(OrderSide.Buy)
+          expect(state.fills.slice(1).every((fill) => fill.side === OrderSide.Sell)).toBe(true)
+          expect(state.fills.length).toBeGreaterThanOrEqual(scenario === 'partial-exit-reentry' ? 3 : 2)
           expect(state.ledger.positions).toHaveLength(0)
           expect(
             yield* sql`SELECT closure.document #>> '{document,strategyDecision,reason}' AS reason
               FROM autonomous_cycle_paper_closures AS closure
               JOIN autonomous_cycles AS cycle USING (cycle_id) WHERE cycle.account_id = ${accountId}`,
-          ).toEqual([{ reason: 'PROFIT_TARGET' }])
+          ).toEqual([])
           const reconciliation = yield* runtime.reconcile
           expect(reconciliation.report.metrics.accountingExact).toBe(true)
           expect(reconciliation.riskContext.unknownMutationCount).toBe(0)
           expect(reconciliation.brokerState.account.cashMicros).toBe(state.ledger.cashMicros)
+          const entryRoot = state.orders.find(({ order }) => order.side === OrderSide.Buy)?.order
+          if (entryRoot === undefined) throw new Error('Missing accounted entry parent')
           expect(
             yield* sql`SELECT
               paper_partial_limit_entry_is_reconciled_flat(i.intent_id,o.broker_order_id,
@@ -1419,14 +1409,20 @@ durableTest.each(
                 o.filled_quantity_atoms,i.updated_at) AS entry_cut_complete
               FROM intents i JOIN LATERAL (
                 SELECT o.* FROM orders o JOIN broker_events e USING(event_id)
-                WHERE o.intent_id=i.intent_id ORDER BY e.source_sequence DESC LIMIT 1
+                WHERE o.intent_id=i.intent_id AND o.side='BUY' AND o.client_order_id=i.client_order_id ORDER BY e.source_sequence DESC LIMIT 1
               ) o ON true WHERE i.account_id=${accountId} AND i.side='BUY'`,
-          ).toEqual([{ complete: true, entry_cut_complete: false }])
+          ).toEqual([
+            {
+              complete: BigInt(entryRoot.filledQuantityAtoms) < BigInt(entryRoot.quantityAtoms),
+              entry_cut_complete: false,
+            },
+          ])
           expect(yield* sql`SELECT state FROM autonomous_cycles WHERE account_id = ${accountId}`).toEqual([
             { state: 'COMPLETED' },
           ])
           if (partialEntryReentry) {
-            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['40000000000', '40000000000'])
+            expect(state.orders.some(({ order }) => order.nativeProtection?._tag === 'Oco')).toBe(true)
+            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual(['10000000000', '10000000000'])
             expect(state.orders[0]?.order.status).toBe(OrderStatus.Canceled)
             const restarted = yield* createRuntime
             yield* passUnavailableCryptoAdmission(restarted)
@@ -1477,11 +1473,12 @@ durableTest.each(
             if (entry === undefined) throw new Error('Missing measured entry execution')
             expect(Date.parse(entry.submittedAt)).toBeGreaterThanOrEqual(lastEntryResponse)
             for (const order of state.orders) {
+              if (BigInt(order.order.filledQuantityAtoms) === 0n) continue
               const execution = order.executions.findLast((execution) => execution.outcome.status === 'filled')
               if (execution?.quote === null || execution?.quote === undefined || execution.outcome.status !== 'filled')
                 throw new Error('Measured lifecycle requires complete execution quote evidence')
               const tick = Math.floor((Date.parse(execution.arrivedAt) - initialAtMs) / 200)
-              const expectedMidpoint = 100 * (1.02 + tick * 0.00002 + (tick >= 50 ? 0.015 : 0))
+              const expectedMidpoint = 100 * (1.02 + tick * 0.00002 + (tick >= 50 ? 0.04 : 0))
               expect(execution.quote.availableAtMs).toBe(initialAtMs + tick * 200)
               expect(execution.quote.askPrice).toBeCloseTo(expectedMidpoint + 0.01, 8)
               expect(execution.quote.bidPrice).toBeCloseTo(expectedMidpoint - 0.01, 8)
@@ -1492,22 +1489,25 @@ durableTest.each(
                   ? ((quotedMicros + 9999n) / 10000n) * 10000n
                   : (quotedMicros / 10000n) * 10000n
               expect(execution.outcome.fillPriceMicros).toBe(tickRoundedMicros.toString())
-              expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
+              if (order.order.parentBrokerOrderId === undefined)
+                expect(Date.parse(execution.arrivedAt) - Date.parse(execution.submittedAt)).toBe(10)
+              else expect(Date.parse(execution.arrivedAt)).toBe(execution.quote.availableAtMs)
             }
           }
           if (scenario === 'partial-exit-reentry') {
-            expect(state.fills.map((fill) => fill.quantityAtoms)).toEqual([
-              '100000000000',
-              '40000000000',
-              '40000000000',
-              '20000000000',
-            ])
+            const buys = state.fills.filter((fill) => fill.side === OrderSide.Buy)
+            const sells = state.fills.filter((fill) => fill.side === OrderSide.Sell)
+            expect(buys).toHaveLength(1)
+            expect(sells.every((fill) => BigInt(fill.quantityAtoms) <= 10_000_000_000n)).toBe(true)
+            expect(sells.reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)).toBe(
+              BigInt(buys[0]?.quantityAtoms ?? '0'),
+            )
             const restarted = yield* createRuntime
             expect(restarted.authorityGenerationHash).toBe(
               (yield* runtime.store.authorityGeneration.readAuthorityState).generationHash,
             )
             yield* restarted.advance
-            expect((yield* broker.snapshot).fills).toHaveLength(4)
+            expect((yield* broker.snapshot).fills).toHaveLength(state.fills.length)
             yield* passUnavailableCryptoAdmission(restarted)
             for (let attempt = 0; attempt < 20; attempt++) {
               const advanced = yield* restarted.advance
@@ -1515,10 +1515,11 @@ durableTest.each(
               yield* advanceMarketTo((yield* Clock.currentTimeMillis) + 1000)
             }
             const repeated = yield* broker.snapshot
+            expect(repeated.fills.slice(0, state.fills.length)).toEqual([...state.fills])
             expect(
-              repeated.fills.map((fill) => fill.side),
+              repeated.fills.slice(state.fills.length).map((fill) => fill.side),
               JSON.stringify(yield* Ref.get(passes)),
-            ).toEqual([OrderSide.Buy, OrderSide.Sell, OrderSide.Sell, OrderSide.Sell, OrderSide.Buy, OrderSide.Sell])
+            ).toEqual([OrderSide.Buy, OrderSide.Sell])
             expect(managementCalls).toBe(0)
             expect(repeated.ledger.positions).toHaveLength(0)
             const final = yield* restarted.reconcile
@@ -1623,6 +1624,25 @@ durableTest.each(
             brokerState.orders.map((entry) => ({ order: entry.order, execution: entry.executions.at(-1) })),
           ),
         ).toHaveLength(0)
+        const entryOrder = brokerState.orders.find(({ order }) => order.side === OrderSide.Buy)?.order
+        expect(entryOrder?.nativeProtection?._tag).toBe('Bracket')
+        expect(
+          brokerState.orders.filter(({ order }) => order.parentBrokerOrderId === entryOrder?.brokerOrderId),
+        ).toHaveLength(2)
+        expect(
+          brokerState.orders.every(({ order }) =>
+            [OrderStatus.Filled, OrderStatus.Canceled, OrderStatus.Expired, OrderStatus.Rejected].includes(
+              order.status,
+            ),
+          ),
+        ).toBe(true)
+        const [nativeEvidence] = yield* sql<{ matches: boolean }>`SELECT bool_and(
+          i.protection ->> '_tag' = 'Bracket' AND m.request_body ->> 'order_class' = 'bracket'
+          AND m.request_body #>> '{stop_loss,stop_price}' IS NOT NULL
+          AND m.request_body #>> '{take_profit,limit_price}' IS NOT NULL) AS matches
+          FROM intents i JOIN mutation_events m USING (intent_id)
+          WHERE i.side = 'BUY' AND i.account_id = ${accountId} AND m.event_type = 'SUBMIT_STARTED'`
+        expect(nativeEvidence?.matches).toBe(true)
         expect(brokerState.fills.map((fill) => fill.side)).toEqual([OrderSide.Buy, OrderSide.Sell])
         const rows = yield* sql<Record<string, unknown>>`SELECT
       (SELECT count(*)::int FROM intents WHERE account_id = ${accountId}) AS intents,

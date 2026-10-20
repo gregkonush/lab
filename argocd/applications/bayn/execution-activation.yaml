@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-5eb5306250a6
+  name: bayn-execution-activate-e272a29ce500
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: sha-5eb5306250a6
+    app.kubernetes.io/version: sha-e272a29ce500
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: sha-5eb5306250a6
+        app.kubernetes.io/version: sha-e272a29ce500
     spec:
       nodeSelector:
         network.proompteng.ai/100g: "true"
@@ -35,16 +35,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:19de2fc2c60f12305a5f4968cce63af618ea64865ec844586af0ec89f8b52714
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:6ccf4899c110e12314341c70c71970b86348b2bd26694204945331bf3e0734ba
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: 19de2fc2c60f12305a5f4968cce63af618ea64865ec844586af0ec89f8b52714
+              value: 6ccf4899c110e12314341c70c71970b86348b2bd26694204945331bf3e0734ba
             - name: BAYN_CODE_REVISION
-              value: 5eb5306250a672899b9813dbbc044b646d6905dc
+              value: e272a29ce5000b0d6486869b21fbc9a4e26597d9
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -53,26 +53,17 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:19de2fc2c60f12305a5f4968cce63af618ea64865ec844586af0ec89f8b52714
+              value: sha256:6ccf4899c110e12314341c70c71970b86348b2bd26694204945331bf3e0734ba
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "a9205de6b18592ce2aa3697720eefaf45c555d34a1df80bd7ef9ac3650de9c74"
+              value: "9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "e8efe1ed01ca88afb5ca016a48027b0d04dd54af91ee8024d5a23eee8822ecaf"
+              value: "7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:19de2fc2c60f12305a5f4968cce63af618ea64865ec844586af0ec89f8b52714\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"5eb5306250a672899b9813dbbc044b646d6905dc\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:ac05bc0d3a38492de7bd290d5e4abc4dd474186f6d02003af24b07d3149d839e\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"774f6f34328e66f9b89b0900542b77a779a683d1\"\n  },\n  \"requestHash\": \"c6b2304eab5e9eead50f4bb6ef0ad28c24276cd7b36231d0babdaf836beee44d\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
-              value: "32bef8b6d2c1fd6fb72717e374bff56bcede76b048a380fcffd20c02ca07fc5c"
+              value: "303957be46eb222482cb529c5a723a9d3945a38ee126675291e7e83947868bd3"
             - name: BAYN_BROKER_PROVIDER
               value: alpaca
             - name: BAYN_BROKER_ENVIRONMENT

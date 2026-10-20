@@ -35,10 +35,10 @@ import {
   legacyValuationSchemaVersion,
 } from './legacy-wire'
 
-export const executionIntentSchemaVersion = 'bayn.execution-intent.v4' as const
-export const referenceIntentSchemaVersion = 'bayn.reference-intent.v3' as const
-export const intentPlanSchemaVersion = 'bayn.intent-plan.v2' as const
-export const intentIdentitySchemaVersion = 'bayn.execution-intent-identity.v4' as const
+export const executionIntentSchemaVersion = 'bayn.execution-intent.v5' as const
+export const referenceIntentSchemaVersion = 'bayn.reference-intent.v4' as const
+export const intentPlanSchemaVersion = 'bayn.intent-plan.v3' as const
+export const intentIdentitySchemaVersion = 'bayn.execution-intent-identity.v5' as const
 
 const U32_MAX = 4_294_967_295
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -105,7 +105,23 @@ export enum OrderSide {
 export enum OrderType {
   Market = 'MARKET',
   Limit = 'LIMIT',
+  StopLimit = 'STOP_LIMIT',
 }
+
+const ProtectivePrices = {
+  stopPriceMicros: PositiveMicros,
+  stopLimitPriceMicros: PositiveMicros,
+  profitLimitPriceMicros: PositiveMicros,
+}
+
+export const NativeProtectionSchema = Schema.TaggedUnion({
+  Bracket: ProtectivePrices,
+  Oco: { ...ProtectivePrices, entryDecisionHash: Sha256 },
+  StopLimit: { stopPriceMicros: PositiveMicros, entryDecisionHash: Sha256 },
+})
+export type NativeProtection = typeof NativeProtectionSchema.Type
+export const submittedBrokerOrderCount = (protection: NativeProtection | undefined): number =>
+  protection?._tag === 'Bracket' ? 3 : protection?._tag === 'Oco' ? 2 : 1
 
 export enum TimeInForce {
   Day = 'DAY',
@@ -211,6 +227,7 @@ const OrderBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyOrderV2SchemaVersion),
   accountId: NonEmptyString,
   brokerOrderId: NonEmptyString,
+  parentBrokerOrderId: Schema.optionalKey(NonEmptyString),
   clientOrderId: NonEmptyString,
   intentId: Schema.optionalKey(Sha256),
   symbol: SymbolName,
@@ -221,6 +238,7 @@ const OrderBase = Schema.Struct({
   notionalMicros: Schema.optionalKey(PositiveMicros),
   filledQuantityAtoms: UnsignedMicros,
   limitPriceMicros: Schema.optionalKey(PositiveMicros),
+  stopPriceMicros: Schema.optionalKey(PositiveMicros),
   status: Schema.Enum(OrderStatus),
   observedAt: UtcInstant,
 })
@@ -268,9 +286,14 @@ export const OrderSchema = OrderBase.check(
     if ((order.status === OrderStatus.New || order.status === OrderStatus.Pending) && filledQuantity !== 0n) {
       issues.push({ path: ['filledQuantityAtoms'], issue: 'must be zero before any fill' })
     }
-    if (order.orderType === OrderType.Limit && order.limitPriceMicros === undefined) {
+    if (
+      (order.orderType === OrderType.Limit || order.orderType === OrderType.StopLimit) &&
+      order.limitPriceMicros === undefined
+    ) {
       issues.push({ path: ['limitPriceMicros'], issue: 'is required for a limit order' })
     }
+    if ((order.orderType === OrderType.StopLimit) !== (order.stopPriceMicros !== undefined))
+      issues.push({ path: ['stopPriceMicros'], issue: 'is required exactly for a stop-limit order' })
     if (order.orderType === OrderType.Market && order.limitPriceMicros !== undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'must be absent for a market order' })
     }
@@ -410,11 +433,12 @@ const intentFields = {
   clientOrderId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Literal(OrderType.Limit),
-  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled]),
   quantityAtoms: PositiveMicros,
   notionalLimitMicros: PositiveMicros,
   limitPriceMicros: PositiveMicros,
+  protection: Schema.optionalKey(NativeProtectionSchema),
   /** Hash of the prior close plan that authorizes a distinct residual close generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),
   state: Schema.Enum(IntentState),
@@ -437,10 +461,34 @@ type IntentContract = typeof ReferenceIntentBase.Type | typeof IntentBase.Type
 
 const intentContractIssues = (intent: IntentContract): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
+  const protection = intent.protection
+  const stop = protection?._tag === 'StopLimit'
+  const group = protection?._tag === 'Bracket' || protection?._tag === 'Oco'
   if (
-    intent.timeInForce !==
-    (instrumentMarket(intent.symbol) === MarketKind.Crypto ? TimeInForce.ImmediateOrCancel : TimeInForce.Day)
+    stop !== (intent.orderType === OrderType.StopLimit) ||
+    (protection?._tag === 'Bracket' && (crypto || intent.side !== OrderSide.Buy)) ||
+    (protection?._tag === 'Oco' && (crypto || intent.side !== OrderSide.Sell)) ||
+    (stop && intent.side !== OrderSide.Sell)
   )
+    issues.push({ path: ['protection'], issue: 'native protection must match its market, side and order type' })
+  if (stop && BigInt(intent.limitPriceMicros) > BigInt(protection.stopPriceMicros))
+    issues.push({ path: ['limitPriceMicros'], issue: 'a sell stop-limit floor cannot exceed its trigger' })
+  if (
+    group &&
+    (BigInt(protection.stopLimitPriceMicros) > BigInt(protection.stopPriceMicros) ||
+      BigInt(protection.stopPriceMicros) >= BigInt(protection.profitLimitPriceMicros) ||
+      (protection._tag === 'Oco' && intent.limitPriceMicros !== protection.profitLimitPriceMicros))
+  )
+    issues.push({ path: ['protection'], issue: 'linked sell exits must preserve their ordered strategy prices' })
+  const duration = stop
+    ? crypto
+      ? TimeInForce.GoodUntilCanceled
+      : TimeInForce.Day
+    : crypto
+      ? TimeInForce.ImmediateOrCancel
+      : TimeInForce.Day
+  if (intent.timeInForce !== duration)
     issues.push({ path: ['timeInForce'], issue: 'must use the native instrument LIMIT duration' })
   const notional =
     (BigInt(intent.quantityAtoms) * BigInt(intent.limitPriceMicros) +

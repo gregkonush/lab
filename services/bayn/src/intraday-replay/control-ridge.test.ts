@@ -542,7 +542,7 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v7',
+          schemaVersion: 'bayn.control-study-input.v8',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,
           management: ControlManagementMode.Mechanical,
@@ -557,7 +557,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v12',
+              inputDefinition: 'bayn.jev-trading-signal-state.v13',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',

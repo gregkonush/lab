@@ -56,6 +56,7 @@ export const marketCalendarUrl = Pipeable.dual(2, marketCalendarUrlDataFirst)
 
 const ordersUrlDataFirst = (connection: BrokerConnection, query: OrdersQuery): URL => {
   const url = new URL('/v2/orders', connection.baseUrl)
+  url.searchParams.set('nested', 'true')
   if (query.status !== undefined) url.searchParams.set('status', query.status)
   if (query.limit !== undefined) url.searchParams.set('limit', String(query.limit))
   if (query.after !== undefined) url.searchParams.set('after', query.after)
@@ -83,6 +84,7 @@ export const cancelOrderUrl = Pipeable.dual(2, cancelOrderUrlDataFirst)
 const orderByClientIdUrlDataFirst = (connection: BrokerConnection, clientOrderId: string): URL => {
   const url = new URL('/v2/orders:by_client_order_id', connection.baseUrl)
   url.searchParams.set('client_order_id', clientOrderId)
+  url.searchParams.set('nested', 'true')
   return url
 }
 

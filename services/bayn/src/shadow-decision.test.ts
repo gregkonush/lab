@@ -1,4 +1,4 @@
-import { maximumAllocatedBuyQuantities } from './jev/entry-sizing'
+import { maximumFundedBuyQuantities } from './jev/entry-sizing'
 import { nativeJevFixture, nativeJevDecisionEvidence, nativeJevBatchResult } from './jev/native.test-support'
 import { makeJevObservation } from './jev/observation'
 import { decodeJevPortfolio, JevPurpose } from './jev/portfolio'
@@ -214,7 +214,7 @@ const policy = (account = accountId): Policy =>
     PolicySchema,
     strictParseOptions,
   )({
-    schemaVersion: 'bayn.execution-risk-policy.v3',
+    schemaVersion: 'bayn.execution-risk-policy.v4',
     accountId: account,
     brokerMode: BrokerMode.Execution,
     allowedSymbols: protocol.candidateSymbols,
@@ -231,7 +231,7 @@ const policy = (account = accountId): Policy =>
     maxBrokerStateAgeMs: 120_000,
     maxMarketDataAgeMs: 120_000,
     maxAdverseSlippageBps: 100,
-    maxOpenOrders: 2,
+    maxOpenOrders: 5,
     decisionTtlMs: 120_000,
   })
 
@@ -322,12 +322,12 @@ const fixture = (
     )
   })()
   const planningTargetWeights =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v3'
       ? jevPlanningTargetWeights(compiledDecision)
       : compiledDecision.targetWeights
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2' && compiledDecision.selectedSymbols.length > 0
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v3' && compiledDecision.selectedSymbols.length > 0
   const {
     candidateEvidencePolicy: _policy,
     benchmarkEvidencePolicy: _benchmark,
@@ -400,7 +400,7 @@ const fixture = (
       ...intradayMomentumExecutionModel.precision,
       quantityIncrementAtoms: '1000000000',
     },
-    allocationCapitalMicros: '2000000000',
+    allocationCapitalMicros: '10000000000',
     executionTerms: {
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -408,9 +408,10 @@ const fixture = (
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
       maximumBuyQuantityAtoms:
-        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
+        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v3'
           ? value(
-              maximumAllocatedBuyQuantities({
+              maximumFundedBuyQuantities({
+                plans: compiledDecision.exitPolicy.plans,
                 askPriceMicros,
                 targetWeights: jevPlanningTargetWeights(compiledDecision),
                 capitalMicros: broker.account.equityMicros,
@@ -854,7 +855,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v13', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v14', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -879,7 +880,7 @@ describe('intraday shadow decision', () => {
           })})`
             const store = yield* makeCycleStore()
             yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
-            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v2')
+            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v3')
               throw new Error('missing Jev evidence')
             const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
             yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
@@ -943,7 +944,16 @@ describe('intraday shadow decision', () => {
       expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
       expect(document.riskBlock).toBeUndefined()
       const buy = document.deltaRisk[0]
-      if (buy === undefined) throw new Error('missing Jev entry risk')
+      if (buy === undefined)
+        throw new Error(
+          JSON.stringify({
+            targetPlan: document.targetPlan,
+            selected:
+              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v3'
+                ? document.strategyDecision.selectedSymbols
+                : [],
+          }),
+        )
       const runtime = ManagedRuntime.make(
         CycleStoreLive.pipe(
           Layer.provideMerge(
@@ -1100,6 +1110,7 @@ describe('intraday shadow decision', () => {
               ...target,
               notionalLimitMicros: risk.notionalLimitMicros,
               limitPriceMicros: risk.limitPriceMicros,
+              ...(risk.protection === undefined ? {} : { protection: risk.protection }),
               createdAt: document.createdAt,
             },
             { authority: { ...authority, effective: Authority.Execution, kill: KillState.Clear } },
@@ -1158,6 +1169,8 @@ describe('intraday shadow decision', () => {
           },
         ).pipe(
           Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () =>
               Effect.sync(() => {
@@ -1207,6 +1220,7 @@ describe('intraday shadow decision', () => {
       }
       for (const [index, target] of document.targetPlan.intentTargets.entries()) {
         const risk = document.deltaRisk[index]?.evaluation.decision
+        const protection = document.deltaRisk[index]?.protection
         const notional = document.deltaRisk[index]?.notionalLimitMicros
         const limitPriceMicros = document.deltaRisk[index]?.limitPriceMicros
         if (risk === undefined || notional === undefined || limitPriceMicros === undefined)
@@ -1218,6 +1232,7 @@ describe('intraday shadow decision', () => {
               ...target,
               notionalLimitMicros: notional,
               limitPriceMicros,
+              ...(protection === undefined ? {} : { protection }),
               createdAt: document.createdAt,
             },
             { authority },
@@ -1269,6 +1284,8 @@ describe('intraday shadow decision', () => {
           },
         ).pipe(
           Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () => Effect.die(new Error('malformed set cannot commit')),
           }),
@@ -1553,7 +1570,7 @@ describe('intraday shadow decision', () => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v2') {
+    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v3') {
       throw new Error('Jev fixture requires one entry decision')
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])
@@ -1768,6 +1785,7 @@ describe('intraday shadow decision', () => {
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
           limitPriceMicros: risk.limitPriceMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
         },
         authorityGenerationHash,
       ),
@@ -1821,6 +1839,7 @@ describe('intraday shadow decision', () => {
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
           limitPriceMicros: risk.limitPriceMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
         },
         authorityGenerationHash,
       ),
