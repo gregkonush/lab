@@ -209,11 +209,11 @@ export type CycleObservabilityProjectionRow = ProjectionRow
 const ProjectionRowsSchema = Schema.Tuple([ProjectionRowSchema])
 const decodeRunId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 const decodeAccountId = Schema.decodeUnknownEffect(StrictNonEmptyStringSchema, strictParseOptions)
-const decodeProjectionRowsResult = Schema.decodeUnknownResult(ProjectionRowsSchema, strictParseOptions)
 
-export const decodeCycleObservabilityProjectionRows = (
-  rows: unknown,
-): Result.Result<readonly [CycleObservabilityProjectionRow], Schema.SchemaError> => decodeProjectionRowsResult(rows)
+export const decodeCycleObservabilityProjectionRows = Schema.decodeUnknownResult(
+  ProjectionRowsSchema,
+  strictParseOptions,
+)
 
 const messageOf = (cause: unknown): string =>
   pipe(

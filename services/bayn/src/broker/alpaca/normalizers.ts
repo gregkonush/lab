@@ -37,7 +37,7 @@ import {
   type Position,
 } from './model'
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
-import { Pipeable } from '../../pipeable'
+
 import { equityDataSession } from '../../equity-hours'
 import { quantityFromDecimal } from '../../quantity'
 import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
@@ -124,9 +124,8 @@ const decimalMicrosResult = (
   return Result.succeed(result.toString())
 }
 
-export const decimalToMicrosResult = Pipeable.dual(3, (value: string, signed: boolean, name: string) =>
-  decimalMicrosResult(value, signed, name, 'EXACT'),
-)
+export const decimalToMicrosResult = (value: string, signed: boolean, name: string) =>
+  decimalMicrosResult(value, signed, name, 'EXACT')
 
 const quantityResult = (
   value: string,
@@ -218,7 +217,7 @@ const positionMicrosResult = (
       : Result.succeed(normalized.toString())
   })
 
-const normalizeAccountResultDataFirst = (
+export const normalizeAccountResult = (
   raw: typeof AccountResponseSchema.Type,
   expectedAccountId: string,
   observedAt: string,
@@ -265,9 +264,7 @@ const normalizeAccountResultDataFirst = (
   })
 }
 
-export const normalizeAccountResult = Pipeable.dual(3, normalizeAccountResultDataFirst)
-
-const normalizeAccountConfigurationResultDataFirst = (
+export const normalizeAccountConfigurationResult = (
   raw: typeof AccountConfigurationResponseSchema.Type,
   observedAt: string,
 ): Result.Result<AccountConfigurationObservation, BrokerReadContractFailure> =>
@@ -283,9 +280,7 @@ const normalizeAccountConfigurationResultDataFirst = (
     return { ...normalized, observedAt, normalizedResponseHash }
   })
 
-export const normalizeAccountConfigurationResult = Pipeable.dual(2, normalizeAccountConfigurationResultDataFirst)
-
-const normalizePositionResultDataFirst = (
+export const normalizePositionResult = (
   raw: typeof PositionResponseSchema.Type,
   accountId: string,
   observedAt: string,
@@ -341,18 +336,14 @@ const normalizePositionResultDataFirst = (
   })
 }
 
-export const normalizePositionResult = Pipeable.dual(3, normalizePositionResultDataFirst)
-
-const normalizePositionsResultDataFirst = (
+export const normalizePositionsResult = (
   raw: readonly (typeof PositionResponseSchema.Type)[],
   accountId: string,
   observedAt: string,
 ): Result.Result<readonly Position[], BrokerReadContractFailure> =>
   Result.all(raw.map((position) => normalizePositionResult(position, accountId, observedAt)))
 
-export const normalizePositionsResult = Pipeable.dual(3, normalizePositionsResultDataFirst)
-
-const normalizeAssetResultDataFirst = (
+export const normalizeAssetResult = (
   raw: typeof AssetResponseSchema.Type,
   requestedSymbol: string,
   observedAt: string,
@@ -405,9 +396,7 @@ const normalizeAssetResultDataFirst = (
   })
 }
 
-export const normalizeAssetResult = Pipeable.dual(3, normalizeAssetResultDataFirst)
-
-const normalizeOrderResultDataFirst = (
+export const normalizeOrderResult = (
   raw: typeof OrderResponseSchema.Type,
   accountId: string,
   observedAt: string,
@@ -516,18 +505,14 @@ const normalizeOrderResultDataFirst = (
   })
 }
 
-export const normalizeOrderResult = Pipeable.dual(3, normalizeOrderResultDataFirst)
-
-const normalizeOrdersResultDataFirst = (
+export const normalizeOrdersResult = (
   raw: readonly (typeof OrderResponseSchema.Type)[],
   accountId: string,
   observedAt: string,
 ): Result.Result<readonly Order[], BrokerReadContractFailure> =>
   Result.all(raw.map((order) => normalizeOrderResult(order, accountId, observedAt)))
 
-export const normalizeOrdersResult = Pipeable.dual(3, normalizeOrdersResultDataFirst)
-
-const normalizeFillActivityResultDataFirst = (
+export const normalizeFillActivityResult = (
   raw: typeof FillActivityResponseSchema.Type,
   accountId: string,
 ): Result.Result<FillActivity, BrokerReadContractFailure> => {
@@ -581,15 +566,11 @@ const normalizeFillActivityResultDataFirst = (
   })
 }
 
-export const normalizeFillActivityResult = Pipeable.dual(2, normalizeFillActivityResultDataFirst)
-
-const normalizeFillActivitiesResultDataFirst = (
+export const normalizeFillActivitiesResult = (
   raw: readonly (typeof FillActivityResponseSchema.Type)[],
   accountId: string,
 ): Result.Result<readonly FillActivity[], BrokerReadContractFailure> =>
   Result.all(raw.map((activity) => normalizeFillActivityResult(activity, accountId)))
-
-export const normalizeFillActivitiesResult = Pipeable.dual(2, normalizeFillActivitiesResultDataFirst)
 
 const marketCalendarInstantResult = (
   date: string,
@@ -623,7 +604,7 @@ const marketCalendarInstantResult = (
     : Result.succeed(DateTime.formatIso(zoned.value))
 }
 
-const normalizeMarketCalendarResultDataFirst = (
+export const normalizeMarketCalendarResult = (
   raw: typeof MarketCalendarResponseSchema.Type,
   query: typeof MarketCalendarQueryBase.Type,
 ): Result.Result<MarketCalendarObservation, BrokerReadContractFailure> =>
@@ -694,8 +675,6 @@ const normalizeMarketCalendarResultDataFirst = (
     const normalizedResponseHash = yield* hashResult(normalized, 'market calendar response')
     return { ...normalized, normalizedResponseHash }
   })
-
-export const normalizeMarketCalendarResult = Pipeable.dual(2, normalizeMarketCalendarResultDataFirst)
 
 export const normalizeFeeActivitiesResult = (
   raw: readonly (typeof FeeActivityResponseSchema.Type)[],

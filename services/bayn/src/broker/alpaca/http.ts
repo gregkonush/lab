@@ -76,7 +76,7 @@ import {
   positionsUrl,
   responseEvidenceResult,
 } from './requests'
-import { Pipeable } from '../../pipeable'
+
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -110,7 +110,7 @@ const normalizeRead = <A>(
     ),
   )
 
-const makeProxyDispatcherDataFirst = (
+export const makeProxyDispatcher = (
   proxyUrl: string,
   dependencies: ProxyDispatcherDependencies = {
     create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
@@ -130,11 +130,6 @@ const makeProxyDispatcherDataFirst = (
     ),
     (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
   )
-
-export const makeProxyDispatcher = Pipeable.by<
-  (dependencies?: ProxyDispatcherDependencies) => (proxyUrl: string) => ReturnType<typeof makeProxyDispatcherDataFirst>,
-  typeof makeProxyDispatcherDataFirst
->((arguments_) => typeof arguments_[0] === 'string', makeProxyDispatcherDataFirst)
 
 export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadError> =>
   pipe(
@@ -177,21 +172,11 @@ const proxyLayer = (
 ): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
   Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
 
-const alpacaHttpLayerDataFirst = (
+export const alpacaHttpLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
   NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
-
-export const alpacaHttpLayer = Pipeable.by<
-  (
-    dependencies?: ProxyDispatcherDependencies,
-  ) => (connection: BrokerConnection) => ReturnType<typeof alpacaHttpLayerDataFirst>,
-  typeof alpacaHttpLayerDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'baseUrl' in arguments_[0],
-  alpacaHttpLayerDataFirst,
-)
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {

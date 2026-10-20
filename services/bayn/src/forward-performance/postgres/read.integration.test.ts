@@ -7,7 +7,7 @@ import { StreamingPerformanceManifestSchema } from '../intraday-schema'
 
 import { PostgresClientLive } from '../../db/postgres-client'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
-import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCountDataFirst } from './read'
+import { readForwardPerformanceMarketVolumeBindings, readForwardPerformanceUnclosedCycleCount } from './read'
 import { completedIntradayCycles, makeStreamingPerformanceFixture } from '../intraday-cycle.test-support'
 import { readForwardPerformancePostgres } from './read'
 import { runForwardPerformanceReport, type ForwardPerformanceReaders } from '../program'
@@ -393,7 +393,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 (${hash('1')}, ${accountId}, 'COMPLETED', '2026-09-04T13:30:00.000Z'::timestamptz, ${hash('2')}, NULL, ${researchPlanHash}, '2026-09-04T12:00:00.000Z'::timestamptz),
                 (${hash('3')}, ${accountId}, 'ACTIVE', '2026-09-08T13:30:00.000Z'::timestamptz, ${hash('4')}, NULL, ${researchPlanHash}, '2026-09-04T14:00:00.000Z'::timestamptz)`
 
-              const withoutReconciliation = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+              const withoutReconciliation = yield* readForwardPerformanceUnclosedCycleCount(
                 sql,
                 accountId,
                 authorityGenerationHash,
@@ -404,7 +404,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                   (${hash('c')}, ${accountId}, '2026-09-04T21:00:00.000Z'::timestamptz),
                   (${hash('d')}, ${accountId}, '2026-09-05T21:00:00.000Z'::timestamptz)`
 
-              const withoutFutureFacts = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+              const withoutFutureFacts = yield* readForwardPerformanceUnclosedCycleCount(
                 sql,
                 accountId,
                 authorityGenerationHash,
@@ -427,7 +427,7 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 (${hash('d')}, ${accountId}, 'ACTIVE', '2026-09-04T13:30:00.000Z'::timestamptz, ${hash('e')}, NULL, ${hash('f')}, '2026-09-04T16:30:00.000Z'::timestamptz)`
               yield* sql`INSERT INTO intents (intent_id, cycle_id) VALUES (${hash('0')}, ${hash('7')})`
 
-              const withDurableAndPastFacts = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+              const withDurableAndPastFacts = yield* readForwardPerformanceUnclosedCycleCount(
                 sql,
                 accountId,
                 authorityGenerationHash,

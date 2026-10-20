@@ -46,7 +46,7 @@ import {
   type ReconciliationRiskContext,
 } from '../simulation-reconciliation/broker-model'
 import { strictParseOptions, type IsoDate } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import { positionCostAnchor } from './position-cost-reporting'
@@ -368,7 +368,7 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
-const verifyAccountingReceiptsDataFirst = (
+export const verifyAccountingReceipts = (
   transactions: readonly AccountingTransaction[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
@@ -410,8 +410,6 @@ const verifyAccountingReceiptsDataFirst = (
     }
     return { exactReceipts, plans: planned.map(({ plan }) => plan) }
   })
-
-export const verifyAccountingReceipts = Pipeable.dual(3, verifyAccountingReceiptsDataFirst)
 
 export const compareOpeningCash = (input: {
   readonly accountId: string
@@ -515,7 +513,7 @@ export const compareOpeningCash = (input: {
     return { accountingHash: accountingHashValue, comparison }
   })
 
-const ageDiscrepanciesDataFirst = (
+export const ageDiscrepancies = (
   comparison: ReconciliationComparison,
   previous: readonly Discrepancy[],
   reconciledAt: string,
@@ -554,8 +552,6 @@ const ageDiscrepanciesDataFirst = (
     status: discrepancies.length === 0 ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy,
   })
 }
-
-export const ageDiscrepancies = Pipeable.dual(3, ageDiscrepanciesDataFirst)
 
 export const makeReconciliationIdentity = (input: {
   readonly accountId: string
@@ -613,7 +609,7 @@ export const decideReconciliation = (input: {
     return yield* makeReconciliationIdentity({ ...input, aged })
   })
 
-const validateReconciliationReadbackDataFirst = (
+export const validateReconciliationReadback = (
   reconciliation: Reconciliation,
   storedContentHash: string,
 ): Result.Result<void, ReconciliationAlgebraFailure> =>
@@ -625,8 +621,6 @@ const validateReconciliationReadbackDataFirst = (
         expectedContentHash: reconciliation.contentHash,
         storedContentHash,
       })
-
-export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
 
 const timestamp = (field: 'authority_observed_at', value: Date): Result.Result<string, ReconciliationAlgebraFailure> =>
   Number.isFinite(value.getTime())
@@ -641,7 +635,7 @@ const riskMaterial = (row: RiskContextRow, unknownMutationCount: number) => ({
   peakEquityMicros: row.peak_equity_micros,
 })
 
-const riskContextFromRowDataFirst = (
+export const riskContextFromRow = (
   row: RiskContextRow,
   unknownMutationCount: number,
 ): Result.Result<ReconciliationRiskContext, ReconciliationAlgebraFailure> =>
@@ -731,8 +725,6 @@ const riskContextFromRowDataFirst = (
       authorityObservedAt,
     }
   })
-
-export const riskContextFromRow = Pipeable.dual(2, riskContextFromRowDataFirst)
 
 interface ReconciliationAlgebraFailureDetails {
   readonly failure: 'decode' | 'invariant'

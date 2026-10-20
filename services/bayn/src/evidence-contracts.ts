@@ -13,10 +13,8 @@ import {
   SourceRevisionSchema as SourceRevision,
   SymbolSchema as Symbol,
   UnitIntervalSchema as UnitIntervalFinite,
-  strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation/constants'
-import { Pipeable } from './pipeable'
 
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
@@ -422,11 +420,6 @@ export const EquitySeriesArtifactSchema = Schema.Struct({
     }),
   ).check(Schema.isMinLength(1)),
 })
-const decodeInputManifestArtifactDataFirst = Schema.decodeUnknownEffect(InputManifestArtifactSchema, StrictParseOptions)
-
-export const decodeInputManifestArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeInputManifestArtifactDataFirst(input),
-)
 
 export type InputManifest = typeof InputManifestArtifactSchema.Type
 export type SymbolCoverage = InputManifest['symbols'][number]

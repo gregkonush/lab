@@ -123,6 +123,4 @@ const CycleRecoveryStateSchema = Schema.Struct({
 
 export type DecodedCycleRecoveryState = typeof CycleRecoveryStateSchema.Type
 
-const decodeCycleRecoveryState = Schema.decodeUnknownResult(CycleRecoveryStateSchema, strictParseOptions)
-
-export const decodeCycleRecoveryStateResult = (input: unknown) => decodeCycleRecoveryState(input)
+export const decodeCycleRecoveryStateResult = Schema.decodeUnknownResult(CycleRecoveryStateSchema, strictParseOptions)

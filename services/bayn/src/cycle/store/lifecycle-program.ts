@@ -1,7 +1,6 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import { CycleState, type CycleCompletionState, type CycleTerminalReason } from '../model'
 import {
   decideAcquire,
@@ -30,7 +29,7 @@ export interface CycleLifecyclePrograms {
   readonly block: CycleStoreShape['block']
 }
 
-const makeCycleLifecycleProgramsDataFirst = (
+export const makeCycleLifecyclePrograms = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
@@ -202,5 +201,3 @@ const makeCycleLifecycleProgramsDataFirst = (
 
   return { acquire, activate, finish, block }
 }
-
-export const makeCycleLifecyclePrograms = Pipeable.dual(3, makeCycleLifecycleProgramsDataFirst)

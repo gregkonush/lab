@@ -824,7 +824,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(provideTestLayer(TestClock.layer()))
+    ).pipe((self) => provideTestLayer(self, TestClock.layer()))
 
     const receipt = await Effect.runPromise(program)
     expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:02.000Z')
@@ -961,7 +961,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -1021,7 +1021,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -1147,7 +1147,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(provideTestLayer(TestClock.layer()))
+    ).pipe((self) => provideTestLayer(self, TestClock.layer()))
 
     const failure = await Effect.runPromise(program)
     expect(failure).toMatchObject({

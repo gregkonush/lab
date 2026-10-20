@@ -156,7 +156,9 @@ describe('simulation reconciliation persistence logging', () => {
     })
 
     const result = await Effect.runPromise(
-      persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe(provideTestLayer(Logger.layer([logger]))),
+      persistStableSnapshot(store, snapshot, Effect.succeed(observedAt)).pipe((self) =>
+        provideTestLayer(self, Logger.layer([logger])),
+      ),
     )
 
     expect(result.report.reconciliation.accountId).toBe(accountId)

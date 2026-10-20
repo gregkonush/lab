@@ -28,7 +28,7 @@ import { UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillisResult } from '../time'
 import type { StoredIntent } from './intents/domain'
 import { MutationEventType, type MutationEvent } from './mutations/model'
-import { Pipeable } from '../pipeable'
+
 import { submissionDenialReason, type SubmissionDenialReason } from './submission-denial'
 
 // Pure decisions for the effectful coordinator interpreter.
@@ -142,7 +142,7 @@ interface CancelReceipt {
 const completeMutationEvidence = Schema.is(MutationEvidenceSchema)
 const isUtcInstant = Schema.is(UtcInstantSchema)
 
-const selectStoredIntentDataFirst = (
+export const selectStoredIntent = (
   operation: MutationOperation,
   intentId: string,
   stored: Option.Option<StoredIntent>,
@@ -151,8 +151,6 @@ const selectStoredIntentDataFirst = (
     onNone: () => Result.fail({ _tag: 'IntentMissing', operation, intentId }),
     onSome: Result.succeed,
   })
-
-export const selectStoredIntent = Pipeable.dual(3, selectStoredIntentDataFirst)
 
 const parseInstant = (
   operation: MutationOperation,
@@ -187,7 +185,7 @@ const validateCurrentTime = (
 ): Result.Result<number, ExecutionDecisionFailure> =>
   Result.map(formatInstant(operation, 'current-time', currentTimeMillis), () => currentTimeMillis)
 
-const nextInstantDataFirst = (
+export const nextInstant = (
   operation: MutationOperation,
   instant: string,
   current: string,
@@ -200,9 +198,7 @@ const nextInstantDataFirst = (
     ),
   )
 
-export const nextInstant = Pipeable.dual(3, nextInstantDataFirst)
-
-const encodeOrderDataFirst = (
+export const encodeOrder = (
   operation: MutationOperation,
   intent: Intent,
   message = 'intent cannot be represented as an Alpaca order',
@@ -225,11 +221,6 @@ const encodeOrderDataFirst = (
       ),
     ),
   )
-
-export const encodeOrder = Pipeable.by<
-  (intent: Intent, message?: string) => (operation: MutationOperation) => ReturnType<typeof encodeOrderDataFirst>,
-  typeof encodeOrderDataFirst
->((arguments_) => typeof arguments_[0] === 'string', encodeOrderDataFirst)
 
 const validateSubmitRiskDecision = (
   stored: StoredIntent,
@@ -254,33 +245,20 @@ const validateSubmitRiskDecision = (
   )
 }
 
-const validateActiveSubmitRiskDecisionDataFirst = (
+export const validateActiveSubmitRiskDecision = (
   stored: StoredIntent,
   currentTimeMillis: number,
   operationLabel = 'submission',
 ): Result.Result<StoredIntent, ExecutionDecisionFailure> =>
   validateSubmitRiskDecision(stored, currentTimeMillis, operationLabel, IntentState.Approved)
 
-export const validateActiveSubmitRiskDecision = Pipeable.by<
-  (
-    currentTimeMillis: number,
-    operationLabel?: string,
-  ) => (stored: StoredIntent) => ReturnType<typeof validateActiveSubmitRiskDecisionDataFirst>,
-  typeof validateActiveSubmitRiskDecisionDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null,
-  validateActiveSubmitRiskDecisionDataFirst,
-)
-
-const validateStartedSubmitRiskDecisionDataFirst = (
+export const validateStartedSubmitRiskDecision = (
   stored: StoredIntent,
   currentTimeMillis: number,
 ): Result.Result<StoredIntent, ExecutionDecisionFailure> =>
   validateSubmitRiskDecision(stored, currentTimeMillis, 'final submission', IntentState.IoStarted)
 
-export const validateStartedSubmitRiskDecision = Pipeable.dual(2, validateStartedSubmitRiskDecisionDataFirst)
-
-const makeDryRunSubmitDataFirst = (
+export const makeDryRunSubmit = (
   stored: StoredIntent,
   currentTimeMillis: number,
 ): Result.Result<DryRunSubmitDecision, ExecutionDecisionFailure> =>
@@ -298,8 +276,6 @@ const makeDryRunSubmitDataFirst = (
     ),
   )
 
-export const makeDryRunSubmit = Pipeable.dual(2, makeDryRunSubmitDataFirst)
-
 export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefined => {
   switch (status) {
     case OrderStatus.Filled:
@@ -315,7 +291,7 @@ export const terminalOutcome = (status: OrderStatus): TerminalOutcome | undefine
   }
 }
 
-const exactOrderDataFirst = (intent: Intent, request: OrderRequestBody, order: Order): boolean => {
+export const exactOrder = (intent: Intent, request: OrderRequestBody, order: Order): boolean => {
   const limitPrice = 'limit_price' in request ? orderPriceBoundaryMicros(intent) : Result.succeed(undefined)
   if (Result.isFailure(limitPrice)) return false
   const representationMatches = order.quantityAtoms === intent.quantityAtoms && order.notionalMicros === undefined
@@ -331,8 +307,6 @@ const exactOrderDataFirst = (intent: Intent, request: OrderRequestBody, order: O
     order.extendedHours === request.extended_hours
   )
 }
-
-export const exactOrder = Pipeable.dual(3, exactOrderDataFirst)
 
 export const completeEvidence = (value: unknown): MutationEvidence | undefined =>
   completeMutationEvidence(value) ? value : undefined
@@ -352,7 +326,7 @@ export const readErrorEvidence = (error: BrokerReadError): MutationEvidence | un
     observedAt: error.observedAt,
   })
 
-const decideSubmitFailureDataFirst = (
+export const decideSubmitFailure = (
   expectedRequestHash: string,
   error: BrokerMutationError,
 ): SubmitPersistenceDecision => {
@@ -373,9 +347,7 @@ const decideSubmitFailureDataFirst = (
         }
 }
 
-export const decideSubmitFailure = Pipeable.dual(2, decideSubmitFailureDataFirst)
-
-const decideSubmitSuccessDataFirst = (
+export const decideSubmitSuccess = (
   intent: Intent,
   encoded: EncodedOrder,
   receipt: SubmitReceipt,
@@ -396,8 +368,6 @@ const decideSubmitSuccessDataFirst = (
   }
 }
 
-export const decideSubmitSuccess = Pipeable.dual(3, decideSubmitSuccessDataFirst)
-
 export const cancellationIdentity = (
   submitEvent: MutationEvent | undefined,
 ): Result.Result<{ readonly brokerOrderId: string; readonly requestHash: string }, ExecutionDecisionFailure> =>
@@ -416,7 +386,7 @@ export const decideCancelFailure = (error: BrokerMutationError): CancelPersisten
   }
 }
 
-const decideCancelSuccessDataFirst = (
+export const decideCancelSuccess = (
   brokerOrderId: string,
   requestHash: string,
   receipt: CancelReceipt,
@@ -425,8 +395,6 @@ const decideCancelSuccessDataFirst = (
     ? { _tag: 'CancelAccepted', evidence: receipt.evidence }
     : { _tag: 'CancelUnknown', evidence: receipt.evidence }
 
-export const decideCancelSuccess = Pipeable.dual(3, decideCancelSuccessDataFirst)
-
 const submitResolved = (intent: Intent, event: MutationEvent): boolean =>
   intent.state === IntentState.Terminal &&
   (event.eventType === MutationEventType.SubmitAccepted ||
@@ -434,7 +402,7 @@ const submitResolved = (intent: Intent, event: MutationEvent): boolean =>
     event.eventType === MutationEventType.SubmitDenied ||
     event.eventType === MutationEventType.RecoveryFound)
 
-const selectRecoveryDataFirst = (
+export const selectRecovery = (
   operation: MutationOperation,
   intent: Intent,
   event: MutationEvent | undefined,
@@ -447,8 +415,6 @@ const selectRecoveryDataFirst = (
       event.eventType === MutationEventType.RecoveryFound)
   return Result.succeed(complete ? { _tag: 'RecoveryComplete', event } : { _tag: 'RecoveryRequired', event })
 }
-
-export const selectRecovery = Pipeable.dual(3, selectRecoveryDataFirst)
 
 const recoveryRequestHash = (
   intent: Intent,
@@ -468,7 +434,7 @@ const recoveryRequestHash = (
       )
     : Result.succeed(event.brokerOrderId === undefined ? undefined : cancelRequestHash(event.brokerOrderId))
 
-const validateRecoveryDataFirst = (
+export const validateRecovery = (
   intent: Intent,
   event: MutationEvent,
   cancellation: MutationEvent | undefined,
@@ -492,9 +458,7 @@ const validateRecoveryDataFirst = (
   )
 }
 
-export const validateRecovery = Pipeable.dual(3, validateRecoveryDataFirst)
-
-const ensureRecoveryDelayDataFirst = (
+export const ensureRecoveryDelay = (
   operation: MutationOperation,
   event: MutationEvent,
   currentMillis: number,
@@ -514,9 +478,7 @@ const ensureRecoveryDelayDataFirst = (
     }),
   )
 
-export const ensureRecoveryDelay = Pipeable.dual(3, ensureRecoveryDelayDataFirst)
-
-const decideInterruptedStartDataFirst = (event: MutationEvent, occurredAt: string): InterruptedStartDecision => {
+export const decideInterruptedStart = (event: MutationEvent, occurredAt: string): InterruptedStartDecision => {
   if (event.eventType === MutationEventType.SubmitStarted) {
     return { _tag: 'MarkSubmitUnknown', event, occurredAt }
   }
@@ -524,8 +486,6 @@ const decideInterruptedStartDataFirst = (event: MutationEvent, occurredAt: strin
     ? { _tag: 'MarkCancelUnknown', event, brokerOrderId: event.brokerOrderId, occurredAt }
     : { _tag: 'KeepMutation', event }
 }
-
-export const decideInterruptedStart = Pipeable.dual(2, decideInterruptedStartDataFirst)
 
 export const decideRecoveryFailure = (error: BrokerReadError): RecoveryPersistenceDecision => {
   const evidence = readErrorEvidence(error)
@@ -537,7 +497,7 @@ export const decideRecoveryFailure = (error: BrokerReadError): RecoveryPersisten
       }
 }
 
-const decideRecoverySuccessDataFirst = (
+export const decideRecoverySuccess = (
   intent: Intent,
   operation: MutationOperation,
   interrupted: MutationEvent,
@@ -568,8 +528,6 @@ const decideRecoverySuccessDataFirst = (
         ...(outcome === undefined ? {} : { terminalOutcome: outcome }),
       }
 }
-
-export const decideRecoverySuccess = Pipeable.dual(5, decideRecoverySuccessDataFirst)
 
 export const recoveryObservationRequiresPersistence = (
   current: MutationEvent,

@@ -14,7 +14,6 @@ import {
   validateAll,
   withoutManifestHash,
 } from './shared'
-import { Pipeable } from '../../pipeable'
 
 export interface VerifiedManifest {
   readonly manifest: SignalManifestRow
@@ -47,7 +46,7 @@ const manifestMismatch = (
   snapshotId,
 })
 
-const verifyManifestDataFirst = (
+export const verifyManifest = (
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
 ): Result.Result<VerifiedManifest, MarketDataVerificationError> =>
@@ -245,12 +244,8 @@ const verifyManifestDataFirst = (
     }),
   )
 
-export const verifyManifest = Pipeable.dual(2, verifyManifestDataFirst)
-
-const verifyFinalizedManifestDataFirst = (
+export const verifyFinalizedManifest = (
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
 ): Result.Result<FinalizedSnapshotProvenance, MarketDataVerificationError> =>
   Result.map(verifyManifest(manifests, request), ({ finalizedSnapshot }) => finalizedSnapshot)
-
-export const verifyFinalizedManifest = Pipeable.dual(2, verifyFinalizedManifestDataFirst)

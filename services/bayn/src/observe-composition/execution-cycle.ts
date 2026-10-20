@@ -1120,7 +1120,7 @@ const terminalizeUnboundMutationCycle = (
     })),
   )
 
-const terminalizeBlockedExecutionCycleDataFirst = (
+export const terminalizeBlockedExecutionCycle = (
   cycle: AutonomousCycle,
   outcome: Extract<BoundMutationCycleOutcome, { readonly _tag: 'Block' }>,
   authorityGenerationHash: string,
@@ -1193,8 +1193,6 @@ const terminalizeBlockedExecutionCycleDataFirst = (
         : mutationRunnerError({ message: 'blocked execution cycle transaction failed', cause, failure: 'store' }),
     ),
   )
-
-export const terminalizeBlockedExecutionCycle = terminalizeBlockedExecutionCycleDataFirst
 
 const interpretBoundExecutionCycleOutcome = (
   input: ObserveAutonomousCycleInput,

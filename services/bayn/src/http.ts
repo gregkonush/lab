@@ -15,7 +15,7 @@ import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
-import { Pipeable } from './pipeable'
+
 import { defaultJevProtocolDocument } from './jev/protocol'
 import { telemetryHeartbeat } from './telemetry'
 import { accountTradingDate } from './time'
@@ -337,7 +337,7 @@ const publicCycleState = (state: RuntimeState) =>
         error: cyclePresentationReason(state.cycle.error),
       }
 
-const statusFactsDataFirst = (
+export const statusFacts = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
@@ -411,16 +411,12 @@ const statusFactsDataFirst = (
   } as const
 }
 
-export const statusFacts = Pipeable.dual(4, statusFactsDataFirst)
-
-const statusResponseDecisionDataFirst = (
+export const statusResponseDecision = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
   provenanceVerification: RuntimeBuildMetadata['verification'],
 ): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
-
-export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDataFirst)
 
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
@@ -717,7 +713,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   )
 }
 
-const renderPrometheusMetricsDataFirst = (
+export const renderPrometheusMetrics = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
@@ -1350,8 +1346,6 @@ const renderPrometheusMetricsDataFirst = (
   return `${lines.join('\n')}\n`
 }
 
-export const renderPrometheusMetrics = Pipeable.dual(4, renderPrometheusMetricsDataFirst)
-
 const interpretResponseDecision = (
   decision: HttpResponseDecision,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -1404,7 +1398,7 @@ const registerHttpRoutes = (
   const status = currentStateAndTime.pipe(
     Effect.map(({ current, nowMs }) =>
       jsonDecision(
-        statusFactsDataFirst(
+        statusFacts(
           current,
           config.execution,
           provenance,
@@ -1430,7 +1424,7 @@ const registerHttpRoutes = (
         )
         const native = yield* PrometheusMetrics.format()
         return textDecision(
-          renderPrometheusMetricsDataFirst(
+          renderPrometheusMetrics(
             current,
             config,
             provenance,
@@ -1458,7 +1452,7 @@ const registerHttpRoutes = (
   })
 }
 
-const serveHttpDataFirst = (
+export const serveHttp = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
@@ -1473,5 +1467,3 @@ const serveHttpDataFirst = (
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
-
-export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)

@@ -33,7 +33,7 @@ import {
   type PersistedCapitalGrant,
   type MutationExecutionAuthority,
 } from './authority'
-import { Pipeable } from '../pipeable'
+
 import { SubmissionDenialReason } from './submission-denial'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
@@ -299,7 +299,7 @@ const positionExposureIdentity = (
     }))
     .sort((left, right) => left.symbol.localeCompare(right.symbol))
 
-const validateStablePositionSnapshotDataFirst = (
+export const validateStablePositionSnapshot = (
   before: Parameters<typeof positionExposureIdentity>[0],
   after: readonly Position[],
 ): Result.Result<readonly Position[], ExecutionCapitalLimitFailure> => {
@@ -319,8 +319,6 @@ const validateStablePositionSnapshotDataFirst = (
         afterHash: afterHash.success,
       })
 }
-
-export const validateStablePositionSnapshot = Pipeable.dual(2, validateStablePositionSnapshotDataFirst)
 
 const openOrderExposureIdentity = (orders: readonly Order[]) =>
   orders
@@ -342,7 +340,7 @@ const openOrderExposureIdentity = (orders: readonly Order[]) =>
       left.brokerOrderId < right.brokerOrderId ? -1 : left.brokerOrderId > right.brokerOrderId ? 1 : 0,
     )
 
-const validateStableOpenOrderSnapshotDataFirst = (
+const validateStableOpenOrderSnapshot = (
   before: readonly Order[],
   after: readonly Order[],
 ): Result.Result<readonly Order[], ExecutionCapitalLimitFailure> => {
@@ -363,12 +361,10 @@ const validateStableOpenOrderSnapshotDataFirst = (
       })
 }
 
-const validateStableOpenOrderSnapshot = Pipeable.dual(2, validateStableOpenOrderSnapshotDataFirst)
-
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority.authorityGenerationHash
 
-const validateIntentAuthorityBindingDataFirst = (
+export const validateIntentAuthorityBinding = (
   authority: MutationExecutionAuthority,
   intent: Intent,
 ): Result.Result<void, IntentAuthorityBindingFailure> => {
@@ -396,8 +392,6 @@ const validateIntentAuthorityBindingDataFirst = (
   }
   return Result.succeed(undefined)
 }
-
-export const validateIntentAuthorityBinding = Pipeable.dual(2, validateIntentAuthorityBindingDataFirst)
 
 const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
   intent.side === IntentOrderSide.Buy ? notional : -notional
@@ -606,7 +600,7 @@ interface PendingSymbolExposure {
 
 const emptyPendingSymbolExposure: PendingSymbolExposure = { buyMicros: 0n, sellMicros: 0n }
 
-const maximumAbsoluteExposureAcrossPendingFillsDataFirst = (
+export const maximumAbsoluteExposureAcrossPendingFills = (
   currentMicros: bigint,
   pending: PendingSymbolExposure,
   proposedMicros: bigint,
@@ -615,11 +609,6 @@ const maximumAbsoluteExposureAcrossPendingFillsDataFirst = (
   const upperBound = currentMicros + proposedMicros + pending.buyMicros
   return absolute(lowerBound) > absolute(upperBound) ? absolute(lowerBound) : absolute(upperBound)
 }
-
-export const maximumAbsoluteExposureAcrossPendingFills = Pipeable.dual(
-  3,
-  maximumAbsoluteExposureAcrossPendingFillsDataFirst,
-)
 
 const validateSnapshotBindings = (
   authority: MutationExecutionAuthority,
@@ -720,7 +709,7 @@ const validateBrokerStateFreshness = (
       })
 }
 
-const validateExecutionCapitalLimitsDataFirst = (
+export const validateExecutionCapitalLimits = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
@@ -933,8 +922,6 @@ const validateExecutionCapitalLimitsDataFirst = (
   return Result.succeed(undefined)
 }
 
-export const validateExecutionCapitalLimits = Pipeable.dual(8, validateExecutionCapitalLimitsDataFirst)
-
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest({ operation: MutationOperation.Submit, message, cause })
 
@@ -994,7 +981,7 @@ export type PersistedCapitalGrantRefreshFailure =
       readonly _tag: 'FreshAuthorityCapabilityMismatch'
     }
 
-const validatePersistedCapitalGrantForSubmitDataFirst = (
+export const validatePersistedCapitalGrantForSubmit = (
   captured: MutationExecutionAuthority,
   persisted: GrantedCapitalAuthority,
   observedAt: string,
@@ -1025,11 +1012,9 @@ const validatePersistedCapitalGrantForSubmitDataFirst = (
     : Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
 }
 
-export const validatePersistedCapitalGrantForSubmit = Pipeable.dual(3, validatePersistedCapitalGrantForSubmitDataFirst)
-
 export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure | InstrumentError
 
-const validateExecutionBrokerSubmitSnapshotDataFirst = (
+export const validateExecutionBrokerSubmitSnapshot = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
@@ -1113,9 +1098,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
   )
 }
 
-export const validateExecutionBrokerSubmitSnapshot = Pipeable.dual(6, validateExecutionBrokerSubmitSnapshotDataFirst)
-
-const makeAuthorityGuardedBrokerMutationDataFirst = (
+export const makeAuthorityGuardedBrokerMutation = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
@@ -1150,5 +1133,3 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
       : { orderByClientId: dependencies.brokerMutation.orderByClientId }),
   }
 }
-
-export const makeAuthorityGuardedBrokerMutation = Pipeable.dual(2, makeAuthorityGuardedBrokerMutationDataFirst)

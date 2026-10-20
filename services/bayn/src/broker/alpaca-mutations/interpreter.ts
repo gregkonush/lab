@@ -23,7 +23,7 @@ import {
   type BrokerMutationShape,
 } from './model'
 import { withObservedStage } from '../../telemetry'
-import { Pipeable } from '../../pipeable'
+
 import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -109,7 +109,7 @@ const readCancelBody = (
         ),
       )
 
-const makeMutationDataFirst = (
+export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
   client: HttpClient.HttpClient,
@@ -209,5 +209,3 @@ const makeMutationDataFirst = (
       orderByClientId: session.read.orderByClientId,
     }
   })
-
-export const makeMutation = Pipeable.dual(3, makeMutationDataFirst)

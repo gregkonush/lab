@@ -216,6 +216,13 @@ under chronological partitions, native fee scenarios and serial capital accounti
 missing coverage, never promotes a strategy, and does not substitute historical bars for original arrival/quote evidence.
 Run it only in a separate research process; it is not part of the live service or its strategy selection.
 
+## Internal APIs
+
+Internal functions use a single data-first calling convention. The execution worker uses the recovering native runtime
+adapter, and its tests exercise that same adapter. The current execution model is defined directly in
+`src/strategy/intraday-market.ts`. Historical wire decoders and the daily snapshot readers remain available for
+retained financial evidence; they do not select a live strategy or create current execution authority.
+
 ## Reproducible image dependencies
 
 The Bayn Nix dependency build normalizes the two CLI symlinks in the

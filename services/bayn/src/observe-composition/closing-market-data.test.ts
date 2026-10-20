@@ -36,7 +36,7 @@ import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-suppo
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { decideJevExit, JevExitReason } from '../jev/exit'
 import { type IntradayMarketDataService } from '../market-data/intraday/model'
-import { MarketData } from '../market-data/model'
+
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { retryableOperationalError } from '../errors'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
@@ -215,15 +215,6 @@ const fixture = async (source = native) => {
       })
     }).pipe(
       Effect.provideService(BrokerRead, broker),
-      Effect.provideService(MarketData, {
-        check: unused,
-        load: unused,
-        inspect: unused,
-        inspectCyclePublications: unused,
-        inspectPublication: () => unused,
-        inspectSnapshotPublication: () => unused,
-        loadSnapshotPublication: () => unused,
-      }),
       Effect.provideService(CandidateObservationStore, {
         record: () => Effect.void,
         latestJevWindowEnd: () => Effect.succeed(Option.none()),

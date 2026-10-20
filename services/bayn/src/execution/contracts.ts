@@ -15,7 +15,7 @@ import {
   UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import {
   legacyAccountingReceiptSchemaVersion,
   legacyAccountSnapshotSchemaVersion,
@@ -936,80 +936,49 @@ export const AuthorityStateSchema = AuthorityStateBase.check(
 )
 export type AuthorityState = typeof AuthorityStateSchema.Type
 
-const decodeBrokerEventDataFirst = Schema.decodeUnknownEffect(BrokerEventSchema, StrictParseOptions)
+export const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, StrictParseOptions)
 
-export const decodeBrokerEvent = Pipeable.dual(1, (input: unknown) => decodeBrokerEventDataFirst(input))
-const decodeAccountSnapshotDataFirst = Schema.decodeUnknownEffect(AccountSnapshotSchema, StrictParseOptions)
+export const decodeAccountSnapshot = Schema.decodeUnknownEffect(AccountSnapshotSchema, StrictParseOptions)
 
-export const decodeAccountSnapshot = Pipeable.dual(1, (input: unknown) => decodeAccountSnapshotDataFirst(input))
-const decodePositionDataFirst = Schema.decodeUnknownEffect(PositionSchema, StrictParseOptions)
+export const decodePosition = Schema.decodeUnknownEffect(PositionSchema, StrictParseOptions)
 
-export const decodePosition = Pipeable.dual(1, (input: unknown) => decodePositionDataFirst(input))
-const decodeOrderDataFirst = Schema.decodeUnknownEffect(OrderSchema, StrictParseOptions)
+export const decodeOrder = Schema.decodeUnknownEffect(OrderSchema, StrictParseOptions)
 
-export const decodeOrder = Pipeable.dual(1, (input: unknown) => decodeOrderDataFirst(input))
-const decodeFillDataFirst = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
+export const decodeFill = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
 
-export const decodeFill = Pipeable.dual(1, (input: unknown) => decodeFillDataFirst(input))
-const decodeBrokerErrorDataFirst = Schema.decodeUnknownEffect(BrokerErrorSchema, StrictParseOptions)
+export const decodeBrokerError = Schema.decodeUnknownEffect(BrokerErrorSchema, StrictParseOptions)
 
-export const decodeBrokerError = Pipeable.dual(1, (input: unknown) => decodeBrokerErrorDataFirst(input))
-const decodeRateLimitDataFirst = Schema.decodeUnknownEffect(RateLimitSchema, StrictParseOptions)
+export const decodeRateLimit = Schema.decodeUnknownEffect(RateLimitSchema, StrictParseOptions)
 
-export const decodeRateLimit = Pipeable.dual(1, (input: unknown) => decodeRateLimitDataFirst(input))
-const decodeReferenceIntentDataFirst = Schema.decodeUnknownEffect(ReferenceIntentSchema, StrictParseOptions)
+export const decodeReferenceIntent = Schema.decodeUnknownEffect(ReferenceIntentSchema, StrictParseOptions)
 
-export const decodeReferenceIntent = Pipeable.dual(1, (input: unknown) => decodeReferenceIntentDataFirst(input))
-const decodeIntentDataFirst = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
+export const decodeIntent = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
 
-export const decodeIntent = Pipeable.dual(1, (input: unknown) => decodeIntentDataFirst(input))
-const decodeRiskInputDataFirst = Schema.decodeUnknownEffect(RiskInputSchema, StrictParseOptions)
+export const decodeRiskInput = Schema.decodeUnknownEffect(RiskInputSchema, StrictParseOptions)
 
-export const decodeRiskInput = Pipeable.dual(1, (input: unknown) => decodeRiskInputDataFirst(input))
-const decodeRiskDecisionDataFirst = Schema.decodeUnknownEffect(RiskDecisionSchema, StrictParseOptions)
+export const decodeRiskDecision = Schema.decodeUnknownEffect(RiskDecisionSchema, StrictParseOptions)
 
-export const decodeRiskDecision = Pipeable.dual(1, (input: unknown) => decodeRiskDecisionDataFirst(input))
-const decodeAccountingReceiptDataFirst = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
+export const decodeAccountingReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
 
-export const decodeAccountingReceipt = Pipeable.dual(1, (input: unknown) => decodeAccountingReceiptDataFirst(input))
-const decodeValuationDataFirst = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
+export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
 
-export const decodeValuation = Pipeable.dual(1, (input: unknown) => decodeValuationDataFirst(input))
-const decodeReconciliationDataFirst = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
+export const decodeReconciliation = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
 
-export const decodeReconciliation = Pipeable.dual(1, (input: unknown) => decodeReconciliationDataFirst(input))
-const decodeCapitalGrantProofBindingDataFirst = Schema.decodeUnknownEffect(
+export const decodeCapitalGrantProofBinding = Schema.decodeUnknownEffect(
   CapitalGrantProofBindingSchema,
   StrictParseOptions,
 )
 
-export const decodeCapitalGrantProofBinding = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalGrantProofBindingDataFirst(input),
-)
-const decodeResearchCapitalGrantProofBindingDataFirst = Schema.decodeUnknownEffect(
+export const decodeResearchCapitalGrantProofBinding = Schema.decodeUnknownEffect(
   ResearchCapitalGrantProofBindingSchema,
   StrictParseOptions,
 )
 
-export const decodeResearchCapitalGrantProofBinding = Pipeable.dual(1, (input: unknown) =>
-  decodeResearchCapitalGrantProofBindingDataFirst(input),
-)
-const decodeCapitalGrantGenerationDataFirst = Schema.decodeUnknownEffect(
-  CapitalGrantGenerationSchema,
-  StrictParseOptions,
-)
+export const decodeCapitalGrantGeneration = Schema.decodeUnknownEffect(CapitalGrantGenerationSchema, StrictParseOptions)
 
-export const decodeCapitalGrantGeneration = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalGrantGenerationDataFirst(input),
-)
-const decodeResearchCapitalGrantGenerationDataFirst = Schema.decodeUnknownEffect(
+export const decodeResearchCapitalGrantGeneration = Schema.decodeUnknownEffect(
   ResearchCapitalGrantGenerationSchema,
   StrictParseOptions,
 )
 
-export const decodeResearchCapitalGrantGeneration = Pipeable.dual(1, (input: unknown) =>
-  decodeResearchCapitalGrantGenerationDataFirst(input),
-)
-const decodeAuthorityStateDataFirst = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)
-
-export const decodeAuthorityState = Pipeable.dual(1, (input: unknown) => decodeAuthorityStateDataFirst(input))
+export const decodeAuthorityState = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)

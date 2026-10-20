@@ -96,7 +96,7 @@ import {
   type IntradayMarketDataService,
   type IntradaySnapshotRequest,
 } from './market-data/intraday/model'
-import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data/model'
+
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
 import { marketDataOperationError } from './market-data/errors'
 import { unusedEntryExpiresAt } from './cycle/entry-admission'
@@ -105,7 +105,7 @@ import { constructStreamingSnapshot } from './market-data/streaming/snapshot'
 import { intradayMomentumBehaviorHash, makeIntradayMomentumDefinition } from './strategy/intraday-momentum/decision'
 import { decodeDefaultIntradayMomentumProtocol } from './strategy/intraday-momentum/protocol'
 import { makeIntradayMomentumTestSnapshot } from './strategy/intraday-momentum/test-support'
-import { makePersistedSnapshotFixture } from './testing/persisted-snapshot-fixture'
+
 import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
@@ -189,7 +189,6 @@ import type { IsoDate } from './types'
 const signalDate = '2020-04-30'
 const executionDate = '2020-05-01'
 const accountId = 'paper-account-1'
-const snapshotId = '7'.repeat(64)
 const generationHash = 'a'.repeat(64)
 const accountingHash = 'b'.repeat(64)
 const reconciledAt = '2020-05-01T16:44:59.000Z'
@@ -512,7 +511,6 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
     }).pipe(
       Effect.provideService(BrokerRead, brokerRead),
       Effect.provideService(CycleStore, cycleStore),
-      Effect.provideService(MarketData, marketData([])),
       Effect.provideService(BrokerEventStore, executionStore),
       Effect.provideService(FillAccountingStore, executionStore),
       Effect.provideService(ValuationStore, executionStore),
@@ -633,21 +631,6 @@ const cycle = Effect.runSync(
     updatedAt: new Date(Date.parse(evaluatedAt) - 1000).toISOString(),
   }),
 )
-
-const sourceManifest = makePersistedSnapshotFixture()
-const { hash: _sourceManifestHash, ...sourceManifestMaterial } = sourceManifest
-const snapshotManifest = {
-  ...sourceManifestMaterial,
-  finalizedSnapshot: {
-    ...sourceManifestMaterial.finalizedSnapshot,
-    snapshotId,
-    finalizedAt: '2020-04-30T22:00:00.000Z',
-  },
-} as const
-const snapshot: MarketDataSnapshot = {
-  bars: [],
-  manifest: { ...snapshotManifest, hash: canonicalHashV1(snapshotManifest) },
-}
 
 const account: AccountSnapshot = {
   schemaVersion: 'bayn.paper-account-snapshot.v1',
@@ -957,20 +940,6 @@ test.each([
   )
 })
 
-const marketData = (requests: unknown[]): MarketDataService => ({
-  check: Effect.die(new Error('decision building must not run the static snapshot check')),
-  inspect: Effect.die(new Error('decision building must not inspect the static snapshot')),
-  inspectCyclePublications: Effect.die(new Error('decision building must not discover publications')),
-  inspectPublication: () => Effect.die(new Error('decision building must not inspect another publication')),
-  inspectSnapshotPublication: () => Effect.die(new Error('decision building must not re-inspect metadata')),
-  loadSnapshotPublication: (request) =>
-    Effect.sync(() => {
-      requests.push(request)
-      return snapshot
-    }),
-  load: Effect.die(new Error('decision building must not load the static qualification snapshot')),
-})
-
 const calendarRead =
   (
     queries: unknown[],
@@ -1009,8 +978,7 @@ const decisionBrokerRead = (marketCalendar: BrokerReadShape['marketCalendar']): 
 }
 
 const provideDecisionServices = <A, E>(
-  program: Effect.Effect<A, E, BrokerRead | MarketData | CandidateObservationStore | JevTestServices>,
-  marketDataService: MarketDataService,
+  program: Effect.Effect<A, E, BrokerRead | CandidateObservationStore | JevTestServices>,
   marketCalendar: BrokerReadShape['marketCalendar'],
 ): Effect.Effect<A, E> =>
   program.pipe(
@@ -1020,7 +988,6 @@ const provideDecisionServices = <A, E>(
       latestJevWindowEnd: () => Effect.succeed(Option.none()),
     }),
     provideJevTestServices,
-    Effect.provideService(MarketData, marketDataService),
   )
 
 const makeExactReconciliationServices = (maximum: Authority = Authority.Observe) => {
@@ -1189,10 +1156,7 @@ const executionLifecycleFixture = async (transformPolicy: (policy: Policy) => Po
         strategy: currentIntradayRuntime,
         intradayMarketData,
       })
-    }).pipe(
-      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
-      Effect.provide(TestClock.layer()),
-    ),
+    }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
   )
   const boundCycle = Effect.runSync(
     decodeAutonomousCycle({
@@ -1488,7 +1452,6 @@ const prepareStoredExecutionStep = async (
           ),
         ),
       ),
-      Effect.provideService(MarketData, marketData([])),
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -2258,7 +2221,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, intentStore),
         Effect.provideService(MutationStore, mutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3181,7 +3143,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, intentStore),
         Effect.provideService(MutationStore, mutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3248,7 +3209,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, intentStore),
         Effect.provideService(MutationStore, mutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3511,7 +3471,6 @@ describe('OBSERVE runtime composition', () => {
         )
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, intentStore),
         Effect.provideService(MutationStore, mutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3657,7 +3616,6 @@ describe('OBSERVE runtime composition', () => {
           })
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-          Effect.provideService(MarketData, marketData([])),
           Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
           Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
           Effect.provideService(ValuationStore, {} as ValuationStoreShape),
@@ -3751,7 +3709,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, closeIntentStore),
         Effect.provideService(MutationStore, closeMutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3806,7 +3763,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(IntentStore, missedCloseIntentStore),
         Effect.provideService(MutationStore, closeMutationStore),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
@@ -3911,7 +3867,6 @@ describe('OBSERVE runtime composition', () => {
           })
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-          Effect.provideService(MarketData, marketData([])),
           Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
           Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
           Effect.provideService(ValuationStore, {} as ValuationStoreShape),
@@ -4137,7 +4092,6 @@ describe('OBSERVE runtime composition', () => {
           return yield* Fiber.join(closing)
         }).pipe(
           Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-          Effect.provideService(MarketData, marketData([])),
           Effect.provideService(IntentStore, {
             read: (intentId) =>
               Effect.succeed(
@@ -4287,7 +4241,6 @@ describe('OBSERVE runtime composition', () => {
         })
       }).pipe(
         Effect.provideService(BrokerRead, decisionBrokerRead(calendarRead([]))),
-        Effect.provideService(MarketData, marketData([])),
         Effect.provideService(BrokerEventStore, {} as BrokerEventStoreShape),
         Effect.provideService(FillAccountingStore, {} as FillAccountingStoreShape),
         Effect.provideService(ValuationStore, {} as ValuationStoreShape),
@@ -4792,10 +4745,7 @@ describe('OBSERVE runtime composition', () => {
         yield* TestClock.adjust(2_000)
         expect(yield* cache.read).toBe(refreshed ?? initial)
         return document
-      }).pipe(
-        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
-        Effect.provide(TestClock.layer()),
-      ),
+      }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
     )
     return { exit, events, snapshotRequests, refreshes, initial, refreshed, reconciliationReads }
   }
@@ -5114,10 +5064,7 @@ describe('OBSERVE runtime composition', () => {
               }).pipe(Effect.andThen(Effect.die('Occupied account must not start an entry observation'))),
           },
         })
-      }).pipe(
-        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
-        Effect.provide(TestClock.layer()),
-      ),
+      }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
     )
     expect(Exit.isFailure(exit)).toBe(true)
     if (Exit.isFailure(exit)) expect(Cause.pretty(exit.cause)).toContain('entry requires a reconciled flat account')
@@ -5241,7 +5188,6 @@ describe('OBSERVE runtime composition', () => {
                 finish: () => Effect.die('no batch should be finished'),
               }),
             ),
-            marketData([]),
             calendarRead([]),
           ),
         Effect.provide(TestClock.layer()),
@@ -5271,7 +5217,7 @@ describe('OBSERVE runtime composition', () => {
           latestJevWindowEnd: () => Effect.succeed(Option.some('2020-05-01T16:45:00.000Z')),
           record: () => Effect.die('Same-window retry must not record a new observation'),
         }),
-        (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
+        (program) => provideDecisionServices(program, calendarRead([])),
         Effect.provide(TestClock.layer()),
       ),
     )
@@ -5344,13 +5290,6 @@ describe('OBSERVE runtime composition', () => {
       fillActivities: () => unused,
       marketCalendar: () => unused,
     }
-    const marketDataService: MarketDataService = {
-      ...marketData([]),
-      inspectCyclePublications: Effect.succeed({
-        outcome: 'MISSING',
-        observedAt: '2026-01-30T21:20:00.000Z',
-      }),
-    }
     const writerFence: WriterFenceService = {
       check: unused,
       transaction: (effect) => effect,
@@ -5375,7 +5314,6 @@ describe('OBSERVE runtime composition', () => {
             AutonomousCycleLoop<
               | BrokerRead
               | CycleStore
-              | MarketData
               | BrokerEventStore
               | FillAccountingStore
               | ValuationStore
@@ -5398,7 +5336,6 @@ describe('OBSERVE runtime composition', () => {
           const fiber = yield* loop.pipe(
             Effect.provideService(BrokerRead, brokerRead),
             Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, marketDataService),
             Effect.provideService(BrokerEventStore, executionStore),
             Effect.provideService(FillAccountingStore, executionStore),
             Effect.provideService(ValuationStore, executionStore),
@@ -5484,25 +5421,6 @@ describe('OBSERVE runtime composition', () => {
         expect(query).toEqual(calendarMaterial.requestedRange)
         return Effect.succeed({ value: ordinaryCalendar, evidence: readEvidence('calendar') })
       },
-    }
-    const marketDataService: MarketDataService = {
-      ...marketData([]),
-      inspectCyclePublications: Effect.succeed({
-        outcome: 'FINALIZED',
-        observedAt: '2020-04-29T22:00:00.000Z',
-        publications: [
-          {
-            manifest: snapshot.manifest,
-            sessionDates: [signalSessionDate],
-            signalSession: {
-              calendar_version: 'fixture-calendar-v2',
-              session_date: signalSessionDate,
-              close_time: '16:00',
-              timezone: 'America/New_York' as const,
-            },
-          },
-        ],
-      }),
     }
     const unusedCycleStore = Effect.die(new Error('bounded NOT_DUE pass attempted to mutate cycle state'))
     const cycleStore: CycleStoreShape = {
@@ -5601,7 +5519,6 @@ describe('OBSERVE runtime composition', () => {
           const fiber = yield* loop.pipe(
             Effect.provideService(BrokerRead, brokerRead),
             Effect.provideService(CycleStore, cycleStore),
-            Effect.provideService(MarketData, marketDataService),
             Effect.provideService(BrokerEventStore, executionStore),
             Effect.provideService(FillAccountingStore, executionStore),
             Effect.provideService(ValuationStore, executionStore),
@@ -6256,7 +6173,6 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
         latestJevWindowEnd: () => Effect.succeed(Option.none()),
       }),
       provideJevTestServices,
-      Effect.provideService(MarketData, marketData([])),
       Effect.provide(TestClock.layer()),
     ),
   )
@@ -6702,10 +6618,7 @@ test('entry expiry during reconciliation remains a non-dispatchable lifecycle re
           },
         }).pipe(Effect.mapError(decisionBuildError)),
       )
-    }).pipe(
-      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
-      Effect.provide(TestClock.layer()),
-    ),
+    }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
   )
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result))
@@ -6777,7 +6690,7 @@ test.each([
       )
     }).pipe(
       (program) =>
-        provideDecisionServices(program, marketData([]), (query) => {
+        provideDecisionServices(program, (query) => {
           calendarReads++
           return entry.excess > 0n
             ? Effect.die('A protected entry must not request the calendar')
@@ -6843,10 +6756,7 @@ test('account drawdown does not suppress read-only strategy observations', async
           },
         }),
       )
-    }).pipe(
-      (program) => provideDecisionServices(program, marketData([]), calendarRead([])),
-      Effect.provide(TestClock.layer()),
-    ),
+    }).pipe((program) => provideDecisionServices(program, calendarRead([])), Effect.provide(TestClock.layer())),
   )
   expect(Result.isSuccess(result)).toBe(true)
   expect(snapshots).toBeGreaterThan(0)

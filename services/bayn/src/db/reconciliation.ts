@@ -63,7 +63,7 @@ import {
   verifyAccountingReceipts,
   type ReconciliationAlgebraFailure,
 } from '../reconciliation/algebra'
-import { Pipeable } from '../pipeable'
+
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { firstSessionEquityQuery, peakEquityQuery } from './risk-valuation-query'
 import { postCashSettlements, prepareCashSettlements, type CashSettlementAccounting } from './cash-settlements'
@@ -272,7 +272,7 @@ const fromDecision = <A>(
     }),
   )
 
-const restrictAuthorityDataFirst = (
+export const restrictAuthority = (
   sql: PgClient.PgClient,
   reason: string,
   updatedAt: string,
@@ -329,14 +329,12 @@ const restrictAuthorityDataFirst = (
     ),
   )
 
-export const restrictAuthority = Pipeable.dual(3, restrictAuthorityDataFirst)
-
 export interface FinalExecutionRiskContext {
   readonly dailyTradedNotionalMicros: string
   readonly peakEquityMicros: string
 }
 
-const readFinalExecutionRiskContextDataFirst = (
+export const readFinalExecutionRiskContext = (
   sql: PgClient.PgClient,
   accountId: string,
   observedAt: string,
@@ -373,8 +371,6 @@ const readFinalExecutionRiskContextDataFirst = (
       }
     }),
   )
-
-export const readFinalExecutionRiskContext = Pipeable.dual(3, readFinalExecutionRiskContextDataFirst)
 
 /** Called under the account writer fence; the current durable start reserves this cache version. */
 export const verifyBrokerStateVersion = (

@@ -645,7 +645,9 @@ describe('execution reconciliation loop', () => {
     }
     const control: StoreControl = { writes: 0, reconciliations: [], restrictions: [] }
 
-    const result = await Effect.runPromise(provide(read, makeStore(control)).pipe(provideTestLayer(TestClock.layer())))
+    const result = await Effect.runPromise(
+      provide(read, makeStore(control)).pipe((self) => provideTestLayer(self, TestClock.layer())),
+    )
 
     expect(orderCutoffs).toEqual(['1970-01-01T00:00:00.000Z', '1970-01-01T00:00:00.100Z'])
     expect(fillCutoffs).toEqual(orderCutoffs)
@@ -946,7 +948,7 @@ describe('execution reconciliation loop', () => {
           yield* TestClock.adjust(500)
           yield* Fiber.join(fiber)
         }),
-      ).pipe(provideTestLayer(TestClock.layer())),
+      ).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
     expect(reads).toBe(4)
     expect(control.reconciliations[0]?.fees.map((item) => item.value)).toEqual([fee])
@@ -1050,7 +1052,7 @@ describe('execution reconciliation loop', () => {
           yield* TestClock.adjust(500)
           yield* Fiber.join(fiber)
         }),
-      ).pipe(provideTestLayer(TestClock.layer())),
+      ).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
 
     expect(orderReads).toBe(4)
@@ -1083,7 +1085,7 @@ describe('execution reconciliation loop', () => {
           yield* TestClock.adjust(1000)
           return yield* Fiber.join(fiber)
         }),
-      ).pipe(provideTestLayer(TestClock.layer())),
+      ).pipe((self) => provideTestLayer(self, TestClock.layer())),
     )
     if (permanent) {
       expect(Result.isFailure(result)).toBe(true)

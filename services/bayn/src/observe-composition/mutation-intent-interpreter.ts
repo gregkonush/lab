@@ -50,7 +50,6 @@ import {
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
-import { Pipeable } from '../pipeable'
 
 export type MutationPreparationFacts = {
   readonly snapshot: {
@@ -291,7 +290,7 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
   input: I,
   preparation: P,
   policy: Policy,
@@ -909,17 +908,3 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
       : { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: completion.reason }
   })
-
-export const prepareMutationIntent = Pipeable.generic<
-  <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
-    preparation: P,
-    policy: Policy,
-    cycle: AutonomousCycle,
-    document: ExecutionDecisionDocument,
-    reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
-    allowSubmit: boolean,
-    drainOpenOrders: boolean,
-    dependencies: MutationPreparationDependencies<R, E, I, P>,
-  ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
-  typeof prepareMutationIntentDataFirst
->(9, prepareMutationIntentDataFirst)
