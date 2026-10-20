@@ -6,7 +6,7 @@ import { JevEvaluationStoreLive } from '../db/jev-evaluation-postgres'
 import { PostgresClientLive } from '../db/postgres-client'
 import { Sha256Schema } from '../schemas'
 import { JevCandidatePlanStatus } from './batch'
-import { JevBatchStore, recoverJevBatch } from './batch-evaluation'
+import { JevBatchStore } from './batch-evaluation'
 import { JevEvidenceError, JevOutcome, makeJevEvaluationReceipt } from './evidence'
 import { JevEvaluationStore } from './evaluation'
 import { tradingSignalInferenceFixture } from './trading-signal.test-support'
@@ -27,7 +27,7 @@ const main = Effect.gen(function* () {
   yield* Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem
     if (mode === 'recover') {
-      const recovered = yield* recoverJevBatch(batchId)
+      const recovered = yield* Effect.flatMap(JevBatchStore, (store) => store.finish(batchId))
       yield* fs.writeFileString(resultPath, JSON.stringify(recovered), { flag: 'wx' })
       return
     }

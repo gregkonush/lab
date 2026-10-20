@@ -7,7 +7,7 @@ import technicalFixture from '../market-data/features/fixtures/technical-indicat
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
 import { featureBarContentHash } from '../market-data/features/contract'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { streamingFixture } from '../testing/streaming-market-fixture'
@@ -59,7 +59,7 @@ const snapshotWithTechnical = (candidateTradeMissing = false) => {
   const feature = Result.getOrThrow(
     decodeTechnicalMarketFeature({
       material,
-      featureId: canonicalHashV1(material),
+      featureId: Result.getOrThrow(canonicalHashV1Result(material)),
       producerRevision: 'jev-signal-fixture',
       computedAtMs: observed,
     }),
@@ -213,7 +213,7 @@ describe('Jev trading signal input', () => {
     ]) {
       const changedValue = {
         ...changed,
-        value: { ...changed.value, featureId: canonicalHashV1(changed.value.material) },
+        value: { ...changed.value, featureId: Result.getOrThrow(canonicalHashV1Result(changed.value.material)) },
       }
       const input = {
         ...snapshot,

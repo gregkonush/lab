@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import { Effect, Exit, FileSystem, Result, Schema } from 'effect'
 
 import { parseEntryTimingExportArgs } from '../../tools/entry-timing-export'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { type ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -151,7 +151,7 @@ test.each([false, true])('exports exact native timing and a conservative v1 rece
   expect(result.receipt.spans.commit.endTimeUnixNano).toBe(String(f.commitNanos))
   expect(result.receipt.timing.sha256).toBe(sha256(result.timingText))
   const { receiptHash, ...material } = result.receipt
-  expect(receiptHash).toBe(canonicalHashV1(material))
+  expect(receiptHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
   expect(result.receipt.qualification).toBe('UNQUALIFIED')
   expect(result.receipt.scope).toBe('OBSERVED_ENTRY_TIMING_ONLY')
 })

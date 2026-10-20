@@ -13,7 +13,7 @@ import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker
 import { EmbeddedBuildMetadataSchema, embeddedBuildMetadata } from '../build'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { causeSummary } from '../broker/alpaca-mutations/model'
-import { makeRuntimeProvenance } from '../contracts'
+import { makeRuntimeProvenanceResult } from '../contracts'
 import { canonicalHashV1Result } from '../hash'
 import {
   ImageDigestSchema,
@@ -259,7 +259,7 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       environment: BrokerEnvironment.Sandbox,
       accountId: `replay-${runId}`,
     })
-    const provenance = makeRuntimeProvenance({
+    const provenance = yield* makeRuntimeProvenanceResult({
       sourceRevision: decoded.build.sourceRevision,
       image: { repository: decoded.build.imageRepository, digest: decoded.build.imageDigest },
       strategy: {

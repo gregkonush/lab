@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { MarketVolumeBindingRow } from './postgres/model'
@@ -240,7 +240,7 @@ const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvi
     sourceFeed: 'sip' as const,
     adjustment: 'all' as const,
   }
-  return [{ ...material, contentHash: canonicalHashV1(material) }]
+  return [{ ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }]
 }
 
 const terminalReferencePriceFor = (
@@ -255,7 +255,7 @@ const terminalReferencePriceFor = (
     observedAt: volume.finalizedAt,
     sourceEvidenceHash: volume.contentHash,
   }
-  return { ...material, contentHash: canonicalHashV1(material) }
+  return { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }
 
 const exactTransactions = () => [
@@ -296,7 +296,7 @@ test('keeps accounting totals while any unverified decision withholds execution 
       status: 'UNDETERMINED',
       reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
       unverifiedDecisionHashes: [hash('9')],
-      evidenceHash: canonicalHashV1({ unverifiedDecisionHashes: [hash('9')] }),
+      evidenceHash: Result.getOrThrow(canonicalHashV1Result({ unverifiedDecisionHashes: [hash('9')] })),
       implementationShortfall: null,
     })
     expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
@@ -1120,7 +1120,9 @@ describe('forward performance domain', () => {
         input({
           transactions: exactTransactions(),
           executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: [{ ...driftedMaterial, contentHash: canonicalHashV1(driftedMaterial) }],
+          marketVolumeEvidence: [
+            { ...driftedMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(driftedMaterial)) },
+          ],
         }),
       ),
     )
@@ -1635,7 +1637,7 @@ test('retains measured native execution quality when missing minutes prevent com
     if (evidence === undefined) throw new Error('expected terminal mark')
     const { contentHash: _hash, ...source } = evidence
     const material = { ...source, cycleId: hash('a') }
-    const volume = { ...material, contentHash: canonicalHashV1(material) }
+    const volume = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
     // Move the existing synthetic accounting fixture into the native session's window.
     const accounting = JSON.parse(
       JSON.stringify(input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }))

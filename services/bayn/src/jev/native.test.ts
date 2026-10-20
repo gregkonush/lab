@@ -7,7 +7,7 @@ import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } fro
 import { decideJevEntry, jevEntryQuoteMaximumAgeMs, JevEntryTargetSchema } from './decision'
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { makeJevObservation, reproduceJevCandidateObservation } from './observation'
@@ -165,7 +165,7 @@ describe('native Jev entry and position observations', () => {
       makeStrategyProtocolHashResult({
         name: 'jev',
         behaviorHash: jevBehaviorHash,
-        parameterHash: canonicalHashV1(active),
+        parameterHash: Result.getOrThrow(canonicalHashV1Result(active)),
         parameterSchemaVersion: active.schemaVersion,
       }),
     )

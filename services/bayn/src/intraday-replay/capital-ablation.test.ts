@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { BrokerMode, executionRiskPolicySchemaVersion } from '../risk'
 import { OrderType, TimeInForce } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   nativeJevDecisionEvidence,
   nativeJevFixture,
@@ -122,7 +122,7 @@ const quoteAt = (symbol: string, atMs: number, overrides: Partial<IntradayQuote>
     askSize: 1000,
     ...overrides,
   }
-  return { value, availableAtMs: atMs, sequence: 1, recordHash: canonicalHashV1(value) }
+  return { value, availableAtMs: atMs, sequence: 1, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const evaluate = (
   opps: readonly CapitalOpportunity[],
@@ -183,7 +183,9 @@ test('both arms retain every identical current native opportunity, abstention an
   expect(reports[0]?.metrics.knownInferenceCostMicros).toBe('30000')
   expect(reports[0]?.ledger.positions).toEqual([])
   expect(reports[0]?.trades[0]?.result.requestedEntryQuantityAtoms).toBe('199000000000')
-  expect(Result.getOrThrow(validateCapitalPopulation(opps, terms))).toBe(canonicalHashV1(defaultJevProtocolDocument))
+  expect(Result.getOrThrow(validateCapitalPopulation(opps, terms))).toBe(
+    Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument)),
+  )
   expect(evaluate(opps)).toEqual(reports)
 })
 

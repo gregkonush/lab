@@ -1,7 +1,7 @@
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { ControlExit } from './control-portfolio'
@@ -27,7 +27,7 @@ const quote = (t: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 1000,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: t, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: t, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const terms = {
   symbol: 'AAPL',

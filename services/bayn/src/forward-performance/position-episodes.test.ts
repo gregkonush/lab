@@ -7,7 +7,7 @@ import { prepareAccounting } from '../accounting/domain'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import {
   decodeForwardPerformanceReceiptEnvelopeResult,
@@ -36,7 +36,7 @@ const transaction = (
   const quantityAtoms = BigInt(quantity) * 1_000_000n
   return success(
     prepareAccounting(
-      canonicalHashV1({ index, side, quantity, symbol }),
+      Result.getOrThrow(canonicalHashV1Result({ index, side, quantity, symbol })),
       {
         schemaVersion: 'bayn.fill.v2',
         accountId: 'episode-account',
@@ -806,12 +806,14 @@ describe('position episodes', () => {
     }
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))
     const { reportHash, ...material } = report
-    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...material,
-        inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...material,
+          inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
+        }),
+      ),
     ).not.toBe(reportHash)
   })
 
@@ -837,8 +839,8 @@ describe('position episodes', () => {
     expect(first.receipt.profitability).toBe('UNDETERMINED')
     expect(first.reportHash).not.toBe(second.reportHash)
     const { reportHash, ...material } = first
-    expect(canonicalHashV1(material)).toBe(reportHash)
-    expect(canonicalHashV1({ ...material, scope: second.scope })).not.toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...material, scope: second.scope }))).not.toBe(reportHash)
   })
 
   test('declares an account scope when no generation was requested', () => {
@@ -853,13 +855,15 @@ describe('position episodes', () => {
     expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
-    expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...reportFields,
-        receipt,
-        positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...reportFields,
+          receipt,
+          positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
+        }),
+      ),
     ).not.toBe(reportHash)
     const envelope = success(
       makeForwardPerformanceReceiptEnvelope({
@@ -874,14 +878,17 @@ describe('position episodes', () => {
     expect(success(decodeForwardPerformanceReceiptEnvelopeResult(envelope))).toEqual(envelope)
     const { receiptHash: _, ...receiptMaterial } = receipt
     const changedMaterial = { ...receiptMaterial, positionEpisodes: report.positionEpisodes }
-    const changedReceipt = { ...changedMaterial, receiptHash: canonicalHashV1(changedMaterial) }
+    const changedReceipt = {
+      ...changedMaterial,
+      receiptHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+    }
     const { contentHash: _contentHash, ...envelopeMaterial } = envelope
     const changedEnvelope = { ...envelopeMaterial, receiptHash: changedReceipt.receiptHash, receipt: changedReceipt }
     expect(
       Result.isFailure(
         decodeForwardPerformanceReceiptEnvelopeResult({
           ...changedEnvelope,
-          contentHash: canonicalHashV1(changedEnvelope),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(changedEnvelope)),
         }),
       ),
     ).toBe(true)

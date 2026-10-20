@@ -25,7 +25,7 @@ import type { Statement } from 'effect/sql/Statement'
 import { CycleStore } from '../cycle/store/model'
 import { CycleStoreLive } from '../cycle/store/postgres'
 import { operationalError } from '../errors'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { Authority } from '../execution/contracts'
 import {
   JevCandidatePlanStatus,
@@ -34,7 +34,7 @@ import {
   makeJevBatchPlan,
   usableJevBatchInferences,
 } from '../jev/batch'
-import { evaluateJevBatch, JevBatchExpired, JevBatchStore, recoverJevBatch } from '../jev/batch-evaluation'
+import { evaluateJevBatch, JevBatchExpired, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevClaim, JevEvaluationStore } from '../jev/evaluation'
@@ -324,7 +324,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         for (const admitted of saved) expect(admitted).toEqual(firstSaved)
         yield* TestClock.adjust('1 minute')
         expect(yield* batches.begin(excludedPlan)).toEqual(firstSaved)
-        expect(yield* recoverJevBatch(excludedPlan.batchId)).toEqual(firstSaved)
+        expect(yield* Effect.flatMap(JevBatchStore, (store) => store.finish(excludedPlan.batchId))).toEqual(firstSaved)
         expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
       }).pipe(atObservation),
     )
@@ -378,7 +378,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           throw new Error('Lost acknowledgement did not retain a complete batch')
         yield* TestClock.adjust('1 minute')
         expect(yield* batches.begin(excludedPlan)).toEqual(saved)
-        expect(yield* recoverJevBatch(excludedPlan.batchId)).toEqual(saved)
+        expect(yield* Effect.flatMap(JevBatchStore, (store) => store.finish(excludedPlan.batchId))).toEqual(saved)
         expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
       }).pipe(atObservation),
     )
@@ -396,7 +396,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* TestClock.adjust('1 minute')
         expect(yield* batches.begin(excludedPlan)).toEqual({ plan: excludedPlan, result: null })
         expect(yield* batches.pending(excludedPlan.cycleId)).toEqual([excludedPlan.batchId])
-        const saved = yield* recoverJevBatch(excludedPlan.batchId)
+        const saved = yield* Effect.flatMap(JevBatchStore, (store) => store.finish(excludedPlan.batchId))
         expect(saved.result).not.toBeNull()
         expect(
           saved.result?.candidates.every((candidate) => candidate.status === JevCandidateResultStatus.Excluded),
@@ -819,9 +819,9 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const requests = yield* JevEvaluationStore
         yield* store.begin(plan)
         yield* requests.begin(first.request)
-        expect((yield* recoverJevBatch(plan.batchId)).result).toBeNull()
+        expect((yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))).result).toBeNull()
         yield* TestClock.adjust('10 seconds')
-        const sealed = yield* recoverJevBatch(plan.batchId)
+        const sealed = yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))
         const result = sealed.result
         if (result === null) throw new Error('Expired batch did not finalize')
         expect(
@@ -846,7 +846,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* requests.record(first.request, late)
         expect((yield* requests.read(first.request.requestId))?.receipt).toEqual(late)
         expect(yield* store.read(plan.batchId)).toEqual(sealed)
-        expect(yield* recoverJevBatch(plan.batchId)).toEqual(sealed)
+        expect(yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))).toEqual(sealed)
         for (const candidate of requested.slice(1))
           expect(Result.isFailure(yield* requests.begin(candidate.request).pipe(Effect.result))).toBe(true)
         expect(
@@ -898,7 +898,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const saved = yield* store.begin(plan)
         yield* TestClock.setTime(observed + 16000)
         expect(yield* store.begin(plan)).toEqual(saved)
-        expect((yield* recoverJevBatch(plan.batchId)).result).not.toBeNull()
+        expect((yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))).result).not.toBeNull()
         expect(yield* sql`SELECT request_id FROM jev_evaluation_requests`).toEqual([])
         expect(calls).toBe(0)
       }).pipe(
@@ -1009,7 +1009,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         yield* requests.begin(first.request)
         yield* TestClock.adjust('10 seconds')
         const recovered = yield* Effect.all(
-          Array.from({ length: 4 }, () => recoverJevBatch(plan.batchId)),
+          Array.from({ length: 4 }, () => Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))),
           { concurrency: 'unbounded' },
         )
         const saved = yield* store.read(plan.batchId)
@@ -1077,7 +1077,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           expect(stopped).toBe(calls)
           expect((yield* (yield* JevBatchStore).read(plan.batchId))?.result).toBeNull()
           yield* TestClock.adjust('10 seconds')
-          expect((yield* recoverJevBatch(plan.batchId)).result).not.toBeNull()
+          expect((yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))).result).not.toBeNull()
           expect(stopped).toBe(calls)
         }),
       ).pipe(atObservation),
@@ -1093,7 +1093,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         )
         expect(Exit.isFailure(exit)).toBe(true)
         yield* TestClock.adjust('10 seconds')
-        const saved = yield* recoverJevBatch(plan.batchId)
+        const saved = yield* Effect.flatMap(JevBatchStore, (store) => store.finish(plan.batchId))
         expect(saved.result).not.toBeNull()
       }).pipe(atObservation),
     )
@@ -1112,7 +1112,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
                 Effect.gen(function* () {
                   calls += 1
                   if (calls === requested.length) yield* Deferred.succeed(allStarted, undefined)
-                  if (canonicalHashV1(request) === first.request.requestHash)
+                  if (Result.getOrThrow(canonicalHashV1Result(request)) === first.request.requestHash)
                     return yield* Effect.never.pipe(
                       Effect.ensuring(
                         Effect.sync(() => {

@@ -496,11 +496,3 @@ export const deriveCycleOperationsStatusResult = (
     ),
     (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
   )
-
-export const deriveCycleOperationsStatus = (
-  projection: CycleOperationsProjection,
-  nowMs: number,
-  maximumAuthority: Authority,
-  thresholds: CycleOperationsThresholds,
-): CycleOperationsStatus =>
-  Result.getOrThrow(deriveCycleOperationsStatusResult(projection, nowMs, maximumAuthority, thresholds))

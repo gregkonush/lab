@@ -4,7 +4,7 @@ import { coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import type { StoredBrokerFee } from '../accounting/broker-fees'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 
 // Synthetic fractional fills and observed debit; these are not account or profitability evidence.
@@ -17,11 +17,11 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
     .map(({ index, side, quantityAtoms }) =>
       Result.getOrThrow(
         prepareAccounting(
-          canonicalHashV1({ syntheticCoinFill: index }),
+          Result.getOrThrow(canonicalHashV1Result({ syntheticCoinFill: index })),
           {
             schemaVersion: 'bayn.fill.v2',
             accountId,
-            intentId: canonicalHashV1({ syntheticCoinIntent: index, accountId, cycleId }),
+            intentId: Result.getOrThrow(canonicalHashV1Result({ syntheticCoinIntent: index, accountId, cycleId })),
             fillId: `synthetic-coin-fill-${index}`,
             brokerOrderId: `synthetic-coin-order-${index}`,
             clientOrderId: `synthetic-coin-client-${index}`,
@@ -101,7 +101,7 @@ export const coinActivity = (quantityAtoms = '82625', accountId = 'episode-accou
       contentHash: 'a'.repeat(64),
       observedAt: '2026-09-18T16:00:00.000Z',
     },
-    content_hash: canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data }),
+    content_hash: Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data })),
     ledger_plan_hash: Result.getOrThrow(
       hashLedgerPlanResult(coinFeeLedgerPlan(data.accountId, data.activityId, 'ETH/USD', '0', 7_001)),
     ),

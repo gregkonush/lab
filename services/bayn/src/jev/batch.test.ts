@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   decodeJevBatchPlan,
   decodeJevBatchResult,
@@ -33,7 +33,9 @@ const planMaterial = {
   observedAt: request.observedAt,
   expiresAt: request.expiresAt,
   benchmarkSymbol: 'SPY',
-  questionSetHash: canonicalHashV1({ model: request.request.model, questions: request.request.questions }),
+  questionSetHash: Result.getOrThrow(
+    canonicalHashV1Result({ model: request.request.model, questions: request.request.questions }),
+  ),
   candidates: [
     { symbol: 'AAPL', status: JevCandidatePlanStatus.Requested, request },
     { symbol: 'AMZN', status: JevCandidatePlanStatus.Requested, request: second },
@@ -92,7 +94,7 @@ describe('complete Jev batch evidence', () => {
       unfavorable: 0.46,
       unclear: 0.08,
     }
-    tied.responseHash = canonicalHashV1(tied.response)
+    tied.responseHash = Result.getOrThrow(canonicalHashV1Result(tied.response))
     const result = Result.getOrThrow(
       makeJevBatchResult(
         plan,
@@ -176,9 +178,11 @@ describe('complete Jev batch evidence', () => {
       [{ symbol: 'AAPL', status: JevCandidateResultStatus.Excluded }, ...material.candidates.slice(1)],
     ]) {
       const changed = { ...material, candidates }
-      expect(Result.isFailure(decodeJevBatchResult(plan, { ...changed, resultHash: canonicalHashV1(changed) }))).toBe(
-        true,
-      )
+      expect(
+        Result.isFailure(
+          decodeJevBatchResult(plan, { ...changed, resultHash: Result.getOrThrow(canonicalHashV1Result(changed)) }),
+        ),
+      ).toBe(true)
     }
   })
 

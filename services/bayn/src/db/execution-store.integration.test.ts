@@ -29,7 +29,7 @@ import {
 } from '../execution/contracts'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
@@ -78,7 +78,7 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const accountId = 'paper-account-execution-store'
 const observedAt = '2026-08-28T14:31:00.000Z'
 const occurredAt = '2026-08-28T14:30:59.000Z'
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const reconcileSnapshot = (store: ReconciliationStoreShape, snapshot: BrokerSnapshot) =>
   store.reconcile(snapshot.account.accountId, Effect.succeed(snapshot)).pipe(Effect.map((result) => result.persisted))
 const brokerIdentity = Result.getOrThrow(
@@ -159,7 +159,7 @@ const accountEvent = (
     broker: Broker.Alpaca,
     accountId,
     sourceEventId,
-    contentHash: canonicalHashV1({ sourceEventId, account }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceEventId, account })),
     occurredAt,
     observedAt,
     account,
@@ -169,7 +169,11 @@ const accountEvent = (
 const flatAccountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => {
   const event = accountEvent('flat-account-response')
   const account = { ...event.account, equityMicros: event.account.cashMicros }
-  return { ...event, contentHash: canonicalHashV1({ sourceEventId: event.sourceEventId, account }), account }
+  return {
+    ...event,
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceEventId: event.sourceEventId, account })),
+    account,
+  }
 }
 
 const order = () => ({
@@ -194,7 +198,7 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
     broker: Broker.Alpaca,
     accountId,
     sourceEventId: 'order-observation-1',
-    contentHash: canonicalHashV1(observedOrder),
+    contentHash: Result.getOrThrow(canonicalHashV1Result(observedOrder)),
     occurredAt,
     observedAt,
     order: observedOrder,
@@ -224,7 +228,7 @@ const positionEvent = (
     broker: Broker.Alpaca,
     accountId,
     sourceEventId: `position:${sourceHash}:${observedAt}:${symbol}`,
-    contentHash: canonicalHashV1({ sourceHash, position }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash, position })),
     occurredAt: observedAt,
     observedAt,
     position,
@@ -259,7 +263,7 @@ const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicr
     accountId,
     sourceEventId: id,
     sourceTimestamp: timestamp,
-    contentHash: canonicalHashV1({ fill, timestamp }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ fill, timestamp })),
     occurredAt,
     observedAt,
     fill,
@@ -553,7 +557,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             const accountReceipt = yield* events.ingest({
               ...raw,
               sourceEventId: `fee-cut:${at}`,
-              contentHash: canonicalHashV1(account),
+              contentHash: Result.getOrThrow(canonicalHashV1Result(account)),
               occurredAt: at,
               observedAt: at,
               account,
@@ -678,7 +682,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         yield* events.ingest({
           ...opening,
           account: openingAccount,
-          contentHash: canonicalHashV1(openingAccount),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(openingAccount)),
           observedAt: openingAt,
           occurredAt: openingAt,
         })
@@ -802,7 +806,11 @@ describePostgres('PostgreSQL execution persistence', () => {
       averageEntryPriceMicros: '100333333',
       costBasisMicros: '301000000',
     }
-    const current: PositionEventInput = { ...legacy, position, contentHash: canonicalHashV1({ sourceHash, position }) }
+    const current: PositionEventInput = {
+      ...legacy,
+      position,
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash, position })),
+    }
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const events = yield* BrokerEventStore
@@ -882,7 +890,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           const accounting = yield* FillAccountingStore
           const base = fillEvent('rounded-crypto-buy', OrderSide.Buy, '1000000000', priceMicros)
           const fill = { ...base.fill, symbol: 'BTC/USD', feeMicros: '0' }
-          yield* accounting.account({ ...base, fill, contentHash: canonicalHashV1(fill) })
+          yield* accounting.account({ ...base, fill, contentHash: Result.getOrThrow(canonicalHashV1Result(fill)) })
           const original =
             yield* sql`SELECT transaction_id,content_hash,cash_delta_micros::text AS cash_delta_micros,ledger_plan_hash
         FROM accounting_transactions`
@@ -1148,7 +1156,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   test('coin fees survive a ledger retry and a fractional close without changing cash or replaying inventory', async () => {
     const buyBase = fillEvent('crypto-buy', OrderSide.Buy, '1000000000', '100000000')
     const buyFill = { ...buyBase.fill, symbol: 'SOL/USD', feeMicros: '0' }
-    const buy = { ...buyBase, fill: buyFill, contentHash: canonicalHashV1(buyFill) }
+    const buy = { ...buyBase, fill: buyFill, contentHash: Result.getOrThrow(canonicalHashV1Result(buyFill)) }
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
@@ -1189,7 +1197,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     const secondBuy = {
       ...secondBase,
       fill: secondFill,
-      contentHash: canonicalHashV1(secondFill),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(secondFill)),
       occurredAt: secondBuyAt,
       observedAt: secondBuyAt,
       sourceTimestamp: Result.getOrThrow(sourceTimestamp(secondBuyAt)),
@@ -1200,7 +1208,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     const sell = {
       ...sellBase,
       fill: sellFill,
-      contentHash: canonicalHashV1(sellFill),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(sellFill)),
       occurredAt: sellAt,
       observedAt: sellAt,
       sourceTimestamp: Result.getOrThrow(sourceTimestamp(sellAt)),
@@ -1302,7 +1310,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           return {
             ...base,
             fill,
-            contentHash: canonicalHashV1(fill),
+            contentHash: Result.getOrThrow(canonicalHashV1Result(fill)),
             occurredAt: at,
             observedAt: at,
             sourceTimestamp: Result.getOrThrow(sourceTimestamp(at)),
@@ -1356,7 +1364,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           broker: Broker.Alpaca,
           accountId,
           sourceEventId: `position:${hash('settlement-net-eth')}:${observedAt}:ETH/USD`,
-          contentHash: canonicalHashV1({ sourceHash: hash('settlement-net-eth'), position }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash: hash('settlement-net-eth'), position })),
           occurredAt: observedAt,
           observedAt,
           position,
@@ -1368,7 +1376,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const acctReceipt = yield* events.ingest({
           ...opening,
           sourceEventId: 'settlement-bought-account',
-          contentHash: canonicalHashV1(acct),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(acct)),
           occurredAt: observedAt,
           observedAt,
           account: acct,
@@ -1425,7 +1433,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const cashReceipt = yield* events.ingest({
           ...opening,
           sourceEventId: 'settlement-sold-account',
-          contentHash: canonicalHashV1(cashAccount),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(cashAccount)),
           occurredAt: sellAt,
           observedAt: sellAt,
           account: cashAccount,
@@ -1447,7 +1455,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                 yield* events.ingest({
                   ...opening,
                   sourceEventId: 'settlement-opening-without-reporting',
-                  contentHash: canonicalHashV1(unknownOpening),
+                  contentHash: Result.getOrThrow(canonicalHashV1Result(unknownOpening)),
                   occurredAt: unknownOpening.observedAt,
                   observedAt: unknownOpening.observedAt,
                   account: unknownOpening,
@@ -1531,7 +1539,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
               VALUES(${accountId},${regulatory.activityId},${regulatory.date},${regulatory.netAmountMicros},${sql.json(regulatory)},${sql.json(readEvidence)},
-                ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...regulatory })},${Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan))},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...regulatory }))},${Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan))},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
               yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
               VALUES(${accrual.accrual_id},${accountId},${regulatory.activityId},200000,200000)`
             }),
@@ -1601,7 +1609,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               Effect.gen(function* () {
                 yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
                 VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
-                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                  ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value }))},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
                 yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
                 VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
               }),
@@ -1619,7 +1627,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                   Effect.gen(function* () {
                     yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
                 VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
-                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                  ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value }))},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
                     yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
                 VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
                   }),
@@ -1803,7 +1811,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           const settledReceipt = yield* events.ingest({
             ...opening,
             sourceEventId: 'after-regulatory-settlement',
-            contentHash: canonicalHashV1(settledAccount),
+            contentHash: Result.getOrThrow(canonicalHashV1Result(settledAccount)),
             occurredAt: reportAt,
             observedAt: reportAt,
             account: settledAccount,

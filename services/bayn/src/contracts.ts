@@ -243,14 +243,6 @@ export const makeStrategyProtocolHashResult = (
     ),
   )
 
-export const decodeFinalizedSnapshot = Schema.decodeUnknownEffect(FinalizedSnapshotProvenanceSchema, StrictParseOptions)
-
-export const decodeEvaluationBounds = Schema.decodeUnknownEffect(EvaluationBoundsSchema, StrictParseOptions)
-
-export const decodeRunIdentity = Schema.decodeUnknownEffect(RunIdentitySchema, StrictParseOptions)
-
-export const decodeRuntimeProvenance = Schema.decodeUnknownEffect(RuntimeProvenanceSchema, StrictParseOptions)
-
 const decodeRunIdentityMaterialResult = Schema.decodeUnknownResult(RunIdentityMaterialSchema, StrictParseOptions)
 const decodeRunIdentityResult = Schema.decodeUnknownResult(RunIdentitySchema, StrictParseOptions)
 const decodeRuntimeProvenanceResult = Schema.decodeUnknownResult(RuntimeProvenanceSchema, StrictParseOptions)
@@ -314,8 +306,5 @@ export const makeRuntimeProvenanceResult = (
       }),
     ),
   )
-
-export const makeRuntimeProvenance = (input: RuntimeProvenanceInput): RuntimeProvenance =>
-  Result.getOrThrow(makeRuntimeProvenanceResult(input))
 
 export { IsoDateSchema, Sha256Schema } from './schemas'

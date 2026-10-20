@@ -10,7 +10,7 @@ import {
 } from '../broker/alpaca-mutations/model'
 import {
   type OrderRequestBody,
-  cancelRequestHash,
+  prepareCancel,
   recordedOrderRequestBody,
   orderPriceBoundaryMicros,
   orderRequestBody,
@@ -386,10 +386,15 @@ export const cancellationIdentity = (
 ): Result.Result<{ readonly brokerOrderId: string; readonly requestHash: string }, ExecutionDecisionFailure> =>
   submitEvent?.brokerOrderId === undefined
     ? Result.fail({ _tag: 'CancellationOrderMissing' })
-    : Result.succeed({
-        brokerOrderId: submitEvent.brokerOrderId,
-        requestHash: cancelRequestHash(submitEvent.brokerOrderId),
-      })
+    : Result.mapError(
+        prepareCancel(submitEvent.brokerOrderId),
+        (cause): ExecutionDecisionFailure => ({
+          _tag: 'OrderCanonicalizationFailed',
+          operation: MutationOperation.Cancel,
+          message: 'cancellation order cannot be represented by a current Alpaca request',
+          cause,
+        }),
+      )
 
 export const decideCancelFailure = (error: BrokerMutationError): CancelPersistenceDecision => {
   const evidence = completeEvidence(error.evidence)
@@ -445,7 +450,9 @@ const recoveryRequestHash = (
           }),
         ),
       )
-    : Result.succeed(event.brokerOrderId === undefined ? undefined : cancelRequestHash(event.brokerOrderId))
+    : event.brokerOrderId === undefined
+      ? Result.succeed(undefined)
+      : Result.map(cancellationIdentity(event), ({ requestHash }) => requestHash)
 
 export const validateRecovery = (
   intent: Intent,

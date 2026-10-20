@@ -5,7 +5,7 @@ import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { config } from '../testing/runtime-fixtures'
@@ -163,5 +163,14 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       },
     },
   }
-  return { input, body, receipt, receiptText, source, calendar, protocol, inputHash: canonicalHashV1(input) }
+  return {
+    input,
+    body,
+    receipt,
+    receiptText,
+    source,
+    calendar,
+    protocol,
+    inputHash: Result.getOrThrow(canonicalHashV1Result(input)),
+  }
 }

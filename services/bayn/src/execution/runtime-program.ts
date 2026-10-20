@@ -60,11 +60,6 @@ export interface ExecutionProgramDependencies {
   readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
 }
 
-export interface ExecutionProgramConstructionFailure {
-  readonly _tag: 'ExecutionProgramRequiresMutationAuthority'
-  readonly brokerAccess: BrokerAccess
-}
-
 interface FinalExecutionCapitalAuthorization {
   readonly limits: ExecutionCapitalLimits
   readonly hardCloseLimits?: Pick<ExecutionCapitalLimits, 'maxOrderNotionalMicros' | 'maxDailyLossMicros'>

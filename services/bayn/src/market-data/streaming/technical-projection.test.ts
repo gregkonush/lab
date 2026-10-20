@@ -6,7 +6,7 @@ import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import rollingFixture from '../features/fixtures/observed-price-window-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { decodeRollingMarketFeature } from '../features/contract'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { IntradayBar, IntradaySnapshotQuery } from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import {
@@ -81,7 +81,7 @@ const rolling = Result.getOrThrow(
   decodeRollingMarketFeature({
     ...rollingFixture,
     material: rollingMaterial,
-    featureId: canonicalHashV1(rollingMaterial),
+    featureId: Result.getOrThrow(canonicalHashV1Result(rollingMaterial)),
     computedAtMs: end + 1000,
   }),
 )
@@ -94,7 +94,7 @@ const calendar = withProviderSessions({
 })
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
-  calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+  calendar: { ...calendar, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
   rangeStartAt: new Date(start).toISOString(),
   rangeEndAt: new Date(end).toISOString(),
   observedAt: new Date(observed).toISOString(),
@@ -235,7 +235,7 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     select(
       incorporateMarketRecord(
         base,
-        record('0', { ...feature, material: wrong, featureId: canonicalHashV1(wrong) }),
+        record('0', { ...feature, material: wrong, featureId: Result.getOrThrow(canonicalHashV1Result(wrong)) }),
         universe,
         end + 2200,
       ),
@@ -249,7 +249,11 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     select(
       incorporateMarketRecord(
         base,
-        record('0', { ...feature, material: corrected, featureId: canonicalHashV1(corrected) }),
+        record('0', {
+          ...feature,
+          material: corrected,
+          featureId: Result.getOrThrow(canonicalHashV1Result(corrected)),
+        }),
         universe,
         end + 2200,
       ),
@@ -277,7 +281,7 @@ test('a new technical revision supersedes the previous value before matching raw
     ...feature.material,
     inputs: feature.material.inputs.map((input, index) => (index === 60 ? { ...input, sourceOffset: '9999' } : input)),
   }
-  const corrected = { ...feature, material, featureId: canonicalHashV1(material) }
+  const corrected = { ...feature, material, featureId: Result.getOrThrow(canonicalHashV1Result(material)) }
   const waiting = incorporateMarketRecord(ready, record('1', corrected), universe, end + 2500)
   expect(select(waiting).technical?.features).toHaveLength(0)
   expect(select(waiting).technical?.unavailableSymbols).toEqual(['AAPL'])
@@ -300,7 +304,7 @@ test('a new technical revision supersedes the previous value before matching raw
       value: JSON.stringify({
         ...rolling,
         material: updatedRollingMaterial,
-        featureId: canonicalHashV1(updatedRollingMaterial),
+        featureId: Result.getOrThrow(canonicalHashV1Result(updatedRollingMaterial)),
       }),
     },
     universe,

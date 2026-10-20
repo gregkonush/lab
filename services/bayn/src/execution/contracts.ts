@@ -330,7 +330,6 @@ export const BrokerErrorSchema = Schema.Struct({
   mutationOutcome: Schema.Enum(MutationOutcome),
   observedAt: UtcInstant,
 })
-export type BrokerError = typeof BrokerErrorSchema.Type
 
 const RateLimitBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRateLimitSchemaVersion),
@@ -347,7 +346,6 @@ export const RateLimitSchema = RateLimitBase.check(
       : [{ path: ['remaining'], issue: 'must not exceed limit' }],
   ),
 )
-export type RateLimit = typeof RateLimitSchema.Type
 
 const SourceFields = {
   schemaVersion: Schema.Literal(legacyBrokerEventSchemaVersion),
@@ -420,7 +418,6 @@ export const BrokerEventSchema = BrokerEventBase.check(
     return issues
   }),
 )
-export type BrokerEvent = typeof BrokerEventSchema.Type
 
 const intentFields = {
   intentId: Sha256,
@@ -519,54 +516,6 @@ export type ReferenceIntent = typeof ReferenceIntentSchema.Type
 export const IntentSchema = IntentBase.check(Schema.makeFilter(intentContractIssues))
 export type Intent = typeof IntentSchema.Type
 
-const allowedTransitions: Readonly<Record<IntentState, readonly IntentState[]>> = {
-  [IntentState.Planned]: [IntentState.Approved, IntentState.Terminal],
-  [IntentState.Approved]: [IntentState.IoStarted, IntentState.Terminal],
-  [IntentState.IoStarted]: [IntentState.Acknowledged, IntentState.Unknown, IntentState.Terminal],
-  [IntentState.Acknowledged]: [IntentState.Terminal],
-  [IntentState.Unknown]: [IntentState.Recovered],
-  [IntentState.Recovered]: [IntentState.Acknowledged, IntentState.Terminal],
-  [IntentState.Terminal]: [],
-}
-
-const allowedTerminalOutcomes: Readonly<Partial<Record<IntentState, readonly TerminalOutcome[]>>> = {
-  [IntentState.Planned]: [TerminalOutcome.Blocked],
-  [IntentState.Approved]: [TerminalOutcome.Blocked, TerminalOutcome.Canceled],
-  [IntentState.IoStarted]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-  [IntentState.Acknowledged]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-  [IntentState.Recovered]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-}
-
-export interface IntentTransitionInput {
-  readonly from: IntentState
-  readonly to: IntentState
-  readonly terminalOutcome?: TerminalOutcome
-}
-
-export const isIntentTransitionAllowed = (input: IntentTransitionInput): boolean => {
-  if (!allowedTransitions[input.from].includes(input.to)) return false
-  if (input.to !== IntentState.Terminal) return input.terminalOutcome === undefined
-  return (
-    input.terminalOutcome !== undefined &&
-    (allowedTerminalOutcomes[input.from]?.includes(input.terminalOutcome) ?? false)
-  )
-}
-
 const RiskInputBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskInputSchemaVersion),
   inputHash: Sha256,
@@ -585,7 +534,6 @@ export const RiskInputSchema = RiskInputBase.check(
     input.freshUntil > input.evaluatedAt ? [] : [{ path: ['freshUntil'], issue: 'must follow evaluatedAt' }],
   ),
 )
-export type RiskInput = typeof RiskInputSchema.Type
 
 const RiskDecisionBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskDecisionSchemaVersion),
@@ -713,7 +661,6 @@ export const CapitalGrantProofBindingSchema = Schema.Struct({
   riskPolicyHash: Sha256,
   proofPlanHash: Sha256,
 })
-export type CapitalGrantProofBinding = typeof CapitalGrantProofBindingSchema.Type
 
 export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyResearchGrantProofSchemaVersion),
@@ -986,25 +933,13 @@ export type AuthorityState = typeof AuthorityStateSchema.Type
 
 export const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, StrictParseOptions)
 
-export const decodeAccountSnapshot = Schema.decodeUnknownEffect(AccountSnapshotSchema, StrictParseOptions)
-
 export const decodePosition = Schema.decodeUnknownEffect(PositionSchema, StrictParseOptions)
 
 export const decodeOrder = Schema.decodeUnknownEffect(OrderSchema, StrictParseOptions)
 
 export const decodeFill = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
 
-export const decodeBrokerError = Schema.decodeUnknownEffect(BrokerErrorSchema, StrictParseOptions)
-
-export const decodeRateLimit = Schema.decodeUnknownEffect(RateLimitSchema, StrictParseOptions)
-
-export const decodeReferenceIntent = Schema.decodeUnknownEffect(ReferenceIntentSchema, StrictParseOptions)
-
 export const decodeIntent = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
-
-export const decodeRiskInput = Schema.decodeUnknownEffect(RiskInputSchema, StrictParseOptions)
-
-export const decodeRiskDecision = Schema.decodeUnknownEffect(RiskDecisionSchema, StrictParseOptions)
 
 export const decodeAccountingReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
 
@@ -1012,17 +947,10 @@ export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, Stric
 
 export const decodeReconciliation = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
 
-export const decodeCapitalGrantProofBinding = Schema.decodeUnknownEffect(
-  CapitalGrantProofBindingSchema,
-  StrictParseOptions,
-)
-
 export const decodeResearchCapitalGrantProofBinding = Schema.decodeUnknownEffect(
   ResearchCapitalGrantProofBindingSchema,
   StrictParseOptions,
 )
-
-export const decodeCapitalGrantGeneration = Schema.decodeUnknownEffect(CapitalGrantGenerationSchema, StrictParseOptions)
 
 export const decodeResearchCapitalGrantGeneration = Schema.decodeUnknownEffect(
   ResearchCapitalGrantGenerationSchema,
