@@ -8,7 +8,7 @@ import { Result } from 'effect'
 
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { receivedCryptoFee, calculateSessionFees } from '../strategy/execution-model/fees'
-import { notionalMicros } from '../execution-model'
+import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { createReplayLedger, applyReplayFill } from './ledger'
 import { replayFeeActivity } from './broker-fees'
 import { replayInstrument, simulateIntradayReplayExecution } from './execution-core'
@@ -161,7 +161,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
 
 test('continuous frozen comparison registers five consecutive UTC days including weekends without a midnight close', () => {
   const registration = {
-    schemaVersion: 'bayn.matched-entry-registration.v1' as const,
+    schemaVersion: 'bayn.matched-entry-registration.v2' as const,
     definitionHash: 'a'.repeat(64),
     sourceRevision: 'b'.repeat(40),
     protocolHash: 'c'.repeat(64),

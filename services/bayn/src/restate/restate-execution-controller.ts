@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
-import { maximumConsistencyDelayMs } from '../execution/mutations'
+import { maximumConsistencyDelayMs } from '../execution/mutations/model'
 import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
@@ -639,20 +639,24 @@ export const makeBaynExecutionController = (
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
           // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
-          const scheduleAt =
-            result.outcome.nextWakeAt === undefined ? undefined : transportClock.currentTimeMillisUnsafe()
+          // Ordinary polling waits retain the same due-time contract; projection and journaling must consume their
+          // delay budget too, rather than starting a fresh wait after the persisted deadline has already passed.
+          const scheduleAt = transportClock.currentTimeMillisUnsafe()
           const completionDelay =
-            completed.nextDueAt === undefined || scheduleAt === undefined
+            completed.nextDueAt === undefined
               ? result.outcome.nextDelayMs
               : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
           scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
+            completionToScheduleMs: scheduleAt - Date.parse(result.completedAt),
             controllerKey: ctx.key,
             epoch: completed.epoch,
             invocationId: ctx.request().id,
             nextSequence: completed.nextSequence,
             outcome: result.outcome._tag,
             receiptHash: result.outcome.receiptHash,
+            requestedNextDelayMs: result.outcome.nextDelayMs,
+            scheduledNextDelayMs: completionDelay,
             sourceRevision: completed.sourceRevision,
           })
         },

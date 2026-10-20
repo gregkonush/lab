@@ -4,7 +4,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
 import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from '../accounting/domain'
-import type { FeeActivity } from '../broker/alpaca'
+import type { FeeActivity } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { JournalService } from '../ledger'

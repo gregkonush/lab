@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { provideTestLayer } from './effect-test-support'
 import { OrderSide, type Fill } from './execution/contracts'
 import {

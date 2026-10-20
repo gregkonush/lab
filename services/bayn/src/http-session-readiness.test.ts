@@ -2,7 +2,7 @@ import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { DecisionReadinessReason, snapshotReadiness } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome } from './execution/controller-status'
@@ -357,6 +357,110 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
   })
 })
 
+const protectedAdmissionState = (): RuntimeState => {
+  const checkedAt = '2026-10-01T20:01:00.000Z'
+  const state = sessionState(checkedAt)
+  const current = state.cycle.current
+  if (current === null) throw new Error('fixture cycle missing')
+  return {
+    ...state,
+    cycle: {
+      ...state.cycle,
+      current: null,
+      last: {
+        ...current,
+        phase: CycleState.Blocked,
+        terminalReason: CycleTerminalReason.UnusedEntryExpired,
+        terminalAt: '2026-10-01T20:00:00.000Z',
+      },
+      unfinishedCycleCount: 0,
+    },
+    autonomousCycleLoop: {
+      ...state.autonomousCycleLoop,
+      lastPass: {
+        result: 'SUCCESS',
+        outcome: 'ADMISSION_WAITING',
+        observedAt: checkedAt,
+        readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        admissionProtection: {
+          authorityGenerationHash: 'b'.repeat(64),
+          authorityUpdatedAt: checkedAt,
+          reconciliationId: 'd'.repeat(64),
+          tradingDate: '2026-10-01',
+          validUntil: '2026-10-01T20:02:00.000Z',
+        },
+      },
+    },
+  }
+}
+
+test('current cycle-free account protection takes precedence over historical closed cycles and absent history', () => {
+  const state = protectedAdmissionState()
+  for (const candidate of [state, { ...state, cycle: { ...state.cycle, last: null } }]) {
+    expect(statusResponseDecision(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      body: {
+        operational: { ready: true },
+        executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
+      },
+    })
+    const metrics = renderPrometheusMetrics(candidate, config, provenance, config.build.verification)
+    expect(metrics).toContain('bayn_execution_session_condition{condition="blocked"} 1\n')
+    expect(metrics).toContain('bayn_execution_session_ready 0\n')
+  }
+})
+
+test('expired or superseded cycle-free protection cannot override current session facts', () => {
+  const state = protectedAdmissionState()
+  const pass = state.autonomousCycleLoop.lastPass
+  if (pass?.result !== 'SUCCESS' || pass.admissionProtection === undefined) throw new Error('fixture proof missing')
+  for (const admissionProtection of [
+    { ...pass.admissionProtection, authorityGenerationHash: 'f'.repeat(64) },
+    { ...pass.admissionProtection, authorityUpdatedAt: '2026-10-01T20:01:00.000001Z' },
+    { ...pass.admissionProtection, reconciliationId: 'f'.repeat(64) },
+    { ...pass.admissionProtection, tradingDate: '2026-09-30' as const },
+    { ...pass.admissionProtection, validUntil: pass.observedAt },
+  ]) {
+    const candidate = {
+      ...state,
+      autonomousCycleLoop: { ...state.autonomousCycleLoop, lastPass: { ...pass, admissionProtection } },
+    }
+    expect(statusResponseDecision(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      body: { executionSession: { condition: 'CLOSED', ready: false } },
+    })
+  }
+  const future = {
+    ...state,
+    autonomousCycleLoop: {
+      ...state.autonomousCycleLoop,
+      lastPass: { ...pass, observedAt: '2026-10-01T20:01:00.001Z' },
+    },
+  }
+  expect(statusResponseDecision(future, config.execution, provenance, config.build.verification)).toMatchObject({
+    body: { executionSession: { condition: 'CLOSED', ready: false } },
+  })
+  const last = state.cycle.last
+  if (last === null) throw new Error('fixture cycle missing')
+  const executing = {
+    ...state,
+    cycle: {
+      ...state.cycle,
+      current: {
+        ...last,
+        phase: CycleState.Active,
+        decisionHash: 'a'.repeat(64),
+        terminalReason: null,
+        terminalAt: null,
+        submissionCutoffAt: '2026-10-01T20:55:00.000Z',
+        executionCloseAt: '2026-10-01T21:00:00.000Z',
+      },
+      unfinishedCycleCount: 1,
+    },
+  }
+  expect(statusResponseDecision(executing, config.execution, provenance, config.build.verification)).toMatchObject({
+    body: { executionSession: { condition: 'EXECUTING', ready: true } },
+  })
+})
+
 test('controller startup without a durable completion cannot establish session readiness', () => {
   const state = sessionState()
   const controller = state.executionController
@@ -471,6 +575,7 @@ test('an unused entry expiry reports rearming during the market rotation cooldow
 
 test.each([
   [null, 'AWAITING_DECISION', true],
+  [DecisionReadinessReason.AccountProtection, 'BLOCKED', false],
   [DecisionReadinessReason.SnapshotUnavailable, 'INPUT_UNAVAILABLE', false],
   [DecisionReadinessReason.InferenceUnavailable, 'EVALUATION_UNAVAILABLE', false],
 ] as const)(
@@ -518,6 +623,27 @@ test.each([
     })
   },
 )
+
+test('account protection takes precedence over equity first-minute warmup', () => {
+  const state = sessionState('2026-10-01T13:30:10.000Z')
+  expectSession(
+    {
+      ...state,
+      autonomousCycleLoop: {
+        ...state.autonomousCycleLoop,
+        lastPass: {
+          result: 'SUCCESS',
+          outcome: 'RECOVERED',
+          recoveryAction: 'WAITING',
+          observedAt: state.health.checkedAt ?? '',
+          readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+        },
+      },
+    },
+    'BLOCKED',
+    false,
+  )
+})
 
 test('equity admission uses the later of the first completed minute and submission opening', () => {
   const state = sessionState('2026-10-01T13:45:00.000Z')

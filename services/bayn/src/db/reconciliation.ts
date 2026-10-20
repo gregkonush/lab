@@ -3,8 +3,8 @@ import { databaseUtcInstant, postgresWallClock, type DatabaseClock } from './clo
 import { Data, Effect, Option, Result, Schema } from 'effect'
 
 import type { AccountingTransaction } from '../accounting/schema'
-import { MutationOperation } from '../broker/alpaca-mutations'
-import type { RuntimeConfig } from '../config'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import type { RuntimeConfig } from '../config/model'
 import { WriterFenceError, type WriterFenceService } from '../execution/writer-fence'
 import type { JournalService } from '../ledger'
 import {
@@ -32,7 +32,7 @@ import {
   type ReconciliationComparison,
   type ReconciliationMetrics,
   type ReconciliationRiskContext,
-} from '../reconciliation'
+} from '../simulation-reconciliation/broker-model'
 import {
   isExecutionMandateFailureRestriction,
   isExecutionMandateRecoveryRestriction,
@@ -46,7 +46,7 @@ import {
   UtcDatabaseInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { MutationEventType } from '../execution/mutations'
+import { MutationEventType } from '../execution/mutations/model'
 import {
   AccountingReceiptRowSchema,
   AccountingTransactionRowSchema,
@@ -77,7 +77,7 @@ import {
   type FeeAccrualRecords,
 } from './fee-accruals'
 import type { FeeAccrual } from '../accounting/fee-accrual'
-import type { FeeActivity } from '../broker/alpaca'
+import type { FeeActivity } from '../broker/alpaca/model'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import type { BrokerStateVersion } from '../execution/broker-state-cache'
 import { withObservedStage } from '../telemetry'

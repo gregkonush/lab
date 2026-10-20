@@ -26,6 +26,7 @@ import { matchedCommittedDecisionFixture } from './matched-entry.test-support'
 import { SignalStudyFailure } from './signal-study'
 import { CycleState } from '../cycle/model'
 import { JevPurpose } from '../jev/portfolio'
+import { defaultJevProtocolDocument } from '../jev/protocol'
 
 const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input.inventory[0]?.sessionDate ?? '') => {
   const batch = data.input.study.batches[0]
@@ -87,8 +88,11 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   }
 }
 
-const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => {
-  const base = nativeJevFixture()
+const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, profitTargetNetBps = 100) => {
+  const base = nativeJevFixture(JevPurpose.Entry, undefined, 'jev-native-test', {
+    ...defaultJevProtocolDocument,
+    profitTargetNetBps,
+  })
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(
     normalizeMarketCalendarResult(
@@ -194,7 +198,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number) => 
     ),
   }
   const registration = {
-    schemaVersion: 'bayn.matched-entry-registration.v1',
+    schemaVersion: 'bayn.matched-entry-registration.v2',
     definitionHash: canonicalHashV1(matchedEntryDefinition),
     sourceRevision: 'a'.repeat(40),
     protocolHash: canonicalHashV1(base.protocol),
@@ -784,7 +788,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v5')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v6')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
@@ -807,10 +811,11 @@ test('offline command reproduces native observations, prices shared lifecycle on
         dataRole: MatchedDataRole.Prospective,
         registeredAt: '2026-09-04T13:30:00.000Z',
       }
-      const { sourceComparison: _sourceComparison, ...currentDefinition } = matchedEntryDefinition
       const oldDefinitionHash = canonicalHashV1({
-        ...currentDefinition,
-        schemaVersion: 'bayn.matched-entry-definition.v1',
+        ...matchedEntryDefinition,
+        schemaVersion: 'bayn.matched-entry-definition.v5',
+        lifecycle:
+          'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
       })
       const oldRegistration = { ...data.registration, definitionHash: oldDefinitionHash }
       const oldResult = yield* runMatchedEntryStudy(data.input, oldRegistration, arrivals, data.receipt).pipe(
@@ -964,3 +969,17 @@ test.each(['timeout', 'interruption', 'defect'] as const)(
     )
   },
 )
+
+test('matched studies reject a registered protocol with a different net-profit target', async () => {
+  const data = fixture(undefined, undefined, 99)
+  const result = await Effect.runPromise(
+    runMatchedEntryStudy(data.input, data.registration, '/unused-matched-arrivals', data.receipt).pipe(
+      Effect.result,
+      Effect.scoped,
+      Effect.provide(NodeServices.layer),
+    ),
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result))
+    expect(result.failure).toMatchObject({ message: 'Matched lifecycle requires the frozen protective protocol' })
+})

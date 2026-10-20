@@ -21,7 +21,7 @@ import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
-import { readForwardPerformancePostgres } from './postgres'
+import { readForwardPerformancePostgres } from './postgres/read'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,
@@ -751,7 +751,7 @@ describe('forward performance read program', () => {
         ),
       ),
     )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v3')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v4')
     expect(expenseWriterFence).toBe(writerFence)
     expect(report.receipt).toEqual(receipt)
     expect(report.positionEpisodes.status).toBe('UNDETERMINED')
@@ -998,7 +998,7 @@ describe('forward performance read program', () => {
       Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
     expect(report.positionEpisodes).toMatchObject({
-      schemaVersion: 'bayn.position-episode-evidence.v3',
+      schemaVersion: 'bayn.position-episode-evidence.v4',
       status: 'MEASURED',
       completedCount: 0,
       crossScopeCount: 1,

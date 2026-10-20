@@ -3,13 +3,13 @@ import { Chunk, Effect, HashSet, Result, Schedule, pipe } from 'effect'
 import {
   OrderCollection,
   SortDirection,
-  type BrokerReadError,
   type BrokerReadShape,
   type FillActivity,
   type FeeActivity,
   type Order as BrokerOrder,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
+import { type BrokerReadError } from '../broker/alpaca/failures'
 import { canonicalHashV1Result } from '../hash'
 import {
   fillsPageSize,

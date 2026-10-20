@@ -1,3 +1,4 @@
+import { jevProfitTargetProceeds } from './exit-policy'
 import { Result } from 'effect'
 
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
@@ -57,7 +58,17 @@ export const jevEntryEconomics = (input: {
       upperBidMicros: maximumEntryPrice * 2n,
     })
     const exit = yield* jevLiquidationValue({ ...liquidation, bidMicros: breakEvenBid })
+    const minimumNetProceeds = jevProfitTargetProceeds(acquisitionCost, protocol.profitTargetNetBps)
+    const profitTargetBid = yield* jevBreakEvenExitBid({
+      ...liquidation,
+      acquisitionCostMicros: minimumNetProceeds,
+      upperBidMicros: maximumEntryPrice * 2n,
+    })
     return {
+      profitTargetExitBidUsd: Number(profitTargetBid) / 1_000_000,
+      profitTargetNetBps: protocol.profitTargetNetBps,
+      protectiveStopBps: protocol.protectiveStopBps,
+      maximumHoldingMinutes: protocol.maximumHoldingMinutes,
       maximumEntryPriceUsd: Number(maximumEntryPrice) / 1_000_000,
       assumedEntryQuantity: Number(quantity) / Number(quantityScale),
       estimatedEntryFeesUsd: Number(entryFees.totalMicros) / 1_000_000,

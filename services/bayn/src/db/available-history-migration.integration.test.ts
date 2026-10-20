@@ -1,3 +1,5 @@
+import entryBoundExitsMigration from '../../migrations/0126_entry_bound_exits'
+import marketManagementJudgmentMigration from '../../migrations/0125_market_management_judgment'
 import focusedJevJudgmentsMigration from '../../migrations/0124_focused_jev_judgments'
 import setupActionProtocolMigration from '../../migrations/0123_setup_action_protocol'
 import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
@@ -31,6 +33,13 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  { label: 'jev-native-exits', id: 126, protocol: 'bayn.jev.protocol.v13', migration: entryBoundExitsMigration },
+  {
+    label: 'jev-market-management',
+    id: 125,
+    protocol: 'bayn.jev.protocol.v12',
+    migration: marketManagementJudgmentMigration,
+  },
   {
     label: 'jev-focused-judgments',
     id: 124,
@@ -96,8 +105,22 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 124) {
-      test('recovers retained v10 authority through the native OBSERVE interpreter after cutover', async () => {
+    if (id === 124 || id === 125) {
+      const retired =
+        id === 125
+          ? {
+              protocol: 'bayn.jev.protocol.v11' as const,
+              behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
+              parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
+              protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+            }
+          : {
+              protocol: 'bayn.jev.protocol.v10' as const,
+              behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
+              parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
+              protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
+            }
+      test('recovers the retained prior authority through native OBSERVE after cutover', async () => {
         await runtime.runPromise(
           Effect.gen(function* () {
             const sql = yield* PgClient.PgClient
@@ -133,15 +156,13 @@ for (const { label, id, protocol, migration } of [
               VALUES(${retained},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
                 ${original},'PAPER',2,${broker.schemaVersion},${broker.identityHash},${broker.provider},${broker.environment},
                 ${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
-                '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
-                '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
-                'bayn.jev.protocol.v10',${broker.accountId},${'3'.repeat(64)},${'4'.repeat(64)},${reconciliation},
-                ${content},${'5'.repeat(64)},'48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',clock_timestamp())`
+                ${retired.behavior},${retired.parameters},${retired.protocol},${broker.accountId},${'3'.repeat(64)},${'4'.repeat(64)},${reconciliation},
+                ${content},${'5'.repeat(64)},${retired.protocolHash},clock_timestamp())`
             yield* sql`UPDATE authority_state SET generation_hash=${retained},maximum='PAPER',effective='PAPER',
               kill_state='CLEAR',reason=NULL,version=2,updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${retained}) WHERE singleton`
             yield* sql.withTransaction(migration)
             expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
-              'bayn.jev.protocol.v10',
+              retired.protocol,
             )
             const staleRecovery = yield* ensure({ generationHash: successor, maximum: Authority.Observe }).pipe(
               Effect.result,
@@ -160,7 +181,7 @@ for (const { label, id, protocol, migration } of [
               kill: 'CLEAR',
             })
             expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
-              'bayn.jev.protocol.v10',
+              retired.protocol,
             )
             const retiredWrite = yield* sql
               .withTransaction(

@@ -49,7 +49,7 @@ import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerState, type Rep
 import type { CycleRunResult } from '../cycle/runner/model'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayTimeline, driveReplaySession } from './session'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import type { RecordAutonomousCyclePass } from '../app'
 import type { OperationalError } from '../errors'
 import { postgresMigrations } from '../db/postgres-migrations'

@@ -1,7 +1,7 @@
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
 import { Data, Effect, Result, Scope } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { assembleAccountPlan } from '../ledger/decisions'
 import { readAccountLedger } from '../ledger/account-read'
 import {

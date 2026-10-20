@@ -86,3 +86,41 @@ test('retains a broker-cache wait without inventing a recovered cycle', () => {
     false,
   )
 })
+
+test('retains a cycle-free admission wait with its exact evidence clock even when completion crosses expiry', () => {
+  const observation = {
+    outcome: 'SUCCEEDED',
+    observedAt: '2026-09-04T14:31:00.001Z',
+    result: {
+      outcome: 'ADMISSION_WAITING',
+      observedAt: '2026-09-04T14:30:02.000Z',
+      readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+      admissionProtection: {
+        authorityGenerationHash: 'a'.repeat(64),
+        authorityUpdatedAt: '2026-09-04T14:29:00.123456Z',
+        reconciliationId: 'b'.repeat(64),
+        tradingDate: '2026-09-04',
+        validUntil: '2026-09-04T14:31:00.000Z',
+      },
+    },
+  } as const satisfies CyclePassObservation
+  const retained = retainAutonomousCyclePassObservation(observation)
+  expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(retained)).toEqual(retained)
+  expect(retained).toEqual({ result: 'SUCCESS', ...observation.result })
+  expect(cyclePassLogFacts(observation)).toMatchObject({
+    level: 'INFO',
+    annotations: { outcome: 'ADMISSION_WAITING', reconciliationId: 'b'.repeat(64) },
+  })
+  for (const invalid of [
+    { ...retained, admissionProtection: undefined },
+    { ...retained, recoveryAction: 'WAITING' },
+    { ...retained, waitReason: 'BROKER_OBSERVATION_PENDING' },
+    { ...retained, readiness: { reason: DecisionReadinessReason.SnapshotUnavailable, message: 'source unavailable' } },
+    { ...retained, outcome: 'RECOVERED', recoveryAction: 'WAITING' },
+    {
+      ...retained,
+      admissionProtection: { ...observation.result.admissionProtection, validUntil: observation.result.observedAt },
+    },
+  ])
+    expect(Schema.is(RetainedAutonomousCyclePassObservationSchema)(invalid)).toBe(false)
+})

@@ -2,15 +2,15 @@ import { expect, test } from 'bun:test'
 import { Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { canonicalHashV1 } from '../../hash'
 import { nativeJevFixture } from '../../jev/native.test-support'
 import { executionMarketDataBinding } from '../../observe-composition/intraday-market-data'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
+import { TargetPlanReason, TargetPlanStatus } from '../../target-planner/index'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
-import { selectCycleRecovery } from '../recovery'
-import { CycleStore, type CycleStoreShape } from '../store'
+import { selectCycleRecovery } from './recovery-selection'
+import { CycleStore, type CycleStoreShape } from '../store/model'
 import { decideBlock, decideDecisionBinding, makeInitialCycle } from '../store/decisions'
 import { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'
 
@@ -112,7 +112,6 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     const store: CycleStoreShape = {
       read: forbidden,
       readOldestUnfinished: forbidden,
-      bindSnapshot: forbidden,
       activate: forbidden,
       finish: forbidden,
       block: forbidden,
