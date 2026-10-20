@@ -92,6 +92,17 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
         return input.mode === 'Mutation' ? 'Continue' : 'Rebind'
       return 'Hold'
     }
+    const settle = Effect.gen(function* () {
+      const recovery = yield* advanceRestrictedGenerationRecovery(
+        Effect.void,
+        input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
+      )
+      const authority = yield* readAuthority
+      const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, authority.generationHash)
+      const changed = step._tag !== 'Waiting'
+      if (changed) yield* Deferred.succeed(rebind, undefined)
+      return { authority, changed }
+    })
     const advance = Effect.gen(function* () {
       let cycleInProgress = false
       return yield* runRestateAdvanceWithinTimeout(
@@ -115,19 +126,13 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
             } satisfies RecoveryFirstCycleAdvance
           }
           if (input.mode === 'CloseOnly') {
-            const recovery = yield* advanceRestrictedGenerationRecovery(
-              Effect.void,
-              input.settle.pipe(withObservedStage('bayn.execution.generation.settle')),
-            )
-            const current = yield* readAuthority
-            const step = recognizeRestrictedGenerationRebind(recovery, input.generationHash, current.generationHash)
-            if (step._tag !== 'Waiting') {
-              yield* Deferred.succeed(rebind, undefined)
+            const recovery = yield* settle
+            if (recovery.changed) {
               return {
                 observation: { result: 'SUCCESS', observedAt: yield* currentUtcInstant, outcome: 'RECOVERED' },
               } satisfies RecoveryFirstCycleAdvance
             }
-            if (disposition(current) === 'Hold') {
+            if (disposition(recovery.authority) === 'Hold') {
               yield* input.reconcileWhenHeld.pipe(withObservedStage('bayn.execution.generation.reconcile-held'))
               return {
                 observation: {
@@ -145,6 +150,7 @@ export const makeGenerationCycleDriver = <R>(input: GenerationCycleInput, driver
           cycleInProgress = false
           const after = disposition(yield* readAuthority)
           if (after === 'Rebind') yield* Deferred.succeed(rebind, undefined)
+          if (after === 'Continue' && input.mode === 'CloseOnly' && advanced.result !== undefined) yield* settle
           return advanced
         }),
         driver.timeoutMs,
