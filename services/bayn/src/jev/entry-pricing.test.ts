@@ -157,19 +157,17 @@ describe('Jev entry execution quote eligibility', () => {
         expect(calls).toEqual({ snapshots: 1, observations: 1, batches: 1 })
       }).pipe(
         Effect.provideService(CandidateObservationStore, {
-          record: (observation) =>
-            Effect.sync(() => {
-              calls.observations += 1
-              latestWindow = Option.some(observation.payload.manifest.rangeEndAt)
-            }),
+          record: () => Effect.die('Observation admission must be owned by the batch store'),
           latestJevWindowEnd: () => Effect.sync(() => latestWindow),
         }),
         Effect.provideService(JevBatchStore, {
           pending: () => Effect.succeed([]),
           read: () => unused,
           finish: () => unused,
-          begin: (plan) =>
+          begin: (plan, observation) =>
             Effect.gen(function* () {
+              calls.observations += 1
+              latestWindow = Option.some(observation.manifest.rangeEndAt)
               calls.batches += 1
               yield* TestClock.adjust(100)
               const now = yield* Clock.currentTimeMillis

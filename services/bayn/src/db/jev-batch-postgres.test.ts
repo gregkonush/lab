@@ -61,7 +61,10 @@ test.each([
         }) as PgClient.PgClient
         yield* TestClock.setTime(observed + scenario.elapsedMs)
         const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-        const result = yield* evaluateJevBatch(plan).pipe(Effect.provideService(JevBatchStore, store), Effect.result)
+        const result = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
+          Effect.provideService(JevBatchStore, store),
+          Effect.result,
+        )
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure).toMatchObject({ _tag: scenario.expectedTag })

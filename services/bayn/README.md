@@ -50,6 +50,11 @@ Missing or expired preflight evidence follows the existing admission and decisio
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
 
+Native Jev admission commits the verified source observation and sealed batch plan in one PostgreSQL transaction
+before any provider call. A rejected or interrupted admission cannot strand a new observation without its plan.
+Candidate claims still commit before inference, and response receipts remain independently durable. The existing
+ten-second inference validity, quote freshness checks, complete-batch requirement and risk limits are unchanged.
+
 Migration 131 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v15 strategy identity.

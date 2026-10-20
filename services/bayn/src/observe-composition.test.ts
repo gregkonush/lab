@@ -1568,9 +1568,10 @@ describe('OBSERVE runtime composition', () => {
                       ? Effect.die('Unexpected batch recovery')
                       : Effect.succeed({ plan: pendingEvidence.batchPlan, result: null })
                   }),
-                begin: (plan) =>
+                begin: (plan, observation) =>
                   Clock.currentTimeMillis.pipe(
                     Effect.map((now) => {
+                      expect(canonicalHashV1Result(observation)).toEqual(Result.succeed(plan.observationHash))
                       calls.batch += 1
                       return {
                         plan,
@@ -1591,7 +1592,7 @@ describe('OBSERVE runtime composition', () => {
       )
       if (mode === 'fresh') {
         expect(Result.isSuccess(result)).toBe(true)
-        expect(calls).toEqual({ signal: 1, pricing: 1, pending: 1, finish: 0, window: 1, record: 1, batch: 1 })
+        expect(calls).toEqual({ signal: 1, pricing: 1, pending: 1, finish: 0, window: 1, record: 0, batch: 1 })
       } else {
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isSuccess(result)) throw new Error('Expected entry observation to remain unavailable')
