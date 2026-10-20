@@ -19,7 +19,7 @@ import {
 } from 'effect'
 import { HttpClient } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
@@ -85,7 +85,7 @@ export const settleCompletedBrokerObservationPoll = <R>(
   )
 
 export const acquireBrokerObservationRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime

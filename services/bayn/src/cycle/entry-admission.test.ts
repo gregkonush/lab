@@ -8,7 +8,7 @@ import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeCycleExecutionPolicyFromModel } from './construction'
 import { unusedEntryExpiresAt } from './entry-admission'
 import { CycleState, CycleTerminalReason } from './model'
-import { selectCycleRecovery } from './recovery'
+import { selectCycleRecovery } from './runner/recovery-selection'
 import {
   canRearmUnusedCycle,
   makeIntradayCycleDraft,

@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Exit, Layer, Logger, References, Tracer } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
@@ -146,7 +146,7 @@ const result = await Effect.runPromise(
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },
-      } as unknown as ApplicationPlanFor<'AutonomousService'>)
+      } as unknown as ApplicationPlan)
       const signal = new AbortController().signal
       const poll = yield* Effect.exit(
         Effect.promise(() =>

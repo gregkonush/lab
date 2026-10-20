@@ -4,13 +4,13 @@ import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
+import { loadConfig } from './config/load'
+import { resolveRuntimeConfig } from './config/resolution'
 import {
-  loadConfig,
-  resolveRuntimeConfig,
   type ParsedRuntimeConfig,
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
-} from './config'
+} from './config/model'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'

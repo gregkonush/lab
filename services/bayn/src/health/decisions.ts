@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import {
   CycleOperationsCondition,
   deriveCycleOperationsStatusResult,

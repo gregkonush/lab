@@ -5,7 +5,7 @@ import { Effect, Result } from 'effect'
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { brokerFeeLedgerPlan, cashSettlementLedgerPlan, prepareAccounting } from '../accounting/domain'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { stableU128 } from '../hash'
 import { assembleAccountPlan } from '../ledger/decisions'

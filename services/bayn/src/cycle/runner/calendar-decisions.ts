@@ -7,7 +7,7 @@ import {
 } from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
-import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
+import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca/model'
 import { intradayDecisionDelaySeconds } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
@@ -19,8 +19,6 @@ import {
 import {
   CycleState,
   CycleTerminalReason,
-  intradayCycleEntryAttemptOrdinal,
-  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
@@ -128,7 +126,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum' | 'jev'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -175,7 +173,6 @@ export const nextIntradayEntryAttemptOrdinal = (
   recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
-    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
     (cycle.state !== CycleState.Completed &&
       cycle.state !== CycleState.NoTrade &&
       !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
@@ -211,7 +208,6 @@ export const canRearmUnusedCycle = (
   observedAt: string,
 ): boolean => {
   if (
-    !isIntradayAutonomousCycle(cycle) ||
     cycle.state !== CycleState.Blocked ||
     cycle.bindings.snapshotId !== undefined ||
     cycle.bindings.decisionHash !== undefined ||
@@ -247,7 +243,7 @@ export const canRearmUnusedCycle = (
       ? { schemaVersion: cycle.window.executionCalendarSchemaVersion, source: cycle.window.executionCalendarSource }
       : observation,
     originalSession,
-    intradayCycleEntryAttemptOrdinal(cycle.identity),
+    cycle.identity.entryAttemptOrdinal,
   )
   if (Result.isFailure(originalDraft)) return false
   return (

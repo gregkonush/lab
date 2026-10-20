@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Cause, Effect, Layer } from 'effect'
 
-import type { LoadedRuntimeConfig } from './config'
+import type { LoadedRuntimeConfig } from './config/model'
 import { PostgresClientLive } from './db/postgres-client'
 import { postgresMigrations } from './db/postgres-migrations'
 import {

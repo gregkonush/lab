@@ -3,7 +3,7 @@ import { trace } from '@opentelemetry/api'
 import { Cause, Effect } from 'effect'
 import { embeddedBuildMetadata } from './build'
 import type { Reconciliation } from './execution/contracts'
-import type { CycleRunnerError } from './cycle/runner'
+import type { CycleRunnerError } from './cycle/runner/model'
 import type { NativeArrivalCaptureError } from './market-data/streaming/native-arrival'
 
 /**

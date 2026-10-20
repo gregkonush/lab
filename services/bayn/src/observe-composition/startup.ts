@@ -1,7 +1,7 @@
 import { Effect, Result, Schema } from 'effect'
 import { BrokerEnvironment } from '../broker/identity'
 import type { AutonomousCycleDriverStartup } from '../app'
-import { makeCycleExecutionPolicyFromModel } from '../cycle'
+import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { AuthorityGenerationStore } from '../db/execution-store'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { OperationalError, operationalError } from '../errors'

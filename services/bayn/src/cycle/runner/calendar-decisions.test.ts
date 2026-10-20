@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 
 import { Effect, Result } from 'effect'
 
-import type { MarketCalendarObservation } from '../../broker/alpaca'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy } from '../construction'
 import { CycleState, decodeAutonomousCycle } from '../model'
 import {
@@ -73,7 +73,7 @@ describe('intraday calendar decisions', () => {
   test('derives a distinct cycle for every session under the same standing mandate', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
-      strategyName: 'intraday-momentum' as const,
+      strategyName: 'jev' as const,
       strategyProtocolHash: '3'.repeat(64),
       accountId: 'sandbox-account',
       executionPolicy: policy,
@@ -98,7 +98,7 @@ describe('intraday calendar decisions', () => {
   test('rearms successive zero-fill attempts until the session cutoff with distinct immutable cycles', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
-      strategyName: 'intraday-momentum' as const,
+      strategyName: 'jev' as const,
       strategyProtocolHash: '3'.repeat(64),
       accountId: 'sandbox-account',
       executionPolicy: policy,

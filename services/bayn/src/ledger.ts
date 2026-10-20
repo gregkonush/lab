@@ -1,6 +1,6 @@
 import { Context, Effect, Layer, Result } from 'effect'
 
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { OperationalError } from './errors'
 import { stableU128 } from './hash'
 import {

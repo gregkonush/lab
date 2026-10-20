@@ -31,7 +31,7 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,

@@ -1,7 +1,7 @@
 import { Clock, Data, Effect, Match, Result } from 'effect'
 
-import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
+import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations/model'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { IntentState, type Intent } from './contracts'
 import {
   cancellationIdentity,
@@ -29,7 +29,7 @@ import {
   type SubmitPersistenceDecision,
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
-import { MutationStore, MutationStoreError, type MutationEvent } from './mutations'
+import { MutationStore, MutationStoreError, type MutationEvent } from './mutations/model'
 import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
 import { Pipeable } from '../pipeable'

@@ -4,9 +4,9 @@ import { Result, pipe } from 'effect'
 
 import { AccountStatus, OrderType, OrderStatus, ReconciliationStatus } from '../execution/contracts'
 import { legacyTargetPlannerInputV1SchemaVersion } from '../execution/legacy-wire'
-import { desiredQuantityAtoms } from '../execution-model'
+import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   canonicalizePlannerInputFailure,

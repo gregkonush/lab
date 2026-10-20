@@ -25,18 +25,15 @@ import { isSnapshotExecutionMarketDataBinding } from '../shadow-decision-contrac
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { Clock, Context, Data, Duration, Effect, Result, Schema } from 'effect'
 import type { AutonomousCycleStartup } from '../app'
-import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type MarketCalendarQuery } from '../broker/alpaca'
+import { BrokerRead, type MarketCalendarQuery } from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
-import { cycleAuthoritySessionDate, isIntradayAutonomousCycle, type AutonomousCycle } from '../cycle'
+import { type AutonomousCycle } from '../cycle/model'
 import { unusedEntryExpiresAt } from '../cycle/entry-admission'
 import { reportCyclePassFailure } from '../error-tracking'
 import { makeStrategyProtocolHashResult } from '../contracts'
-import {
-  CycleDecisionBuildError,
-  CycleRunnerError,
-  marketCalendarQueryFromSession,
-  type CyclePassObservation,
-} from '../cycle/runner'
+import { CycleDecisionBuildError, CycleRunnerError, type CyclePassObservation } from '../cycle/runner/model'
+import { marketCalendarQueryFromSession } from '../cycle/runner/calendar-decisions'
 import { retainAutonomousCyclePassObservation } from '../cycle/runner/pass-decisions'
 import { DecisionReadinessReason, snapshotReadiness, type DecisionReadiness } from '../cycle/runner/readiness'
 import {
@@ -46,7 +43,8 @@ import {
 } from '../execution-session'
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
 import { canonicalHashV1Result } from '../hash'
-import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type PersistedIntradaySnapshotRows } from '../market-data'
+import { IntradaySnapshotPurpose, type IntradaySnapshotQuery } from '../market-data/intraday/model'
+import { type PersistedIntradaySnapshotRows } from '../market-data/intraday/verification'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import {
@@ -65,7 +63,7 @@ import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { isQuoteBoundExecutionModel, type CycleExecutionModel } from '../execution-model-contract'
 import { legacyRiskStateSchemaVersion } from '../execution/legacy-wire'
 import { runOnce, type ReconciliationPassResult } from '../reconciler'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import {
   accountEntryProtectionReasons,
   BrokerMode,
@@ -105,7 +103,7 @@ import {
   type TargetPlannerInput,
   type TargetPlannerFailure,
   type TargetPlanResult,
-} from '../target-planner'
+} from '../target-planner/index'
 import { strategyDefinition, type StrategyRuntime } from '../strategy'
 import type { RuntimeStrategyDecision } from '../strategy/runtime-decision'
 import type { DecisionPlan, IsoDate } from '../types'
@@ -274,7 +272,7 @@ export type ObserveDecisionInput<R = never> = {
   /** Refresh before pricing when the pass cache lacks quote headroom, preserving broker-risk freshness. */
   readonly reconcileForPricing?: PricingReconciliationRead<R>
   readonly strategy: ObserveStrategy
-  readonly intradayMarketData?: import('../market-data').IntradayMarketDataService
+  readonly intradayMarketData?: import('../market-data/intraday/model').IntradayMarketDataService
   /** Worst-case delay required to run and durably bind one final decision before the submission cutoff. */
   readonly decisionFinalizationHeadroomMs?: number
 }
@@ -659,9 +657,6 @@ const reconciledPositionReferencePrices = (
 export const prepareObserveDecisionReads = <R>(
   input: ObserveDecisionInput<R>,
 ): Result.Result<ObserveDecisionReadPreparation, CycleCalendarQueryFailure | ObserveDecisionCompositionFailure> => {
-  if (!isIntradayAutonomousCycle(input.cycle)) {
-    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
-  }
   return Result.map(
     marketCalendarQueryFromSession(input.cycle.identity.executionSessionDate),
     (marketCalendarQuery) => ({
@@ -861,9 +856,6 @@ const prepareExecutionSessionBinding = <R>(
     calendar: facts.calendar.value,
     executionModel: input.executionModel,
   }
-  if (!isIntradayAutonomousCycle(input.cycle)) {
-    return Result.fail(compositionFailure('cycle-binding', 'only current intraday cycles are executable'))
-  }
   return bindCycleExecutionSession({
     ...common,
     executionSessionDate: input.cycle.identity.executionSessionDate,
@@ -1053,7 +1045,7 @@ const compileObserveStrategyDecision = <R>(
       })
     const compiled = yield* Effect.fromResult(compileJevEntry(decision, snapshot, pricingSnapshot))
     return {
-      compiled: { ...compiled, signalDate: cycleAuthoritySessionDate(input.cycle.identity) },
+      compiled: { ...compiled, signalDate: input.cycle.identity.executionSessionDate },
       facts: { ...initialFacts, reconciliation, evaluatedAt },
     }
   }).pipe(
@@ -1529,11 +1521,7 @@ const recoverExecutionSession = (
       compositionFailure('cycle-binding', 'execution-session binding does not match its cycle', cause),
     )
   const persistedSession = entryDocument.executionSession
-  if (
-    persistedSession === undefined ||
-    persistedSession.schemaVersion !== 'bayn.execution-session-binding.v3' ||
-    !isIntradayAutonomousCycle(cycle)
-  ) {
+  if (persistedSession === undefined || persistedSession.schemaVersion !== 'bayn.execution-session-binding.v3') {
     return Result.fail(
       compositionFailure('cycle-binding', 'intraday close requires its persisted v3 execution-session binding'),
     )
@@ -1597,7 +1585,7 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
   const { input, preparation, policy, cycle, entryDocument, reconcile, closeExpiresAt, replanGenerationHash } = request
   return Effect.gen(function* () {
     const executionModel = preparation.executionModel
-    if (executionModel.schemaVersion !== 'bayn.execution-model.v6' || !isIntradayAutonomousCycle(cycle)) {
+    if (executionModel.schemaVersion !== 'bayn.execution-model.v6') {
       return yield* mutationRunnerError({
         message: 'execution close requires the active intraday execution contract',
         failure: 'contract',

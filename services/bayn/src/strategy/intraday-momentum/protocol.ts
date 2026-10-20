@@ -204,25 +204,6 @@ export const intradayMomentumSessionHasDecisionInterval = (
   )
 }
 
-export const intradayMomentumFirstDecisionPollMs = (
-  protocol: IntradayMomentumProtocol,
-  window: { readonly executionOpenAt: string; readonly submissionOpenAt: string },
-  schedule: { readonly firstPollDelayMs: number; readonly pollIntervalMs: number },
-): number => {
-  const firstPollMs = Date.parse(window.submissionOpenAt) + schedule.firstPollDelayMs
-  const firstRangeEndMs =
-    Math.ceil(
-      Math.max(
-        Date.parse(window.submissionOpenAt),
-        Date.parse(window.executionOpenAt) + protocol.lookbackMinutes * 60_000,
-      ) / 60_000,
-    ) * 60_000
-  const readyMs = firstRangeEndMs + protocol.decisionDelaySeconds * 1_000
-  return (
-    firstPollMs + Math.max(0, Math.ceil((readyMs - firstPollMs) / schedule.pollIntervalMs)) * schedule.pollIntervalMs
-  )
-}
-
 export const intradayMomentumSnapshotSymbols = (protocol: IntradayMomentumProtocol): readonly string[] =>
   Object.freeze([...protocol.candidateSymbols, protocol.benchmarkSymbol].sort())
 

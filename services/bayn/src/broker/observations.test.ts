@@ -17,7 +17,7 @@ import {
   type Order as AlpacaOrder,
   type Position as AlpacaPosition,
   type ReadEvidence,
-} from './alpaca'
+} from './alpaca/model'
 import { AccountStatus, OrderSide, OrderStatus, OrderType } from '../execution/contracts'
 import {
   accountObservation,

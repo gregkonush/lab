@@ -6,7 +6,7 @@ import type { StreamingVerifiedMarketSnapshot, StreamingFeatureReceipt } from '.
 import { equityMarketProfile } from '../jev/markets'
 
 import { Effect, Result } from 'effect'
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { StreamingVerifiedSnapshotReference } from '../market-data/streaming/reference'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'

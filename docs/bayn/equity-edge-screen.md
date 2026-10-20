@@ -5,10 +5,9 @@ bar-based policies without constructing a broker client, using a model, changing
 controller. It does not replace the original-arrival and execution witnesses required by the
 [matched-entry experiment](matched-entry-study.md) or [portfolio controls](control-portfolios.md).
 
-The Bayn image also installs `bayn-equity-edge-screen`, backed by `dist/equity-edge-screen.js`. `--help` needs no
-configuration. Invoke the same arguments shown below in an independent research process with bounded private storage;
-the command does not run at API/controller startup and has no broker, database or model dependency. Image builds
-exercise the actual compiled Node help entry point on both architectures.
+Build the offline command with `bun run --filter @proompteng/bayn build:research`, then run
+`bun run --filter @proompteng/bayn equity:screen` with the arguments shown below. `--help` needs no configuration.
+Use an independent research process with bounded private storage. The command has no broker, database or model dependency.
 
 ## Frozen hypotheses
 
