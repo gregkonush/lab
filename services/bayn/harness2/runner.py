@@ -391,6 +391,10 @@ class Editor(Proposer):
             "Never instruct the executor to use them or invent a fallback path. "
             if kwargs.get("harvest")
             else "Follow the mission's reflection format. "
+            "Only systemprompt.md can change in Bayn, so report one component. "
+            "Keep analysis brief and finish the requested reflection within 200 words. "
+            "Compare only the supplied executions; if they show no reusable behavioral "
+            "contrast, retain the edit row and use NO_ENTRY instead of inventing a lesson. "
         )
         try:
             receipt = self.adapter.calls.call(

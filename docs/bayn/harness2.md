@@ -22,6 +22,9 @@ factor-selection contract. Editors and reflection use `bayn.harness2-inference.v
 `reflection` purpose, bound into operator approval and the run identity. Their receipts contain no selected factors.
 Quoted factor-list tags in an edited prompt remain text. The editor must return exactly one bounded `<harness>` block;
 reflection uses the upstream experience format. Both roles retain the original complete response bytes.
+Reflection asks for one component and at most 200 words within the pinned inference token budget. It must retain
+the edit row and use `NO_ENTRY` when executions show no reusable behavioral contrast. A rejected or truncated
+reflection leaves the entire study `INCONCLUSIVE`; replay retains that result without another inference attempt.
 
 The study freezes one to four ordered tasks, 8–32 model-call reservations, and a 60–3,600-second wall-time budget.
 Each task contains an existing `bayn.research-run.v1` registration. Its original context must pass Bayn's validator
