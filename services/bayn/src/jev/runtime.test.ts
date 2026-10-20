@@ -168,7 +168,7 @@ const scenario = (
 describe('entry-bound native position exits', () => {
   test.each([
     [-0.02, JevExitReason.ProtectiveStop],
-    [0.05, JevExitReason.ProfitTarget],
+    [0.051, JevExitReason.ProfitTarget],
   ] as const)('a premium of %f triggers %s without any model or inference store', async (premium, reason) => {
     const check = scenario({ premium })
     expect(await check.run()).toMatchObject({ _tag: 'Exit', target: { reason, targetWeights: { AAPL: 0 } } })

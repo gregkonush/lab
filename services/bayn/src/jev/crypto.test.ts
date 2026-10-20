@@ -20,10 +20,10 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
-    expect(plan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Excluded, reason: 'exit-plan' }])
+    expect(plan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Requested }])
     const signals = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(observation, symbol)).body).state
     expect(signals.benchmark.symbol).toBe(symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD')
     expect(signals.session.schedule).toBe('CONTINUOUS')
@@ -78,7 +78,7 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observation.observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V5,
       }),
     )
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual(symbols)
@@ -94,8 +94,7 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         reason: 'not-ready',
       })
       expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
-        status: 'EXCLUDED',
-        reason: 'exit-plan',
+        status: 'REQUESTED',
       })
     }
   })

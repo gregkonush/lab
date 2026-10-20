@@ -92,7 +92,7 @@ const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOp
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   const completedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -325,7 +325,7 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v14')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v15')
   expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('chosen-model-action')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
@@ -394,7 +394,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
   const { gzipSync } = await import('node:zlib')
   const { normalizeMarketCalendarResult } = await import('../broker/alpaca/normalizers')
   const { streamingFixtureFromRaw, streamingFixture } = await import('../testing/streaming-market-fixture')
-  const { makeIntradayMomentumTestSnapshot } = await import('../strategy/intraday-momentum/test-support')
+  const { makeJevMarketTestSnapshot: makeIntradayMomentumTestSnapshot } = await import('../testing/jev-market-fixture')
   const { equityMarketProfile, cryptoMarketProfile } = await import('../jev/markets')
   const { historicalRawArrivals } = await import('../testing/historical-streaming-fixture')
   const { sha256 } = await import('../hash')
@@ -435,7 +435,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(equityAt + 9900).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, new Date(equityAt).toISOString())

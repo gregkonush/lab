@@ -1,32 +1,38 @@
-# Strategy-bound position protection
+# Jev-selected trade plans and broker protection
 
-The active Jev v14 strategy commits one immutable exit plan before an entry can execute. Jev chooses an entry action;
-it does not choose an exit after a position is open. The rule, prices, quantity ceiling, estimated costs and capital
-risk budget are included in the strategy decision and its canonical identity.
+Jev chooses the entry action, stop loss and take profit before execution. Protocol v15 / signal state v14,
+batch v5, entry/exit targets v4 and position-exit policy v3 replace the earlier executable contracts.
+There is no positive-return or benchmark-outperformance admission gate, range extension target,
+fixed percentage stop, five-percent stop-distance cap or 0.1-percent capital-risk sizing rule.
 
-## Rule and parameters
+## Model contract
 
-The continuation hypothesis uses the complete 15-minute completed-bar window immediately before entry. The stop is
-one venue price increment below its lowest low. The target is the maximum permitted entry price plus the window's
-high-low range, rounded upward to a valid venue price. The maximum entry price includes the existing quote-drift and
-adverse-limit allowances. These levels remain absolute prices after fills and fee publication.
+The current Jev API returns typed judgments and closed choices, not arbitrary generated numeric prices.
+Each candidate request includes an `action` choice and independent `stop_loss` and `take_profit` choices.
+Price choices come from the actual completed OHLC observations available in that candidate's verified snapshot,
+rounded conservatively to the instrument's executable precision. They are not an extrapolated price grid.
+Each price question includes `none`; when a role has no valid observed price, its question is absent and
+entry cannot be funded. The entry action still reaches Jev. This limitation can leave a setup without a
+profit choice beyond a fresh high; it must never be hidden by inventing a replacement target.
+See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
+[value extraction pattern](https://docs.typesafe.ai/cookbooks/pre_parsed_value_extraction_cookbook).
 
-The strategy rejects incomplete windows, malformed/duplicate/future bars, invalid price ordering, unsupported
-precision, an already-invalidated setup, a stop farther than 500 basis points from the entry ceiling, or a target
-that cannot cover conservative execution costs. Incomplete candidate evidence excludes that candidate before a paid
-Jev request. Malformed evidence remains a contract error. The source snapshot and sealed decision reproduce the plan.
+The questions run independently over the same state and cannot see one another's answers. Each price question
+explicitly assumes a new long entry and judges its own price from the supplied evidence. Code consumes those
+speculative answers only for a chosen `enter` with both selected prices; the action question cannot choose or
+coordinate other answers. See [speculative fan-out](https://docs.typesafe.ai/patterns/fan-out).
+Code checks that the stop is positive and below the current bid and entry ceiling, that the take profit is
+above that ceiling, and that estimated target proceeds cover the modeled entry and exit costs. An unsupported,
+missing, inverted or unfunded plan cannot create an order. Code never substitutes another stop or target.
+The immutable request, raw response and selected prices reproduce the exact sealed entry plan.
+The batch question identity binds each symbol's distinct choices; a different price menu changes its identity.
 
-Quantity is the smaller of the existing exposure allocation and the quantity whose modeled stop liquidation loss
-fits 10 basis points of account equity. The estimate includes entry and exit fees, received crypto quantity,
-adverse sell allowance and fee rounding. This preserves the previous modeled price-loss scale of 20% allocation
-multiplied by a 0.5% price stop, while including estimated costs in the budget. It is not an optimized parameter.
-Rounding the allocation weight upward to one part per million preserves the funded quantity; its separate immutable
-quantity ceiling prevents that rounding from increasing the order.
-
-The first actual entry fill starts the 15-minute maximum holding time. Partial entry fills, retries and restarts do
-not restart it. The controller checks price protection at most five seconds apart, with an earlier wake for the
-holding or session deadline. Existing account loss, drawdown, turnover, authority, reconciliation and final broker
-checks continue to govern submission.
+Quantity retains the existing capital allocation and instrument precision. Its immutable funded quantity ceiling
+prevents a cheaper refreshed ask from expanding it. Account loss, drawdown, turnover, notional, exposure, open-order,
+authority and reconciliation limits remain enforced. The existing maximum holding/session deadlines and five-second
+protection cadence remain execution safeguards. They are distinct from the removed price-selection formula.
+No model action overrides those safeguards or proves predictive edge. Model probabilities are not calibrated
+probabilities of a profitable trade.
 
 ## Venue behavior
 
@@ -75,32 +81,11 @@ require a new reconciliation. Retrying cancellation addresses the same broker or
 terminal, with fresh exact inventory and accounting, before a new close sells the residual. A filled parent does not
 make its remaining children disappear. Unknown submissions are recovered by their original client identity.
 
-Migration 128 requires terminal intents and mutation cycles, flat broker and accounting inventory, settled orders,
-complete receipts and fresh exact reconciliation. It preserves financial history, retires the prior executable
-protocol and clamps old PAPER authority for normal OBSERVE recovery. New execution requires the v14 identity and the
-existing capital-activation path. Image publication does not grant live capital authority.
+## Hard cutover
 
-## Parameter evidence
-
-The rule is an explicit experimental continuation hypothesis. Neither a geometric range nor a selected Jev action
-establishes a profitable strategy. Two target-anchor formulations were inspected during development; the implemented
-one measures the completed range upward from the maximum entry price. No parameters were fitted to the results below.
-
-The retained source contains 163,623 original one-minute crypto bars with SHA-256
-`7770bec9ca5275081981e5274152a716267d31ecaf8fad92e0b2d1a8ee9ed8e0`.
-`services/bayn/tools/exit-policy-validation.ts` verifies the original pages and runs the current strategy calculation
-with an explicitly hypothetical $100,000 capital amount and bar-close planning reference. It uses the production fee
-and risk calculation. This reference is not an executable quote or an observed account balance.
-
-| Symbol  |   Bars | Missing pre-entry history | No funded plan | Target touched first | Stop touched first | Deadline | Missing held history |
-| ------- | -----: | ------------------------: | -------------: | -------------------: | -----------------: | -------: | -------------------: |
-| BTC/USD | 66,923 |                    13,392 |         50,905 |                   40 |                864 |    1,722 |                    0 |
-| ETH/USD | 44,885 |                    30,935 |         10,912 |                   77 |              1,001 |    1,347 |                  613 |
-| SOL/USD | 51,815 |                    34,325 |         11,468 |                  214 |              2,077 |    2,620 |                1,101 |
-
-SOL also had nine adverse opening-price exclusions and one opening price already below its bound stop. Touches are
-not fills. The screen has no contemporaneous arrival evidence, executable quotes, Jev selection or complete operating
-costs. It is not a strategy backtest, an economic qualification, or evidence that the parameters are profitable.
-Most observed windows cannot fund the target after estimated costs. The remaining unselected touch counts provide no
-basis for claiming an edge. PAPER receipts, reconciliation, execution costs and a properly frozen prospective
-strategy evaluation remain separate evidence requirements.
+Migration 131 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v15, and accepts only current batch and
+native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
+recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
+No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v9 rejects
+pre-cutover checkpoints. Broker order, fill and accounting history are preserved.

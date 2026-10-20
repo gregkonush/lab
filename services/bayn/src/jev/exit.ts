@@ -158,7 +158,7 @@ export const decideJevExit = (input: unknown) =>
       }
     }
     return {
-      schemaVersion: 'bayn.jev-exit-target.v3' as const,
+      schemaVersion: 'bayn.jev-exit-target.v4' as const,
       strategyName: 'jev' as const,
       cycleId: evidence.cycleId,
       entryDecisionHash: portfolio.entryDecisionHash,
@@ -173,7 +173,7 @@ export const decideJevExit = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev exit evidence does not reproduce', cause })))
 
 export const JevExitTargetSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-exit-target.v3'),
+  schemaVersion: Schema.Literal('bayn.jev-exit-target.v4'),
   strategyName: Schema.Literal('jev'),
   cycleId: Sha256Schema,
   entryDecisionHash: Sha256Schema,
