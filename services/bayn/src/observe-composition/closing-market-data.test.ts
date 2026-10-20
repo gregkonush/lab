@@ -6,8 +6,9 @@ import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type BrokerReadShape } from '../broker/alpaca'
-import { CycleState, decodeAutonomousCycle } from '../cycle'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { CycleState, decodeAutonomousCycle } from '../cycle/model'
 import {
   Authority,
   IntentState,
@@ -18,8 +19,8 @@ import {
   TerminalOutcome,
   TimeInForce,
 } from '../execution/contracts'
-import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
-import { MutationStore, type MutationStoreShape } from '../execution/mutations'
+import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents/domain'
+import { MutationStore, type MutationStoreShape } from '../execution/mutations/model'
 import {
   makeExecutionCycleClosure,
   type ExecutionCycleClosure,
@@ -34,12 +35,13 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-support'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { decideJevExit, JevExitReason } from '../jev/exit'
-import { type IntradayMarketDataService, MarketData } from '../market-data'
+import { type IntradayMarketDataService } from '../market-data/intraday/model'
+import { MarketData } from '../market-data/model'
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { retryableOperationalError } from '../errors'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { type ReconciliationPassResult } from '../reconciler'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition'
+import { loadStrategyExecutionRiskPolicy } from './startup'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'

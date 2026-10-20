@@ -1,8 +1,7 @@
 # Gap-recovery decision replay
 
 `bayn-gap-recovery` evaluates the fixed long-only gap-recovery rule over two
-original-receipt replay sources. It is packaged in the Bayn image but is not the
-active strategy. It does not call a model or broker, submit orders, acquire
+original-receipt replay sources. Build it with `bun run --filter @proompteng/bayn build:research`. It does not call a model or broker, submit orders, acquire
 credentials, configure capture, or grant capital authority.
 
 The prior-close reference is the retained midquote thirty seconds before the
@@ -48,7 +47,7 @@ interval export; hashes supplied alongside unverified bytes are not independent
 proof of a capture.
 
 ```sh
-bayn-gap-recovery \
+node services/bayn/dist/research/gap-recovery-command.js \
   --input /evidence/gap-input.json --input-sha256 "$INPUT_SHA256" \
   --previous-arrivals /evidence/previous.ndjson.gz \
   --previous-receipt /evidence/previous-receipt.json \

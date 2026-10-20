@@ -1,6 +1,6 @@
 import { Chunk, Effect, HashMap, HashSet, Option, Result, pipe } from 'effect'
 
-import type { FillActivity, Order as BrokerOrder } from '../broker/alpaca'
+import type { FillActivity, Order as BrokerOrder } from '../broker/alpaca/model'
 import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import {
   accountObservation,

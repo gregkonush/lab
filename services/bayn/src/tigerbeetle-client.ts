@@ -12,7 +12,7 @@ import {
 } from 'tigerbeetle-node'
 import { Data, Effect, Option, Result, Scope, ScopedRef, Semaphore } from 'effect'
 
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { OperationalError, operationalError } from './errors'
 import type {
   LedgerAccountBalance,

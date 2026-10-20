@@ -14,7 +14,7 @@ import { AssetStatus, type MarketCalendarObservation, type MarketCalendarSession
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
 import type { JevProtocol } from '../jev/protocol'
 import type { IntradaySnapshotQuery } from '../market-data/intraday/model'

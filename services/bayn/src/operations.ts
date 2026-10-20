@@ -1,7 +1,7 @@
 import { Effect } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
-import { CycleObservabilityError } from './cycle/store'
+import { CycleObservabilityError } from './cycle/store/observability'
 import { DatabaseError } from './db/database-error'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
 import { Pipeable } from './pipeable'

@@ -1,7 +1,7 @@
 import type { FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
-import type { ProjectedPosition } from '../reconciliation'
+import type { ProjectedPosition } from '../simulation-reconciliation/broker-model'
 
 type CoinAccrual = Extract<FeeAccrual, { readonly kind: 'COIN' }>
 interface WeightedPosition {

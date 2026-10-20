@@ -1,15 +1,10 @@
 import { Cause, Clock, Duration, Effect, Exit, Fiber, Ref, Result, Schedule } from 'effect'
 
-import {
-  OrderCollection,
-  SortDirection,
-  verifyBrokerAccountPermissions,
-  type BrokerAccountPreflightFailure,
-  type BrokerReadError,
-  type BrokerReadShape,
-} from '../broker/alpaca'
+import { OrderCollection, SortDirection, type BrokerReadShape } from '../broker/alpaca/model'
+import { verifyBrokerAccountPermissions, type BrokerAccountPreflightFailure } from '../broker/alpaca/preflight'
+import { type BrokerReadError } from '../broker/alpaca/failures'
 import type { ObservedBrokerState } from '../broker/alpaca/observed-snapshot'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { operationalError } from '../errors'
 import { databaseOperation, withinDeadline } from '../operations'
 import { type BrokerConfiguration, type RuntimeState } from '../runtime-state'

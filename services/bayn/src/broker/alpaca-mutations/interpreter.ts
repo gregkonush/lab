@@ -4,7 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import type { BrokerSessionShape } from '../alpaca'
+import type { BrokerSessionShape } from '../alpaca/session'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
 import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {

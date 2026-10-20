@@ -1,7 +1,7 @@
 import { Effect, Option } from 'effect'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import type { AutonomousCycle } from '../cycle'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import type { AutonomousCycle } from '../cycle/model'
 import {
   intentPlanSchemaVersion,
   IntentState,
@@ -11,8 +11,8 @@ import {
   RiskOutcome,
   TimeInForce,
 } from '../execution/contracts'
-import { IntentStore, planExecutionIntent } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { IntentStore, planExecutionIntent } from '../execution/intents/domain'
+import { MutationStore } from '../execution/mutations/model'
 import { decidePositionProtection, type ProtectionOrderState } from '../execution/position-protection'
 import { canonicalHashV1Result } from '../hash'
 import { JevPositionStore } from '../jev/portfolio'
@@ -25,7 +25,7 @@ import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
 import { quantityScale } from '../quantity'
 import type { CycleWaitReason } from '../cycle/runner/readiness'
-import { CycleRunnerError } from '../cycle/runner'
+import { CycleRunnerError } from '../cycle/runner/model'
 import {
   decidePreparedMutationRecovery,
   mutationRecoveryIsDue,

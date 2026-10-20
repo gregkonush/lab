@@ -2,7 +2,7 @@ import { Result } from 'effect'
 
 import { Pipeable } from '../../pipeable'
 import { CycleState, type AutonomousCycle } from '../model'
-import type { CycleRecoverySelection } from '../recovery'
+import type { CycleRecoverySelection } from './recovery-model'
 import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
 import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 

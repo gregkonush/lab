@@ -52,5 +52,3 @@ export const isFlatExecutionTarget = (
   { readonly schemaVersion: 'bayn.execution-flat-target.v1' | 'bayn.jev-exit-target.v3' }
 > =>
   decision?.schemaVersion === 'bayn.execution-flat-target.v1' || decision?.schemaVersion === 'bayn.jev-exit-target.v3'
-
-export const runtimeDecisionSessionDate = (decision: RuntimeStrategyDecision): string => decision.sessionDate

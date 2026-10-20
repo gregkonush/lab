@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { decodeJevPortfolio, JevPurpose } from './portfolio'
 import { nativeJevFixture } from './native.test-support'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { jevProfitTargetBid } from './profit-target'
 
 test('accounted protective disposals explain a remaining position without changing its strategy prices', () => {

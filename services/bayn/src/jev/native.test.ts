@@ -8,7 +8,7 @@ import { decideJevEntry, jevEntryQuoteMaximumAgeMs, JevEntryTargetSchema } from 
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1 } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { jevProtocolIdentityMatches } from '../shadow-decision-contract'
 import { makeJevObservation, reproduceJevCandidateObservation } from './observation'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'

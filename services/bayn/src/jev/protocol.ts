@@ -1,10 +1,4 @@
-import {
-  JevMarketProfilesSchema,
-  jevMarketProfiles,
-  jevUniverse,
-  jevCandidateSymbols,
-  jevBenchmarkSymbol,
-} from './markets'
+import { JevMarketProfilesSchema, jevMarketProfiles, jevUniverse, jevCandidateSymbols } from './markets'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
 
@@ -144,5 +138,3 @@ export const decodeJevProtocol = (input: unknown) =>
   )
 
 export const jevBehaviorHash = sha256('bayn.jev.strategy-priced-protection.behavior.v1')
-export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
-  [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort()

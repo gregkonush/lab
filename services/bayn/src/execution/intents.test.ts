@@ -35,7 +35,7 @@ import {
   type IntentPlan,
   type PreparedCommit,
   type StoredIntent,
-} from './intents'
+} from './intents/domain'
 
 const hash = (digit: string): string => digit.repeat(64)
 

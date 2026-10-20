@@ -13,13 +13,13 @@ import {
   type BrokerReadShape,
   type Order,
   type Position,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import {
   BrokerMutationError,
   MutationOperation,
   invalidRequest,
   type BrokerMutationShape,
-} from '../broker/alpaca-mutations'
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'

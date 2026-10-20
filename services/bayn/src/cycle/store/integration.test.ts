@@ -7,20 +7,17 @@ import { Effect, Layer, ManagedRuntime, Option, Redacted, Result, Schema } from 
 import { TestClock } from 'effect/testing'
 import type { Statement } from 'effect/sql/Statement'
 
-import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
 import { discoverAutonomousCyclePass } from '../runner/program'
 
+import { CycleState, CycleTerminalReason, type CycleDraft } from '../model'
 import {
-  CycleState,
-  CycleTerminalReason,
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-  type IntradayCycleDraft,
-} from '../index'
+} from '../construction'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
@@ -35,7 +32,8 @@ import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
-import { CycleStore, CycleStoreLive } from '.'
+import { CycleStore } from './model'
+import { CycleStoreLive } from './postgres'
 import { makeCycleQueries } from './queries'
 import { DecisionEvidenceMismatch } from './model'
 import { makeAuthorityPostgres } from '../../db/execution-store/authority-shared'
@@ -64,7 +62,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const draft = (
-  strategyProtocolHash = canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
+  strategyProtocolHash = canonicalHashV1({ strategy: 'jev', version: 1 }),
   executionModel = intradayMomentumExecutionModel,
   entryAttemptOrdinal = 1,
 ) => {
@@ -81,7 +79,7 @@ const draft = (
   const identity = value(
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v4',
-      strategyName: 'intraday-momentum',
+      strategyName: 'jev',
       qualificationRunId,
       strategyProtocolHash,
       accountId,
@@ -94,8 +92,7 @@ const draft = (
     }),
   )
   const candidate = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, executionPolicy))))
-  if (!isIntradayCycleDraft(candidate)) throw new Error('expected the active intraday cycle contract')
-  return candidate satisfies IntradayCycleDraft
+  return candidate satisfies CycleDraft
 }
 
 const makeRuntime = () =>
@@ -249,111 +246,89 @@ describePostgres('PostgreSQL intraday cycle store', () => {
     })
   })
 
-  for (const version of ['v3', 'v4'] as const)
-    test(`discovery preserves the ${version} pre-open block and converges on one new unbound attempt`, async () => {
-      const currentDraft = draft()
-      if (currentDraft.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4')
-        throw new Error('expected v4 fixture')
-      const { cycleId: _id, schemaVersion: _schema, entryAttemptOrdinal: _ordinal, ...material } = currentDraft.identity
-      const candidate =
-        version === 'v4'
-          ? currentDraft
-          : value(
-              makeCycleDraft(
-                value(makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' })),
-                currentDraft.window,
-              ),
-            )
-      const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
-      if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
-        throw new Error('invalid policy')
-      const forbidden = () => Effect.die(new Error('unexpected recovery-side broker or decision operation'))
-      const broker: BrokerReadShape = {
-        account: forbidden(),
-        accountConfiguration: forbidden(),
-        positions: forbidden(),
-        assetBySymbol: forbidden,
-        orders: forbidden,
-        orderById: forbidden,
-        orderByClientId: forbidden,
-        fillActivities: forbidden,
-        feeActivities: forbidden,
-        marketCalendar: () =>
-          Effect.succeed({
-            value: withProviderSessions({
-              schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
-              source: 'alpaca-v2-calendar',
-              timeZone: 'UTC',
-              requestedRange: { start: sessionDate, end: sessionDate },
-              normalizedResponseHash: '8'.repeat(64),
-              sessions: [
-                { date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' },
-              ],
-            }),
-            evidence: {
-              requestId: 'recovery-calendar',
-              status: 200,
-              contentHash: '9'.repeat(64),
-              observedAt: '2026-08-28T13:11:00.000Z',
-            },
+  test('discovery preserves the pre-open block and converges on one new unbound attempt', async () => {
+    const candidate = draft()
+    const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
+    if (executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') throw new Error('invalid policy')
+    const forbidden = () => Effect.die(new Error('unexpected recovery-side broker or decision operation'))
+    const broker: BrokerReadShape = {
+      account: forbidden(),
+      accountConfiguration: forbidden(),
+      positions: forbidden(),
+      assetBySymbol: forbidden,
+      orders: forbidden,
+      orderById: forbidden,
+      orderByClientId: forbidden,
+      fillActivities: forbidden,
+      feeActivities: forbidden,
+      marketCalendar: () =>
+        Effect.succeed({
+          value: withProviderSessions({
+            schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
+            source: 'alpaca-v2-calendar',
+            timeZone: 'UTC',
+            requestedRange: { start: sessionDate, end: sessionDate },
+            normalizedResponseHash: '8'.repeat(64),
+            sessions: [{ date: sessionDate, openAt: '2026-08-28T13:30:00.000Z', closeAt: '2026-08-28T20:00:00.000Z' }],
           }),
-      }
-      const result = await runtime.runPromise(
-        Effect.gen(function* () {
-          const store = yield* CycleStore
-          yield* store.acquire(candidate, acquiredAt)
-          const blocked = yield* store.block(
-            candidate.identity.cycleId,
-            CycleTerminalReason.ProvenanceMismatch,
-            '2026-08-28T13:10:00.000Z',
-          )
-          yield* TestClock.setTime(Date.parse('2026-08-28T14:12:00.000Z'))
-          const discover = discoverAutonomousCyclePass({
-            cycleBindingId: qualificationRunId,
+          evidence: {
+            requestId: 'recovery-calendar',
+            status: 200,
+            contentHash: '9'.repeat(64),
+            observedAt: '2026-08-28T13:11:00.000Z',
+          },
+        }),
+    }
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const store = yield* CycleStore
+        yield* store.acquire(candidate, acquiredAt)
+        const blocked = yield* store.block(
+          candidate.identity.cycleId,
+          CycleTerminalReason.ProvenanceMismatch,
+          '2026-08-28T13:10:00.000Z',
+        )
+        yield* TestClock.setTime(Date.parse('2026-08-28T14:12:00.000Z'))
+        const discover = discoverAutonomousCyclePass({
+          cycleBindingId: qualificationRunId,
+          accountId,
+          strategyName: 'jev',
+          strategyProtocolHash: candidate.identity.strategyProtocolHash,
+          authorityGenerationHash: '7'.repeat(64),
+          executionPolicy,
+          buildDecision: forbidden,
+          buildDecisionEvidence: forbidden,
+        })
+        const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
+        const sql = yield* PgClient.PgClient
+        const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
+        return {
+          blocked: blocked.cycle,
+          previous: yield* store.read(candidate.identity.cycleId),
+          current: yield* store.readAuthoritySlot({
+            qualificationRunId,
             accountId,
-            strategyName: 'intraday-momentum',
-            strategyProtocolHash: candidate.identity.strategyProtocolHash,
-            authorityGenerationHash: '7'.repeat(64),
-            executionPolicy,
-            buildDecision: forbidden,
-            buildDecisionEvidence: forbidden,
-          })
-          const attempts = yield* Effect.all([discover, discover], { concurrency: 'unbounded' })
-          const sql = yield* PgClient.PgClient
-          const [intents] = yield* sql<{ count: string }>`SELECT count(*)::text AS count FROM intents`
-          return {
-            blocked: blocked.cycle,
-            previous: yield* store.read(candidate.identity.cycleId),
-            current: yield* store.readAuthoritySlot({
-              qualificationRunId,
-              accountId,
-              executionSessionDate: sessionDate,
-            }),
-            attempts,
-            intentCount: intents?.count,
-          }
-        }).pipe(Effect.provideService(BrokerRead, broker), Effect.provide(TestClock.layer())),
-      )
-      expect(Option.getOrThrow(result.previous)).toEqual(result.blocked)
-      const current = Option.getOrThrow(result.current)
-      if (version === 'v3') {
-        expect(current).toEqual(result.blocked)
-        expect(result.attempts.every((attempt) => attempt.outcome === 'ALREADY_TERMINAL')).toBe(true)
-        expect(result.intentCount).toBe('0')
-        return
-      }
-      expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
-      expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
-      expect(current.state).toBe(CycleState.Pending)
-      expect(current.bindings).toEqual({})
-      expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
-      expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
-      expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
-      expect(result.intentCount).toBe('0')
-    })
+            executionSessionDate: sessionDate,
+          }),
+          attempts,
+          intentCount: intents?.count,
+        }
+      }).pipe(Effect.provideService(BrokerRead, broker), Effect.provide(TestClock.layer())),
+    )
+    expect(Option.getOrThrow(result.previous)).toEqual(result.blocked)
+    const current = Option.getOrThrow(result.current)
+    expect(current.identity).toMatchObject({ entryAttemptOrdinal: 2, executionSessionDate: sessionDate })
+    expect(current.identity.cycleId).not.toBe(candidate.identity.cycleId)
+    expect(current.state).toBe(CycleState.Pending)
+    expect(current.bindings).toEqual({})
+    expect(current.window.executionCalendarSchemaVersion).toBe('bayn.continuous-market-hours.v1')
+    expect(current.window.submissionCutoffAt).toBe('2026-08-28T14:13:00.000Z')
+    expect(result.attempts.filter((attempt) => attempt.outcome === 'ACQUIRED')).toHaveLength(1)
+    expect(result.intentCount).toBe('0')
+  })
 
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
-    const candidate = draft(canonicalHashV1({ strategy: 'intraday-momentum', boundaries: 'regular-session' }), {
+    const candidate = draft(canonicalHashV1({ strategy: 'jev', boundaries: 'regular-session' }), {
       ...intradayMomentumExecutionModel,
       order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
     })
@@ -578,8 +553,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             ${authorityGenerationHash}, 'bayn.authority-generation-history.v1',
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
-            'intraday-momentum', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.intraday-momentum.protocol.v2', ${'7'.repeat(64)}, ${accountId},
+            'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
+            'bayn.jev.protocol.v13', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}
@@ -616,7 +591,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
             quantity_atoms, notional_limit_micros, limit_price_micros, state, terminal_outcome, state_version, created_at, updated_at
           ) VALUES (
-            ${intentId}, 'bayn.execution-intent.v5', ${authorityGenerationHash}, NULL, 'intraday-momentum',
+            ${intentId}, 'bayn.execution-intent.v5', ${authorityGenerationHash}, NULL, 'jev',
             ${'f'.repeat(64)}, ${'0'.repeat(64)}, ${policyHash}, ${accountId}, 'bayn-risk-cutoff-test',
             'SPY', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000, 1000000000, 'PLANNED', NULL, 1,
             '2026-08-28T14:58:30.000Z', '2026-08-28T14:58:30.000Z'
@@ -1041,7 +1016,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
                 targetPlan: { status: 'PLANNED' },
                 orderedIntentIds: ['intent'],
                 bindings: {
-                  strategyName: 'intraday-momentum',
+                  strategyName: 'jev',
                   strategyDecisionHash: 'strategy',
                   policyHash: 'policy',
                   authorityGenerationHash: generationHash,
@@ -1058,7 +1033,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               })}
             )`
             yield* sql`INSERT INTO intents VALUES (
-              'intent', 'account', 'cycle', 'intraday-momentum', 'strategy', 'policy', ${generationHash}, 'risk',
+              'intent', 'account', 'cycle', 'jev', 'strategy', 'policy', ${generationHash}, 'risk',
               'TERMINAL', 'CANCELED', 'LIMIT', 'IOC', 'client', 'AMZN', 'BUY', 38000000,
               '2026-09-08T17:01:00Z'
             )`
@@ -1151,7 +1126,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               ADD submission_cutoff_at timestamptz,
               ADD submission_open_at timestamptz,
               ADD qualification_run_id text,
-              ADD strategy_name text DEFAULT 'intraday-momentum',
+              ADD strategy_name text DEFAULT 'jev',
               ADD strategy_protocol_hash text,
               ADD schema_version text,
               ADD identity_schema_version text,

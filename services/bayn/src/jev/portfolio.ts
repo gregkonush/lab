@@ -2,7 +2,7 @@ import { JevPositionExitPolicySchema } from './exit-policy'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import type { OperationalError } from '../errors'
-import type { ReconciledBrokerState } from '../reconciliation'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 
 import {
   AccountSnapshotSchema,
@@ -15,7 +15,7 @@ import {
   ReconciliationSchema,
   ReconciliationStatus,
 } from '../execution/contracts'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 import type { JevFundedExitPlan } from './strategy-exit-plan'

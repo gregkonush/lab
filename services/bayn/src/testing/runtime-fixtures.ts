@@ -1,6 +1,6 @@
 import { Redacted, Result } from 'effect'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { makeRuntimeProvenance } from '../contracts'
 import { deriveCycleOperationsStatus } from '../cycle/observability'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'

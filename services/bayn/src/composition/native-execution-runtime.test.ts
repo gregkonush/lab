@@ -18,7 +18,7 @@ import {
 } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
@@ -33,8 +33,8 @@ import {
 } from '../execution/controller-status'
 import { TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
-import type { RecoveryFirstRuntime } from '../observe-composition'
-import type { CycleRunnerError } from '../cycle/runner'
+import type { RecoveryFirstRuntime } from '../observe-composition/model'
+import type { CycleRunnerError } from '../cycle/runner/model'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
 import { JevBatchStore, type JevBatchEvidence } from '../jev/batch-evaluation'
 import { operationalError } from '../errors'
@@ -143,7 +143,7 @@ const statusStore = (
   read: () => Effect.succeed(null),
 })
 
-const plan = (overrides: PlanOverrides = {}): ApplicationPlanFor<'AutonomousService'> => {
+const plan = (overrides: PlanOverrides = {}): ApplicationPlan => {
   const readOnly = overrides.brokerAccess === 'read-only' || overrides.capitalAuthorityKind === 'none'
   return {
     _tag: 'AutonomousService',

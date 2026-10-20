@@ -6,7 +6,7 @@ import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { randomUUID } from 'node:crypto'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
@@ -20,16 +20,14 @@ import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
-import {
-  IntentStore,
-  IntentStoreLive,
-  BlockedCycleIntentStore,
-  BlockedCycleIntentStoreLive,
-  BlockedCycleIntentStoreError,
-} from '../execution/intents'
-import { MutationStore, MutationStoreLive, MutationStoreError } from '../execution/mutations'
+import { IntentStore } from '../execution/intents/domain'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStore, BlockedCycleIntentStoreError } from '../execution/intents/blocked-cycle'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationStore, MutationStoreError } from '../execution/mutations/model'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { SubmissionDenialReason } from '../execution/submission-denial'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
 import { PostgresClientLive } from '../db/postgres-client'
@@ -65,7 +63,7 @@ import { makeReplayBroker, ReplayBrokerFailure } from './broker'
 import { makeReplayExecutionRuntime } from './runtime'
 import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 import { makeRecoveryClockFixture } from './recovery-clock.test-support'
-import { BrokerRead } from '../broker/alpaca'
+import { BrokerRead } from '../broker/alpaca/model'
 import {
   AuthorityGenerationStore,
   AuthorityRestrictionStore,
@@ -74,8 +72,8 @@ import {
   ReconciliationStore,
   ValuationStore,
 } from '../db/execution-store'
-import { CycleStore } from '../cycle/store'
-import { CycleTerminalReason } from '../cycle'
+import { CycleStore } from '../cycle/store/model'
+import { CycleTerminalReason } from '../cycle/model'
 import { terminalizeBlockedExecutionCycle } from '../observe-composition/execution-cycle'
 import { ExecutionCycleClosureStore } from '../db/execution-cycle-closure'
 import { PersistedCapitalGrantStore } from '../db/persisted-capital-grant'
@@ -88,7 +86,7 @@ import { makeTradingEngine } from '../composition/trading-engine'
 import { ownGenerationCycleDriver } from '../composition/generation-cycle'
 import { recoverTerminalGenerationToObserve } from '../blocked-generation-recovery'
 import { operationalError } from '../errors'
-import type { RecoveryFirstCycleDriver, RecoveryFirstRuntime } from '../observe-composition'
+import type { RecoveryFirstCycleDriver, RecoveryFirstRuntime } from '../observe-composition/model'
 import { makeStrategyProtocolHashResult } from '../contracts'
 
 const durableTest = baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined ? test.skip : test

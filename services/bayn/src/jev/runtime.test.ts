@@ -3,9 +3,9 @@ import { Clock, Effect, Fiber, Logger, Option, References, Result, Tracer } from
 import { TestClock } from 'effect/testing'
 import { NodeServices } from '@effect/platform-node'
 
-import { CycleState, type AutonomousCycle } from '../cycle'
+import { CycleState, type AutonomousCycle } from '../cycle/model'
 import { retryableOperationalError } from '../errors'
-import { type IntradayMarketDataService } from '../market-data'
+import { type IntradayMarketDataService } from '../market-data/intraday/model'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
@@ -17,7 +17,7 @@ import { nativeJevFixture } from './native.test-support'
 import { JevPositionStore, JevPurpose } from './portfolio'
 import { evaluateJevObservation, evaluateJevPositionManagement } from './runtime'
 import { utcInstantFromEpochMillis } from '../time'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { defaultJevProtocolDocument } from './protocol'
 
 const scenario = (

@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
-import { maximumConsistencyDelayMs } from '../execution/mutations'
+import { maximumConsistencyDelayMs } from '../execution/mutations/model'
 import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,

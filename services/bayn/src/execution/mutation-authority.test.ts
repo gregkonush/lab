@@ -23,9 +23,9 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { BrokerMutationShape } from '../broker/alpaca-mutations'
+import type { BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import type { CancelReceipt, SubmitReceipt } from '../broker/alpaca-mutations/model'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from './contracts'
 import {

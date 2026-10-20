@@ -12,7 +12,8 @@ import {
   TimeInForce as DomainTimeInForce,
   type Intent,
 } from '../../execution/contracts'
-import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
+import { AssetClass, OrderSide, OrderType, TimeInForce, type Order } from '../alpaca/model'
+import { type BrokerSessionShape } from '../alpaca/session'
 import { quantizeInstrumentPriceMicros } from '../alpaca-price'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'

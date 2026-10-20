@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import type { CycleRunResult } from '../cycle/runner'
+import type { CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
 import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'

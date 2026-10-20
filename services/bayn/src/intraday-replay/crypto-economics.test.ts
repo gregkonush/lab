@@ -8,7 +8,7 @@ import { Result } from 'effect'
 
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { receivedCryptoFee, calculateSessionFees } from '../strategy/execution-model/fees'
-import { notionalMicros } from '../execution-model'
+import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { createReplayLedger, applyReplayFill } from './ledger'
 import { replayFeeActivity } from './broker-fees'
 import { replayInstrument, simulateIntradayReplayExecution } from './execution-core'

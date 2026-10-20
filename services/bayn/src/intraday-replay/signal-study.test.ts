@@ -234,7 +234,7 @@ test.each<{ premium: number; selected: string | null }>([
       snapshot,
     }),
   )
-  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, snapshot, observation })
+  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, observation })
   const result = Result.getOrThrow(prepareSignalStudyBatch(evidence))
   if (selected === null) expect(result.selected[SignalScreenRule.RelativeMomentum]).toBeNull()
   else expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)

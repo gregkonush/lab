@@ -4,15 +4,13 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Fiber, Layer, Logger, ManagedRuntime, Redacted, References, Result } from 'effect'
 import * as Reactivity from 'effect/reactivity/Reactivity'
-
 import {
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-} from '../index'
+} from '../construction'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { runDatabase } from '../../db/database-error'
 import { postgresMigrations } from '../../db/postgres-migrations'
@@ -24,7 +22,9 @@ import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from 
 import { defaultJevProtocolDocument } from '../../jev/protocol'
 import { makeIntradayCycleDraft } from '../runner/calendar-decisions'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
-import { CycleObservability, CycleObservabilityLive, CycleStore, CycleStoreLive } from '.'
+import { CycleObservability, CycleObservabilityLive } from './observability'
+import { CycleStore } from './model'
+import { CycleStoreLive } from './postgres'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -146,10 +146,11 @@ const draft = () => {
   const executionPolicy = value(makeCycleExecutionPolicyFromModel(intradayMomentumExecutionModel))
   const identity = value(
     makeCycleIdentity({
-      schemaVersion: 'bayn.autonomous-cycle-identity.v3',
-      strategyName: 'intraday-momentum',
+      schemaVersion: 'bayn.autonomous-cycle-identity.v4',
+      entryAttemptOrdinal: 1,
+      strategyName: 'jev',
       qualificationRunId,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'intraday-momentum', version: 1 }),
+      strategyProtocolHash: canonicalHashV1({ strategy: 'jev', version: 1 }),
       accountId,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
@@ -159,7 +160,6 @@ const draft = () => {
     }),
   )
   const candidate = value(makeCycleDraft(identity, value(makeIntradayCycleWindow(calendar, executionPolicy))))
-  if (!isIntradayCycleDraft(candidate)) throw new Error('expected the active intraday cycle contract')
   return candidate
 }
 

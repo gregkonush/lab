@@ -3,7 +3,7 @@ import { Result } from 'effect'
 import { Authority } from '../../execution/contracts'
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanStatus } from '../../target-planner'
+import { TargetPlanStatus } from '../../target-planner/index'
 import type { AutonomousCycle } from '../model'
 import {
   selectRecoveryFailure,

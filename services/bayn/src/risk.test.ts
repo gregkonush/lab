@@ -25,7 +25,7 @@ import {
   type Intent,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { utcInstantFromEpochMillis } from './time'
 import {
   accountLossMicros,

@@ -4,7 +4,8 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
 import { exchangeSessions } from '../market-hours'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { IsoDateSchema } from '../schemas'
 
 import {
   AccountStatus,
@@ -18,7 +19,7 @@ import {
   type Order,
 } from '../execution/contracts'
 import { canonicalHashV1 } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { makeJevObservation } from './observation'
@@ -52,18 +53,23 @@ export const nativeJevFixture = (
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
+  const selectedCalendar = calendar ?? base.query.calendar
+  const selectedDate = Schema.decodeUnknownSync(IsoDateSchema)(
+    calendar === undefined ? base.query.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.query.sessionDate),
+  )
   const end =
     Math.floor((Date.parse(observedAt ?? base.query.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) *
     60_000
   const timedQuery = {
     ...base.query,
-    ...(calendar === undefined ? {} : { calendar }),
+    calendar: selectedCalendar,
+    sessionDate: selectedDate,
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
     rangeStartAt: new Date(
-      jevHistoryStartMs(base.query.calendar, base.query.sessionDate, end, protocol.lookbackMinutes),
+      jevHistoryStartMs(selectedCalendar, selectedDate, end, protocol.lookbackMinutes),
     ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }
@@ -289,9 +295,7 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
 }
 
 export const nativeJevDecisionEvidence = (
-  fixture: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
-    readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
-  } = nativeJevFixture(),
+  fixture: Pick<ReturnType<typeof nativeJevFixture>, 'observation' | 'protocol'> = nativeJevFixture(),
   action = 'enter',
   probability = 0.8,
 ) => {

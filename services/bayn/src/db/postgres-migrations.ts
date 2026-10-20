@@ -2,7 +2,7 @@ import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { classifyDatabaseError, databaseError, DatabaseError } from './database-error'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'

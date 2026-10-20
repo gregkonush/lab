@@ -17,7 +17,7 @@ import {
   type Tracer,
 } from 'effect'
 
-import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
+import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
 import {
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
@@ -44,7 +44,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
-} from '../observe-composition'
+} from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
@@ -78,7 +78,7 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
 export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner/model').CycleRunnerError>
   readonly nextDelayMs: number
 }
 
@@ -108,7 +108,7 @@ const runtimeError = (
 ): NativeExecutionRuntimeError => new NativeExecutionRuntimeError({ operation, message, cause })
 
 export const executionControllerConfig = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Result.Result<ExecutionControllerConfig, NativeExecutionRuntimeError> =>
   Result.succeed({
     controllerKey: plan.config.alpaca.identity.identityHash,
@@ -489,7 +489,7 @@ export const makeNativeExecutionRuntimeAdapter = (
     runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
 })
 
-const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, slot: RecoveryFirstCycleDriverSlot) =>
+const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
     ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
   }).pipe(
@@ -543,7 +543,7 @@ export const makePublishedExecutionCycleDriverLive = <R>(
     }),
   )
 
-export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlan) =>
   makePublishedExecutionCycleDriverLive(plan.config.operationTimeoutMs, (slot) => startRuntimePreparation(plan, slot))
 
 type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
@@ -683,7 +683,7 @@ export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<Kafk
   )
 
 export const acquireNativeExecutionRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
     const config = yield* Effect.fromResult(executionControllerConfig(plan))

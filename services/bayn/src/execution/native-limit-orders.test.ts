@@ -1,10 +1,10 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { orderRequestBody } from '../broker/alpaca-mutations'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { IntentSchema, OrderSide, OrderType, TimeInForce } from './contracts'
 import { deriveExecutionIntentPricing } from './intent-pricing'
-import { intentIdForPlan } from './intents'
+import { intentIdForPlan } from './intents/domain'
 
 const request = {
   symbol: 'AAPL',

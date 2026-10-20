@@ -2,23 +2,24 @@ import { continuousMarketHours, type MarketHours } from '../../market-hours'
 import { canonicalHashV1 } from '../../hash'
 import { Effect, Option, pipe, Schema } from 'effect'
 
-import { BrokerRead } from '../../broker/alpaca'
+import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { IsoDateSchema } from '../../schemas'
-import { CycleState, intradayCycleEntryAttemptOrdinal, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
-import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore } from '../store'
+import { CycleState, type AutonomousCycle } from '../model'
+import { selectCycleRecovery } from './recovery-selection'
+import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
+import { CycleStore } from '../store/model'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
+import { calendarQueryFailureError } from './errors'
+import { finishRecoveryResult } from './pass-decisions'
 import {
-  calendarQueryFailureError,
-  finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
-} from './decisions'
+} from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
 
@@ -27,25 +28,12 @@ const currentIsoTime = currentUtcInstant
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
-  const candidate =
-    (context.strategyName === 'intraday-momentum' || context.strategyName === 'jev') &&
-    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-      ? {
-          cycleBindingId: context.cycleBindingId,
-          strategyName: context.strategyName,
-          strategyProtocolHash: context.strategyProtocolHash,
-          accountId: context.accountId,
-          executionPolicy: context.executionPolicy,
-        }
-      : undefined
-  if (candidate === undefined) {
-    return Effect.fail(
-      runnerError({
-        operation: 'configure',
-        failure: 'invalid-config',
-        message: 'intraday discovery requires an exact strategy and session-relative execution-policy pairing',
-      }),
-    )
+  const candidate = {
+    cycleBindingId: context.cycleBindingId,
+    strategyName: context.strategyName,
+    strategyProtocolHash: context.strategyProtocolHash,
+    accountId: context.accountId,
+    executionPolicy: context.executionPolicy,
   }
   return Effect.gen(function* () {
     const observedAt = yield* currentIsoTime
@@ -82,10 +70,7 @@ export const discoverAutonomousCyclePass = <R>(
     let hours: MarketHours = continuousMarketHours
     let hoursReadHash = canonicalHashV1(continuousMarketHours)
     // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
-    if (
-      Option.isNone(existing) ||
-      (isIntradayAutonomousCycle(existing.value) && intradayCycleEntryAttemptOrdinal(existing.value.identity) % 2 === 0)
-    ) {
+    if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
       const broker = yield* BrokerRead
       const calendar = yield* broker.marketCalendar(query).pipe(
         Effect.mapError((cause) =>

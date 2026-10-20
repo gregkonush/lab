@@ -5,7 +5,7 @@ import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { InputManifest, IsoDate } from '../../types'
+import type { IsoDate } from '../../types'
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../model'
 import type { CycleStoreDecisionFailure } from './decision-contract'
 
@@ -43,11 +43,7 @@ interface CycleAuthoritySlotScope {
   readonly accountId: string
 }
 
-export type CycleAuthoritySlot = CycleAuthoritySlotScope &
-  (
-    | { readonly signalSessionDate: IsoDate; readonly executionSessionDate?: never }
-    | { readonly signalSessionDate?: never; readonly executionSessionDate: IsoDate }
-  )
+export type CycleAuthoritySlot = CycleAuthoritySlotScope & { readonly executionSessionDate: IsoDate }
 
 export interface CycleRecoveryScope {
   readonly qualificationRunId: string
@@ -59,7 +55,6 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'acquire'
     | 'activate'
     | 'bind-decision'
-    | 'bind-snapshot'
     | 'block'
     | 'finish'
     | 'read'
@@ -84,11 +79,6 @@ export interface CycleStoreShape {
   readonly readOldestUnfinished: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
-  readonly bindSnapshot: (
-    cycleId: string,
-    inputManifest: InputManifest,
-    observedAt: string,
-  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly bindDecision: (
     cycleId: string,
