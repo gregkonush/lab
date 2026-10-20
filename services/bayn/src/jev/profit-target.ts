@@ -1,12 +1,10 @@
-import { jevProfitTargetProceeds } from './exit-policy'
 import { Result } from 'effect'
 
-import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { JevContractError } from './contract'
-import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
-import type { JevManagedPortfolio } from './portfolio'
+import { jevLiquidationValue } from './liquidation-economics'
+import { jevManagedExitPlan, type JevManagedPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 
 export const jevPositionProfitTarget = (protocol: JevProtocol, portfolio: JevManagedPortfolio) =>
@@ -40,12 +38,16 @@ export const jevPositionProfitTarget = (protocol: JevProtocol, portfolio: JevMan
     if (quantityAtoms <= 0n)
       return yield* Result.fail(new JevContractError({ message: 'Profit target has no quantity after entry fees' }))
     const acquisitionCostMicros =
+      -BigInt(portfolio.protectionDisposals.costBasisMicros) +
       fills.reduce((sum, fill) => sum + fill.notionalMicros, 0n) +
       (fees.cashMicros > observedCashFees ? fees.cashMicros : observedCashFees)
-    const minimumNetProceedsMicros = jevProfitTargetProceeds(
-      acquisitionCostMicros,
-      portfolio.exitPolicy.profitTargetNetBps,
-    )
+    const exitPlan = yield* jevManagedExitPlan(portfolio)
+    const minimumNetProceedsMicros = (yield* jevLiquidationValue({
+      protocol,
+      symbol: held.symbol,
+      quantityAtoms,
+      bidMicros: BigInt(exitPlan.levels.profitLimitPriceMicros),
+    })).conservativeNetMicros
     const profitMicros = minimumNetProceedsMicros - acquisitionCostMicros
     return {
       symbol: held.symbol,
@@ -58,20 +60,8 @@ export const jevPositionProfitTarget = (protocol: JevProtocol, portfolio: JevMan
     Result.mapError((cause) => new JevContractError({ message: 'Accounted position profit target is invalid', cause })),
   )
 
-export const jevProfitTargetCrossed = (protocol: JevProtocol, portfolio: JevManagedPortfolio, bidMicros: bigint) =>
-  Result.gen(function* () {
-    const target = yield* jevPositionProfitTarget(protocol, portfolio)
-    const liquidation = yield* jevLiquidationValue({ protocol, ...target, bidMicros })
-    return liquidation.conservativeNetMicros >= target.minimumNetProceedsMicros
-  })
+export const jevProfitTargetCrossed = (portfolio: JevManagedPortfolio, bidMicros: bigint) =>
+  jevProfitTargetBid(portfolio).pipe(Result.map((target) => bidMicros >= target))
 
-export const jevProfitTargetBid = (protocol: JevProtocol, portfolio: JevManagedPortfolio) =>
-  Result.gen(function* () {
-    const target = yield* jevPositionProfitTarget(protocol, portfolio)
-    return yield* jevBreakEvenExitBid({
-      protocol,
-      ...target,
-      acquisitionCostMicros: target.minimumNetProceedsMicros,
-      upperBidMicros: ((target.minimumNetProceedsMicros * quantityScale) / target.quantityAtoms + 1n) * 2n,
-    })
-  })
+export const jevProfitTargetBid = (portfolio: JevManagedPortfolio) =>
+  jevManagedExitPlan(portfolio).pipe(Result.map((plan) => BigInt(plan.levels.profitLimitPriceMicros)))

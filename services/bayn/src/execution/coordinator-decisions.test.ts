@@ -51,7 +51,7 @@ const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const decisionId = 'b'.repeat(64)
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: decisionId,

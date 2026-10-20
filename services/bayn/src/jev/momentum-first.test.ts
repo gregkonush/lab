@@ -19,7 +19,6 @@ import {
 import { JevBatchStore } from './batch-evaluation'
 import { JevClient } from './client'
 import { decideJevEntry, jevEntryQuoteMaximumAgeMs } from './decision'
-import { decideJevManagement, JevManagementAction } from '../intraday-replay/research-management'
 import { JevEvaluationStore } from './evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from './native.test-support'
 import { makeJevObservation } from './observation'
@@ -128,20 +127,14 @@ describe('momentum-first Jev admission', () => {
     expect(Result.getOrThrow(decideJevEntry(evidence(f, () => action))).selectedSymbols).toEqual([])
   })
 
-  test('honors chosen enter actions below the retired floor and preserves the fixed weight', () => {
+  test('honors chosen enter actions below the retired floor and respects the funded risk budget', () => {
     const f = fixture()
     expect(Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.649))).selectedSymbols).toEqual(['AAPL'])
     const decision = Result.getOrThrow(decideJevEntry(evidence(f, () => 'enter', 0.42)))
     expect(decision.selectedSymbols).toEqual(['AAPL'])
-    expect(decision.targetWeights['AAPL']).toBe(0.2)
+    expect(decision.targetWeights['AAPL']).toBeGreaterThan(0)
+    expect(decision.targetWeights['AAPL']).toBeLessThanOrEqual(0.2)
     expect(jevEntryQuoteMaximumAgeMs(decision, f.at, 10_000)).toBe(10_000)
-  })
-
-  test('management still requests a negative-momentum held symbol and preserves hold/exit', () => {
-    const f = fixture({ AAPL: -0.02 }, JevPurpose.Manage)
-    expect(f.plan.candidates.map(({ status }) => status)).toEqual([JevCandidatePlanStatus.Requested])
-    expect(Result.getOrThrow(decideJevManagement(evidence(f, () => 'hold'))).action).toBe(JevManagementAction.Hold)
-    expect(Result.getOrThrow(decideJevManagement(evidence(f, () => 'exit'))).action).toBe(JevManagementAction.Exit)
   })
 
   test('requires every requested result and rejects late complete results', () => {

@@ -3,30 +3,58 @@ import { NodeServices } from '@effect/platform-node'
 import { Clock, Effect, FileSystem, Layer, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import { canonicalHashV1 } from '../hash'
-import { JevCandidatePlanStatus } from '../jev/batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
-import { decideJevManagement, JevManagementAction } from './research-management'
+import { decideJevEntry } from '../jev/decision'
+import { makeJevObservation } from '../jev/observation'
+import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { evaluateJevOnce, JevClaim, JevEvaluationStore } from '../jev/evaluation'
-import { nativeJevInference } from '../jev/native.test-support'
+import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevResolutionStatus } from '../jev/resolution'
 import { evaluateJevObservation } from '../jev/runtime'
 import { CandidateObservationStore } from '../observe-composition/candidate-observation'
-import { controlJevFixture } from './control-jev.test-support'
 import { makeControlJevJournal } from './control-jev-journal'
 
-const fixture = controlJevFixture()
-const plan = fixture.prepared.batch
+const runId = '3'.repeat(64)
+const originalFixture = nativeJevFixture(undefined, undefined, `research-control-${runId}`, undefined, undefined, {
+  AAPL: 0.02,
+})
+const fixture = {
+  ...originalFixture,
+  observation: Result.getOrThrow(
+    makeJevObservation({
+      cycleId: canonicalHashV1({ runId, sessionDate: originalFixture.snapshot.manifest.sessionDate }),
+      authorityGenerationHash: canonicalHashV1({
+        runId,
+        scope: 'SIMULATED_CONTROL',
+        protocol: originalFixture.protocol,
+      }),
+      protocol: originalFixture.protocol,
+      portfolio: originalFixture.portfolio,
+      snapshot: originalFixture.snapshot,
+    }),
+  ),
+}
+const plan = Result.getOrThrow(
+  makeJevTradingSignalBatch({
+    observation: fixture.observation.payload,
+    expiresAt: new Date(
+      Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
+    ).toISOString(),
+    planVersion: JevBatchPlanVersion.V4,
+  }),
+)
 const candidate = plan.candidates[0]
-if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected management request')
+if (candidate?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected entry request')
 const request = candidate.request
-const observation = fixture.prepared.observation
+const observation = fixture.observation.payload
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem
   const directory = `${yield* fs.makeTempDirectoryScoped()}/journal`
-  const journal = yield* makeControlJevJournal(directory, fixture.input.runId)
-  yield* TestClock.setTime(fixture.atMs)
+  const journal = yield* makeControlJevJournal(directory, '3'.repeat(64))
+  yield* TestClock.setTime(Date.parse(observation.observedAt))
   return { fs, directory, journal }
 })
 const run = <A, E>(
@@ -47,12 +75,12 @@ const receipt = () =>
       completedAt: observation.observedAt,
       outcome: {
         status: JevOutcome.Received,
-        inference: nativeJevInference(request.request, observation.observedAt, 'exit'),
+        inference: nativeJevInference(request.request, observation.observedAt, 'enter'),
       },
     }),
   )
 
-test('native management commits source and request before inference, reproduces its result, and consumes its window once', () =>
+test('native entry commits source and request before inference, reproduces its result, and consumes its window once', () =>
   run(
     Effect.gen(function* () {
       const { fs, directory, journal } = yield* setup
@@ -63,7 +91,7 @@ test('native management commits source and request before inference, reproduces 
             calls++
             expect(yield* fs.exists(`${directory}/request-${request.requestId}.json`).pipe(Effect.orDie)).toBeTrue()
             expect(yield* fs.exists(`${directory}/batch-${plan.batchId}.json`).pipe(Effect.orDie)).toBeTrue()
-            return nativeJevInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), 'exit')
+            return nativeJevInference(input, new Date(yield* Clock.currentTimeMillis).toISOString(), 'enter')
           }),
       }
       const evaluation = evaluateJevObservation({
@@ -79,7 +107,7 @@ test('native management commits source and request before inference, reproduces 
         Effect.provideService(JevClient, client),
       )
       const evidence = yield* evaluation
-      expect(Result.getOrThrow(decideJevManagement(evidence)).action).toBe(JevManagementAction.Exit)
+      expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
       const repeated = yield* Effect.result(evaluation)
       expect(Result.isFailure(repeated) && repeated.failure._tag).toBe('JevAwaitingFreshWindow')
       expect(calls).toBe(1)
@@ -140,7 +168,7 @@ test('exclusive directories reject a restarted experiment and corrupted receipts
   run(
     Effect.gen(function* () {
       const { fs, directory, journal } = yield* setup
-      expect(Result.isFailure(yield* Effect.result(makeControlJevJournal(directory, fixture.input.runId)))).toBeTrue()
+      expect(Result.isFailure(yield* Effect.result(makeControlJevJournal(directory, '3'.repeat(64))))).toBeTrue()
       yield* seed(journal)
       yield* journal.evaluations.begin(request)
       yield* journal.evaluations.record(request, receipt())

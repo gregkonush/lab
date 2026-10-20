@@ -1,3 +1,4 @@
+import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
@@ -20,7 +21,7 @@ import {
   type BrokerMutationShape,
 } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
-import { OrderSide as IntentOrderSide, type Intent } from './contracts'
+import { submittedBrokerOrderCount, OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
 import type { CachedBrokerState } from './broker-state-cache'
 import {
@@ -737,11 +738,12 @@ const validateExecutionCapitalLimitsDataFirst = (
   const pendingSellCoverage = validatePendingSellCoverage(snapshot)
   if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
-  if (snapshot.openOrders.length >= limits.maxOpenOrders) {
+  const prospectiveOrderCount = snapshot.openOrders.length + submittedBrokerOrderCount(intent.protection)
+  if (prospectiveOrderCount > limits.maxOpenOrders) {
     return Result.fail({
       _tag: 'OpenOrderLimitExceeded',
       limit: limits.maxOpenOrders,
-      observed: snapshot.openOrders.length,
+      observed: prospectiveOrderCount,
     })
   }
 
@@ -1039,6 +1041,17 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
   const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
   if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
+  if (
+    intent.protection !== undefined &&
+    instrumentMarket(intent.symbol) === MarketKind.Equity &&
+    equityClockSession(observedAt) !== 'regular'
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'Native equity protection requires the regular session at final transmission',
+      }),
+    )
   const asset = snapshot.asset
   if (
     asset.symbol !== intent.symbol ||

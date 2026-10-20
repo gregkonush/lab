@@ -1,3 +1,4 @@
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { Option, Result, Schema } from 'effect'
 
 import {
@@ -328,7 +329,19 @@ const exactOrderDataFirst = (intent: Intent, request: OrderRequestBody, order: O
     order.timeInForce === request.time_in_force &&
     representationMatches &&
     order.limitPriceMicros === (limitPrice.success === undefined ? undefined : limitPrice.success.toString()) &&
-    order.extendedHours === request.extended_hours
+    order.extendedHours === request.extended_hours &&
+    order.orderClass === (request.order_class ?? 'simple') &&
+    order.stopPriceMicros ===
+      (intent.protection?._tag === 'StopLimit' ? intent.protection.stopPriceMicros : undefined) &&
+    (intent.protection === undefined ||
+      intent.protection._tag === 'StopLimit' ||
+      Result.isSuccess(
+        verifyProtectionGroup(order, {
+          symbol: intent.symbol,
+          quantityAtoms: intent.quantityAtoms,
+          protection: intent.protection,
+        }),
+      ))
   )
 }
 
