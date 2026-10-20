@@ -172,7 +172,8 @@ const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            begin: (plan, observation) =>
+              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
           })
         } else complete = false

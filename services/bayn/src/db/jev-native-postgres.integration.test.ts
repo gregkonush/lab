@@ -60,7 +60,8 @@ import { equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { CandidateObservationStore, recordJevObservation } from '../observe-composition/candidate-observation'
+import { CandidateObservationStore } from '../observe-composition/candidate-observation'
+import { makeJevObservation } from '../jev/observation'
 import {
   buildMutationShadowCycleDecision,
   loadExecutionRiskPolicy,
@@ -333,9 +334,16 @@ const seedManagedPosition = (
     return { managed, portfolio: { ...portfolio, brokerState } }
   })
 
+const recordJevFixtureObservation = (input: Parameters<typeof makeJevObservation>[0]) =>
+  Effect.gen(function* () {
+    const observation = yield* Effect.fromResult(makeJevObservation(input))
+    yield* (yield* CandidateObservationStore).record(observation)
+    return observation
+  })
+
 const prepareManagementBatch = Effect.gen(function* () {
   const { managed, portfolio } = yield* seedManagedPosition()
-  const observation = yield* recordJevObservation({
+  const observation = yield* recordJevFixtureObservation({
     ...nativeInput,
     portfolio,
     snapshot: managed.snapshot,
@@ -360,7 +368,7 @@ const prepareManagementBatch = Effect.gen(function* () {
       outcome: { status: JevOutcome.Received, inference: nativeJevInference(request.request, plan.observedAt, 'hold') },
     }),
   )
-  yield* (yield* JevBatchStore).begin(plan)
+  yield* (yield* JevBatchStore).begin(plan, observation.payload)
   return { plan, request, receipt }
 })
 
@@ -393,7 +401,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       },
       entry.query,
     ).snapshot
-    const observation = yield* recordJevObservation({
+    const observation = yield* recordJevFixtureObservation({
       cycleId: entry.draft.identity.cycleId,
       authorityGenerationHash: entry.observation.payload.authorityGenerationHash,
       protocol: entry.protocol,
@@ -410,7 +418,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
     expect(plan.candidates).toHaveLength(15)
     expect(requested.map((candidate) => candidate.symbol)).toEqual([...symbols].sort())
-    yield* (yield* JevBatchStore).begin(plan)
+    yield* (yield* JevBatchStore).begin(plan, observation.payload)
     return { plan, requested }
   })
 
@@ -986,7 +994,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         const wrongIdentity = Result.getOrThrow(
           makeJevBatchPlan({ ...rebound, observationHash: result.batchPlan.observationHash }),
         )
-        expect(Result.isFailure(yield* store.begin(wrongIdentity).pipe(Effect.result))).toBe(true)
+        expect(Result.isFailure(yield* store.begin(wrongIdentity, result.observation).pipe(Effect.result))).toBe(true)
         expect(yield* sql`SELECT count(*)::int AS count FROM jev_batch_plans`).toEqual([{ count: 1 }])
       }).pipe(
         Effect.provideService(JevClient, {
@@ -1703,7 +1711,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }),
         )
         const store = yield* JevBatchStore
-        yield* store.begin(plan)
+        yield* store.begin(plan, fixture.observation.payload)
         expect(yield* store.pending(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toEqual([plan.batchId])
         expect(yield* recoverPendingJevBatches(nativeInput.cycleId, nativeInput.authorityGenerationHash)).toBe(false)
         yield* TestClock.setTime(observed + fixture.protocol.inferenceValidityMs)

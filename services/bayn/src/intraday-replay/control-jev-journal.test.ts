@@ -66,13 +66,7 @@ const run = <A, E>(
 ) =>
   Effect.runPromise(program.pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))))
 const seed = (journal: Effect.Success<typeof setup>['journal']) =>
-  Effect.gen(function* () {
-    yield* journal.observations.record({
-      contentHash: Result.getOrThrow(canonicalHashV1Result(observation)),
-      payload: observation,
-    })
-    yield* journal.batches.begin(plan)
-  })
+  journal.batches.begin(plan, observation).pipe(Effect.asVoid)
 const receipt = (evaluationRequest = request) =>
   Result.getOrThrow(
     makeJevEvaluationReceipt(evaluationRequest, {

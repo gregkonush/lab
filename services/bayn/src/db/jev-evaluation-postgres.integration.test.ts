@@ -119,7 +119,7 @@ describePostgres('PostgreSQL Jev evaluation evidence', () => {
         yield* (yield* CandidateObservationStore).record(fixture.observation)
 
         yield* TestClock.setTime(Date.parse(request.observedAt)).pipe(
-          Effect.andThen((yield* JevBatchStore).begin(batch)),
+          Effect.andThen((yield* JevBatchStore).begin(batch, fixture.observation.payload)),
           Effect.provide(TestClock.layer()),
         )
       }),
