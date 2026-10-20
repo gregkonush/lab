@@ -1,3 +1,4 @@
+import setupActionProtocolMigration from '../../migrations/0123_setup_action_protocol'
 import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
 import costSupportedEntryMigration from '../../migrations/0116_cost_supported_entry'
 import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
@@ -25,6 +26,7 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  { label: 'jev-setup-action', id: 123, protocol: 'bayn.jev.protocol.v10', migration: setupActionProtocolMigration },
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },

@@ -125,7 +125,6 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
     'action',
     'continuation',
     'exhaustion',
-    'net_economics',
     'regime',
     'setup_quality',
   ])

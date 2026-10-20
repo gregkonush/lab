@@ -84,9 +84,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "b12adaa9febc0a207c07b4b6a773b833cced9731e71dc06d4b7686608fea8ac5"
+              value: "1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "ca77ee9e9a5bbab64e74164a3547f5e70be699b10f49f6880e4f4e144e4a379d"
+              value: "6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_AUTHORITY
@@ -188,6 +188,8 @@ spec:
                 secretKeyRef:
                   name: bayn-valkey-auth
                   key: password
+            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
+              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
               valueFrom:
                 secretKeyRef:
@@ -196,9 +198,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"568606b968351fe9bb1fe99723674d0655c118e7ef051a0f04ae8bb60e9bba0c","authoredActivation":{"sourceRevision":"ea804cd06edb9596c6ccf1b2dd1cfffc9a903481","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:4382b44028c153535647fa6086cd85e947766bd0a46c8957d6436ee02ed095c9"},"activation":{"sourceRevision":"ea804cd06edb9596c6ccf1b2dd1cfffc9a903481","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:4382b44028c153535647fa6086cd85e947766bd0a46c8957d6436ee02ed095c9"}}'
-            - name: OTEL_EXPORTER_OTLP_METRICS_ENDPOINT
-              value: http://observability-mimir-gateway.observability.svc.cluster.local/otlp/v1/metrics
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"125447d3b176b1f1f06a82fc946acfb3932ea0b67c5b23a5dee1fab693bed733","authoredActivation":{"sourceRevision":"9e8316546589e056d3d9f74e753c0ec62f270858","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:38dcc6343f55386646b81c19ee213a79306c3ecd3e370903b4d77e6b9c9f0f43"},"activation":{"sourceRevision":"9e8316546589e056d3d9f74e753c0ec62f270858","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:38dcc6343f55386646b81c19ee213a79306c3ecd3e370903b4d77e6b9c9f0f43"}}'
           startupProbe:
             tcpSocket:
               port: restate

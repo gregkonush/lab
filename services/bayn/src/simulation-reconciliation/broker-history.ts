@@ -83,7 +83,7 @@ const decideOrderPageDataFirst = (
     return Result.fail(paginationFailure('OrderPageTooLarge', 'Alpaca returned more orders than requested'))
   }
   if (page.value.length === 0) {
-    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt } })
+    return Result.succeed({ _tag: 'Complete', read: { rows: state.rows, observedAt: state.observedAt ?? observedAt } })
   }
   const pageResult = page.value.reduce<Result.Result<OrderPageAccumulator, ReconciliationError>>(
     (result, order) => {
@@ -114,14 +114,14 @@ const decideOrderPageDataFirst = (
       if (
         normalizedPrevious !== undefined &&
         Result.isSuccess(normalizedPrevious) &&
-        normalizedSubmittedAt.success < normalizedPrevious.success
+        normalizedSubmittedAt.success > normalizedPrevious.success
       ) {
-        return Result.fail(paginationFailure('OrderHistoryNotAscending', 'Alpaca order history is not ascending'))
+        return Result.fail(paginationFailure('OrderHistoryNotDescending', 'Alpaca order history is not descending'))
       }
       if (
         normalizedCursor !== undefined &&
         Result.isSuccess(normalizedCursor) &&
-        normalizedSubmittedAt.success <= normalizedCursor.success
+        normalizedSubmittedAt.success >= normalizedCursor.success
       ) {
         return Result.fail(
           paginationFailure('OrderTimestampCursorDidNotAdvance', 'Alpaca order timestamp cursor did not advance'),
@@ -212,10 +212,9 @@ const readOrderPages = (
   return Effect.suspend(() =>
     read.orders({
       status: OrderCollection.All,
-      direction: SortDirection.Ascending,
+      direction: SortDirection.Descending,
       limit,
-      until,
-      ...(state.cursor === undefined ? {} : { after: state.cursor }),
+      until: state.cursor ?? until,
     }),
   ).pipe(
     Effect.flatMap((page) => Effect.fromResult(decideOrderPage(state, limit, page))),

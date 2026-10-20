@@ -1,13 +1,14 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { cpSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
 import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
+import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
@@ -831,18 +832,77 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
-    await context.addInitScript(() => {
+    const webAuthnRequests: unknown[] = []
+    await context.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      webAuthnRequests.push(options)
+    })
+    const observeWebAuthn = () => {
       window.prompt = () => {
         throw new Error('prompt() is not supported.')
       }
-    })
+      const get = navigator.credentials.get.bind(navigator.credentials)
+      navigator.credentials.get = async (options) => {
+        if (options?.publicKey) {
+          const record: unknown = Reflect.get(window, 'recordWebAuthnOptions')
+          if (typeof record !== 'function') throw new Error('Fixture WebAuthn observer is unavailable')
+          await record({
+            hints: Reflect.get(options.publicKey, 'hints'),
+            userVerification: options.publicKey.userVerification,
+          })
+        }
+        return get(options)
+      }
+    }
+    await context.addInitScript(observeWebAuthn)
     const page = await context.newPage()
+    const themeScreenshots = process.env.TENGRI_IDENTITY_SCREENSHOTS
+    if (themeScreenshots) mkdirSync(themeScreenshots, { recursive: true })
+    const checkTheme = async (screen: string) => {
+      await browserExpect(page).toHaveTitle('Sign in to Tengri')
+      await browserExpect(page.locator('.tengri-brand')).toHaveText('Tengri')
+      await browserExpect(page.locator('.tengri-mark img')).toBeVisible()
+      await browserExpect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /\/img\/fruit-pear\.svg$/)
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 320, height: 740 },
+      ]) {
+        await page.setViewportSize(viewport)
+        await page.evaluate(() => document.fonts.ready)
+        await page
+          .locator('.tengri-window')
+          .evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)))
+        expect(await page.evaluate(() => document.fonts.check('14px Geist'))).toBe(true)
+        expect(await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily)).toContain(
+          'Geist',
+        )
+        expect(
+          await page
+            .locator('.tengri-mark img')
+            .evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth > 0),
+        ).toBe(true)
+        expect(await page.locator('body').evaluate((element) => element.scrollWidth <= window.innerWidth)).toBe(true)
+        await browserExpect(page.locator('.tengri-window')).toBeInViewport()
+        const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+        expect(accessibility.violations).toEqual([])
+        if (themeScreenshots)
+          await page.screenshot({
+            path: path.join(themeScreenshots, `${screen}-${viewport.width}.png`),
+            fullPage: true,
+          })
+      }
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      expect(await page.locator('.tengri-window').evaluate((element) => getComputedStyle(element).animationName)).toBe(
+        'none',
+      )
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+    }
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
-    await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
-        transport: 'internal',
+        transport: 'usb',
         hasResidentKey: true,
         hasUserVerification: true,
         isUserVerified: true,
@@ -852,7 +912,7 @@ identityTest(
     await page.goto(base)
     await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.getByRole('heading', { name: /Passkey Registration/ }))
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true }))
       .toBeVisible({ timeout: 20_000 })
       .catch(async () => {
         throw new Error(
@@ -867,7 +927,13 @@ identityTest(
         )
       })
     await page.waitForLoadState('domcontentloaded')
-    await page.getByRole('button', { name: /Register/ }).click()
+    await checkTheme('setup')
+    await page.keyboard.press('Tab')
+    await page.locator('#registerWebAuthn').focus()
+    expect(await page.locator('#registerWebAuthn').evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+      'solid',
+    )
+    await page.keyboard.press('Enter')
     await page
       .waitForURL((url) => url.origin === base, { timeout: 20_000 })
       .catch(async (cause: unknown) => {
@@ -890,6 +956,7 @@ identityTest(
     }
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
     )
@@ -1008,11 +1075,29 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
-    await adminCall('', 'PUT', { loginTheme: 'keycloak', sslRequired: 'none' })
+    const webAuthnPolicy = Object.fromEntries(
+      Object.entries(z.record(z.string(), z.unknown()).parse(await (await adminCall('')).json())).filter(
+        ([key]) => key.startsWith('webAuthnPolicy') && !key.startsWith('webAuthnPolicyPasswordless'),
+      ),
+    )
+    await adminCall('', 'PUT', {
+      ...webAuthnPolicy,
+      loginTheme: 'keycloak',
+      sslRequired: 'none',
+      webAuthnPolicyUserVerificationRequirement: 'required',
+    })
+    expect(
+      z.object({ webAuthnPolicyUserVerificationRequirement: z.string() }).parse(await (await adminCall('')).json())
+        .webAuthnPolicyUserVerificationRequirement,
+    ).toBe('required')
     expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
     await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
-    expect(z.object({ loginTheme: z.string() }).parse(await (await adminCall('')).json()).loginTheme).toBe('tengri')
+    expect(await (await adminCall('')).json()).toMatchObject({
+      ...webAuthnPolicy,
+      loginTheme: 'tengri',
+      webAuthnPolicyUserVerificationRequirement: 'discouraged',
+    })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -1324,6 +1409,9 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    await checkTheme('verify')
+    await browserExpect(page.getByRole('heading', { name: 'Verify your passkey', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('link', { name: 'Use another account', exact: true })).toBeVisible()
     const subjectBeforeFailover = (
       await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
     ).rows[0]?.identity_subject
@@ -1359,6 +1447,11 @@ identityTest(
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
+    const platformWebAuthnRequests: unknown[] = []
+    await secondContext.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      platformWebAuthnRequests.push(options)
+    })
+    await secondContext.addInitScript(observeWebAuthn)
     const secondPage = await secondContext.newPage()
     const secondCdp = await secondContext.newCDPSession(secondPage)
     await secondCdp.send('WebAuthn.enable')
@@ -1372,18 +1465,13 @@ identityTest(
         automaticPresenceSimulation: true,
       },
     })
-    await secondContext.addInitScript(() => {
-      window.prompt = () => {
-        throw new Error('prompt() is not supported.')
-      }
-    })
     const enroll = async (id: string) => {
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
       await secondPage.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
-      await browserExpect(secondPage.getByRole('heading', { name: /Passkey Registration/ })).toBeVisible()
+      await browserExpect(secondPage.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
       await secondPage.waitForLoadState('domcontentloaded')
-      await secondPage.getByRole('button', { name: /Register/ }).click()
+      await secondPage.getByRole('button', { name: 'Create passkey', exact: true }).click()
       await secondPage
         .waitForURL((url) => url.origin === base && (id === '999' || url.pathname === '/'), {
           timeout: 10_000,
@@ -1419,6 +1507,18 @@ identityTest(
     )
     expect(distinct.rowCount).toBe(2)
     expect(new Set(distinct.rows.map((row) => row.identity_subject)).size).toBe(2)
+    await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
+    await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+    await secondPage.getByRole('link', { name: 'GitHub fixture 2', exact: true }).click()
+    await browserExpect(secondPage.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await secondPage.waitForLoadState('domcontentloaded')
+    await secondPage.locator('#authenticateWebAuthnButton').click()
+    await secondPage.waitForURL(base + '/')
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+    expect(platformWebAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of platformWebAuthnRequests)
+      expect(request).toEqual({ hints: ['client-device', 'security-key'], userVerification: 'discouraged' })
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     // The nonmember is a separate upstream identity, with no existing Keycloak SSO cookie.
@@ -1489,7 +1589,7 @@ identityTest(
         ])
       ).rows[0]?.reason,
     ).toBe('verified passkey assurance required')
-    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('4')
+    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('5')
     const mappers = z
       .array(z.object({ id: z.string(), name: z.string() }))
       .parse(await (await adminCall(`/clients/${client.id}/protocol-mappers/models`)).json())
@@ -1562,9 +1662,19 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('4')
+    ).toBe('5')
+    expect(webAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of webAuthnRequests)
+      expect(request).toEqual({ hints: ['security-key'], userVerification: 'discouraged' })
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
+    )
+    await page.goto(issuer + '/protocol/openid-connect/auth?client_id=invalid-theme-fixture&response_type=code')
+    await browserExpect(page.getByRole('heading', { name: 'Unable to continue', exact: true })).toBeVisible()
+    await browserExpect(page.locator('#kc-error-message')).toContainText('Client not found')
+    await checkTheme('error')
+    console.log(
+      'PASS: branded passkey setup, verification and error pages fit desktop and 320px, load Geist, respect reduced motion and pass WCAG A/AA browser checks',
     )
   },
   300_000,
