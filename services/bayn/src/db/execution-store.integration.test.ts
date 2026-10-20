@@ -1232,11 +1232,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = ['crypto', 'cross-date', 'regulatory', 'retained', 'partial', 'overreleased'] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'cross-date'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1737,6 +1737,15 @@ describePostgres('PostgreSQL execution persistence', () => {
               observedAt: sellAt,
             },
           })
+        if (scenario === 'cross-date') {
+          for (const fee of fees) {
+            Object.assign(fee.value, {
+              sourceCreatedAt: `${sellAt.slice(0, 19)}.123456000Z`,
+              date: '2026-08-31',
+            })
+            Object.assign(fee.evidence, { observedAt: '2026-08-31T08:00:00.000Z' })
+          }
+        }
         const post = Effect.gen(function* () {
           yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
           return yield* fence.transaction(
@@ -1760,6 +1769,23 @@ describePostgres('PostgreSQL execution persistence', () => {
           journalControl.failPosts = false
         }
         const result = yield* post
+        if (scenario === 'cross-date') {
+          expect(
+            yield* sql`SELECT fee_date::text,data ? 'sourceCreatedAt' AS provenance_in_content,
+              read_evidence->>'sourceCreatedAt' AS source_created_at FROM broker_fee_accounting ORDER BY activity_id`,
+          ).toEqual([
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+          ])
+        }
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
