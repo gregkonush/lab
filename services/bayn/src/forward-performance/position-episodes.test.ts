@@ -13,7 +13,7 @@ import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
-import { makeForwardPerformanceReport } from './report'
+import { ForwardPerformanceScopeKind, makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
@@ -815,10 +815,42 @@ describe('position episodes', () => {
     ).not.toBe(reportHash)
   })
 
+  test('binds an empty financial report to the requested generation without supplying financial identity', () => {
+    const input = evidence([])
+    const firstGeneration = '1'.repeat(64)
+    const secondGeneration = '2'.repeat(64)
+    const first = success(makeForwardPerformanceReport(input, [], firstGeneration))
+    const second = success(makeForwardPerformanceReport(input, [], secondGeneration))
+
+    expect(first.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: firstGeneration,
+    })
+    expect(second.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: secondGeneration,
+    })
+    expect(first.receipt).toEqual(second.receipt)
+    expect(first.receipt.bindings.source).toBeNull()
+    expect(first.receipt.bindings.strategy).toBeNull()
+    expect(Object.values(first.receipt.totals).every((total) => total === null)).toBe(true)
+    expect(first.receipt.profitability).toBe('UNDETERMINED')
+    expect(first.reportHash).not.toBe(second.reportHash)
+    const { reportHash, ...material } = first
+    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(canonicalHashV1({ ...material, scope: second.scope })).not.toBe(reportHash)
+  })
+
+  test('declares an account scope when no generation was requested', () => {
+    const report = success(makeForwardPerformanceReport(evidence([]), []))
+    expect(report.scope).toEqual({ kind: ForwardPerformanceScopeKind.Account })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+  })
+
   test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v4')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
     expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)

@@ -1394,6 +1394,47 @@ describe('forward performance domain', () => {
     expect(receipt.profitability).toBe('UNDETERMINED')
   })
 
+  test('reports missing capital and operating costs independently without inventing totals', () => {
+    const original = input()
+    assert(original.ledgerTotals !== undefined)
+    const evidence = input({ ledgerTotals: { ...original.ledgerTotals, otherChargedCostsMicros: null } })
+    Reflect.deleteProperty(evidence, 'startingCapitalMicros')
+
+    const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+    expect(receipt.evidence.reasonCodes).toEqual(['OPERATING_COST_EVIDENCE_GAP', 'STARTING_CAPITAL_GAP'])
+    expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test('reports missing capital and ledger independently without treating absent amounts as malformed', () => {
+    const evidence = input()
+    Reflect.deleteProperty(evidence, 'startingCapitalMicros')
+    Reflect.deleteProperty(evidence, 'ledgerTotals')
+
+    const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+    expect(receipt.evidence.reasonCodes).toEqual(['MISSING_LEDGER_ACCOUNT', 'STARTING_CAPITAL_GAP'])
+    expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test.each(['startingCapitalMicros', 'ledgerTotals'] as const)(
+    'retains an explicitly unsettled fee accrual when %s is unavailable',
+    (missing) => {
+      const evidence = input({
+        brokerFeeAccruals: [{ accrualId: hash('f'), accountId: 'paper-account-1', expenseMicros: '5', settled: false }],
+      })
+      Reflect.deleteProperty(evidence, missing)
+
+      const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+      expect(receipt.evidence.reasonCodes).toContain('BROKER_FEE_SETTLEMENT_PENDING')
+      expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+      expect(receipt.profitability).toBe('UNDETERMINED')
+    },
+  )
+
   test('invalid or overflowing integer-micro arithmetic fails closed', () => {
     const max = ((1n << 127n) - 1n).toString()
     const receipt = success(
