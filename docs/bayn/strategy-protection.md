@@ -17,7 +17,10 @@ profit choice beyond a fresh high; it must never be hidden by inventing a replac
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 [value extraction pattern](https://docs.typesafe.ai/cookbooks/pre_parsed_value_extraction_cookbook).
 
-All three answers describe the same trade. Only a chosen `enter` with both selected prices can proceed.
+The questions run independently over the same state and cannot see one another's answers. Each price question
+explicitly assumes a new long entry and judges its own price from the supplied evidence. Code consumes those
+speculative answers only for a chosen `enter` with both selected prices; the action question cannot choose or
+coordinate other answers. See [speculative fan-out](https://docs.typesafe.ai/patterns/fan-out).
 Code checks that the stop is positive and below the current bid and entry ceiling, that the take profit is
 above that ceiling, and that estimated target proceeds cover the modeled entry and exit costs. An unsupported,
 missing, inverted or unfunded plan cannot create an order. Code never substitutes another stop or target.

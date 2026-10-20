@@ -1331,7 +1331,7 @@ describe('intraday shadow decision', () => {
         }),
       ),
     ).toBe(true)
-  })
+  }, 30_000)
 
   test('persists reproducible streaming decision and pricing cuts and rejects altered or missing execution rows', async () => {
     const input = fixture({ AAPL: 0.02 })

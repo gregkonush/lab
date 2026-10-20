@@ -251,7 +251,7 @@ export const jevTradingQuestions = {
   action: {
     type: 'choice',
     instructions:
-      'Choose enter, wait or avoid from the supplied market evidence, costs and observed price choices. There is no required positive return or benchmark outperformance. When choosing enter, also choose a stop_loss below the current bid and a take_profit above the maximum entry price that covers estimated execution costs. Choose none for an unsupported price and wait or avoid when a coherent trade plan is unsupported. All answers describe the same trade. Code validates and seals your chosen prices before execution; it never supplies replacement exit prices. Code owns permission, quantity, execution and account risk limits.',
+      'Using `candidate`, `benchmark`, `relativeSignals`, `entryEconomics` and `session`, choose enter, wait or avoid for a new long position in `candidate.symbol` now over `task.horizonMinutes`. There is no required positive return or benchmark outperformance. Judge whether the supplied market evidence supports the entry after estimated execution costs. Execution remains conditional on separately selected and validated stop loss and take profit prices. Code owns permission, quantity, execution and account risk limits.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',

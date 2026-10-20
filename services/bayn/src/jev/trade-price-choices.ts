@@ -48,8 +48,8 @@ export const jevTradePriceQuestions = (input: {
         type: 'choice',
         instructions:
           role === 'stop_loss'
-            ? 'Choose the observed price that best invalidates the proposed long entry thesis. Use none when the evidence does not support a stop. Coordinate with the entry action and take_profit. No return or momentum sign is required.'
-            : 'Choose the observed price that best supports taking profit on the proposed long entry after execution costs. Use none if no supplied price is supported or covers estimated costs. Coordinate with the entry action and stop_loss.',
+            ? 'Assume a new long position in `candidate.symbol` is entered now under `entryEconomics`, with a holding horizon of `task.horizonMinutes`. Using `candidate`, `benchmark` and `relativeSignals`, select the supplied observed price below `candidate.quote.bid` at which the market evidence would invalidate that long thesis. Choose none if the evidence does not support any supplied stop price. No positive return or benchmark outperformance is required. Code uses this speculative answer only when entering a long position is separately supported.'
+            : 'Assume a new long position in `candidate.symbol` is entered now under `entryEconomics`, with a holding horizon of `task.horizonMinutes`. Using `candidate`, `benchmark` and `relativeSignals`, select the supplied observed price above `entryEconomics.maximumEntryPriceUsd` that the evidence supports reaching to realize a profit after estimated execution costs. Consider `entryEconomics.breakEvenExitBidUsd`. Choose none if no supplied price is supported or covers estimated costs. Code uses this speculative answer only when entering a long position is separately supported.',
         criteria: { none: 'No supplied price supports this trade.', ...criteria },
       }
     }

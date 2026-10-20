@@ -12,11 +12,12 @@ import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './ent
 import { jevEntryEconomics } from './entry-economics'
 import { defaultJevProtocolDocument } from './protocol'
 
-test('setup selection asks the model for its setup action without a second economics judgment', () => {
+test('typed entry and protection choices support an entry without a confidence gate', () => {
   const fixture = nativeJevFixture()
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
-  expect(request.request.questions['net_economics']).toBeUndefined()
-  expect(request.request.questions['action']?.instructions).toContain('stop_loss')
+  expect(
+    Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
+  ).toEqual({ action: 'choice', stop_loss: 'choice', take_profit: 'choice' })
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
