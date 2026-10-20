@@ -187,10 +187,10 @@ and remaining economic assumptions. Native children and protective disposals sha
 Migration 131 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59`.
-This source cutover carries OBSERVE authority. PAPER restoration requires a reviewed same-account mandate authored
-against the published v15 image. The sealed request identity, activation generation and all three runtime build
-lineages must move together through Kargo. Preserve every existing monetary limit; changing the order contract does
-not authorize additional capital or a risk-history reset.
+The protocol cutover uses OBSERVE authority. The committed same-account PAPER request is authored against a
+verified published v15 image. Its sealed identity, activation generation and all three runtime build lineages move
+together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
+account losses, peak equity and turnover history remain in place.
 
 Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
@@ -407,8 +407,8 @@ thirty-minute Kargo deployment budget covers that startup and native handoff. Th
 immutable history rewrite; readiness and native authority still require completed migrations and verified state.
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
-no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-129, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
+97 and 131, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
 containing this migration and the current Jev v15 strategy/risk identities. Its sealed request and PR may be prepared
 while the OBSERVE rollout finishes; hold the activation merge until migration 131, the source-bound controller plan v3
