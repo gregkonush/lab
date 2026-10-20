@@ -23,7 +23,9 @@ accepts those completed decisions only when every generation-bound decision matc
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
 no intents or active cycles. Native recovery settles and reconciles a restricted generation before running another cycle.
 An already settled, flat account rotates through clear OBSERVE and resumes the approved PAPER mandate without an extra
-close-only cycle pass. Unsettled broker work continues through close-only recovery. Operator holds remain restricted.
+close-only cycle pass. Unsettled broker work continues through close-only recovery. The same settlement check runs
+after an actual close-only cycle pass, so newly resolved broker work can finish its generation handoff immediately.
+Operator holds remain restricted.
 A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
@@ -51,6 +53,13 @@ reconciliation, account trading date and earliest broker-evidence expiry. Public
 Missing or expired preflight evidence follows the existing admission and decision checks. The check adds no
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
+
+A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
+supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
+pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
+contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
+rejection receipts cannot be relabeled as accepted evidence.
 
 Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
 in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
