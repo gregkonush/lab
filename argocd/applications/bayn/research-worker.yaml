@@ -45,6 +45,8 @@ spec:
             - name: restate
               containerPort: 9080
           env:
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: BAYN_PUBLIC_INFORMATION_ENABLED
               value: 'true'
             - name: BAYN_PUBLIC_INFORMATION_PROXY
@@ -132,4 +134,4 @@ spec:
                 path: ca.crt
         - name: tmp
           emptyDir:
-            sizeLimit: 32Mi
+            sizeLimit: 256Mi
