@@ -24,7 +24,7 @@ const request = evaluationRequestFixture()
 const { requestId: _, ...requestMaterial } = request
 const second = Result.getOrThrow(makeJevEvaluationRequest({ ...requestMaterial, symbol: 'AMZN' }))
 const planMaterial = {
-  schemaVersion: JevBatchPlanVersion.V4,
+  schemaVersion: JevBatchPlanVersion.V5,
   cycleId: request.cycleId,
   authorityGenerationHash: request.authorityGenerationHash,
   observationHash: 'd'.repeat(64),
@@ -34,7 +34,13 @@ const planMaterial = {
   expiresAt: request.expiresAt,
   benchmarkSymbol: 'SPY',
   questionSetHash: Result.getOrThrow(
-    canonicalHashV1Result({ model: request.request.model, questions: request.request.questions }),
+    canonicalHashV1Result(
+      [request, second].map((entry) => ({
+        symbol: entry.symbol,
+        model: entry.request.model,
+        questions: entry.request.questions,
+      })),
+    ),
   ),
   candidates: [
     { symbol: 'AAPL', status: JevCandidatePlanStatus.Requested, request },
@@ -139,12 +145,22 @@ describe('complete Jev batch evidence', () => {
       Result.isFailure(makeJevBatchPlan({ ...planMaterial, schemaVersion: 'bayn.jev-batch-plan.v1', candidates })),
     ).toBe(true)
     const mixed = Result.getOrThrow(
-      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V4, candidates }),
+      makeJevBatchPlan({
+        ...planMaterial,
+        schemaVersion: JevBatchPlanVersion.V5,
+        candidates,
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
+      }),
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
     expect(Result.isFailure(usableJevBatchInferences(mixed, result, 450))).toBe(true)
     const versionThree = Result.getOrThrow(
-      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V4, candidates }),
+      makeJevBatchPlan({
+        ...planMaterial,
+        schemaVersion: JevBatchPlanVersion.V5,
+        candidates,
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
+      }),
     )
     const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
     expect(Result.isFailure(usableJevBatchInferences(versionThree, versionThreeResult, 450))).toBe(true)

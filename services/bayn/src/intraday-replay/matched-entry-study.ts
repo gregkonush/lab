@@ -470,8 +470,6 @@ export const runMatchedEntryStudy = (
       const protocol = batch.observation.protocol
       if (
         protocol.maximumHoldingMinutes !== 15 ||
-        protocol.maximumCapitalRiskBps !== 10 ||
-        protocol.maximumStopBps !== 500 ||
         controlExitDefinition.protectiveStopBps !== 50 ||
         controlExitDefinition.profitTargetNetBps !== 100 ||
         protocol.flattenBeforeCloseMinutes !== 5
@@ -601,7 +599,7 @@ export const runMatchedEntryStudy = (
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (
         decision.contentHash !== retained.decisionHash ||
-        native?.schemaVersion !== 'bayn.jev-entry-target.v3' ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v4' ||
         native.evidence.batchPlan.batchId !== batch.plan.batchId ||
         native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
         decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||

@@ -15,7 +15,7 @@ const batch = (snapshot: ReturnType<typeof cryptoMarketFixture>['snapshot']) => 
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
 }
@@ -24,7 +24,7 @@ test('BTC can use verified ETH benchmark bars without authorizing an ETH trade',
   const { snapshot } = cryptoMarketFixture('BTC/USD', { missingTradeSymbols: ['ETH/USD'] })
   const plan = batch(snapshot)
   expect(plan.candidates).toHaveLength(1)
-  expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Excluded)
+  expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
   const state = Result.getOrThrow(makeJevTradingSignalRequest(observation, 'BTC/USD')).request.state
   expect(state).toHaveProperty('benchmark.pricingBasis', 'COMPLETED_BAR_CLOSE')
@@ -45,7 +45,7 @@ test('a missing ETH candidate trade excludes ETH while BTC retains the same benc
   )
   const plan = batch(snapshot)
   expect(plan.candidates.find((candidate) => candidate.symbol === 'BTC/USD')?.status).toBe(
-    JevCandidatePlanStatus.Excluded,
+    JevCandidatePlanStatus.Requested,
   )
   expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
     status: 'EXCLUDED',
@@ -88,8 +88,12 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
 test('unused benchmark quote age does not change verified BTC relative momentum', () => {
   const baseline = batch(cryptoMarketFixture('BTC/USD').snapshot)
   const staleBenchmark = batch(cryptoMarketFixture('BTC/USD', { benchmarkQuoteLagMs: 600_000 }).snapshot)
-  expect(staleBenchmark.candidates).toEqual(baseline.candidates)
-  expect(staleBenchmark.candidates[0]).toMatchObject({ status: 'EXCLUDED', reason: 'exit-plan' })
+  const before = baseline.candidates[0]
+  const after = staleBenchmark.candidates[0]
+  if (before?.status !== JevCandidatePlanStatus.Requested || after?.status !== JevCandidatePlanStatus.Requested)
+    throw new Error('Expected candidate requests')
+  expect(after.request.request).toEqual(before.request.request)
+  expect(staleBenchmark.candidates[0]).toMatchObject({ status: 'REQUESTED' })
 })
 
 test('BTC cannot use an ETH feature after its latest completed bar is missing', () => {

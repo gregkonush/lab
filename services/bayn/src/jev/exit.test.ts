@@ -45,7 +45,7 @@ const portfolioWithBrokerAge = (ageMs: number) => {
 
 describe('native Jev exit targets', () => {
   test.each([
-    [0.05, 0, true],
+    [0.051, 0, true],
     [0.002, 0, false],
     [-0.02, 0, false],
     [0.05, 10_001, false],

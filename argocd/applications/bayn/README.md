@@ -178,21 +178,19 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v14`, `bayn.jev.strategy-priced-protection.behavior.v1`,
-trading-signal state v13, batch v4 and pinned `jev-1.13.0`. Jev selects entries. The strategy derives absolute stop and
-target prices from a complete pre-entry range, limits monetary risk and seals the funded plan before execution.
-[Strategy protection](../../../docs/bayn/strategy-protection.md) defines the exact rule, venue capabilities and
-unproven economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
+The implementation uses `bayn.jev.protocol.v15`, `bayn.jev.model-selected-trade-plan.behavior.v1`,
+trading-signal state v14, batch v5 and pinned `jev-1.13.0`. Jev selects the entry action, stop loss and take profit
+from supplied observed prices before execution. The funded plan binds those choices to the order and existing account
+limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
+and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 128 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 131 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e`.
-The v14 source cutover completed in OBSERVE with migration 128. The source now restores a same-account PAPER mandate,
-authored against reviewed source `e272a29ce5000b0d6486869b21fbc9a4e26597d9` and published image
-`sha256:6ccf4899c110e12314341c70c71970b86348b2bd26694204945331bf3e0734ba`. Request
-`9008d4680ded2b5f181a4ffbd037b82fa8be77ede9bbdf7959a92f9c5763c00d` binds the current strategy and risk policy;
-the sealed request identity, activation generation and all three runtime build lineages move together through Kargo.
-Preserve every existing monetary limit; changing the order contract does not authorize additional capital or a risk-history reset.
+history. The strategy protocol hash is `358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59`.
+This source cutover carries OBSERVE authority. PAPER restoration requires a reviewed same-account mandate authored
+against the published v15 image. The sealed request identity, activation generation and all three runtime build
+lineages must move together through Kargo. Preserve every existing monetary limit; changing the order contract does
+not authorize additional capital or a risk-history reset.
 
 Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
@@ -410,10 +408,10 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-123, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+129, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v14 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 123, the source-bound controller plan v3
+containing this migration and the current Jev v15 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 131, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -575,7 +573,7 @@ up to 30 minutes of actual context, expose gaps, and require fresh quotes and th
 
 Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
 settled orders, fresh exact reconciliation and complete fill accounting. The current hard cutover uses migration
-124, 125, 126, 127, 128 and the v14 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
+124, 125, 126, 127, 128, 129 and the v15 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
 The broker account and order-risk limits remain the same.
 
 Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
@@ -583,7 +581,7 @@ LIMIT/IOC through the shared planner, coordinator and generic completion proof. 
 entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
 reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
 than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
-and instrument precision. Current PAPER authority requires a new mandate bound to the published v14 strategy after
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v15 strategy after
 the migration-123 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
 target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
 reconciliation remain required runtime evidence.
@@ -594,16 +592,14 @@ cycles with snapshot, decision or intent evidence still block cutover recovery.
 The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
 Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.
 
-### Strategy protection cutover
+### Jev-selected trade-plan cutover
 
-Protocol v14 / state v13 and entry/exit targets v3 replace the old fixed-percentage exit policy. Migration 128 verifies
-a flat, settled and accounted cutover and installs native order terms, parent-child identity and durable protective
-cancellation commands. There is one executable protocol. Historical accounting evidence remains immutable.
+Protocol v15 / state v14 and entry/exit targets v4 replace the geometric exit policy and momentum gate.
+Migration 131 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
+published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
+existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,
+loss, drawdown, exposure, order and turnover limits and all financial history.
 
-The initial OBSERVE cutover completed with flat settled inventory, exact reconciliation and all historical fills and
-receipts preserved. The source now includes the reviewed same-account PAPER restoration described under
-[Jev protocol activation](#jev-protocol-activation). Kargo advances that request's build lineage while retaining its
-authored image and unchanged monetary limits. Verify native recovery, pre-entry strategy prices, actual broker
-protection, partial disposals, ledger receipts and reconciliation after restoration. Application protection in extended
-hours and application targets for standalone stops remain dependent on controller availability. Stop-limits can gap
-without filling, and bracket siblings can race at the venue. No source change establishes profitability.
+See [strategy protection](../../../docs/bayn/strategy-protection.md) for model choices, validation and broker
+lifecycle details. Model choices are unqualified research decisions; deployment does not establish an edge.

@@ -16,17 +16,15 @@ import { JevContractError, jevModel } from './contract'
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
-export const momentumFirstEntryPolicy = 'bayn.positive-relative-observed-momentum-entry.v1' as const
-
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v14'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v15'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
   entrySelectionPolicy: Schema.Literal('chosen-model-action'),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
   maximumEntryLimitSlippageBps: Schema.Literal(10),
-  entrySignalPolicy: Schema.Literal(momentumFirstEntryPolicy),
+  entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v13'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v14'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -46,9 +44,6 @@ const ProtocolBase = Schema.Struct({
   inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
   horizonMinutes: Minutes,
   maximumHoldingMinutes: Minutes,
-  exitRule: Schema.Literal('completed-horizon-range-continuation'),
-  maximumStopBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(500)),
-  maximumCapitalRiskBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10)),
   allocation: Schema.Literal('equal-weight'),
   executionModel: ExecutionModelV6Schema,
 })
@@ -95,14 +90,14 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v14',
+  schemaVersion: 'bayn.jev.protocol.v15',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entrySelectionPolicy: 'chosen-model-action',
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
-  entrySignalPolicy: momentumFirstEntryPolicy,
+  entrySignalPolicy: 'model-selected-entry-and-protection',
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v13',
+  inputDefinition: 'bayn.jev-trading-signal-state.v14',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -122,9 +117,6 @@ export const defaultJevProtocolDocument = Object.freeze({
   inferenceValidityMs: 10_000,
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
-  exitRule: 'completed-horizon-range-continuation',
-  maximumStopBps: 500,
-  maximumCapitalRiskBps: 10,
   allocation: 'equal-weight',
   executionModel: intradayExecutionModel,
 } as const)
@@ -137,4 +129,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.strategy-priced-protection.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.model-selected-trade-plan.behavior.v1')

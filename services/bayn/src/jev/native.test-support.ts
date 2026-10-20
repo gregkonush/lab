@@ -1,5 +1,5 @@
 import { jevPositionExitPolicy } from './exit-policy'
-import { jevEntryEconomics } from './entry-economics'
+import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -50,6 +50,7 @@ export const nativeJevFixture = (
   cycleBindingId = 'a'.repeat(64),
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
+  observedPriceChoices = true,
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
@@ -93,11 +94,22 @@ export const nativeJevFixture = (
     query: snapshotQuery,
     snapshot,
   } = streamingFixtureFromRaw(
-    makeIntradayMomentumTestSnapshot(
-      protocol,
-      { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
-      returns,
-    ),
+    (() => {
+      const raw = makeIntradayMomentumTestSnapshot(
+        protocol,
+        { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
+        returns,
+      )
+      const firstMinute = raw.bars[0]?.eventAt
+      return {
+        ...raw,
+        bars: raw.bars.map((bar) =>
+          observedPriceChoices && bar.symbol !== 'SPY' && bar.eventAt === firstMinute
+            ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+            : bar,
+        ),
+      }
+    })(),
     query,
   )
   const at = snapshot.manifest.observedAt
@@ -203,15 +215,29 @@ export const nativeJevFixture = (
                   bidMicros: 102_000_000n,
                   askMicros: 102_010_000n,
                   capitalMicros: material.account.equityMicros,
-                  bars: snapshot.bars.map((bar) => ({
-                    ...bar,
-                    eventAt: new Date(Date.parse(bar.eventAt) - 3 * 60_000).toISOString(),
-                  })),
-                  sourceEndAt: new Date(Date.parse(snapshot.manifest.rangeEndAt) - 3 * 60_000).toISOString(),
                 }),
               )
               if (economics === null) throw new Error('Managed fixture requires a funded pre-entry plan')
-              return jevPositionExitPolicy(protocol, { AAPL: economics.exitPlan })
+              const funded = Result.getOrThrow(
+                fundJevTradePlan({
+                  protocol,
+                  economics,
+                  levels: {
+                    schemaVersion: 'bayn.jev-strategy-exit-plan.v2',
+                    rule: 'model-selected-observed-prices',
+                    symbol: 'AAPL',
+                    sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
+                    sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
+                    maximumHoldingMinutes: protocol.maximumHoldingMinutes,
+                    maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+                    stopPriceMicros: '99000000',
+                    stopLimitPriceMicros: '98910000',
+                    profitLimitPriceMicros: '105000000',
+                  },
+                }),
+              )
+              if (funded === null) throw new Error('Managed fixture requires funded model prices')
+              return jevPositionExitPolicy(protocol, { AAPL: funded.exitPlan })
             })(),
             entryIntentIds: [intentId],
             protectionIntentIds: [],
@@ -265,16 +291,24 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
     if (question.type === 'noul') answers[key] = { type: 'noul', noul: 0.8 }
     else if (question.type === 'choice') {
       const choices = Object.keys(question.criteria)
-      const selected = key === 'action' ? action : choices[0]
+      const selected =
+        key === 'action'
+          ? action
+          : key === 'take_profit'
+            ? choices.at(-1)
+            : key === 'stop_loss'
+              ? choices.find((choice) => choice !== 'none')
+              : choices[0]
+      const choiceProbability = key === 'action' ? probability : 0.8
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
         type: 'choice',
         choice: selected,
-        confidence: probability,
+        confidence: choiceProbability,
         probabilities: Object.fromEntries(
           choices.map((choice) => [
             choice,
-            choice === selected ? probability : (1 - probability) / (choices.length - 1),
+            choice === selected ? choiceProbability : (1 - choiceProbability) / (choices.length - 1),
           ]),
         ),
       }
@@ -311,7 +345,7 @@ export const nativeJevDecisionEvidence = (
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)
