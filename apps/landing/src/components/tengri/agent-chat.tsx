@@ -121,6 +121,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
+  const [recoveryFailed, setRecoveryFailed] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
@@ -288,6 +289,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
+    setRecoveryFailed(false)
     setError('')
     setEventStreamState('connecting')
     completedTurns.current.clear()
@@ -401,6 +403,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const commitThreadState = useCallback(
     (thread: TengriCodexThread, commitActiveTurn = true) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
+      setRecoveryFailed(false)
+      lastScrollTop.current = 0
+      setFollowingConversation(true)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
       const itemSequences = new Map(Object.entries(thread.itemEventSequences ?? {}))
@@ -449,6 +454,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
     const resume = async () => {
       if (!current()) return
+      setRecoveryFailed(false)
       const resumeSequence = lastEventSequence.current
       try {
         const thread = await runTengriAction<TengriCodexThread>(
@@ -461,6 +467,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         setError('')
       } catch (cause: unknown) {
         if (current()) {
+          setRecoveryFailed(true)
           setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
           if (retryableReadFailure(cause)) {
             timer = window.setTimeout(() => void resume(), retryDelay)
@@ -485,6 +492,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const generation = ++threadResumeGeneration.current
     setThreadReady(false)
     setReplayRecovering(true)
+    setRecoveryFailed(false)
+    setError('')
     try {
       const thread = await runTengriAction<TengriCodexThread>({
         action: 'resume-thread',
@@ -506,6 +515,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         mountedRef.current &&
         codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
       ) {
+        setRecoveryFailed(true)
         setError(cause instanceof Error ? cause : 'Codex thread state could not be refreshed')
       }
     } finally {
@@ -619,7 +629,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [accountChecked, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
-    if (!active || !followingConversation) return
+    if (!active || !followingConversation || (threadId && !threadReady)) return
     const conversation = conversationRef.current
     const content = conversationContentRef.current
     if (!conversation || !content) return
@@ -639,7 +649,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       observer.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [account?.authenticated, active, followingConversation])
+  }, [account?.authenticated, active, followingConversation, threadId, threadReady])
 
   const resizePrompt = useCallback(() => {
     const textarea = promptRef.current
@@ -1037,6 +1047,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEvents(retainedEvents.current.filter((event) => codexEventMatchesThread(event, nextThreadId)))
     setFollowingConversation(true)
     setReplayRecovering(false)
+    setRecoveryFailed(false)
     replayRecoveryRef.current = false
     setError('')
     completedTurns.current.clear()
@@ -1270,6 +1281,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
               onScroll={(event) => {
                 const conversation = event.currentTarget
+                if (threadId && !threadReady) {
+                  lastScrollTop.current = conversation.scrollTop
+                  return
+                }
                 const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
                 if (atBottom) setFollowingConversation(true)
                 else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
@@ -1290,7 +1305,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ) : null}
               <div
                 ref={conversationContentRef}
-                className="mx-auto w-full max-w-3xl space-y-4"
+                className="mx-auto w-full max-w-3xl space-y-2"
                 role="log"
                 aria-label="Conversation"
                 aria-live="polite"
@@ -1308,11 +1323,28 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
                 <button
                   type="button"
-                  className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                  aria-label="Jump to latest"
+                  className="group pointer-events-auto inline-flex size-8 items-center justify-center rounded-full border border-white/[0.08] bg-zinc-950/95 text-zinc-400 outline-none transition-colors hover:bg-zinc-900 hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                   onClick={() => setFollowingConversation(true)}
                 >
-                  <ArrowDown className="size-3" aria-hidden="true" />
-                  Jump to latest
+                  <span
+                    aria-hidden="true"
+                    data-testid="jump-to-latest-dots"
+                    className="inline-flex items-center gap-1 group-hover:hidden group-focus-visible:hidden"
+                  >
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={index}
+                        className="size-1 rounded-full bg-current motion-safe:animate-bounce"
+                        style={{ animationDelay: `${index * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                  <ArrowDown
+                    aria-hidden="true"
+                    data-testid="jump-to-latest-arrow"
+                    className="hidden size-3.5 group-hover:block group-focus-visible:block"
+                  />
                 </button>
               </div>
             ) : null}
@@ -1330,7 +1362,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
                   Recovering the active conversation…
                 </p>
-              ) : threadId && !threadReady ? (
+              ) : threadId && !threadReady && recoveryFailed ? (
                 <div className="mx-auto mb-3 w-full text-label-12">
                   {conversationMissing ? (
                     <p className="mb-2 text-zinc-400">
