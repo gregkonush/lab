@@ -36,6 +36,11 @@ command is **not** run automatically from the trading service at startup.
 
 ## Isolated Alpha-R1 research
 
+The same immutable image includes `bayn-harness2` for bounded prompt refinement. Use the
+[Harness2 runbook](../../../docs/bayn/harness2.md) for frozen manifests, durable object-store evidence, restart behavior,
+and deployed verification. It uses the worker's existing research API and storage identity. It needs no broker access
+or additional network/database grants.
+
 `research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
 inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
 The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
