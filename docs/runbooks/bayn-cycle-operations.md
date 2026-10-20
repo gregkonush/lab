@@ -16,6 +16,21 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
    `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
+## Native PAPER restoration
+
+The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain
+the request through build lineage. A runtime failure does not require a new request, manifest edits, a manual kill clear
+or a broker test order. Repair the reported dependency or evidence failure, then verify the native recovery result.
+
+Recovery first settles terminal intents and requires fresh exact, flat broker and accounting reconciliation. An already
+settled account can roll through clear OBSERVE and revalidate its PAPER mandate without running another close-only cycle.
+An unresolved order, position or mutation stays under the existing close-only recovery owner. Operator holds and account
+protection cannot be cleared by this path. Strategy identity changes still require an approved matching mandate.
+
+Check the deployed revision and the controller's `RECOVERED` pass, then verify `capitalActivation`, effective authority,
+the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
+waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
+
 ## Trace one lifecycle pass
 
 1. Query Tempo for `resource.service.name = "restate"`, `"bayn-execution-controller"`, and `"bayn"` over the same

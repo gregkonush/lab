@@ -114,7 +114,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
-        return existing
+        return { ...existing, dispatches: [] }
       }
       const checkWindow = Effect.gen(function* () {
         const now = yield* Clock.currentTimeMillis
@@ -138,7 +138,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
         return checkedAt
       })
       yield* checkWindow
-      yield* sql.withTransaction(
+      const dispatches = yield* sql.withTransaction(
         Effect.gen(function* () {
           yield* recordCandidateObservation(sql, { contentHash: plan.observationHash, payload: suppliedObservation })
           const checkedAt = yield* checkWindow
@@ -169,17 +169,36 @@ export const makeJevBatchStore = Effect.gen(function* () {
           SELECT admitted.batch_id, ${result.resultHash}, ${sql.json(result)} FROM admitted
         `
           } else {
-            yield* sql`
+            const inserted = yield* Schema.decodeUnknownEffect(
+              Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
+              strictParseOptions,
+            )(
+              yield* sql`
         INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
         VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
-        ON CONFLICT DO NOTHING
-      `
+        ON CONFLICT DO NOTHING RETURNING batch_id
+      `,
+            )
+            if (inserted.length === 0) return []
+            const requests = plan.candidates.flatMap((candidate) =>
+              candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
+            )
+            yield* sql`INSERT INTO jev_evaluation_requests ${sql.insert(
+              requests.map((request) => ({
+                request_id: request.requestId,
+                cycle_id: request.cycleId,
+                authority_generation_hash: request.authorityGenerationHash,
+                payload: sql.json(request),
+              })),
+            )}`
+            return requests.map((request) => ({ request, claimedAt: checkedAt }))
           }
+          return []
         }),
       )
       const saved = yield* read(plan.batchId)
       if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
-      return saved
+      return { ...saved, dispatches }
     }).pipe(
       Effect.mapError((cause) => (cause instanceof JevBatchExpired ? cause : persistError(cause))),
       withObservedStage('bayn.jev.batch-admission', { dependency: 'postgresql' }),

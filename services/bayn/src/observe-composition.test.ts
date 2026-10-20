@@ -218,6 +218,7 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
         Clock.currentTimeMillis.pipe(
           Effect.map((now) => ({
             plan,
+            dispatches: [],
             result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), (symbol) =>
               symbol === 'NVDA' ? 'enter' : 'wait',
             ),
@@ -227,7 +228,6 @@ const provideJevTestServices = <A, E, R>(program: Effect.Effect<A, E, R>) => {
     }),
     Effect.provideService(JevEvaluationStore, {
       read: () => unexpected,
-      begin: () => unexpected,
       record: () => unexpected,
       abandon: () => unexpected,
     }),
@@ -1575,6 +1575,7 @@ describe('OBSERVE runtime composition', () => {
                       calls.batch += 1
                       return {
                         plan,
+                        dispatches: [],
                         result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), (symbol) =>
                           symbol === 'NVDA' ? 'enter' : 'wait',
                         ),
@@ -4726,6 +4727,7 @@ describe('OBSERVE runtime composition', () => {
                 events.push('inference-committed')
                 return {
                   plan,
+                  dispatches: [],
                   result: nativeJevBatchResult(plan, yield* currentUtcInstant, (symbol) =>
                     symbol === 'NVDA' ? (options.entryAction ?? 'enter') : 'wait',
                   ),
@@ -6724,6 +6726,7 @@ test.each([
                   batches++
                   return {
                     plan,
+                    dispatches: [],
                     result: nativeJevBatchResult(plan, utcInstantFromEpochMillis(now), () => 'enter'),
                   }
                 }),
