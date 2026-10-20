@@ -120,9 +120,18 @@ export default Effect.gen(function* () {
       IF (length(definition) - length(replace(definition, needle, ''))) <> length(needle) THEN
         RAISE EXCEPTION 'expected one extra-intent completion guard' USING ERRCODE = '55000';
       END IF;
+      IF (length(definition) - length(replace(definition, 'WHERE bound.ordered_intent_ids ?', ''))) <> 3 * length('WHERE bound.ordered_intent_ids ?') THEN
+        RAISE EXCEPTION 'expected three cycle effect cutoffs' USING ERRCODE = '55000';
+      END IF;
+      definition := replace(definition, 'WHERE bound.ordered_intent_ids ? intent.intent_id',
+        'WHERE intent.cycle_id = bound.cycle_id');
+      definition := replace(definition, 'WHERE bound.ordered_intent_ids ? event.intent_id',
+        'WHERE EXISTS (SELECT 1 FROM intents effect WHERE effect.intent_id = event.intent_id AND effect.cycle_id = bound.cycle_id)');
+      definition := replace(definition, 'WHERE bound.ordered_intent_ids ? broker_order.intent_id',
+        'WHERE EXISTS (SELECT 1 FROM intents effect WHERE effect.intent_id = broker_order.intent_id AND effect.cycle_id = bound.cycle_id)');
       EXECUTE replace(definition, needle, needle || $guard$
-        AND NOT (extra.state = 'TERMINAL' AND extra.protection ->> '_tag' IN ('Oco','StopLimit')
-          AND extra.protection ->> 'entryDecisionHash' = decision.document ->> 'contentHash')
+        AND NOT COALESCE(extra.state = 'TERMINAL' AND extra.protection ->> '_tag' IN ('Oco','StopLimit')
+          AND extra.protection ->> 'entryDecisionHash' = decision.document ->> 'contentHash', false)
       $guard$);
     END $completion$`
   yield* sql`CREATE TABLE native_protection_cancel_commands (

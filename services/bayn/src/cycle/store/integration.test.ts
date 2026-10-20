@@ -974,7 +974,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
               intent_id text, account_id text, cycle_id text, strategy_name text, decision_hash text,
               policy_hash text, authority_generation_hash text, risk_decision_id text, state text,
               terminal_outcome text, order_type text, time_in_force text, client_order_id text,
-              symbol text, side text, quantity_atoms numeric, updated_at timestamptz
+              symbol text, side text, quantity_atoms numeric, updated_at timestamptz, protection jsonb
             ) ON COMMIT DROP`
             yield* sql`CREATE TEMP TABLE mutation_events (
               intent_id text, operation text, event_type text, sequence bigint,
@@ -1029,13 +1029,14 @@ describePostgres('PostgreSQL intraday cycle store', () => {
                     },
                   },
                 ],
+                contentHash: 'document',
                 retainedEvidence: Array.from({ length: 2_000 }, (_, index) => canonicalHashV1({ index })),
               })}
             )`
             yield* sql`INSERT INTO intents VALUES (
               'intent', 'account', 'cycle', 'jev', 'strategy', 'policy', ${generationHash}, 'risk',
               'TERMINAL', 'CANCELED', 'LIMIT', 'IOC', 'client', 'AMZN', 'BUY', 38000000,
-              '2026-09-08T17:01:00Z'
+              '2026-09-08T17:01:00Z', NULL
             )`
             yield* sql`INSERT INTO mutation_events
               SELECT 'intent', 'SUBMIT', 'RECOVERY_FOUND', sequence, 'broker-order',
@@ -1068,6 +1069,20 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             )`
             expect(yield* completionMatches()).toBe(true)
             expect(yield* completionMatches('2026-09-08T17:02:00.000Z')).toBe(false)
+
+            yield* sql`INSERT INTO intents
+              SELECT 'protection', account_id, cycle_id, strategy_name, decision_hash, policy_hash,
+                authority_generation_hash, risk_decision_id, state, terminal_outcome, order_type,
+                time_in_force, 'protect-client', symbol, 'SELL', quantity_atoms, updated_at, NULL
+              FROM intents WHERE intent_id = 'intent'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE intents SET protection = '{"_tag":"Oco","entryDecisionHash":"wrong"}' WHERE intent_id = 'protection'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`UPDATE intents SET protection = '{"_tag":"Oco","entryDecisionHash":"document"}' WHERE intent_id = 'protection'`
+            expect(yield* completionMatches()).toBe(true)
+            yield* sql`UPDATE intents SET updated_at = '2026-09-08T17:03:00Z' WHERE intent_id = 'protection'`
+            expect(yield* completionMatches()).toBe(false)
+            yield* sql`DELETE FROM intents WHERE intent_id = 'protection'`
 
             yield* sql`UPDATE intents SET updated_at = '2026-09-08T17:03:00Z'`
             expect(yield* completionMatches()).toBe(false)

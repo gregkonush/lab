@@ -1515,8 +1515,8 @@ quotes in availability order, including brief crossings between controller polls
 after trading ends cannot mutate the broker. Crypto LIMIT/IOC orders evaluate their arrival once and cancel any
 remainder through the same quote economics and accounting. Displayed liquidity is shared across orders and retries.
 
-Replay checkpoint v7 and broker state v5 retain every quote execution and uniquely identify partial-fill and fee
-activities. Native bracket children remain held until a complete parent fill. OCO groups reduce stop quantity after
+Replay checkpoint v8 and broker state v6 retain every quote execution and uniquely identify partial-fill and fee
+activities and the first broker arrival. Routing quotes cannot execute queued orders or children before activation. Native bracket children remain held until a complete parent fill. OCO groups reduce stop quantity after
 a partial target, cancel remaining siblings, and retain stop-limit trigger state through restart. Crypto GTC stops
 persist across UTC dates. This sequential quote model cannot qualify venue cancellation races. Restoration reconstructs cumulative order quantities, average prices, cash, inventory, fees and native
 activities before exposing the broker. Account inception is retained across restart so regular-close equity references cannot be fabricated before the simulated account began. Each fill selects its retained quote by topic, partition, offset and availability

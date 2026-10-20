@@ -117,6 +117,7 @@ export type ReplayOrder = Order & {
   readonly submittedAt: string
   readonly updatedAt: string
   readonly nativeProtection?: NativeProtection
+  readonly firstArrivedAt?: string
   readonly stopTriggeredAt?: string
 }
 
@@ -127,7 +128,7 @@ export interface ReplayBrokerOrder {
   readonly order: ReplayOrder
 }
 export interface ReplayBrokerState {
-  readonly schemaVersion: 'bayn.simulated-broker-state.v5'
+  readonly schemaVersion: 'bayn.simulated-broker-state.v6'
   readonly createdAt: string
   readonly runId: string
   readonly accountId: string
@@ -173,7 +174,7 @@ const simulatedUuid = (digest: string) =>
 const isOpen = (order: Order) => order.status === OrderStatus.New || order.status === OrderStatus.PartiallyFilled
 const isWorking = (order: Order) => isOpen(order) || order.status === OrderStatus.Held
 const publicOrder = (order: ReplayOrder, observedAt: string): Order => {
-  const { nativeProtection: _terms, stopTriggeredAt: _trigger, ...value } = order
+  const { nativeProtection: _terms, stopTriggeredAt: _trigger, firstArrivedAt: _arrival, ...value } = order
   return { ...value, observedAt }
 }
 const groupOrder = (order: ReplayOrder, orders: readonly ReplayBrokerOrder[], observedAt: string): Order => {
@@ -208,7 +209,7 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
           ...entry,
           order: { ...order, status: OrderStatus.Canceled, canceledAt: at, updatedAt: at, observedAt: at },
         }
-      const active = terms._tag === 'Oco' || parent.status === OrderStatus.Filled
+      const active = terms._tag === 'Oco' ? parent.firstArrivedAt !== undefined : parent.status === OrderStatus.Filled
       return {
         ...entry,
         order: {
@@ -216,8 +217,8 @@ const reconcileProtectionGroups = (orders: readonly ReplayBrokerOrder[], at: str
           ...(order.brokerOrderId === stop.brokerOrderId
             ? { quantityAtoms: (original - BigInt(profit.filledQuantityAtoms)).toString() }
             : {}),
-          ...(active && order.status === OrderStatus.Held
-            ? { status: OrderStatus.New, updatedAt: at, observedAt: at }
+          ...(active && (order.status === OrderStatus.Held || order.firstArrivedAt === undefined)
+            ? { status: OrderStatus.New, firstArrivedAt: at, updatedAt: at, observedAt: at }
             : {}),
         },
       }
@@ -279,7 +280,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
     const state = yield* SynchronizedRef.make<ReplayBrokerState>(
       restored?.state ?? {
-        schemaVersion: 'bayn.simulated-broker-state.v5',
+        schemaVersion: 'bayn.simulated-broker-state.v6',
         createdAt: accountCreatedAt,
         runId: config.runId,
         accountId,
@@ -455,12 +456,18 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
       arrivedAt: string,
       quote: ObservedMarketValue<IntradayQuote> | undefined,
       unavailableReason: ReplayQuoteRejection | 'outside-regular-session' | null,
+      initialArrival = false,
     ) =>
       SynchronizedRef.updateEffect(state, (current) =>
         Effect.fromResult(
           Result.gen(function* () {
             const record = current.orders.find((entry) => entry.order.brokerOrderId === brokerOrderId)
-            if (record === undefined || !isOpen(record.order)) return current
+            if (
+              record === undefined ||
+              !isOpen(record.order) ||
+              (!initialArrival && record.order.firstArrivedAt === undefined)
+            )
+              return current
             const latest = record.executions.at(-1)
             if (
               quote !== undefined &&
@@ -472,11 +479,23 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               latest.quote.availableAtMs === quote.availableAtMs
             )
               return current
-            let previous = record.order
+            let previous =
+              initialArrival && record.order.firstArrivedAt === undefined
+                ? { ...record.order, firstArrivedAt: arrivedAt, updatedAt: arrivedAt, observedAt: arrivedAt }
+                : record.order
+            const acceptedWithoutTrigger = () =>
+              previous === record.order
+                ? current
+                : {
+                    ...current,
+                    orders: current.orders.map((entry) =>
+                      entry.order.brokerOrderId === brokerOrderId ? { ...entry, order: previous } : entry,
+                    ),
+                  }
             if (previous.orderType === OrderType.StopLimit && previous.stopTriggeredAt === undefined) {
-              if (unavailableReason !== null || quote === undefined) return current
+              if (unavailableReason !== null || quote === undefined) return acceptedWithoutTrigger()
               const bid = yield* numberToMicros(quote.value.bidPrice, 'stop trigger bid')
-              if (bid > BigInt(previous.stopPriceMicros ?? '0')) return current
+              if (bid > BigInt(previous.stopPriceMicros ?? '0')) return acceptedWithoutTrigger()
               previous = { ...previous, stopTriggeredAt: arrivedAt }
             }
             const remaining = BigInt(previous.quantityAtoms) - BigInt(previous.filledQuantityAtoms)
@@ -639,6 +658,21 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           }),
         ).pipe(Effect.tap((next) => (next === current ? Effect.void : retainState(next, arrivedAt)))),
       )
+    const settleOrderAndChildren = (
+      brokerOrderId: string,
+      arrivedAt: string,
+      quote: ObservedMarketValue<IntradayQuote> | undefined,
+      unavailableReason: ReplayQuoteRejection | 'outside-regular-session' | null,
+      initialArrival = false,
+    ) =>
+      Effect.gen(function* () {
+        yield* settleOrder(brokerOrderId, arrivedAt, quote, unavailableReason, initialArrival)
+        const current = yield* SynchronizedRef.get(state)
+        for (const { order } of current.orders) {
+          if (order.parentBrokerOrderId === brokerOrderId && order.firstArrivedAt !== undefined && isOpen(order))
+            yield* settleOrder(order.brokerOrderId, arrivedAt, quote, unavailableReason)
+        }
+      })
     const observeMarket = (atMs: number, quote: ObservedMarketValue<IntradayQuote> | null) =>
       Effect.gen(function* () {
         if (!Number.isSafeInteger(atMs) || (quote !== null && quote.availableAtMs !== atMs))
@@ -651,6 +685,8 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
           const previous = record.executions.at(-1)
           if (
             order.timeInForce === TimeInForce.ImmediateOrCancel ||
+            order.firstArrivedAt === undefined ||
+            Date.parse(order.firstArrivedAt) > atMs ||
             !isOpen(order) ||
             order.symbol !== quote.value.symbol ||
             (previous !== undefined && Date.parse(previous.arrivedAt) > atMs) ||
@@ -660,7 +696,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
               previous.quote.availableAtMs === quote.availableAtMs)
           )
             continue
-          yield* settleOrder(
+          yield* settleOrderAndChildren(
             order.brokerOrderId,
             utcInstantFromEpochMillis(atMs),
             quote,
@@ -1138,7 +1174,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                     ...jevMarketForSymbol(intent.symbol),
                   })
                 : 'outside-regular-session'
-              yield* settleOrder(brokerOrderId, arrivedAt, quote, unavailableReason)
+              yield* settleOrderAndChildren(brokerOrderId, arrivedAt, quote, unavailableReason, true)
             }).pipe(
               Effect.onExit((exit) =>
                 Exit.isSuccess(exit)
@@ -1147,20 +1183,23 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                       const failedAt = yield* now
                       yield* updateCommittedState(failedAt, (current) => ({
                         ...current,
-                        orders: current.orders.map((entry) =>
-                          entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
-                            ? {
-                                ...entry,
-                                deliveryFailure: causeSummary(Cause.squash(exit.cause)),
-                                order: {
-                                  ...entry.order,
-                                  status: OrderStatus.Canceled,
-                                  canceledAt: failedAt,
-                                  updatedAt: failedAt,
-                                  observedAt: failedAt,
-                                },
-                              }
-                            : entry,
+                        orders: reconcileProtectionGroups(
+                          current.orders.map((entry) =>
+                            entry.order.brokerOrderId === brokerOrderId && isOpen(entry.order)
+                              ? {
+                                  ...entry,
+                                  deliveryFailure: causeSummary(Cause.squash(exit.cause)),
+                                  order: {
+                                    ...entry.order,
+                                    status: OrderStatus.Canceled,
+                                    canceledAt: failedAt,
+                                    updatedAt: failedAt,
+                                    observedAt: failedAt,
+                                  },
+                                }
+                              : entry,
+                          ),
+                          failedAt,
                         ),
                       }))
                     }),

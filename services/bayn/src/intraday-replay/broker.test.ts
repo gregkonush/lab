@@ -2279,3 +2279,130 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     )
   })
 }
+
+test('routing quotes cannot fill a bracket or its children before the parent reaches the broker', async () => {
+  await run(
+    Effect.gen(function* () {
+      let broker: Broker
+      broker = yield* setup({
+        assumptions: { ...config.assumptions, latencyMs: 1000 },
+        quoteAt: (_symbol, at) =>
+          Effect.succeed(at >= startMs + 1100 ? laterMarket(1100, 103) : laterMarket(1000, 100)),
+        advanceToArrival: (at) =>
+          Effect.gen(function* () {
+            yield* broker.observeMarket(startMs + 500, laterMarket(500, 100))
+            yield* broker.observeMarket(startMs + 700, laterMarket(700, 103))
+            expect((yield* broker.snapshot).ledger.fills).toEqual([])
+            yield* TestClock.setTime(at)
+          }).pipe(
+            Effect.mapError(
+              (cause) => new ReplayBrokerFailure({ message: 'Pre-arrival quote observation failed', cause }),
+            ),
+          ),
+      })
+      yield* broker.mutation.submit(intent({ protection: bracketTerms }))
+      const arrived = yield* broker.checkpoint
+      expect(arrived.state.ledger.fills.map((fill) => [fill.side, fill.observedAt])).toEqual([
+        ['buy', new Date(startMs + 1000).toISOString()],
+      ])
+      expect(
+        arrived.state.orders.every(({ order }) => order.firstArrivedAt === new Date(startMs + 1000).toISOString()),
+      ).toBe(true)
+      yield* broker.observeMarket(startMs + 1100, laterMarket(1100, 103))
+      yield* TestClock.setTime(startMs + 1100)
+      const flat = yield* broker.checkpoint
+      expect(flat.state.ledger.positions).toEqual([])
+      expect(flat.state.ledger.fills.at(-1)?.observedAt).toBe(new Date(startMs + 1100).toISOString())
+      yield* makeReplayBroker({
+        ...config,
+        assumptions: { ...config.assumptions, latencyMs: 1000 },
+        quoteAt: (_symbol, at) =>
+          Effect.succeed(at >= startMs + 1100 ? laterMarket(1100, 103) : laterMarket(1000, 100)),
+        restoreCheckpoint: { value: flat, expectedHash: flat.checkpointHash },
+      })
+    }),
+  )
+})
+
+for (const kind of ['Oco', 'StopLimit'] as const) {
+  test(`${kind} cannot trigger on quotes delivered before protective-order arrival`, async () => {
+    await run(
+      Effect.gen(function* () {
+        let broker: Broker
+        let deliveries = 0
+        const frozen: ReplayBrokerConfig = {
+          ...config,
+          assumptions: { ...config.assumptions, latencyMs: 1000 },
+          quoteAt: (_symbol, at) =>
+            Effect.succeed(at >= startMs + 2100 ? laterMarket(2100, 99) : laterMarket(1000, 100)),
+          advanceToArrival: (at) =>
+            Effect.gen(function* () {
+              deliveries += 1
+              if (deliveries === 2) {
+                yield* broker.observeMarket(startMs + 1500, laterMarket(1500, 99))
+                expect((yield* broker.snapshot).ledger.fills).toHaveLength(1)
+              }
+              yield* TestClock.setTime(at)
+            }).pipe(
+              Effect.mapError(
+                (cause) => new ReplayBrokerFailure({ message: 'Pre-arrival quote observation failed', cause }),
+              ),
+            ),
+        }
+        broker = yield* setup(frozen)
+        yield* broker.mutation.submit(intent())
+        yield* broker.mutation.submit(
+          intent({
+            clientOrderId: 'delayed-protection',
+            side: OrderSide.Sell,
+            orderType: kind === 'Oco' ? OrderType.Limit : OrderType.StopLimit,
+            limitPriceMicros: kind === 'Oco' ? '103000000' : '98900000',
+            notionalLimitMicros: kind === 'Oco' ? '515000000' : '494500000',
+            protection:
+              kind === 'Oco'
+                ? { ...bracketTerms, _tag: 'Oco', entryDecisionHash: 'a'.repeat(64) }
+                : { _tag: 'StopLimit', stopPriceMicros: '99000000', entryDecisionHash: 'a'.repeat(64) },
+          }),
+        )
+        const armed = yield* broker.checkpoint
+        expect(armed.state.ledger.fills).toHaveLength(1)
+        expect(
+          armed.state.orders
+            .filter(({ order }) => order.side === 'sell')
+            .every(
+              ({ order }) =>
+                order.firstArrivedAt === new Date(startMs + 2000).toISOString() && order.stopTriggeredAt === undefined,
+            ),
+        ).toBe(true)
+        broker = yield* makeReplayBroker({
+          ...frozen,
+          restoreCheckpoint: { value: armed, expectedHash: armed.checkpointHash },
+        })
+        yield* broker.observeMarket(startMs + 2100, laterMarket(2100, 99))
+        yield* TestClock.setTime(startMs + 2100)
+        const flat = yield* broker.checkpoint
+        expect(flat.state.ledger.positions).toEqual([])
+        expect(flat.state.ledger.fills.at(-1)?.observedAt).toBe(new Date(startMs + 2100).toISOString())
+      }),
+    )
+  })
+}
+
+test('failed bracket delivery cancels held children without inventing an arrival', async () => {
+  await run(
+    Effect.gen(function* () {
+      const broker = yield* setup({
+        advanceToArrival: () => Effect.fail(new ReplayBrokerFailure({ message: 'routing failed' })),
+      })
+      expect((yield* Effect.exit(broker.mutation.submit(intent({ protection: bracketTerms }))))._tag).toBe('Failure')
+      const checkpoint = yield* broker.checkpoint
+      expect(checkpoint.state.orders).toHaveLength(3)
+      expect(
+        checkpoint.state.orders.every(
+          ({ order }) => order.status === OrderStatus.Canceled && order.firstArrivedAt === undefined,
+        ),
+      ).toBe(true)
+      expect(checkpoint.state.ledger.fills).toEqual([])
+    }),
+  )
+})

@@ -67,6 +67,7 @@ const OrderFields = {
   observedAt: UtcInstantSchema,
   parentBrokerOrderId: Schema.optionalKey(StrictNonEmptyStringSchema),
   nativeProtection: Schema.optionalKey(NativeProtectionSchema),
+  firstArrivedAt: Schema.optionalKey(UtcInstantSchema),
   stopTriggeredAt: Schema.optionalKey(UtcInstantSchema),
 }
 const OrderSchema = Schema.Struct({
@@ -95,12 +96,12 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v7'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v8'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v5'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v6'),
     createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
@@ -305,6 +306,21 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
                 ) !== true)))
       )
         return yield* fail('Broker checkpoint stop trigger lacks its executable quote')
+      const record = state.orders.find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+      if (
+        ([OrderStatus.New, OrderStatus.PartiallyFilled, OrderStatus.Filled].includes(order.status) ||
+          (record?.executions.length ?? 0) > 0) &&
+        order.firstArrivedAt === undefined
+      )
+        return yield* fail('A working or executed order requires its retained broker arrival')
+      if (
+        order.firstArrivedAt !== undefined &&
+        (Date.parse(order.firstArrivedAt) < Date.parse(order.submittedAt) + config.assumptions.latencyMs ||
+          order.firstArrivedAt > order.updatedAt ||
+          (order.stopTriggeredAt !== undefined && order.stopTriggeredAt < order.firstArrivedAt) ||
+          record?.executions.some((execution) => execution.arrivedAt < (order.firstArrivedAt ?? '')) === true)
+      )
+        return yield* fail('Broker arrival must precede every order execution and follow routing latency')
       orderIds.add(order.brokerOrderId)
       clientIds.add(order.clientOrderId)
     }
@@ -449,7 +465,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v7' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v8' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,
