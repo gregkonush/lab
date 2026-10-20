@@ -1,4 +1,5 @@
 import { DateTime, Result } from 'effect'
+import { sourceTimestamp } from '../observations'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { contractFailure, type BrokerReadContractFailure } from './failures'
@@ -705,12 +706,17 @@ export const normalizeFeeActivitiesResult = (
         const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
         const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
         if (activity.activity_type === 'FEE') return common
+        const sourceCreatedAt = yield* sourceTimestamp(activity.created_at).pipe(
+          Result.mapError(() =>
+            contractFailure({ reason: 'FEE_SHAPE', message: 'crypto fee source timestamp is invalid' }),
+          ),
+        )
         if (activity.qty === undefined) {
           if (BigInt(netAmountMicros) >= 0n)
             return yield* Result.fail(
               contractFailure({ reason: 'DECIMAL_SIGN', message: 'USD crypto fee must debit cash' }),
             )
-          return { ...common, cryptoCashFee: true as const }
+          return { ...common, sourceCreatedAt, cryptoCashFee: true as const }
         }
         if (netAmountMicros !== '0')
           return yield* Result.fail(
@@ -727,7 +733,11 @@ export const normalizeFeeActivitiesResult = (
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must debit a positive coin quantity' }),
           )
         const priceAtoms = yield* quantityResult(activity.price, 'coin fee price')
-        return { ...common, coinDebit: { symbol, quantityAtoms: (-BigInt(quantity)).toString(), priceAtoms } }
+        return {
+          ...common,
+          sourceCreatedAt,
+          coinDebit: { symbol, quantityAtoms: (-BigInt(quantity)).toString(), priceAtoms },
+        }
       })
     }),
   )

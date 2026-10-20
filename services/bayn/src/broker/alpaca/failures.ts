@@ -60,6 +60,7 @@ export type BrokerReadContractFailureReason =
   | 'DECIMAL_ZERO'
   | 'FILL_ACCOUNT_BINDING'
   | 'FILL_SHAPE'
+  | 'FEE_SHAPE'
   | 'ORDER_SHAPE'
   | 'RATE_LIMIT'
 

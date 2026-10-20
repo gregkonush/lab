@@ -1232,11 +1232,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = ['crypto', 'cross-date', 'regulatory', 'retained', 'partial', 'overreleased'] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'cross-date'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1737,6 +1737,38 @@ describePostgres('PostgreSQL execution persistence', () => {
               observedAt: sellAt,
             },
           })
+        if (scenario === 'cross-date') {
+          for (const fee of fees) {
+            Object.assign(fee.value, {
+              sourceCreatedAt: `${sellAt.slice(0, 19)}.123456000Z`,
+              date: '2026-08-31',
+            })
+            Object.assign(fee.evidence, { observedAt: '2026-08-31T08:00:00.000Z' })
+          }
+          const first = fees[0]
+          if (first === undefined || first.value.coinDebit === undefined) throw new Error('Missing coin fee')
+          const { sourceCreatedAt: _sourceCreatedAt, ...withoutSource } = first.value
+          for (const invalid of [
+            withoutSource,
+            { ...first.value, sourceCreatedAt: '2026-08-29T14:31:01.123456000Z' },
+            { ...first.value, sourceCreatedAt: '2026-08-31T08:00:00.000000001Z' },
+            { ...first.value, accountId: 'other-account' },
+            { ...first.value, coinDebit: { ...first.value.coinDebit, quantityAtoms: '82626' } },
+          ]) {
+            expect(
+              yield* fence
+                .transaction(
+                  prepareFeeActivities(
+                    sql,
+                    accountId,
+                    [{ ...first, value: invalid }, ...fees.slice(1)],
+                    config.tigerBeetle,
+                  ),
+                )
+                .pipe(Effect.flip),
+            ).toMatchObject({ _tag: 'ReconciliationStoreError' })
+          }
+        }
         const post = Effect.gen(function* () {
           yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
           return yield* fence.transaction(
@@ -1760,9 +1792,57 @@ describePostgres('PostgreSQL execution persistence', () => {
           journalControl.failPosts = false
         }
         const result = yield* post
+        if (scenario === 'cross-date') {
+          expect(
+            yield* sql`SELECT fee_date::text,data ? 'sourceCreatedAt' AS provenance_in_content,
+              read_evidence->>'sourceCreatedAt' AS source_created_at FROM broker_fee_accounting ORDER BY activity_id`,
+          ).toEqual([
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+          ])
+        }
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
+        if (scenario === 'cross-date') {
+          const first = fees[0]
+          if (first === undefined) throw new Error('Missing source fee')
+          expect(
+            yield* fence
+              .transaction(
+                prepareFeeActivities(
+                  sql,
+                  accountId,
+                  [
+                    { ...first, value: { ...first.value, sourceCreatedAt: '2026-08-28T14:31:01.123456001Z' } },
+                    ...fees.slice(1),
+                  ],
+                  config.tigerBeetle,
+                ),
+              )
+              .pipe(Effect.flip),
+          ).toMatchObject({ failure: 'invariant', message: 'broker fee source timestamp changed' })
+          const future = yield* fence
+            .transaction(sql`
+            INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,coin_cost_basis_micros,
+              data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
+            SELECT account_id,activity_id||':future',fee_date,net_amount_micros,coin_cost_basis_micros,
+              data||jsonb_build_object('activityId',activity_id||':future'),
+              read_evidence||jsonb_build_object('sourceCreatedAt','2026-08-31T08:00:00.000000001Z'),
+              content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at
+            FROM broker_fee_accounting WHERE activity_id=${first.value.activityId}
+          `)
+            .pipe(Effect.flip)
+          expect(JSON.stringify(future)).toContain('broker_fee_source_created_at_check')
+        }
         expect(result.cashDeltaMicros).toBe(hasRegulatory ? '-1146046' : '-6046')
         expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe('0')
         expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual(
