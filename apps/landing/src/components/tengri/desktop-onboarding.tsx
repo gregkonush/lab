@@ -14,6 +14,7 @@ import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/ten
 import { getDesktopSnapshot, runTengriAction } from './client'
 import { CodeDraftRecoveryNotice } from './code-draft-recovery-notice'
 import { ConfirmationDialog } from './confirmation-dialog'
+import { PasskeyRegistration } from './passkey-registration'
 import {
   clearDeletedDesktopState,
   publishDeletedDesktopState,
@@ -291,6 +292,7 @@ function SignInWindow() {
       actionBusy={busy}
       actionLabel="Continue with GitHub"
       onAction={signIn}
+      secondaryAction={<PasskeyRegistration />}
     />
   )
 }
