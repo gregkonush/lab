@@ -25,7 +25,8 @@ reflection uses the upstream experience format. Both roles retain the original c
 
 The study freezes one to four ordered tasks, 8–32 model-call reservations, and a 60–3,600-second wall-time budget.
 Each task contains an existing `bayn.research-run.v1` registration. Its original context must pass Bayn's validator
-before any inference. An ordinary one-task run uses eight model calls. Invalid proposals can consume additional
+before any inference. Editor and reflection registrations cannot be used as probe tasks. An ordinary one-task run uses
+eight model calls. Invalid proposals can consume additional
 reservations within the same budget. Transport failure never authorizes another registration for the same call.
 
 This is offline refinement. Each invocation receives a new bounded inference window, while the original task context,
@@ -73,8 +74,11 @@ study. Completed studies return their retained result without model work. A term
 explicit new registration for a new experiment.
 
 The top-level result records exact integer `costPicoUsd` only when every reserved attempt has priced evidence.
-Missing receipts or an unknown cost basis leave it null. Upstream floating-point session-cost fields are diagnostic
-metadata and are not Bayn accounting evidence. Allocated research inference cost alone does not cover preparation,
+Missing receipts or an unknown cost basis leave it null. An original registration's allocation is retained only while
+its source-backed interval covers the new
+inference window. Otherwise that call explicitly records an unknown cost basis; its original historical allocation
+remains in the immutable study. No rate or effective interval is invented or extended. Upstream floating-point
+session-cost fields are diagnostic metadata, not Bayn accounting evidence. Allocated research inference cost alone does not cover preparation,
 shared capacity, data, or trading costs.
 
 `COMPLETE` means the refinement produced its artifacts without upstream fallback or incomplete model receipts.

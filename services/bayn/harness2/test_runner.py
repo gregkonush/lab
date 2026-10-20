@@ -16,6 +16,8 @@ def study():
             {
                 "id": "engineering-only",
                 "run": {
+                    "schemaVersion": "bayn.research-run.v1",
+                    "costBasis": None,
                     "promptTemplate": "Select factors from the supplied evidence.",
                     "featureCutoff": "1970-01-01T00:00:00.000Z",
                     "context": {
@@ -170,6 +172,40 @@ class RunnerTests(unittest.TestCase):
             ):
                 with self.assertRaises(ValueError):
                     adapter.validate_tree(tree)
+
+    def test_studies_reject_editor_and_reflection_tasks_before_inference(self):
+        for purpose in ("prompt-edit", "reflection"):
+            value = study()
+            value["tasks"][0]["run"].update(
+                schemaVersion="bayn.harness2-inference.v1", purpose=purpose
+            )
+            with self.assertRaisesRegex(ValueError, "factor-selection registrations"):
+                validate_study(value)
+
+    def test_historical_costs_are_unknown_outside_their_actual_inference_interval(self):
+        for end, covered in (
+            ("1970-01-01T00:01:00.000Z", False),
+            ("1970-01-01T01:00:00.000Z", True),
+        ):
+            value = study()
+            basis = {
+                "sourceEvidenceHash": "a" * 64,
+                "effectiveFrom": "1970-01-01T00:00:00.000Z",
+                "effectiveUntil": end,
+                "allocation": "reserved-capacity-wall-time",
+                "picoUsdPerSecond": "1000",
+            }
+            value["tasks"][0]["run"]["costBasis"] = basis
+            invoke = ResearchCLI()
+            with tempfile.TemporaryDirectory() as directory:
+                calls = Calls(
+                    value, Path(directory), MemoryStorage(), invoke, lambda: 1000
+                )
+                calls.call("engineering-only", "probe", "Select factors")
+            self.assertEqual(
+                invoke.requests[0]["costBasis"], basis if covered else None
+            )
+            self.assertEqual(value["tasks"][0]["run"]["costBasis"], basis)
 
     def test_concurrent_slot_winner_supplies_the_original_registration(self):
         class RacedStorage(MemoryStorage):

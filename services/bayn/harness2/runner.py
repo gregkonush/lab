@@ -83,6 +83,8 @@ def validate_study(value):
         seen.add(task["id"])
         if not isinstance(task["run"], dict):
             raise ValueError("Task requires a Bayn research registration")
+        if task["run"].get("schemaVersion") != "bayn.research-run.v1":
+            raise ValueError("Study tasks require factor-selection registrations")
     if len(encode(value)) > MAX_BYTES:
         raise ValueError("Study input exceeds 256 KiB")
     prompts = [task["run"].get("promptTemplate") for task in tasks]
@@ -209,6 +211,12 @@ class Calls:
                     featureCutoff=instant(now),
                     deadlineAt=instant(min(now + 179, self.deadline)),
                 )
+                basis = run["costBasis"]
+                if basis is not None and (
+                    basis["effectiveFrom"] > run["featureCutoff"]
+                    or basis["effectiveUntil"] < run["deadlineAt"]
+                ):
+                    run["costBasis"] = None
                 if purpose is not None:
                     run.update(
                         schemaVersion="bayn.harness2-inference.v1", purpose=purpose
