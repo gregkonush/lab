@@ -173,6 +173,30 @@ class RunnerTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     adapter.validate_tree(tree)
 
+    def test_rejected_reflection_is_retained_and_terminal_replay_does_no_work(self):
+        class RejectedReflection(ResearchCLI):
+            def __call__(self, args, timeout):
+                if args[0] != "--validate":
+                    run = json.loads(Path(args[1]).read_text())
+                    if run.get("purpose") == "reflection":
+                        self.outcome = "REJECTED"
+                        self.cost = None
+                super().__call__(args, timeout)
+
+        storage, invoke = MemoryStorage(), RejectedReflection()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            report = run_study(study(), root, storage, invoke, lambda: 1000)
+            self.assertEqual(report["outcome"], "INCONCLUSIVE")
+            self.assertEqual(report["modelCalls"], 8)
+            self.assertIsNone(report["costPicoUsd"])
+            self.assertEqual(len(report["receiptHashes"]), 8)
+            self.assertEqual(storage.values["receipts/7.json"]["outcome"], "REJECTED")
+            self.assertEqual(
+                run_study(study(), root, storage, invoke, lambda: 1001), report
+            )
+            self.assertEqual(len(invoke.requests), 8)
+
     def test_studies_reject_editor_and_reflection_tasks_before_inference(self):
         for purpose in ("prompt-edit", "reflection"):
             value = study()
