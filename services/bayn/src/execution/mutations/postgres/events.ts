@@ -1,3 +1,4 @@
+import { NativeProtectionSchema } from '../../contracts'
 import { orderRequestBody } from '../../../broker/alpaca-mutations'
 import { canonicalHashV1Result } from '../../../hash'
 import { OrderSide, OrderType, TimeInForce } from '../../contracts'
@@ -70,18 +71,23 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
         const rows = yield* sql<
           Record<string, unknown>
         >`SELECT client_order_id, symbol, side, order_type, time_in_force,
-          quantity_atoms::text, notional_limit_micros::text, limit_price_micros::text FROM intents WHERE intent_id = ${event.intentId}`
+          quantity_atoms::text, notional_limit_micros::text, limit_price_micros::text, protection FROM intents WHERE intent_id = ${event.intentId}`
         const [intent] = yield* Schema.decodeUnknownEffect(
           Schema.Tuple([
             Schema.Struct({
               client_order_id: Schema.String,
               symbol: Schema.String,
               side: Schema.Enum(OrderSide),
-              order_type: Schema.Literal(OrderType.Limit),
-              time_in_force: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+              order_type: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+              time_in_force: Schema.Literals([
+                TimeInForce.Day,
+                TimeInForce.ImmediateOrCancel,
+                TimeInForce.GoodUntilCanceled,
+              ]),
               quantity_atoms: Schema.String,
               notional_limit_micros: Schema.String,
               limit_price_micros: Schema.String,
+              protection: Schema.NullOr(NativeProtectionSchema),
             }),
           ]),
         )(rows).pipe(
@@ -98,6 +104,7 @@ export const makeMutationEventPostgres = (sql: PgClient.PgClient): MutationEvent
           quantityAtoms: intent.quantity_atoms,
           notionalLimitMicros: intent.notional_limit_micros,
           limitPriceMicros: intent.limit_price_micros,
+          ...(intent.protection === null ? {} : { protection: intent.protection }),
         })
         if (Result.isFailure(body))
           return yield* storeError({

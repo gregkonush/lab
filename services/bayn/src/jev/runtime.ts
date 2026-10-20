@@ -50,7 +50,7 @@ import {
   type JevExitEvidence,
   type JevExitTarget,
 } from './exit'
-import { JevPositionStore, JevPurpose } from './portfolio'
+import { JevPositionStore, JevPurpose, jevManagedExitPlan } from './portfolio'
 import { jevProtectiveQuoteDiagnostics } from './quote-diagnostics'
 import { type JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, jevStalePricingSymbols, makeJevTradingSignalBatch } from './trading-signals'
@@ -293,30 +293,37 @@ export const compileJevEntry = (
     const symbols = [...decision.selectedSymbols].sort()
     const planningTargetWeights = jevPlanningTargetWeights(decision)
     const quotePrices = yield* adverseQuotePrices(pricingSnapshot, symbols)
-    const maximumBuyQuantityAtoms = yield* maximumAllocatedBuyQuantities({
-      askPriceMicros: quotePrices.askPriceMicros,
-      targetWeights: planningTargetWeights,
-      capitalMicros: decision.evidence.observation.portfolio.brokerState.account.equityMicros,
-      precision: decision.evidence.observation.protocol.executionModel.precision,
-    })
+    const maximumBuyQuantityAtoms = {
+      ...(yield* maximumAllocatedBuyQuantities({
+        askPriceMicros: quotePrices.askPriceMicros,
+        targetWeights: planningTargetWeights,
+        capitalMicros: decision.evidence.observation.portfolio.brokerState.account.equityMicros,
+        precision: decision.evidence.observation.protocol.executionModel.precision,
+      })),
+    }
     const entryQuotes: Record<string, EntryQuoteFreshness> = {}
     for (const symbol of symbols) {
+      const plan = decision.exitPolicy.plans[symbol]
       const quote = pricingSnapshot.latestQuotes[symbol]
       const originalQuote = decisionSnapshot.latestQuotes[symbol]
-      if (quote === undefined || originalQuote === undefined)
+      if (plan === undefined || quote === undefined || originalQuote === undefined)
         return yield* Result.fail(new JevContractError({ message: `Jev target ${symbol} lacks execution pricing` }))
       const exclusion = yield* jevEntryQuoteExclusion(quote)
       const originalAsk = yield* priceNumberToMicros(originalQuote.askPrice, 'ask', 'UP')
       const withinCostBound =
         BigInt(quotePrices.askPriceMicros[symbol] ?? '0') <=
         jevMaximumEntryAskMicros(decision.evidence.observation.protocol, originalAsk)
-      if (exclusion !== null || !withinCostBound)
+      const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
+      if (exclusion !== null || !withinCostBound || bid <= BigInt(plan.levels.stopPriceMicros))
         return yield* Result.fail(
           new JevAwaitingEvidence({
             message: `Jev target ${symbol} no longer has an eligible execution quote: ${exclusion ?? 'entry cost price ceiling'}`,
             readiness: DecisionReadinessReason.NoEligibleCandidate,
           }),
         )
+      const allocated = BigInt(maximumBuyQuantityAtoms[symbol] ?? '0')
+      const maximumQuantity = BigInt(plan.maximumQuantityAtoms)
+      maximumBuyQuantityAtoms[symbol] = (allocated < maximumQuantity ? allocated : maximumQuantity).toString()
       entryQuotes[symbol] = {
         eventAt: quote.eventAt,
         maximumAgeMs: jevEntryQuoteMaximumAgeMs(decision, quote.eventAt, pricingSnapshot.manifest.maximumQuoteAgeMs),
@@ -380,6 +387,10 @@ export const evaluateJevPositionManagement = (input: {
         portfolio,
         observedAt,
       }
+      if (portfolio.exitRequestedAt !== null)
+        return yield* Effect.fromResult(
+          decideJevExit({ ...evidence, trigger: { reason: JevExitReason.ProtectionReleased } }),
+        )
       const firstFill = portfolio.entryFills[0]
       const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
       if (firstFill === undefined || position === undefined)
@@ -423,15 +434,11 @@ export const evaluateJevPositionManagement = (input: {
             message: 'Held position has no executable bid quantity',
             readiness: DecisionReadinessReason.SnapshotStale,
           })
-        const stopped = jevProtectiveStopCrossed(
-          BigInt(position.costBasisMicros),
-          BigInt(position.quantityAtoms),
-          bid,
-          portfolio.exitPolicy.protectiveStopBps,
-        )
+        const exitPlan = yield* Effect.fromResult(jevManagedExitPlan(portfolio))
+        const stopped = jevProtectiveStopCrossed(bid, exitPlan.levels)
         const reason = stopped
           ? JevExitReason.ProtectiveStop
-          : (yield* Effect.fromResult(jevProfitTargetCrossed(input.protocol, portfolio, bid)))
+          : (yield* Effect.fromResult(jevProfitTargetCrossed(portfolio, bid)))
             ? JevExitReason.ProfitTarget
             : undefined
         if (reason === undefined) return undefined

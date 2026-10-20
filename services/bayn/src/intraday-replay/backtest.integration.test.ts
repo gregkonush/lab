@@ -140,7 +140,7 @@ durableTest(
           quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
-          schemaVersion: 'bayn.execution-intent.v4',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: '1'.repeat(64),
           riskDecisionId: '2'.repeat(64),
           authorityGenerationHash: '3'.repeat(64),
@@ -242,7 +242,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v12',
+            inputDefinition: 'bayn.jev-trading-signal-state.v13',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',

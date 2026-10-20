@@ -1,4 +1,5 @@
 import { jevPositionExitPolicy } from './exit-policy'
+import { jevEntryEconomics } from './entry-economics'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -188,10 +189,30 @@ export const nativeJevFixture = (
             purpose,
             brokerState,
             entryDecisionHash: 'f'.repeat(64),
-            exitPolicy: jevPositionExitPolicy(protocol),
+            exitPolicy: (() => {
+              const economics = Result.getOrThrow(
+                jevEntryEconomics({
+                  protocol,
+                  symbol: 'AAPL',
+                  bidMicros: 102_000_000n,
+                  askMicros: 102_010_000n,
+                  capitalMicros: material.account.equityMicros,
+                  bars: snapshot.bars.map((bar) => ({
+                    ...bar,
+                    eventAt: new Date(Date.parse(bar.eventAt) - 3 * 60_000).toISOString(),
+                  })),
+                  sourceEndAt: new Date(Date.parse(snapshot.manifest.rangeEndAt) - 3 * 60_000).toISOString(),
+                }),
+              )
+              if (economics === null) throw new Error('Managed fixture requires a funded pre-entry plan')
+              return jevPositionExitPolicy(protocol, { AAPL: economics.exitPlan })
+            })(),
             entryIntentIds: [intentId],
+            protectionIntentIds: [],
+            exitRequestedAt: null,
             entryFills,
             entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
+            protectionDisposals: { quantityAtoms: '0', costBasisMicros: '0' },
           },
     ),
   )

@@ -467,7 +467,13 @@ describe('closing market-data fallback boundaries', () => {
           expect(closure).toBeDefined()
           expect(archiveReads).toBeGreaterThan(0)
         }).pipe(
-          Effect.provideService(IntentStore, { read: unused, commit: unused, commitClosing: unused }),
+          Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            read: unused,
+            commit: unused,
+            commitClosing: unused,
+          }),
           Effect.provideService(MutationStore, {
             authorizeSubmit: unused,
             beginSubmit: unused,
@@ -600,10 +606,11 @@ describe('closing market-data fallback boundaries', () => {
             if (risk === undefined) throw new Error('missing fixture risk binding')
             const intent = yield* planExecutionIntent(
               {
-                schemaVersion: 'bayn.intent-plan.v2',
+                schemaVersion: 'bayn.intent-plan.v3',
                 ...target,
                 notionalLimitMicros: risk.notionalLimitMicros,
                 limitPriceMicros: risk.limitPriceMicros,
+                ...(risk.protection === undefined ? {} : { protection: risk.protection }),
                 ...(document.replanGenerationHash === undefined
                   ? {}
                   : { replanGenerationHash: document.replanGenerationHash }),
@@ -733,6 +740,8 @@ describe('closing market-data fallback boundaries', () => {
         }
       }).pipe(
         Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die('terminal close must not commit another intent'),
           commitClosing: () => Effect.die('terminal close must not commit another close'),
@@ -1021,6 +1030,8 @@ describe('closing market-data fallback boundaries', () => {
         expect(closeCommits).toBe(2)
       }).pipe(
         Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die(new Error('residual close cannot use entry commit authority')),
           commitClosing: (intent, decision) =>

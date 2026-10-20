@@ -144,7 +144,7 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
 }
 
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId: '5'.repeat(64),
   authorityGenerationHash,
   riskDecisionId: '6'.repeat(64),

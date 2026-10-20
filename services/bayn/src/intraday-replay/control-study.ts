@@ -1,6 +1,6 @@
-import { researchManagementExitProbability } from './research-management'
+import { controlExitDefinition } from './control-portfolio'
 import { equityMarketProfile } from '../jev/markets'
-import { makeJevEntryQuery, jevHistoryStartMs } from '../jev/observation-query'
+import { makeJevEntryQuery } from '../jev/observation-query'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { Clock, Effect, FileSystem, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
@@ -32,7 +32,6 @@ import { BacktestInputSchema, prepareBacktest } from './backtest'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { makeControlJev, type ControlJevBinding } from './control-jev'
 import { makeControlJevJournal } from './control-jev-journal'
-import type { makeControlManagementBatch } from './control-management'
 import { calculateReplayJevCosts, type ReplayJevCostModelSchema } from './jev-costs'
 import {
   applyControlOrder,
@@ -58,7 +57,6 @@ import {
 
 export enum ControlManagementMode {
   Mechanical = 'MECHANICAL',
-  Jev = 'JEV',
 }
 
 export enum ControlEntryMode {
@@ -76,7 +74,7 @@ export type ControlStudyManagement =
     }
 
 export const ControlStudyInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.control-study-input.v7'),
+  schemaVersion: Schema.Literal('bayn.control-study-input.v8'),
   entry: Schema.Enum(ControlEntryMode),
   management: Schema.Enum(ControlManagementMode),
   backtest: BacktestInputSchema,
@@ -99,8 +97,7 @@ export const ControlStudyInputSchema = Schema.Struct({
 )
 
 export const controlStudyDefinition = {
-  schemaVersion: 'bayn.control-study-definition.v11',
-  researchManagementExitProbability,
+  schemaVersion: 'bayn.control-study-definition.v12',
   policies: {
     RETAINED_BREAKOUT_CLOSE:
       'Six retained candidates, retained breakout thresholds, 10 percent allocation, hold until the close window.',
@@ -122,14 +119,14 @@ export const controlStudyDefinition = {
   execution:
     'Fresh decision and arrival quotes, shared native IOC execution and accounting. Each portfolio consumes displayed liquidity once per quote identity, symbol and side. One entry IOC; persistent risk-reducing exit retries on the next poll.',
   management:
-    'JEV mode uses research-only observation, evaluation, deadline and management decisions for each repeated control from its own filled position. An exclusive simulation journal records source observations, batches, request claims, receipts and resolutions. Measured provider and journal work advance an independent market clock. Entry and management consume signal windows independently. Existing exit triggers, stops, holding deadlines and the close window precede inference.',
+    'All controls use their declared mechanical exit policy. Jev can select an entry; it cannot manage a held position.',
   valuation:
     'Retain session boundaries, one-minute marks, each poll, decision completion and before/after order outcomes. Broker equity and its carried peak govern risk. Net equity deducts cumulative external costs only for reported performance, drawdown and session loss, matching native replay. External costs never change broker cash, sizing or risk.',
   limitations: [
     'DEVELOPMENT_CONTROL_PORTFOLIOS. Not the frozen matched-control acceptance experiment or a prospective qualification.',
-    'MECHANICAL uses native stop, net-profit target and holding/session deadlines. JEV is an offline model-management comparator; its decisions cannot authorize native broker exits. The retained close control never calls Jev. The residual-shock candidate retains its frozen 60-second horizon without a profit trigger. No model responses are synthesized.',
+    'MECHANICAL uses native stop, net-profit target and holding/session deadlines. The retained close control never calls Jev. The residual-shock candidate retains its frozen 60-second horizon without a profit trigger. No model responses are synthesized.',
     'The retained selection and close lifecycle do not reproduce historical persistence, reconciliation, authority, retry and market-close fallback machinery.',
-    'Deterministic entry latency is a declared scenario. Jev entry and management measure provider and simulation-journal work, not production PostgreSQL persistence or a full-controller p95. Timing still requires calibration for the frozen matched comparison. Routing latency is added separately.',
+    'Deterministic entry latency is a declared scenario. Jev entry measures provider and simulation-journal work, not production PostgreSQL persistence or a full-controller p95. Timing still requires calibration for the frozen matched comparison. Routing latency is added separately.',
     'Quote size units and impact remain uncalibrated. Source completeness and a flat simulated close do not establish executable live capacity.',
     'Missing decision or valuation evidence remains explicit and makes a session incomplete. Candidate-local exclusions remain in the decision trace.',
   ],
@@ -396,7 +393,6 @@ export const runControlSession = (input: {
     let maximumSessionLoss = dataCost
     let lastWindow = -1
     let lastEntryDecisionHash: string | undefined
-    let entryBinding: Omit<Parameters<typeof makeControlManagementBatch>[0], 'runId' | 'snapshot'> | null = null
     const decisions: {
       observedAt: string
       status: string
@@ -454,7 +450,6 @@ export const runControlSession = (input: {
     }[] = []
     let missingDecisions = 0
     let missingExecutionQuotes = 0
-    let unavailableManagement = 0
     let nextMarkMs = openMs
     const mark = (atMs: number) =>
       Effect.gen(function* () {
@@ -516,7 +511,6 @@ export const runControlSession = (input: {
               ),
             ),
           )
-    const management = input.management === null ? null : nativeJev
     let atMs = openMs
     let nextPollMs = openMs
     while (atMs < closeMs) {
@@ -534,87 +528,6 @@ export const runControlSession = (input: {
           quote: held === undefined ? undefined : yield* market.quoteAt(held.symbol, atMs),
         }),
       )
-      if (
-        portfolio.inventory.status === 'HOLDING' &&
-        management !== null &&
-        input.management !== null &&
-        held !== undefined
-      ) {
-        if (entryBinding === null)
-          return yield* new ControlStudyFailure({ message: 'Held control position has no entry evidence' })
-        const rangeEndMs = Math.floor((atMs - protocol.decisionDelaySeconds * 1000) / 60_000) * 60_000
-        const observedAt = utcInstantFromEpochMillis(atMs)
-        const observed = yield* market.snapshot({
-          sessionDate,
-          calendar: input.calendar,
-          observedAt,
-          rangeStartAt: utcInstantFromEpochMillis(
-            jevHistoryStartMs(input.calendar, sessionDate, rangeEndMs, protocol.lookbackMinutes),
-          ),
-          rangeEndAt: utcInstantFromEpochMillis(rangeEndMs),
-          universeId: equityMarketProfile.universeId,
-          universeSymbolHash: equityMarketProfile.universeSymbolHash,
-          universe: equityMarketProfile.universe,
-          symbols: [held.symbol, 'SPY'].sort(),
-          candidateSymbols: [held.symbol],
-          ...(protocol.candidateEvidencePolicy === undefined
-            ? {}
-            : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
-          feed: equityMarketProfile.feed,
-          delayClass: equityMarketProfile.delayClass,
-          sourceTopics: equityMarketProfile.sourceTopics,
-          maximumQuoteAgeMs: protocol.maximumQuoteAgeMs,
-          minimumWatermarkLagMs: protocol.decisionDelaySeconds * 1000,
-        })
-        if (observed.status === 'UNAVAILABLE') {
-          unavailableManagement++
-          decisions.push({
-            observedAt,
-            status: 'MANAGEMENT_UNAVAILABLE',
-            symbol: held.symbol,
-            cause: yield* Effect.fromResult(failureDetails(observed.cause)),
-          })
-        } else {
-          const outcome = yield* management.evaluate(
-            { ...entryBinding, runId: input.management.runId, snapshot: observed.snapshot },
-            portfolio,
-          )
-          atMs = yield* Clock.currentTimeMillis
-          if (outcome.status === 'DECIDED') {
-            portfolio = outcome.applied.portfolio
-            decisions.push({
-              observedAt,
-              status: `MANAGEMENT_${outcome.applied.action}`,
-              symbol: held.symbol,
-              management: {
-                batchId: outcome.applied.decision.evidence.batchPlan.batchId,
-                decisionHash: yield* Effect.fromResult(canonicalHashV1Result(outcome.applied.decision)),
-                decidedAt: outcome.applied.decision.evidence.decidedAt,
-                committedAt: utcInstantFromEpochMillis(outcome.committedAtMs),
-              },
-            })
-          } else if (outcome.status === 'UNAVAILABLE') {
-            unavailableManagement++
-            decisions.push({
-              observedAt,
-              status: 'MANAGEMENT_UNAVAILABLE',
-              symbol: held.symbol,
-              cause: yield* Effect.fromResult(failureDetails(outcome.cause)),
-            })
-          }
-          portfolio = yield* Effect.fromResult(
-            triggerControlExit({
-              feeMultiplierPpm: assumptions.feeMultiplierPpm,
-              portfolio,
-              policy: input.policy,
-              protocol,
-              atMs,
-              cutoffMs,
-              quote: yield* market.quoteAt(held.symbol, atMs),
-            }),
-          )
-        }
-      }
       let symbol: string | null = null
       let side = OrderSide.Buy
       let disposition: ControlPollDisposition
@@ -874,11 +787,6 @@ export const runControlSession = (input: {
               arrivalAtMs: atMs,
             }
             const result = yield* Effect.fromResult(applyControlOrder(portfolio, entryOrder))
-            if (side === OrderSide.Buy && result.outcome.status === 'FILLED') {
-              if (lastEntryDecisionHash === undefined)
-                return yield* new ControlStudyFailure({ message: 'Filled control entry has no decision identity' })
-              entryBinding = { beforeEntry: portfolio, entryOrder, entryDecisionHash: lastEntryDecisionHash }
-            } else if (result.portfolio.inventory.status === 'FLAT') entryBinding = null
             portfolio = result.portfolio
             yield* mark(atMs)
             if (result.outcome.status === 'UNRESOLVED') missingExecutionQuotes += 1
@@ -930,7 +838,6 @@ export const runControlSession = (input: {
       ...(missingExecutionQuotes > 0 ? ['MISSING_EXECUTION_QUOTES'] : []),
       ...(marks.some((entry) => entry.netEquityAfterKnownCostsMicros === null) ? ['MISSING_VALUATION'] : []),
       ...(portfolio.ledger.positions.length > 0 ? ['UNCLOSED_POSITION'] : []),
-      ...(unavailableManagement > 0 ? ['UNAVAILABLE_MANAGEMENT'] : []),
       ...(sessionModelCosts.unresolvedCallCount > 0 ? ['UNPRICED_MODEL_CALLS'] : []),
       ...(atMs > closeMs ? ['MANAGEMENT_AFTER_CLOSE'] : []),
     ]
@@ -961,9 +868,8 @@ export const runControlSession = (input: {
       knownModelCostMicros: sessionModelCosts.knownCostMicros,
       modelCallCount: sessionModelCosts.callCount,
       unpricedModelCallCount: sessionModelCosts.unresolvedCallCount,
-      managementMode: input.management === null ? ControlManagementMode.Mechanical : ControlManagementMode.Jev,
+      managementMode: ControlManagementMode.Mechanical,
       entryMode: input.policy === ControlPolicy.JevEntry ? ControlEntryMode.Jev : ControlEntryMode.Deterministic,
-      unavailableManagement,
       dataCostMicros: input.dataCostMicros,
       maximumMarkedDrawdownMicros: String(maximumDrawdown),
       maximumMarkedSessionLossMicros: String(maximumSessionLoss),
@@ -996,7 +902,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
         prepared.protocol.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
-        prepared.protocol.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
+        controlExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
     )
@@ -1022,18 +928,11 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       )
     const definition = {
       ...(input.ridge !== undefined ? ridgeControlStudyDefinition : policyDefinition),
-      schemaVersion: 'bayn.control-study-definition.v11',
-      researchManagementExitProbability,
+      schemaVersion: 'bayn.control-study-definition.v12',
       entry: input.entry,
       opportunityAccounting: opportunityAccountingDefinition,
       nativeEntry:
         'Jev entry uses the native observation, batch and decision against its independent flat ledger. Provider and fsync journal work advance the market clock before execution. Mechanical exits isolate entry selection; no response is reused across portfolios.',
-      ...(input.management === ControlManagementMode.Jev
-        ? {
-            managementDeadline:
-              'The independent provider clock bounds management, including journal work, by inference validity and the first-fill holding deadline. Cancellation waits for finalizers and retains known or unresolved costs.',
-          }
-        : {}),
     }
     if (prepared.input.cadence.pollIntervalMs > 60_000 || prepared.input.assumptions.latencyMs > 60_000)
       return yield* Result.fail(
@@ -1052,12 +951,9 @@ export const runControlStudy = (
     const { input, prepared, falsification, definition } = yield* Effect.fromResult(prepareControlStudy(raw, receipt))
     if (input.management !== management.mode)
       return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
-    if (
-      (input.entry === ControlEntryMode.Jev || input.management === ControlManagementMode.Jev) !==
-      'provider' in management
-    )
+    if ((input.entry === ControlEntryMode.Jev) !== 'provider' in management)
       return yield* new ControlStudyFailure({
-        message: 'Native Jev entry or management requires exactly one measured provider binding',
+        message: 'Native Jev entry requires exactly one measured provider binding',
       })
     const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
     const firstDate = prepared.brokerSessions[0]?.date
@@ -1116,9 +1012,7 @@ export const runControlStudy = (
         yield* TestClock.setTime(prepared.openMs)
         const controlRunId = yield* Effect.fromResult(canonicalHashV1Result({ runId, policy }))
         const binding =
-          'provider' in management &&
-          (policy === ControlPolicy.JevEntry ||
-            (management.mode === ControlManagementMode.Jev && policy !== ControlPolicy.RetainedBreakout))
+          'provider' in management && policy === ControlPolicy.JevEntry
             ? {
                 runId: controlRunId,
                 costs: prepared.input.inference.costs,

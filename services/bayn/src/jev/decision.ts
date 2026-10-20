@@ -19,6 +19,14 @@ import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
+import { JevFundedExitPlanSchema, type JevFundedExitPlan } from './strategy-exit-plan'
+
+const FundedRequestState = Schema.Struct({
+  entryEconomics: Schema.Struct({
+    maximumTargetWeight: UnitIntervalSchema.check(Schema.isGreaterThan(0)),
+    exitPlan: JevFundedExitPlanSchema,
+  }),
+})
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
   observation: JevObservationSchema,
@@ -62,7 +70,7 @@ export const decideJevEntry = (input: unknown) =>
     const { evidence, observation, inferences, calendar } = yield* reproduceDecisionEvidence(input)
     if (observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* unavailable('An entry decision requires a flat entry observation')
-    const eligible: { symbol: string; probability: number }[] = []
+    const eligible: { symbol: string; probability: number; weight: number; exitPlan: JevFundedExitPlan }[] = []
     for (const { symbol, inference } of inferences) {
       const answer = inference.response.answers['action']
       const quote = observation.snapshot.latestQuotes[symbol]
@@ -72,26 +80,28 @@ export const decideJevEntry = (input: unknown) =>
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
       const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
       const request = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === symbol)
-      const fundedEconomics = Schema.is(
-        Schema.Struct({
-          entryEconomics: Schema.Struct({ breakEvenExitBidUsd: Schema.Finite.check(Schema.isGreaterThan(0)) }),
-        }),
-      )(request?.status === JevCandidatePlanStatus.Requested ? request.request.request.state : undefined)
-      if (answer.choice === 'enter' && fundedEconomics && quoteEligible) eligible.push({ symbol, probability })
+      const state = request?.status === JevCandidatePlanStatus.Requested ? request.request.request.state : undefined
+      if (answer.choice === 'enter' && Schema.is(FundedRequestState)(state) && quoteEligible)
+        eligible.push({
+          symbol,
+          probability,
+          weight: state.entryEconomics.maximumTargetWeight,
+          exitPlan: state.entryEconomics.exitPlan,
+        })
     }
     eligible.sort(
       (left, right) =>
         right.probability - left.probability || (left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0),
     )
-    const selectedSymbols = eligible.slice(0, observation.protocol.maximumPositions).map(({ symbol }) => symbol)
-    const weight =
-      Math.floor(
-        Math.min(observation.protocol.maximumGrossWeight, observation.protocol.maximumSymbolWeight) * 1_000_000,
-      ) / 1_000_000
+    const selected = eligible.slice(0, observation.protocol.maximumPositions)
+    const selectedSymbols = selected.map(({ symbol }) => symbol)
     return {
-      schemaVersion: 'bayn.jev-entry-target.v2' as const,
+      schemaVersion: 'bayn.jev-entry-target.v3' as const,
       strategy: 'jev' as const,
-      exitPolicy: jevPositionExitPolicy(observation.protocol),
+      exitPolicy: jevPositionExitPolicy(
+        observation.protocol,
+        Object.fromEntries(selected.map(({ symbol, exitPlan }) => [symbol, exitPlan])),
+      ),
       sessionDate: yield* Schema.decodeUnknownResult(IsoDateSchema)(observation.snapshot.manifest.sessionDate),
       snapshotId: observation.snapshot.manifest.snapshotId,
       observedAt: observation.observedAt,
@@ -99,14 +109,17 @@ export const decideJevEntry = (input: unknown) =>
       calendarHash: calendar.executionCalendarHash,
       selectedSymbols,
       targetWeights: Object.fromEntries(
-        observation.protocol.candidateSymbols.map((symbol) => [symbol, selectedSymbols.includes(symbol) ? weight : 0]),
+        observation.protocol.candidateSymbols.map((symbol) => [
+          symbol,
+          selected.find((entry) => entry.symbol === symbol)?.weight ?? 0,
+        ]),
       ),
       evidence,
     }
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev entry target could not be derived', cause })))
 
 const TargetBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-target.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-target.v3'),
   strategy: Schema.Literal('jev'),
   exitPolicy: JevPositionExitPolicySchema,
   sessionDate: IsoDateSchema,

@@ -1,4 +1,3 @@
-import { jevProfitTargetProceeds } from '../jev/exit-policy'
 import { jevLiquidationValue } from '../jev/liquidation-economics'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -18,7 +17,6 @@ import {
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
 import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
-import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
@@ -32,6 +30,8 @@ import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type Repl
 import { studyOrder } from './signal-study'
 import { RidgeControlPolicy } from './control-ridge'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
+
+export const controlExitDefinition = { protectiveStopBps: 50, profitTargetNetBps: 100 } as const
 
 export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
@@ -284,12 +284,8 @@ export const triggerControlExit = (input: {
       ) {
         const bid = yield* numberToMicros(quote.value.bidPrice)
         if (
-          jevProtectiveStopCrossed(
-            BigInt(position.costBasisMicros),
-            BigInt(position.quantityAtoms),
-            bid,
-            protocol.protectiveStopBps,
-          )
+          bid * BigInt(position.quantityAtoms) * 10_000n <=
+          BigInt(position.costBasisMicros) * 1_000_000_000n * BigInt(10_000 - controlExitDefinition.protectiveStopBps)
         )
           reason = ControlExit.ProtectiveStop
         else if (input.policy !== ControlPolicy.ResidualShock) {
@@ -301,7 +297,10 @@ export const triggerControlExit = (input: {
             costMultiplierMicros: BigInt(input.feeMultiplierPpm),
           })
           const acquisition = BigInt(portfolio.inventory.openingCashMicros) - BigInt(portfolio.ledger.cashMicros)
-          if (liquidation.conservativeNetMicros >= jevProfitTargetProceeds(acquisition, protocol.profitTargetNetBps))
+          if (
+            liquidation.conservativeNetMicros >=
+            (acquisition * BigInt(10_000 + controlExitDefinition.profitTargetNetBps) + 9_999n) / 10_000n
+          )
             reason = ControlExit.ProfitTarget
         }
       }

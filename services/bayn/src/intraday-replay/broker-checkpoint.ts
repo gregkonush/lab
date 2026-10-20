@@ -1,4 +1,6 @@
 import { FeeActivitySchema } from '../broker/fee-activity'
+import { NativeProtectionSchema } from '../execution/contracts'
+import { verifyProtectionGroup } from '../broker/alpaca/protection-group'
 import { replayFeeActivity } from './broker-fees'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { InstrumentSymbolSchema } from '../instruments'
@@ -33,7 +35,7 @@ import {
 } from '../schemas'
 import { applyReplayFill, createReplayLedger } from './ledger'
 import { ReplayOrderExecutionSchema } from './broker-execution-evidence'
-import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState } from './broker'
+import type { ReplayBrokerConfig, ReplayBrokerFill, ReplayBrokerState, ReplayOrder } from './broker'
 
 const OrderFields = {
   accountId: StrictNonEmptyStringSchema,
@@ -51,9 +53,10 @@ const OrderFields = {
   quantityAtoms: PositiveMicrosSchema,
   filledQuantityAtoms: UnsignedMicrosSchema,
   filledAveragePriceMicros: Schema.optionalKey(PositiveMicrosSchema),
-  orderClass: Schema.Literal(OrderClass.Simple),
+  orderClass: Schema.Literals([OrderClass.Simple, OrderClass.Bracket, OrderClass.OneCancelsOther]),
   status: Schema.Literals([
     OrderStatus.New,
+    OrderStatus.Held,
     OrderStatus.PartiallyFilled,
     OrderStatus.Filled,
     OrderStatus.Canceled,
@@ -62,13 +65,17 @@ const OrderFields = {
   ]),
   extendedHours: Schema.Boolean,
   observedAt: UtcInstantSchema,
+  parentBrokerOrderId: Schema.optionalKey(StrictNonEmptyStringSchema),
+  nativeProtection: Schema.optionalKey(NativeProtectionSchema),
+  stopTriggeredAt: Schema.optionalKey(UtcInstantSchema),
 }
 const OrderSchema = Schema.Struct({
   ...OrderFields,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Literal(OrderType.Limit),
-  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled]),
   limitPriceMicros: PositiveMicrosSchema,
+  stopPriceMicros: Schema.optionalKey(PositiveMicrosSchema),
 })
 const EconomicFillSchema = Schema.Struct({
   executionIndex: NonNegativeIntegerSchema,
@@ -88,12 +95,12 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v6'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v7'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v4'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v5'),
     createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
@@ -165,6 +172,23 @@ export const replayBrokerConfigurationHash = (config: ReplayBrokerConfig) =>
     calendar: config.calendar,
   })
 
+export const replayQuantityAtFill = (state: ReplayBrokerState, order: ReplayOrder, index: number): bigint => {
+  const parent = state.orders.find((entry) => entry.order.brokerOrderId === order.parentBrokerOrderId)?.order
+  if (parent === undefined || order.orderType !== OrderType.StopLimit) return BigInt(order.quantityAtoms)
+  const profitId =
+    parent.nativeProtection?._tag === 'Oco'
+      ? parent.brokerOrderId
+      : state.orders.find(
+          (entry) =>
+            entry.order.parentBrokerOrderId === parent.brokerOrderId && entry.order.orderType === OrderType.Limit,
+        )?.order.brokerOrderId
+  const disposed = state.ledger.fills
+    .slice(0, index)
+    .filter((fill) => fill.brokerOrderId === profitId)
+    .reduce((sum, fill) => sum + BigInt(fill.quantityAtoms), 0n)
+  return BigInt(parent.quantityAtoms) - disposed
+}
+
 /** Recompute exact economics and activities before any restored state can answer a production broker read. */
 export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrokerConfig) =>
   Result.gen(function* () {
@@ -208,21 +232,39 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         side: order.side === OrderSide.Buy ? DomainSide.Buy : DomainSide.Sell,
         quantityAtoms: order.quantityAtoms,
       }
-      const body = yield* orderRequestBody({
-        ...common,
-        orderType: DomainOrderType.Limit,
-        timeInForce:
-          order.timeInForce === TimeInForce.Day ? DomainTimeInForce.Day : DomainTimeInForce.ImmediateOrCancel,
-        limitPriceMicros: order.limitPriceMicros,
-        notionalLimitMicros: (
-          (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms) +
-            (order.side === OrderSide.Buy ? 999999999n : 0n)) /
-          1000000000n
-        ).toString(),
-      })
+      const parent = state.orders.find((entry) => entry.order.brokerOrderId === order.parentBrokerOrderId)
+      const root = parent?.order ?? order
+      const terms = root.nativeProtection
       if (
-        requestHash !== (yield* canonicalHashV1Result(body)) ||
-        order.extendedHours !== body.extended_hours ||
+        parent !== undefined &&
+        (terms === undefined || terms._tag === 'StopLimit' || requestHash !== parent.requestHash)
+      )
+        return yield* fail('Generated protection child has no matching submitted parent')
+      if (order.parentBrokerOrderId !== undefined && parent === undefined)
+        return yield* fail('Generated protection child references an absent parent')
+      const body =
+        parent !== undefined
+          ? null
+          : yield* orderRequestBody({
+              ...common,
+              orderType: order.orderType === OrderType.StopLimit ? DomainOrderType.StopLimit : DomainOrderType.Limit,
+              timeInForce:
+                order.timeInForce === TimeInForce.Day
+                  ? DomainTimeInForce.Day
+                  : order.timeInForce === TimeInForce.GoodUntilCanceled
+                    ? DomainTimeInForce.GoodUntilCanceled
+                    : DomainTimeInForce.ImmediateOrCancel,
+              ...(order.nativeProtection === undefined ? {} : { protection: order.nativeProtection }),
+              limitPriceMicros: order.limitPriceMicros,
+              notionalLimitMicros: (
+                (BigInt(order.limitPriceMicros) * BigInt(order.quantityAtoms) +
+                  (order.side === OrderSide.Buy ? 999999999n : 0n)) /
+                1000000000n
+              ).toString(),
+            })
+      if (
+        (body !== null &&
+          (requestHash !== (yield* canonicalHashV1Result(body)) || order.extendedHours !== body.extended_hours)) ||
         (order.status === OrderStatus.Filled && order.filledQuantityAtoms !== order.quantityAtoms) ||
         (order.status === OrderStatus.Rejected && order.failedAt === undefined) ||
         ([OrderStatus.Canceled, OrderStatus.Expired].includes(order.status) &&
@@ -233,6 +275,36 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         )
       )
         return yield* fail('Broker checkpoint request or terminal status is inconsistent')
+      if (terms !== undefined && terms._tag !== 'StopLimit' && parent === undefined) {
+        const legs = state.orders
+          .filter((entry) => entry.order.parentBrokerOrderId === order.brokerOrderId)
+          .map((entry) => entry.order)
+        if (
+          Result.isFailure(
+            verifyProtectionGroup(
+              { ...order, legs },
+              { symbol: order.symbol, quantityAtoms: order.quantityAtoms, protection: terms },
+            ),
+          )
+        )
+          return yield* fail('Broker checkpoint protection group differs from submitted strategy terms')
+      }
+      if (
+        order.orderType === OrderType.StopLimit &&
+        (order.stopPriceMicros === undefined ||
+          (order.stopTriggeredAt !== undefined &&
+            (order.stopTriggeredAt < order.createdAt ||
+              order.stopTriggeredAt > order.updatedAt ||
+              state.orders
+                .find((entry) => entry.order.brokerOrderId === order.brokerOrderId)
+                ?.executions.some(
+                  (execution) =>
+                    execution.arrivedAt === order.stopTriggeredAt &&
+                    execution.quote !== null &&
+                    Math.round(execution.quote.bidPrice * 1_000_000) <= Number(order.stopPriceMicros),
+                ) !== true)))
+      )
+        return yield* fail('Broker checkpoint stop trigger lacks its executable quote')
       orderIds.add(order.brokerOrderId)
       clientIds.add(order.clientOrderId)
     }
@@ -267,12 +339,13 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         fill.quoteSource.availableAtMs > Date.parse(fill.observedAt)
       )
         return yield* fail('Broker checkpoint fill is not bound to its order and quote evaluation')
+      const quantityAtFill = replayQuantityAtFill(state, order, state.ledger.fills.indexOf(fill))
       const totalQuantity = (prior?.quantity ?? 0n) + BigInt(fill.quantityAtoms)
       const totalNotional = (prior?.notional ?? 0n) + BigInt(fill.notionalMicros)
       const next = yield* applyReplayFill(
         ledger,
         fill,
-        (BigInt(order.quantityAtoms) - (prior?.quantity ?? 0n)).toString(),
+        (quantityAtFill - (prior?.quantity ?? 0n)).toString(),
         config.protocol.executionModel,
         config.assumptions.feeMultiplierPpm,
       )
@@ -284,12 +357,12 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         config.assumptions.feeMultiplierPpm,
       )
       if (fee !== null) expectedFees.push({ ...fee, date: yield* Schema.decodeUnknownResult(IsoDateSchema)(fee.date) })
-      const complete = totalQuantity === BigInt(order.quantityAtoms)
+      const complete = totalQuantity === quantityAtFill
       expectedFills.push({
         accountId: state.accountId,
         activityId: `fill::${fill.brokerOrderId}::${fill.executionIndex}`,
         cumulativeQuantityAtoms: totalQuantity.toString(),
-        leavesQuantityAtoms: (BigInt(order.quantityAtoms) - totalQuantity).toString(),
+        leavesQuantityAtoms: (quantityAtFill - totalQuantity).toString(),
         priceAtoms: (BigInt(fill.priceMicros) * 1000n).toString(),
         quantityAtoms: fill.quantityAtoms,
         side: fill.side,
@@ -299,7 +372,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
         type: complete ? TradeActivityType.Fill : TradeActivityType.PartialFill,
         orderStatus: complete
           ? OrderStatus.Filled
-          : order.timeInForce === TimeInForce.Day && order.orderType === OrderType.Limit
+          : order.timeInForce !== TimeInForce.ImmediateOrCancel
             ? OrderStatus.PartiallyFilled
             : OrderStatus.Canceled,
       })
@@ -320,7 +393,11 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
           (order.filledAt !== fills.lastFillAt ||
             order.filledAveragePriceMicros !==
               ((fills.notional * 1_000_000_000n + fills.quantity / 2n) / fills.quantity).toString())) ||
-        (order.status === OrderStatus.New && (order.filledQuantityAtoms !== '0' || executions.length === 0)) ||
+        (order.status === OrderStatus.New &&
+          (order.filledQuantityAtoms !== '0' ||
+            (executions.length === 0 &&
+              order.parentBrokerOrderId === undefined &&
+              order.orderType !== OrderType.StopLimit))) ||
         (order.status === OrderStatus.PartiallyFilled &&
           (fills === undefined || fills.quantity >= BigInt(order.quantityAtoms))) ||
         executions.some(
@@ -372,7 +449,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v6' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v7' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

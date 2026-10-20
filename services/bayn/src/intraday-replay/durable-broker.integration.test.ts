@@ -234,7 +234,7 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
         }).pipe(Effect.provide(stores()), Effect.provide(NodeServices.layer))
         yield* TestClock.setTime(entryMs)
         const order = (side: OrderSide): Intent => ({
-          schemaVersion: 'bayn.execution-intent.v4',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: (side === OrderSide.Buy ? '1' : '2').repeat(64),
           authorityGenerationHash,
           riskDecisionId: '3'.repeat(64),

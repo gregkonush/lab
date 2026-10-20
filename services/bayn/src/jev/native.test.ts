@@ -5,11 +5,6 @@ import { Result, Schema } from 'effect'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
 import { decideJevEntry, jevEntryQuoteMaximumAgeMs, JevEntryTargetSchema } from './decision'
-import {
-  decideJevManagement,
-  JevManagementAction,
-  JevManagementDecisionSchema,
-} from '../intraday-replay/research-management'
 import { entryQuoteExpiresAtMillis } from '../risk'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { canonicalHashV1 } from '../hash'
@@ -37,8 +32,11 @@ describe('native Jev entry and position observations', () => {
     const evidence = nativeJevDecisionEvidence()
     const target = Result.getOrThrow(decideJevEntry(evidence))
     expect(target.selectedSymbols).toEqual(['AAPL'])
-    expect(target.targetWeights['AAPL']).toBe(0.2)
-    expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(0.2)
+    expect(target.targetWeights['AAPL']).toBeGreaterThan(0)
+    expect(target.targetWeights['AAPL']).toBeLessThanOrEqual(0.2)
+    expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
+      target.targetWeights['AAPL'] ?? 0,
+    )
     expect(
       Result.getOrThrow(Schema.decodeUnknownResult(JevEntryTargetSchema)(JSON.parse(JSON.stringify(target)))),
     ).toEqual(target)
@@ -178,39 +176,6 @@ describe('native Jev entry and position observations', () => {
     ).toBe(false)
   })
 
-  test('the held position can request an exit, while weaker or hold evidence retains it', () => {
-    const fixture = nativeJevFixture(JevPurpose.Manage)
-    expect(Result.getOrThrow(decideJevManagement(nativeJevDecisionEvidence(fixture, 'exit')))).toMatchObject({
-      symbol: 'AAPL',
-      action: JevManagementAction.Exit,
-    })
-    expect(Result.getOrThrow(decideJevManagement(nativeJevDecisionEvidence(fixture, 'hold'))).action).toBe(
-      JevManagementAction.Hold,
-    )
-    expect(Result.getOrThrow(decideJevManagement(nativeJevDecisionEvidence(fixture, 'exit', 0.64))).action).toBe(
-      JevManagementAction.Hold,
-    )
-    expect(Result.isFailure(decideJevManagement(nativeJevDecisionEvidence()))).toBe(true)
-  })
-
-  test('management replay rejects an altered action, position, cycle or entry document', () => {
-    const decision = Result.getOrThrow(
-      decideJevManagement(nativeJevDecisionEvidence(nativeJevFixture(JevPurpose.Manage), 'hold')),
-    )
-    expect(
-      Result.getOrThrow(Schema.decodeUnknownResult(JevManagementDecisionSchema)(JSON.parse(JSON.stringify(decision)))),
-    ).toEqual(decision)
-    for (const change of [
-      { action: JevManagementAction.Exit },
-      { symbol: 'AMZN' },
-      { cycleId: '0'.repeat(64) },
-      { entryDecisionHash: '0'.repeat(64) },
-    ])
-      expect(
-        Result.isFailure(Schema.decodeUnknownResult(JevManagementDecisionSchema)({ ...decision, ...change })),
-      ).toBe(true)
-  })
-
   test('recomputed reconciliation hashes cannot legitimize mixed-account or future position evidence', () => {
     const portfolio = nativeJevFixture(JevPurpose.Manage).portfolio
     const state = portfolio.brokerState
@@ -250,7 +215,7 @@ describe('native Jev entry and position observations', () => {
     for (const candidate of batch.candidates) {
       if (candidate.status !== JevCandidatePlanStatus.Requested) continue
       expect(candidate.request.request.state).toMatchObject({
-        schemaVersion: 'bayn.jev-trading-signal-state.v12',
+        schemaVersion: 'bayn.jev-trading-signal-state.v13',
         position: null,
         task: { decisionPurpose: JevPurpose.Entry },
       })

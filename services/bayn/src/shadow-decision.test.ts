@@ -265,7 +265,7 @@ const policy = (account = accountId): Policy =>
     PolicySchema,
     strictParseOptions,
   )({
-    schemaVersion: 'bayn.execution-risk-policy.v3',
+    schemaVersion: 'bayn.execution-risk-policy.v4',
     accountId: account,
     brokerMode: BrokerMode.Execution,
     allowedSymbols: protocol.candidateSymbols,
@@ -1114,6 +1114,7 @@ describe('intraday shadow decision', () => {
               ...target,
               notionalLimitMicros: risk.notionalLimitMicros,
               limitPriceMicros: risk.limitPriceMicros,
+              ...(risk.protection === undefined ? {} : { protection: risk.protection }),
               createdAt: document.createdAt,
             },
             { authority: { ...authority, effective: Authority.Execution, kill: KillState.Clear } },
@@ -1193,6 +1194,8 @@ describe('intraday shadow decision', () => {
           },
         ).pipe(
           Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () =>
               Effect.sync(() => {
@@ -1313,6 +1316,8 @@ describe('intraday shadow decision', () => {
           },
         ).pipe(
           Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
             read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
             commit: () => Effect.die(new Error('malformed set cannot commit')),
           }),
@@ -1926,6 +1931,7 @@ describe('intraday shadow decision', () => {
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
           limitPriceMicros: risk.limitPriceMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
         },
         authorityGenerationHash,
       ),
@@ -1979,6 +1985,7 @@ describe('intraday shadow decision', () => {
           ...target,
           notionalLimitMicros: risk.notionalLimitMicros,
           limitPriceMicros: risk.limitPriceMicros,
+          ...(risk.protection === undefined ? {} : { protection: risk.protection }),
         },
         authorityGenerationHash,
       ),

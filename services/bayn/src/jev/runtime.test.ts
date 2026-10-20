@@ -57,8 +57,28 @@ const scenario = (
     ordersObservedAt: at,
   }
   const hash = Result.getOrThrow(reconciledStateHash(material))
+  const symbol = options.symbol ?? 'AAPL'
+  const planned = original.exitPolicy.plans['AAPL']
+  if (planned === undefined) throw new Error('Expected an immutable entry plan')
+  const firstFillAt = options.firstFillAt ?? original.entryFills[0]?.occurredAt
+  if (firstFillAt === undefined) throw new Error('Expected first entry fill')
+  const sourceEnd = Math.floor(Date.parse(firstFillAt) / 60_000) * 60_000
   const portfolio = {
     ...original,
+    exitPolicy: {
+      ...original.exitPolicy,
+      plans: {
+        [symbol]: {
+          ...planned,
+          levels: {
+            ...planned.levels,
+            symbol,
+            sourceEndAt: utcInstantFromEpochMillis(sourceEnd),
+            sourceStartAt: utcInstantFromEpochMillis(sourceEnd - planned.levels.maximumHoldingMinutes * 60_000),
+          },
+        },
+      },
+    },
     brokerState: {
       ...material,
       reconciliation: {
@@ -148,7 +168,7 @@ const scenario = (
 describe('entry-bound native position exits', () => {
   test.each([
     [-0.02, JevExitReason.ProtectiveStop],
-    [0.02, JevExitReason.ProfitTarget],
+    [0.05, JevExitReason.ProfitTarget],
   ] as const)('a premium of %f triggers %s without any model or inference store', async (premium, reason) => {
     const check = scenario({ premium })
     expect(await check.run()).toMatchObject({ _tag: 'Exit', target: { reason, targetWeights: { AAPL: 0 } } })

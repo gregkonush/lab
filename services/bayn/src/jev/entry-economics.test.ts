@@ -9,7 +9,6 @@ import { JevPurpose } from './portfolio'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { jevEntryEconomics } from './entry-economics'
-import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { defaultJevProtocolDocument } from './protocol'
 
 test('setup selection asks the model for its setup action without a second economics judgment', () => {
@@ -32,18 +31,13 @@ test('an unfunded whole-equity target abstains even when the model chooses enter
 })
 
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
-  '%s entry binds a fee break-even bid and price ceiling',
+  '%s excludes a real source window whose range cannot cover its estimated execution costs',
   (symbol) => {
     const { snapshot } = cryptoMarketFixture(symbol)
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const request = Result.getOrThrow(makeJevTradingSignalRequest(native, symbol))
     const state = JSON.parse(request.body).state
-    expect(state.entryEconomics.profitTargetNetBps).toBe(100)
-    expect(state.entryEconomics.profitTargetExitBidUsd).toBeGreaterThan(state.entryEconomics.breakEvenExitBidUsd)
-    expect(state.entryEconomics.operatingCostCoverage).toBe('UNKNOWN')
-    expect(state.entryEconomics.breakEvenExitBidUsd).toBeGreaterThan(state.candidate.quote.ask)
-    expect(state.entryEconomics.requiredBidRiseBps).toBeGreaterThan(70)
-    expect(state.entryEconomics.maximumEntryPriceUsd).toBeGreaterThan(state.candidate.quote.ask)
+    expect(state.entryEconomics).toBeNull()
     expect(request.request.questions['net_economics']).toBeUndefined()
   },
 )
@@ -56,6 +50,8 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
       fc.bigInt({ min: 1_000_000_000n, max: 1_000_000_000_000n }),
       (ask, capital) => {
         const protocol = defaultJevProtocolDocument
+        const end = Date.parse('2026-10-19T15:00:00.000Z')
+        const price = Number(ask) / 1_000_000
         const economics = Result.getOrThrow(
           jevEntryEconomics({
             protocol,
@@ -63,20 +59,24 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
             askMicros: ask,
             bidMicros: ask,
             capitalMicros: String(capital),
+            sourceEndAt: new Date(end).toISOString(),
+            bars: Array.from({ length: 15 }, (_, i) => ({
+              symbol: 'BTC/USD',
+              eventAt: new Date(end - (15 - i) * 60_000).toISOString(),
+              final: true,
+              open: price,
+              close: price,
+              low: price * 0.99,
+              high: price * 1.02,
+            })),
           }),
         )
         if (economics === null) throw new Error('Funded crypto fixture requires a positive allocation')
         const entryPrice = BigInt(Math.round(economics.maximumEntryPriceUsd * 1_000_000))
-        const quantity = BigInt(
-          Result.getOrThrow(
-            maximumAllocatedBuyQuantities({
-              askPriceMicros: { 'BTC/USD': String(entryPrice) },
-              targetWeights: { 'BTC/USD': 0.2 },
-              capitalMicros: String(capital),
-              precision: protocol.executionModel.precision,
-            }),
-          )['BTC/USD'] ?? '0',
-        )
+        const quantity = BigInt(economics.exitPlan.maximumQuantityAtoms)
+        expect(
+          BigInt(economics.exitPlan.acquisitionCostMicros) - BigInt(economics.exitPlan.estimatedStopNetMicros),
+        ).toBeLessThanOrEqual(BigInt(economics.exitPlan.capitalRiskBudgetMicros))
         const received = quantity - (quantity * 25n + 9999n) / 10_000n
         const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
         const net = (bid: bigint) => {

@@ -1,3 +1,4 @@
+import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
 import { quantityFromDecimal, quantityScale } from '../quantity'
 import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
@@ -1039,6 +1040,17 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
   const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
   if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
+  if (
+    intent.protection !== undefined &&
+    instrumentMarket(intent.symbol) === MarketKind.Equity &&
+    equityClockSession(observedAt) !== 'regular'
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'Native equity protection requires the regular session at final transmission',
+      }),
+    )
   const asset = snapshot.asset
   if (
     asset.symbol !== intent.symbol ||
