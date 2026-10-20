@@ -2,7 +2,6 @@ import { FeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
-import { canonicalHashV1 } from '../../hash'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { CashReportingQuantumSchema } from './cash-reporting'
 import {
@@ -298,5 +297,3 @@ export interface BrokerObservationsShape {
 export class BrokerObservations extends Context.Service<BrokerObservations, BrokerObservationsShape>()(
   '@proompteng/bayn/broker/alpaca/BrokerObservations',
 ) {}
-
-export const observedBrokerSnapshotHash = (value: ObservedBrokerSnapshot): string => canonicalHashV1(value)

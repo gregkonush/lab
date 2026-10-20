@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { decodeEquityEdgeInput, decodeEquityEdgeSource, EquityHistoricalFeed } from './equity-edge-source'
 
 const barsUrl = (end = '2026-08-19') =>
@@ -56,7 +56,11 @@ const fixture = () => {
   const input = {
     schemaVersion: 'bayn.equity-edge-screen-input.v2',
     sourceSha256: sha256(text),
-    calendar: { start: '2026-08-03', end: '2026-08-19', expectedHash: canonicalHashV1(calendar) },
+    calendar: {
+      start: '2026-08-03',
+      end: '2026-08-19',
+      expectedHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
+    },
     symbols: ['SPY', 'AAPL'],
     development: { start: '2026-08-17', end: '2026-08-17' },
     validation: { start: '2026-08-18', end: '2026-08-18' },
@@ -99,7 +103,11 @@ test('an omitted interior trading session cannot remain a complete calendar', ()
   const full = [JSON.stringify(header), ...remainder].join('\n') + '\n'
   const scope = {
     ...input,
-    calendar: { ...input.calendar, end: '2026-08-21', expectedHash: canonicalHashV1(header.data) },
+    calendar: {
+      ...input.calendar,
+      end: '2026-08-21',
+      expectedHash: Result.getOrThrow(canonicalHashV1Result(header.data)),
+    },
     development: { start: '2026-08-17', end: '2026-08-19' },
     validation: { start: '2026-08-20', end: '2026-08-20' },
     holdout: { start: '2026-08-21', end: '2026-08-21' },

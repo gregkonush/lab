@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Result, Schema } from 'effect'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import { retainedReplayFixture } from '../testing/retained-replay-fixture'
 import { gapSourceFixture } from './gap-recovery.test-support'
@@ -23,7 +23,7 @@ import {
 
 const registration: MatchedRegistration = {
   schemaVersion: 'bayn.matched-entry-registration.v2',
-  definitionHash: canonicalHashV1(matchedEntryDefinition),
+  definitionHash: Result.getOrThrow(canonicalHashV1Result(matchedEntryDefinition)),
   sourceRevision: 'a'.repeat(40),
   protocolHash: 'b'.repeat(64),
   registeredAt: '2026-09-03T00:00:00.000Z',
@@ -52,7 +52,7 @@ const outcome = (net: string): NonNullable<MatchedPair['jev']> => ({
 })
 const pairs = (override: Partial<MatchedPair> = {}): MatchedPair[] =>
   Array.from({ length: 20 }, (_, n) => ({
-    batchId: canonicalHashV1({ n }),
+    batchId: Result.getOrThrow(canonicalHashV1Result({ n })),
     sessionDate: registration.sessionDates[n % 5] ?? '',
     jevSymbol: 'AAPL',
     momentumSymbol: null,
@@ -219,7 +219,7 @@ test('sparse selections, omitted inventory and missing calibration remain inconc
 
 test('source comparison preserves nanoseconds and accepts equivalent timestamp spellings', () => {
   const snapshot = nativeJevFixture().snapshot
-  const hash = canonicalHashV1(matchedObservationMaterial(snapshot))
+  const hash = Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(snapshot)))
   const padded = {
     ...snapshot,
     quotes: snapshot.quotes.map((q) => ({
@@ -228,14 +228,14 @@ test('source comparison preserves nanoseconds and accepts equivalent timestamp s
       ingestedAt: q.ingestedAt.replace('.000Z', '.000000000Z'),
     })),
   }
-  expect(canonicalHashV1(matchedObservationMaterial(padded))).toBe(hash)
+  expect(Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(padded)))).toBe(hash)
   const changed = {
     ...padded,
     quotes: padded.quotes.map((q, n) =>
       n === 0 ? { ...q, eventAt: q.eventAt.replace('.000000000Z', '.000000001Z') } : q,
     ),
   }
-  expect(canonicalHashV1(matchedObservationMaterial(changed))).not.toBe(hash)
+  expect(Result.getOrThrow(canonicalHashV1Result(matchedObservationMaterial(changed)))).not.toBe(hash)
 })
 
 test('matched completeness admits a fully verified original-capture source without dropping other gates', async () => {

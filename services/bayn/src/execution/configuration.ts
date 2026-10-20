@@ -403,8 +403,6 @@ export const decodeResearchCapitalBuildLineageResult = Schema.decodeUnknownResul
   strictParseOptions,
 )
 
-export type CapitalAuthorityRequest = NoCapitalRequest | GrantedCapitalRequest
-
 export type ExecutionPolicy =
   | {
       readonly brokerIdentity?: undefined

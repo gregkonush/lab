@@ -1409,5 +1409,3 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
 }
 
 export const decodePolicy = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
-
-export const decodeState = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)

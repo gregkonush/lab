@@ -1,14 +1,13 @@
 import { Result, pipe } from 'effect'
 
-import type { MarketDataInspection, SnapshotRequest } from '../model'
-import type { SignalManifestRow, SignalSessionRow, SnapshotRows } from '../rows'
+import type { SnapshotRequest } from '../model'
+import type { SignalManifestRow, SignalSessionRow } from '../rows'
 import type { InputManifest, SymbolCoverage } from '../../types'
 import type { MarketDataVerificationError, SessionField } from './errors'
 import { verifyManifest, type VerifiedManifest } from './manifest'
 import {
   canonicalHashResult,
   database,
-  fail,
   requireCondition,
   requireValue,
   tables,
@@ -183,28 +182,5 @@ export const verifyCalendar = (
           )
         }),
       )
-    }),
-  )
-
-export const verifyFinalizedCalendar = (
-  rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
-  request: SnapshotRequest,
-): Result.Result<MarketDataInspection, MarketDataVerificationError> =>
-  pipe(
-    verifyCalendar(rows.sessions, rows.manifests, request),
-    Result.flatMap((calendar) => {
-      const signalSession = calendar.boundedSessions.at(-1)
-      return signalSession === undefined
-        ? fail({ _tag: 'SignalSessionMissing', snapshotId: request.snapshotId })
-        : Result.succeed({
-            manifest: calendar.inputManifest,
-            sessionDates: calendar.boundedSessions.map((session) => session.session_date),
-            signalSession: {
-              calendar_version: signalSession.calendar_version,
-              session_date: signalSession.session_date,
-              close_time: signalSession.close_time,
-              timezone: signalSession.timezone,
-            },
-          })
     }),
   )

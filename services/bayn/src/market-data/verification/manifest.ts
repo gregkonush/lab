@@ -243,9 +243,3 @@ export const verifyManifest = (
       )
     }),
   )
-
-export const verifyFinalizedManifest = (
-  manifests: readonly SignalManifestRow[],
-  request: SnapshotRequest,
-): Result.Result<FinalizedSnapshotProvenance, MarketDataVerificationError> =>
-  Result.map(verifyManifest(manifests, request), ({ finalizedSnapshot }) => finalizedSnapshot)

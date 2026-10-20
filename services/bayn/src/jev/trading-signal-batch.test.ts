@@ -3,7 +3,7 @@ import { equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   constructSimulatedSnapshot,
   constructStreamingSnapshot,
@@ -223,7 +223,7 @@ describe('Jev trading batch source reproduction', () => {
   test('freezes the entire recorded universe and reproduces each exact request', () => {
     const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
     expect(plan.observationHash).toBe(fixture.observation.contentHash)
-    expect(plan.protocolHash).toBe(canonicalHashV1(fixture.protocol))
+    expect(plan.protocolHash).toBe(Result.getOrThrow(canonicalHashV1Result(fixture.protocol)))
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual([...equityMarketProfile.candidateSymbols])
     for (const candidate of plan.candidates) {
       if (candidate.status === JevCandidatePlanStatus.Excluded) {
@@ -270,7 +270,11 @@ describe('Jev trading batch source reproduction', () => {
           return {
             ...candidate,
             request: Result.getOrThrow(
-              makeJevEvaluationRequest({ ...evaluation, request, requestHash: canonicalHashV1(request) }),
+              makeJevEvaluationRequest({
+                ...evaluation,
+                request,
+                requestHash: Result.getOrThrow(canonicalHashV1Result(request)),
+              }),
             ),
           }
         }),

@@ -15,7 +15,7 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { runDatabase } from '../../db/database-error'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
@@ -150,7 +150,7 @@ const draft = () => {
       entryAttemptOrdinal: 1,
       strategyName: 'jev',
       qualificationRunId,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'jev', version: 1 }),
+      strategyProtocolHash: Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 1 })),
       accountId,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,

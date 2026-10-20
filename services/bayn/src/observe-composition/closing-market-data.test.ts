@@ -1,6 +1,6 @@
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { IsoDateSchema } from '../schemas'
+import { IsoDateSchema, strictParseOptions } from '../schemas'
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
@@ -8,7 +8,7 @@ import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
-import { CycleState, decodeAutonomousCycle } from '../cycle/model'
+import { CycleState, AutonomousCycleSchema } from '../cycle/model'
 import {
   Authority,
   IntentState,
@@ -77,7 +77,10 @@ const native = activeNativeFixture()
 const accountId = native.portfolio.brokerState.account.accountId
 const at = native.query.observedAt
 const activeCycle = Effect.runSync(
-  decodeAutonomousCycle({
+  Schema.decodeUnknownEffect(
+    AutonomousCycleSchema,
+    strictParseOptions,
+  )({
     ...native.draft,
     state: CycleState.Active,
     bindings: {},
@@ -159,7 +162,10 @@ const freshMarket: IntradayMarketDataService = {
 
 const fixture = async (source = native) => {
   const selectedCycle = Effect.runSync(
-    decodeAutonomousCycle({
+    Schema.decodeUnknownEffect(
+      AutonomousCycleSchema,
+      strictParseOptions,
+    )({
       ...source.draft,
       state: CycleState.Active,
       bindings: {},
@@ -250,7 +256,10 @@ const fixture = async (source = native) => {
     policy,
     entryDocument: document,
     cycle: Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...selectedCycle,
         bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
         stateVersion: 2,

@@ -1,5 +1,5 @@
 import { equityMarketProfile } from '../jev/markets'
-import { makeReplayCheckpointStore } from './checkpoint-store'
+import { makeReplayCheckpointStore } from './checkpoint-store.test-support'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Clock, Config, Effect, FileSystem, Layer, Result, Schema } from 'effect'

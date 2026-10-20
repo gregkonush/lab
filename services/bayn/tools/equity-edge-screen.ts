@@ -1,7 +1,7 @@
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Path, Schema, Stdio, Stream } from 'effect'
 
-import { canonicalHashV1, canonicalJsonV1Result, sha256 } from '../src/hash'
+import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../src/hash'
 import { decodeEquityEdgeInput, decodeEquityEdgeSource } from '../src/intraday-replay/equity-edge-source'
 import {
   EquityScreenError,
@@ -87,7 +87,7 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
       // The selector sees development only. Later outcomes never revise its identity.
       const selection = {
         policy: selectedPolicy,
-        developmentReportHash: canonicalHashV1(development),
+        developmentReportHash: yield* Effect.fromResult(canonicalHashV1Result(development)),
         trialCount: policies.length,
       }
       const later = yield* Effect.forEach(
@@ -164,7 +164,7 @@ export const equityEdgeScreenProgram = (args: readonly string[]) =>
       yield* file.sync
       return {
         outputPath,
-        reportHash: canonicalHashV1(report),
+        reportHash: yield* Effect.fromResult(canonicalHashV1Result(report)),
         sourceSha256: input.sourceSha256,
         selection,
         decision: report.decision,

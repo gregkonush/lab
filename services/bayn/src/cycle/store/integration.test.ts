@@ -27,7 +27,7 @@ import {
 } from '../../execution/mandate'
 import { BlockedCycleIntentStore } from '../../execution/intents/blocked-cycle'
 import { BlockedCycleIntentStoreLive } from '../../execution/intents/blocked-cycle-postgres'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { ExecutionDecisionDocument } from '../../shadow-decision-contract'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
@@ -62,7 +62,7 @@ const value = <A, E>(result: Result.Result<A, E>): A => {
 }
 
 const draft = (
-  strategyProtocolHash = canonicalHashV1({ strategy: 'jev', version: 1 }),
+  strategyProtocolHash = Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 1 })),
   executionModel = intradayMomentumExecutionModel,
   entryAttemptOrdinal = 1,
 ) => {
@@ -328,10 +328,13 @@ describePostgres('PostgreSQL intraday cycle store', () => {
   })
 
   test('persists and reloads an exact full-session cycle with zero boundary offsets', async () => {
-    const candidate = draft(canonicalHashV1({ strategy: 'jev', boundaries: 'regular-session' }), {
-      ...intradayMomentumExecutionModel,
-      order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
-    })
+    const candidate = draft(
+      Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', boundaries: 'regular-session' })),
+      {
+        ...intradayMomentumExecutionModel,
+        order: { ...intradayMomentumExecutionModel.order, warmupAfterOpenMs: 0, submissionCutoffBeforeCloseMs: 0 },
+      },
+    )
     const stored = await runtime.runPromise(
       Effect.gen(function* () {
         const store = yield* CycleStore
@@ -1030,7 +1033,9 @@ describePostgres('PostgreSQL intraday cycle store', () => {
                   },
                 ],
                 contentHash: 'document',
-                retainedEvidence: Array.from({ length: 2_000 }, (_, index) => canonicalHashV1({ index })),
+                retainedEvidence: Array.from({ length: 2_000 }, (_, index) =>
+                  Result.getOrThrow(canonicalHashV1Result({ index })),
+                ),
               })}
             )`
             yield* sql`INSERT INTO intents VALUES (

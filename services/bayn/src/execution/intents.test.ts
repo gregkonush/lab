@@ -1,4 +1,4 @@
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
@@ -315,7 +315,7 @@ describe('pure intent commit decisions', () => {
       ),
     )
     const { decisionId: _decisionId, ...material } = { ...approvedDecision, intentId: intent.intentId }
-    const decision = { ...material, decisionId: canonicalHashV1OrThrow(material) }
+    const decision = { ...material, decisionId: Result.getOrThrow(canonicalHashV1Result(material)) }
     const prepared = validateCommitIdentity(intent, decision)
     expect(Result.isSuccess(prepared)).toBe(true)
     expect(

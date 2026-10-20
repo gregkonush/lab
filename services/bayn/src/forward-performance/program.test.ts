@@ -20,7 +20,7 @@ import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { readForwardPerformancePostgres } from './postgres/read'
 import {
   bindForwardPerformanceTerminalReferencePrices,
@@ -308,22 +308,24 @@ const marketBarMaterial = [
     publication_asof: '2026-07-20',
   },
 ] as const
-const marketBarsContentHash = canonicalHashV1(marketBarMaterial)
-const marketSessionsContentHash = canonicalHashV1(marketSessionMaterial)
-const marketSnapshotId = canonicalHashV1({
-  schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-  provider: 'alpaca',
-  feed: 'sip',
-  adjustment: 'all',
-  calendarVersion: 'fixture-calendar-v1',
-  requestedStart: '2026-07-19',
-  publicationAsOf: '2026-07-20',
-  symbols: marketSymbols,
-  barsContentHash: marketBarsContentHash,
-  sessionsContentHash: marketSessionsContentHash,
-  universeId: 'cross-asset-taa-v1',
-  universeSymbolHash: marketUniverseSymbolHash,
-})
+const marketBarsContentHash = Result.getOrThrow(canonicalHashV1Result(marketBarMaterial))
+const marketSessionsContentHash = Result.getOrThrow(canonicalHashV1Result(marketSessionMaterial))
+const marketSnapshotId = Result.getOrThrow(
+  canonicalHashV1Result({
+    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+    provider: 'alpaca',
+    feed: 'sip',
+    adjustment: 'all',
+    calendarVersion: 'fixture-calendar-v1',
+    requestedStart: '2026-07-19',
+    publicationAsOf: '2026-07-20',
+    symbols: marketSymbols,
+    barsContentHash: marketBarsContentHash,
+    sessionsContentHash: marketSessionsContentHash,
+    universeId: 'cross-asset-taa-v1',
+    universeSymbolHash: marketUniverseSymbolHash,
+  }),
+)
 const marketVolumeRequest: ForwardPerformanceMarketVolumeRequest = {
   ...marketVolumeRequestBase,
 }
@@ -356,7 +358,7 @@ const marketSnapshotRows = {
   manifests: [
     {
       ...marketManifestMaterial,
-      manifest_content_hash: canonicalHashV1(marketManifestMaterial),
+      manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
     },
   ],
 }
@@ -365,21 +367,23 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
   const bars = marketBarMaterial.map((bar) =>
     bar.session_date === '2026-07-20' ? { ...bar, adjusted_close: close, adjusted_volume: volume } : bar,
   )
-  const barsContentHash = canonicalHashV1(bars)
-  const snapshotId = canonicalHashV1({
-    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-    provider: 'alpaca',
-    feed: 'sip',
-    adjustment: 'all',
-    calendarVersion: 'fixture-calendar-v1',
-    requestedStart: '2026-07-19',
-    publicationAsOf: '2026-07-20',
-    symbols: marketSymbols,
-    barsContentHash,
-    sessionsContentHash: marketSessionsContentHash,
-    universeId: 'cross-asset-taa-v1',
-    universeSymbolHash: marketUniverseSymbolHash,
-  })
+  const barsContentHash = Result.getOrThrow(canonicalHashV1Result(bars))
+  const snapshotId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+      provider: 'alpaca',
+      feed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'fixture-calendar-v1',
+      requestedStart: '2026-07-19',
+      publicationAsOf: '2026-07-20',
+      symbols: marketSymbols,
+      barsContentHash,
+      sessionsContentHash: marketSessionsContentHash,
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: marketUniverseSymbolHash,
+    }),
+  )
   const manifestMaterial = {
     ...marketManifestMaterial,
     snapshot_id: snapshotId,
@@ -394,7 +398,7 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
       manifests: [
         {
           ...manifestMaterial,
-          manifest_content_hash: canonicalHashV1(manifestMaterial),
+          manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(manifestMaterial)),
         },
       ],
     },
@@ -483,7 +487,7 @@ describe('forward performance read program', () => {
       quantityAtoms: '123456789000',
       closePriceMicros: '103000000',
       snapshotId: marketSnapshotId,
-      manifestContentHash: canonicalHashV1(marketManifestMaterial),
+      manifestContentHash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
       barsContentHash: marketBarsContentHash,
       finalizedAt: '2026-07-20T21:05:00.000Z',
       requestedStart: '2026-07-19',
@@ -908,7 +912,7 @@ describe('forward performance read program', () => {
         cryptoCashFee: true as const,
         netAmountMicros: '-200000',
       }
-      const contentHash = canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data })
+      const contentHash = Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data }))
       const originalPlan = brokerFeeLedgerPlan(accountId, data.activityId, '10000', 7001)
       const correction = success(
         prepareFeeMatchCorrection(

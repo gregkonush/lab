@@ -4,6 +4,14 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+Internal construction and canonical hashing use the typed `Result` APIs. Eager
+validation stays in `Result`; runtime callers lift failures into their owning
+Effect error channel and retain the cause. Tests assert expected success locally
+with `Result.getOrThrow`. Production throwing compatibility exports and test-only
+Effect decoder wrappers have been removed; tests decode the shared schemas with
+the same strict parse options. Immutable historical documents and the decoders
+used to read them remain supported.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the

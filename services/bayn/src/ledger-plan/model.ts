@@ -1,7 +1,7 @@
 import { Data, Result } from 'effect'
 
 import { renderCanonicalJsonFailure, type CanonicalJsonFailure } from '../hash'
-import type { EvaluationEvent, ReconciliationResult } from '../types'
+import type { EvaluationEvent } from '../types'
 
 export const LEDGER_SCHEMA_VERSION = 2
 export const LEDGER_BATCH_MAX = 8_189
@@ -289,8 +289,6 @@ export type LedgerPlanHashFailure = {
   readonly _tag: 'LedgerPlanHashCanonicalizationFailed'
   readonly cause: CanonicalJsonFailure
 }
-
-export type PersistedReconciliation = Pick<ReconciliationResult, 'runId' | 'accountCount' | 'transferCount' | 'exact'>
 
 export const renderLedgerPlanFailure = (failure: LedgerPlanFailureDetail): string => {
   switch (failure.kind) {

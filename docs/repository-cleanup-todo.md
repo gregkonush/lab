@@ -110,19 +110,22 @@ shell/reference validation for retained builders.
 
 ## Bayn compatibility layers
 
-- [ ] Replace the throwing `cancelRequestHash` path in
+- [x] Replace the throwing `cancelRequestHash` path in
       `services/bayn/src/broker/alpaca-mutations/decisions.ts` with a typed `Result`, map canonicalization failures into the
       existing execution failure channel, and add malformed broker-order-ID regression coverage.
 - [x] Remove the unused daily snapshot writer and binding path while retaining snapshot tables, append-only migrations,
       and historical performance readers.
 - [x] Narrow the daily snapshot queries to the forward-performance readers and remove the unused finalized-daily
       `MarketData` service and publication discovery stack.
-- [ ] Replace test-only callers of throwing constructors with test-local assertions over the total `Result` APIs, then
+- [x] Replace test-only callers of throwing constructors with test-local assertions over the total `Result` APIs, then
       remove the production throwing exports.
-- [ ] Remove `services/bayn/src/execution/legacy-authority.ts` and relocate historical behavior constants only after
-      proving no persisted protocol decoder or reconciliation path needs them.
-- [ ] Preserve append-only migrations, historical decoders, canonical hashes and bytes, forward-performance readers,
+- [x] Delete the unused development authority implementation. Keep historical wire identifiers in
+      `services/bayn/src/execution/legacy-wire.ts` where persisted decoders, order recovery and reconciliation still use them.
+- [x] Remove unused exported types, schemas, alternate mutation projections, duplicate proxy acquisition and hypothetical
+      profit/exit helpers. Keep retained replay oracles and the retired strategy fixture with their test owners.
+- [x] Preserve append-only migrations, historical decoders, canonical hashes and bytes, forward-performance readers,
       fail-closed readiness, and immutable qualification/evidence contracts throughout the cleanup.
 
 Completion evidence: focused cancellation, coordinator, snapshot, market-data, protocol, and forward-performance tests;
-Bayn typecheck and lint; and explicit database-history verification before deleting compatibility readers.
+Bayn typecheck and lint; unchanged migration SQL templates and canonical strategy identities; and PostgreSQL, durable
+ledger and replay checks against isolated test services.
