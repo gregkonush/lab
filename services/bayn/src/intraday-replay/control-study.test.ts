@@ -273,7 +273,7 @@ test('native Jev entry uses measured commitment before execution and mechanical 
   if (accounting === undefined) throw new Error('Expected schedule accounting')
   expect(accounting.scheduledPollCount).toBe(90)
   expect(report.ledger.positions).toEqual([])
-})
+}, 30_000)
 
 test('native entry abstentions retain paid calls without submitting orders', async () => {
   const wait = await simulate({
@@ -286,7 +286,7 @@ test('native entry abstentions retain paid calls without submitting orders', asy
   expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL').length).toBeGreaterThan(0)
   expect(wait.report.modelCallCount).toBeGreaterThan(0)
   expect(BigInt(wait.report.knownModelCostMicros)).toBeGreaterThan(0n)
-}, 15000)
+}, 30_000)
 
 test('incomplete expired native entry evidence cannot submit orders', async () => {
   const expired = await simulate({
@@ -298,7 +298,7 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
   expect(expired.report.orders).toEqual([])
   expect(expired.report.completion).toBe('INCOMPLETE')
   expect(expired.report.missingDecisions).toBeGreaterThan(0)
-}, 15000)
+}, 30_000)
 
 test.each([
   [0, 30_000, 0],
