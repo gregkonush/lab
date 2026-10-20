@@ -314,15 +314,44 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         const batches = yield* JevBatchStore
         const sql = yield* PgClient.PgClient
         yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
-        const [firstSaved, secondSaved] = yield* Effect.all(
-          [batches.begin(excludedPlan), batches.begin(excludedPlan)],
-          { concurrency: 2 },
+        const saved = yield* Effect.all(
+          Array.from({ length: 8 }, () => batches.begin(excludedPlan)),
+          { concurrency: 8 },
         )
+        const firstSaved = saved[0]
+        if (firstSaved === undefined) throw new Error('Concurrent admission did not return a batch')
         expect(firstSaved.result).not.toBeNull()
-        expect(secondSaved).toEqual(firstSaved)
+        for (const admitted of saved) expect(admitted).toEqual(firstSaved)
         yield* TestClock.adjust('1 minute')
         expect(yield* batches.begin(excludedPlan)).toEqual(firstSaved)
         expect(yield* recoverJevBatch(excludedPlan.batchId)).toEqual(firstSaved)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
+      }).pipe(atObservation),
+    )
+  })
+
+  test('a changed deadline cannot replace the admitted batch or its result', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CandidateObservationStore).record(excludedFixture.observation)
+        const saved = yield* batches.begin(excludedPlan)
+        const { batchId: _batchId, ...material } = excludedPlan
+        const conflicting = Result.getOrThrow(
+          makeJevBatchPlan({
+            ...material,
+            expiresAt: utcInstantFromEpochMillis(Date.parse(excludedPlan.expiresAt) - 1),
+          }),
+        )
+        expect(conflicting.batchId).not.toBe(excludedPlan.batchId)
+        const rejected = yield* batches.begin(conflicting).pipe(Effect.result)
+        expect(Result.isFailure(rejected)).toBe(true)
+        if (Result.isFailure(rejected))
+          expect(rejected.failure.message).toContain('source-controlled validity interval')
+        expect(yield* batches.read(conflicting.batchId)).toBeNull()
+        expect(yield* batches.read(excludedPlan.batchId)).toEqual(saved)
+        expect(yield* sql`SELECT batch_id FROM jev_batch_plans`).toEqual([{ batch_id: excludedPlan.batchId }])
         expect(yield* sql`SELECT batch_id FROM jev_batch_results`).toEqual([{ batch_id: excludedPlan.batchId }])
       }).pipe(atObservation),
     )

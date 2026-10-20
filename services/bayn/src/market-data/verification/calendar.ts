@@ -1,6 +1,6 @@
 import { Result, pipe } from 'effect'
 
-import type { FinalizedPublicationRequest, MarketDataContract, MarketDataInspection, SnapshotRequest } from '../model'
+import type { MarketDataInspection, SnapshotRequest } from '../model'
 import type { SignalManifestRow, SignalSessionRow, SnapshotRows } from '../rows'
 import type { InputManifest, SymbolCoverage } from '../../types'
 import type { MarketDataVerificationError, SessionField } from './errors'
@@ -16,7 +16,6 @@ import {
   validateBoundSessions,
   withoutSnapshot,
 } from './shared'
-import { Pipeable } from '../../pipeable'
 
 export interface VerifiedCalendar {
   readonly verifiedManifest: VerifiedManifest
@@ -73,7 +72,7 @@ const validateSession = (
     }),
   ])
 
-const verifyCalendarDataFirst = (
+export const verifyCalendar = (
   sessions: readonly SignalSessionRow[],
   manifests: readonly SignalManifestRow[],
   request: SnapshotRequest,
@@ -187,9 +186,7 @@ const verifyCalendarDataFirst = (
     }),
   )
 
-export const verifyCalendar = Pipeable.dual(3, verifyCalendarDataFirst)
-
-const verifyFinalizedCalendarDataFirst = (
+export const verifyFinalizedCalendar = (
   rows: Pick<SnapshotRows, 'sessions' | 'manifests'>,
   request: SnapshotRequest,
 ): Result.Result<MarketDataInspection, MarketDataVerificationError> =>
@@ -211,32 +208,3 @@ const verifyFinalizedCalendarDataFirst = (
           })
     }),
   )
-
-export const verifyFinalizedCalendar = Pipeable.dual(2, verifyFinalizedCalendarDataFirst)
-
-const publicationSnapshotRequestDataFirst = (
-  manifest: SignalManifestRow,
-  input: FinalizedPublicationRequest,
-  contract: MarketDataContract,
-  observedAt: string,
-): SnapshotRequest => ({
-  snapshotId: manifest.snapshot_id,
-  publicationAsOf: input.signalSessionDate,
-  calendarVersion: input.signalCalendarVersion,
-  universe: contract.universe,
-  bounds: {
-    schemaVersion: 'bayn.evaluation-bounds.v1',
-    dataStart: contract.historyStart,
-    dataEnd: input.signalSessionDate,
-    lookbackStart: contract.historyStart,
-    evaluationStart: contract.evaluationStart,
-    evaluationEnd: input.signalSessionDate,
-  },
-  observedAt,
-  universeId: contract.universeId,
-  universeSymbolHash: contract.universeSymbolHash,
-  historyStart: contract.historyStart,
-  evaluationStart: contract.evaluationStart,
-})
-
-export const publicationSnapshotRequest = Pipeable.dual(4, publicationSnapshotRequestDataFirst)

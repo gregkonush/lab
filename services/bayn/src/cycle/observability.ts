@@ -1,7 +1,7 @@
 import { Result } from 'effect'
 
 import { Authority, KillState, ReconciliationStatus } from '../execution/contracts'
-import { Pipeable } from '../pipeable'
+
 import { utcInstantFromEpochMillisResult, type UtcEpochMillisFailure } from '../time'
 import { CycleState, CycleTerminalReason, type ExecutionCalendarObservation } from './model'
 import { EntryAllocationReason } from './entry-allocation-observation'
@@ -483,7 +483,7 @@ const deriveCycleOperationsStatusWithCheckedAt = (
   }
 }
 
-const deriveCycleOperationsStatusResultDataFirst = (
+export const deriveCycleOperationsStatusResult = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
@@ -497,14 +497,10 @@ const deriveCycleOperationsStatusResultDataFirst = (
     (checkedAt) => deriveCycleOperationsStatusWithCheckedAt(projection, nowMs, maximumAuthority, thresholds, checkedAt),
   )
 
-export const deriveCycleOperationsStatusResult = Pipeable.dual(4, deriveCycleOperationsStatusResultDataFirst)
-
-const deriveCycleOperationsStatusDataFirst = (
+export const deriveCycleOperationsStatus = (
   projection: CycleOperationsProjection,
   nowMs: number,
   maximumAuthority: Authority,
   thresholds: CycleOperationsThresholds,
 ): CycleOperationsStatus =>
   Result.getOrThrow(deriveCycleOperationsStatusResult(projection, nowMs, maximumAuthority, thresholds))
-
-export const deriveCycleOperationsStatus = Pipeable.dual(4, deriveCycleOperationsStatusDataFirst)

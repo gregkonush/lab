@@ -19,7 +19,6 @@ import { decodeAuthoritySnapshot, decodeIntentIds, decodeIntentSnapshot, decodeU
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
-import { Pipeable } from '../../../pipeable'
 
 export interface MutationStartPostgres {
   readonly authorizeSubmit: (
@@ -37,7 +36,7 @@ export interface MutationStartPostgres {
   ) => Effect.Effect<StartReceipt, MutationStoreError | SqlError | WriterFenceError>
 }
 
-const makeMutationStartPostgresDataFirst = (
+export const makeMutationStartPostgres = (
   sql: PgClient.PgClient,
   fence: WriterFenceService,
   events: MutationEventPostgres,
@@ -211,5 +210,3 @@ const makeMutationStartPostgresDataFirst = (
 
   return { authorizeSubmit, begin }
 }
-
-export const makeMutationStartPostgres = Pipeable.dual(3, makeMutationStartPostgresDataFirst)

@@ -31,7 +31,7 @@ import {
   type MutationEvidence,
   type SubmitReceipt,
 } from './model'
-import { Pipeable } from '../../pipeable'
+
 import { quantityScale, quantityToDecimal } from '../../quantity'
 import { instrumentMarket, MarketKind } from '../../instruments'
 
@@ -192,7 +192,7 @@ export const authorizeMutationAccess = (
   return Result.succeed(BrokerAccess.Mutation)
 }
 
-const resolveMutationCapabilityDataFirst = (
+export const resolveMutationCapability = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
 ): Result.Result<ResolvedMutationCapability, BrokerMutationError> => {
@@ -245,8 +245,6 @@ const resolveMutationCapabilityDataFirst = (
     }
   })
 }
-
-export const resolveMutationCapability = Pipeable.dual(2, resolveMutationCapabilityDataFirst)
 
 export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
   const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
@@ -374,7 +372,7 @@ const submitRequestHash = (body: OrderRequestBody): Result.Result<string, Broker
     }),
   )
 
-const prepareSubmitDataFirst = (
+export const prepareSubmit = (
   input: unknown,
   expectedAccountId: string,
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
@@ -416,8 +414,6 @@ const prepareSubmitDataFirst = (
     requestHash,
   }))
 }
-
-export const prepareSubmit = prepareSubmitDataFirst
 
 export const cancelRequestHash = (brokerOrderId: string): string =>
   canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })

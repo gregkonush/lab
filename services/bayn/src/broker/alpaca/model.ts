@@ -12,7 +12,7 @@ import type { EquityProviderSession } from '../../equity-hours'
 import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
-import { Pipeable } from '../../pipeable'
+
 import type { CashReportingQuantum } from './cash-reporting'
 
 export const defaultFillActivitiesPageSize = 100
@@ -735,59 +735,39 @@ const MarketCalendarQuerySchema = MarketCalendarQueryBase.check(
 
 export type Decoder<A> = (input: unknown) => Result.Result<A, Schema.SchemaError>
 
-const decodeAccountDataFirst = Schema.decodeUnknownResult(AccountResponseSchema, responseParseOptions)
+export const decodeAccount = Schema.decodeUnknownResult(AccountResponseSchema, responseParseOptions)
 
-export const decodeAccount = Pipeable.dual(1, (input: unknown) => decodeAccountDataFirst(input))
-const decodeAccountConfigurationDataFirst = Schema.decodeUnknownResult(
+export const decodeAccountConfiguration = Schema.decodeUnknownResult(
   AccountConfigurationResponseSchema,
   responseParseOptions,
 )
 
-export const decodeAccountConfiguration = Pipeable.dual(1, (input: unknown) =>
-  decodeAccountConfigurationDataFirst(input),
-)
-const decodeAssetDataFirst = Schema.decodeUnknownResult(AssetResponseSchema, responseParseOptions)
+export const decodeAsset = Schema.decodeUnknownResult(AssetResponseSchema, responseParseOptions)
 
-export const decodeAsset = Pipeable.dual(1, (input: unknown) => decodeAssetDataFirst(input))
-const decodePositionsDataFirst = Schema.decodeUnknownResult(Schema.Array(PositionResponseSchema), responseParseOptions)
+export const decodePositions = Schema.decodeUnknownResult(Schema.Array(PositionResponseSchema), responseParseOptions)
 
-export const decodePositions = Pipeable.dual(1, (input: unknown) => decodePositionsDataFirst(input))
-const decodeOrdersDataFirst = Schema.decodeUnknownResult(Schema.Array(OrderResponseSchema), responseParseOptions)
+export const decodeOrders = Schema.decodeUnknownResult(Schema.Array(OrderResponseSchema), responseParseOptions)
 
-export const decodeOrders = Pipeable.dual(1, (input: unknown) => decodeOrdersDataFirst(input))
-const decodeOrderDataFirst = Schema.decodeUnknownResult(OrderResponseSchema, responseParseOptions)
+export const decodeOrder = Schema.decodeUnknownResult(OrderResponseSchema, responseParseOptions)
 
-export const decodeOrder = Pipeable.dual(1, (input: unknown) => decodeOrderDataFirst(input))
-const decodeFillActivitiesDataFirst = Schema.decodeUnknownResult(
+export const decodeFillActivities = Schema.decodeUnknownResult(
   Schema.Array(FillActivityResponseSchema),
   responseParseOptions,
 )
 
-export const decodeFillActivities = Pipeable.dual(1, (input: unknown) => decodeFillActivitiesDataFirst(input))
-const decodeMarketCalendarDataFirst = Schema.decodeUnknownResult(MarketCalendarResponseSchema, responseParseOptions)
+export const decodeMarketCalendar = Schema.decodeUnknownResult(MarketCalendarResponseSchema, responseParseOptions)
 
-export const decodeMarketCalendar = Pipeable.dual(1, (input: unknown) => decodeMarketCalendarDataFirst(input))
-const decodeErrorResponseDataFirst = Schema.decodeUnknownResult(ErrorResponseSchema, responseParseOptions)
+export const decodeErrorResponse = Schema.decodeUnknownResult(ErrorResponseSchema, responseParseOptions)
 
-export const decodeErrorResponse = Pipeable.dual(1, (input: unknown) => decodeErrorResponseDataFirst(input))
-const decodeOrdersQueryDataFirst = Schema.decodeUnknownResult(OrdersQuerySchema, inputParseOptions)
+export const decodeOrdersQuery = Schema.decodeUnknownResult(OrdersQuerySchema, inputParseOptions)
 
-export const decodeOrdersQuery = Pipeable.dual(1, (input: unknown) => decodeOrdersQueryDataFirst(input))
-const decodeFillActivitiesQueryDataFirst = Schema.decodeUnknownResult(FillActivitiesQuerySchema, inputParseOptions)
-
-export const decodeFillActivitiesQuery = Pipeable.dual(1, (input: unknown) => decodeFillActivitiesQueryDataFirst(input))
+export const decodeFillActivitiesQuery = Schema.decodeUnknownResult(FillActivitiesQuerySchema, inputParseOptions)
 export const decodeFeeActivitiesQuery = Schema.decodeUnknownResult(FeeActivitiesQuerySchema, inputParseOptions)
-const decodeMarketCalendarQueryDataFirst = Schema.decodeUnknownResult(MarketCalendarQuerySchema, inputParseOptions)
 
-export const decodeMarketCalendarQuery = Pipeable.dual(1, (input: unknown) => decodeMarketCalendarQueryDataFirst(input))
-const decodeAssetSymbolDataFirst = Schema.decodeUnknownResult(SymbolName)
+export const decodeMarketCalendarQuery = Schema.decodeUnknownResult(MarketCalendarQuerySchema, inputParseOptions)
 
-export const decodeAssetSymbol = Pipeable.dual(1, (input: unknown) => decodeAssetSymbolDataFirst(input))
-const decodeOrderIdDataFirst = Schema.decodeUnknownResult(Uuid)
+export const decodeAssetSymbol = Schema.decodeUnknownResult(SymbolName)
 
-export const decodeOrderId = Pipeable.dual(1, (input: unknown) => decodeOrderIdDataFirst(input))
-const decodeExternalClientOrderIdDataFirst = Schema.decodeUnknownResult(ExternalClientOrderId)
+export const decodeOrderId = Schema.decodeUnknownResult(Uuid)
 
-export const decodeExternalClientOrderId = Pipeable.dual(1, (input: unknown) =>
-  decodeExternalClientOrderIdDataFirst(input),
-)
+export const decodeExternalClientOrderId = Schema.decodeUnknownResult(ExternalClientOrderId)

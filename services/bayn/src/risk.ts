@@ -40,7 +40,7 @@ import {
   UtcOrderTimestampSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
-import { Pipeable } from './pipeable'
+
 import { utcInstantFromEpochMillis } from './time'
 import { intradayAgeNanos } from './market-data/intraday/time'
 import {
@@ -1408,9 +1408,6 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
   return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success)
 }
 
-const decodePolicyDataFirst = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
+export const decodePolicy = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
 
-export const decodePolicy = Pipeable.dual(1, (input: unknown) => decodePolicyDataFirst(input))
-const decodeStateDataFirst = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)
-
-export const decodeState = Pipeable.dual(1, (input: unknown) => decodeStateDataFirst(input))
+export const decodeState = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)

@@ -20,7 +20,6 @@ import { roundUnsignedHalfUp } from '../unsigned-round-half-up'
 import { type AccountingFailure, type AccountingHashOperation, type AccountingMicrosField } from './failure'
 import type { PositionCost, PreparedAccounting } from './model'
 import { decodeAccountingTransaction, type AccountingTransaction } from './schema'
-import { Pipeable } from '../pipeable'
 
 const NOTIONAL_DIVISOR = 1_000_000_000_000n
 type AccountCodeValue = (typeof AccountCode)[keyof typeof AccountCode]
@@ -372,10 +371,7 @@ const requireLedgerPlanHash = (
     ),
   )
 
-const rebuildAccountingLedgerDataFirst = (
-  input: unknown,
-  ledger: number,
-): Result.Result<LedgerPlan, AccountingFailure> =>
+export const rebuildAccountingLedger = (input: unknown, ledger: number): Result.Result<LedgerPlan, AccountingFailure> =>
   pipe(
     decodeAccountingTransaction(input),
     Result.mapError((cause): AccountingFailure => ({ _tag: 'AccountingTransactionDecodeFailed', cause })),
@@ -406,9 +402,7 @@ const rebuildAccountingLedgerDataFirst = (
     ),
   )
 
-export const rebuildAccountingLedger = Pipeable.dual(2, rebuildAccountingLedgerDataFirst)
-
-const prepareAccountingDataFirst = (
+export const prepareAccounting = (
   brokerEventId: string,
   fill: Fill,
   prior: PositionCost,
@@ -465,8 +459,6 @@ const prepareAccountingDataFirst = (
       ),
     ),
   )
-
-export const prepareAccounting = Pipeable.dual(4, prepareAccountingDataFirst)
 
 export const brokerFeeLedgerPlan = (
   accountId: string,

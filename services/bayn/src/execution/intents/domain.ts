@@ -31,7 +31,6 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { WriterFenceError } from '../writer-fence'
-import { Pipeable } from '../../pipeable'
 
 export const IntentPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal(intentPlanSchemaVersion),
@@ -154,7 +153,7 @@ const referenceIntentIdResult = (input: IntentPlan): Result.Result<string, Inten
     referenceIdentityMaterial(input),
   )
 
-const executionIntentIdResult = (
+export const executionIntentIdForDecodedPlan = (
   input: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<string, IntentCanonicalizationFailure> =>
@@ -171,8 +170,6 @@ const executionIntentIdResult = (
     },
     executionIdentityMaterial(input, authorityGenerationHash),
   )
-
-export const executionIntentIdForDecodedPlan = Pipeable.dual(2, executionIntentIdResult)
 
 export const intentIdForPlan = referenceIntentIdResult
 
@@ -235,7 +232,7 @@ export const makeExecutionIntentFromDecodedPlan = (
   decoded: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<Intent, IntentConstructionFailure> => {
-  const intentId = executionIntentIdResult(decoded, authorityGenerationHash)
+  const intentId = executionIntentIdForDecodedPlan(decoded, authorityGenerationHash)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
     decodeIntentResult({
@@ -273,7 +270,7 @@ export const plan = (input: unknown): Effect.Effect<ReferenceIntent, IntentPlann
   return Effect.fromResult(Result.flatMap(decoded, makeReferenceIntentResult))
 }
 
-const executionIntentIdForPlanDataFirst = (
+export const executionIntentIdForPlan = (
   input: unknown,
   authorityGenerationHash: string,
 ): Effect.Effect<string, IntentPlanningFailure> => {
@@ -284,18 +281,16 @@ const executionIntentIdForPlanDataFirst = (
   )
   return Effect.fromResult(
     Result.flatMap(decoded, (intentPlan) =>
-      Result.flatMap(generation, (generationHash) => executionIntentIdResult(intentPlan, generationHash)),
+      Result.flatMap(generation, (generationHash) => executionIntentIdForDecodedPlan(intentPlan, generationHash)),
     ),
   )
 }
-
-export const executionIntentIdForPlan = Pipeable.dual(2, executionIntentIdForPlanDataFirst)
 
 export class ExecutionIntentBindingError extends Data.TaggedError('ExecutionIntentBindingError')<{
   readonly message: string
 }> {}
 
-const planExecutionIntentDataFirst = (
+export const planExecutionIntent = (
   input: unknown,
   state: Pick<State, 'authority'>,
 ): Effect.Effect<Intent, IntentPlanningFailure | ExecutionIntentBindingError> => {
@@ -312,8 +307,6 @@ const planExecutionIntentDataFirst = (
     ),
   )
 }
-
-export const planExecutionIntent = Pipeable.dual(2, planExecutionIntentDataFirst)
 
 export class IntentStoreError extends Data.TaggedError('IntentStoreError')<{
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
@@ -533,7 +526,7 @@ const planFromIntent = (intent: Intent): IntentPlan => ({
   createdAt: intent.createdAt,
 })
 
-const validateCommitIdentityDataFirst = (
+export const validateCommitIdentity = (
   inputIntent: unknown,
   inputDecision: unknown,
 ): Result.Result<PreparedCommit, CommitMaterialFailure> => {
@@ -578,8 +571,6 @@ const validateCommitIdentityDataFirst = (
   return Result.succeed({ _tag: 'PreparedCommit', intent: intent.success, decision: decision.success })
 }
 
-export const validateCommitIdentity = Pipeable.dual(2, validateCommitIdentityDataFirst)
-
 const immutableIntentMaterial = (intent: Intent) => ({
   schemaVersion: intent.schemaVersion,
   intentId: intent.intentId,
@@ -620,7 +611,7 @@ const decisionStateMatches = (record: StoredIntent, decision: RiskDecision): boo
     ? record.intent.state !== IntentState.Planned
     : record.intent.state === IntentState.Terminal && record.intent.terminalOutcome === TerminalOutcome.Blocked
 
-const classifyExistingCommitDataFirst = (
+export const classifyExistingCommit = (
   records: readonly StoredIntent[],
   prepared: PreparedCommit,
 ): Result.Result<ExistingCommitDisposition, ExistingCommitFailure> => {
@@ -663,8 +654,6 @@ const classifyExistingCommitDataFirst = (
   return Result.succeed({ _tag: 'CompleteIntent', record })
 }
 
-export const classifyExistingCommit = Pipeable.dual(2, classifyExistingCommitDataFirst)
-
 export type AuthorityBindingFailure =
   | { readonly _tag: 'AuthorityMissing' }
   | { readonly _tag: 'MultipleAuthorityRows'; readonly count: number }
@@ -691,7 +680,7 @@ export const decodeAuthorityBindingRows = (
     cause,
   }))
 
-const validateCurrentAuthorityDataFirst = (
+export const validateCurrentAuthority = (
   rows: readonly AuthorityBindingRow[],
   intent: Intent,
 ): Result.Result<
@@ -738,9 +727,7 @@ const validateCurrentAuthorityDataFirst = (
   return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
 }
 
-export const validateCurrentAuthority = Pipeable.dual(2, validateCurrentAuthorityDataFirst)
-
-const validateCurrentClosingAuthorityDataFirst = (
+export const validateCurrentClosingAuthority = (
   rows: readonly AuthorityBindingRow[],
   intent: Intent,
 ): Result.Result<
@@ -784,8 +771,6 @@ const validateCurrentClosingAuthorityDataFirst = (
   return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
 }
 
-export const validateCurrentClosingAuthority = Pipeable.dual(2, validateCurrentClosingAuthorityDataFirst)
-
 export type WriteDispositionFailure =
   | {
       readonly _tag: 'ReturningRowsDecodeFailed'
@@ -803,7 +788,7 @@ export type IntentInsertDisposition =
   | { readonly _tag: 'IntentInserted'; readonly intentId: string }
   | { readonly _tag: 'IntentInsertConflict'; readonly intentId: string }
 
-const decideIntentInsertDataFirst = (
+export const decideIntentInsert = (
   rows: unknown,
   expectedIntentId: string,
 ): Result.Result<IntentInsertDisposition, WriteDispositionFailure> => {
@@ -826,9 +811,7 @@ const decideIntentInsertDataFirst = (
   })
 }
 
-export const decideIntentInsert = Pipeable.dual(2, decideIntentInsertDataFirst)
-
-const decideRiskCommitDataFirst = (
+export const decideRiskCommit = (
   rows: unknown,
   expectedDecisionId: string,
 ): Result.Result<{ readonly _tag: 'RiskDecisionInserted'; readonly decisionId: string }, WriteDispositionFailure> => {
@@ -848,9 +831,7 @@ const decideRiskCommitDataFirst = (
   })
 }
 
-export const decideRiskCommit = Pipeable.dual(2, decideRiskCommitDataFirst)
-
-const decideIntentTransitionDataFirst = (
+export const decideIntentTransition = (
   rows: unknown,
   expectedIntentId: string,
 ): Result.Result<{ readonly _tag: 'IntentTransitioned'; readonly intentId: string }, WriteDispositionFailure> => {
@@ -869,5 +850,3 @@ const decideIntentTransitionDataFirst = (
     observedIds: decoded.success.map((row) => row.intent_id),
   })
 }
-
-export const decideIntentTransition = Pipeable.dual(2, decideIntentTransitionDataFirst)

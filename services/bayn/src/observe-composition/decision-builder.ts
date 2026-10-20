@@ -114,7 +114,7 @@ import {
   loadIntradaySnapshot,
   IntradayMarketDataFailure,
 } from './intraday-market-data'
-import { Pipeable } from '../pipeable'
+
 import type { ObserveAutonomousCycleInput, ObserveStartupPreparation } from './model'
 
 const dollarsToMicros = (dollars: bigint): string => (dollars * 1_000_000n).toString()
@@ -144,7 +144,7 @@ const executionRiskLimits = (brokerEnvironment: BrokerEnvironment) => ({
     brokerEnvironment === BrokerEnvironment.Sandbox ? dollarsToMicros(10_000n) : observeRiskLimits.maxDrawdownMicros,
 })
 
-const loadExecutionRiskPolicyDataFirst = (
+export const loadExecutionRiskPolicy = (
   accountId: string,
   allowedSymbols: readonly string[],
   brokerEnvironment: BrokerEnvironment = BrokerEnvironment.Live,
@@ -160,16 +160,8 @@ const loadExecutionRiskPolicyDataFirst = (
     ...executionRiskLimits(brokerEnvironment),
   })
 
-export const loadExecutionRiskPolicy = Pipeable.by<
-  (
-    allowedSymbols: readonly string[],
-    brokerEnvironment?: BrokerEnvironment,
-  ) => (accountId: string) => ReturnType<typeof loadExecutionRiskPolicyDataFirst>,
-  typeof loadExecutionRiskPolicyDataFirst
->((args) => typeof args[0] === 'string', loadExecutionRiskPolicyDataFirst)
-
 export const loadObserveRiskPolicy = (accountId: string, allowedSymbols: readonly string[]) =>
-  loadExecutionRiskPolicyDataFirst(accountId, allowedSymbols)
+  loadExecutionRiskPolicy(accountId, allowedSymbols)
 
 type ObserveStrategy = StrategyRuntime
 
