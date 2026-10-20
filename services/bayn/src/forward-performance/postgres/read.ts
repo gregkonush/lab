@@ -387,6 +387,16 @@ export const readForwardPerformancePostgres = (
         const transactionRows = yield* transactionQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeTransactions),
         )
+        const feeTransactionSource = sql`(
+          (transaction.occurred_at AT TIME ZONE (CASE WHEN fee.data ? 'coinDebit' OR fee.data->>'cryptoCashFee'='true' THEN 'UTC' ELSE 'America/New_York' END))::date = fee.fee_date
+          OR EXISTS (
+            SELECT 1 FROM broker_fee_accrual_matches matched
+            JOIN broker_fee_accruals accrual ON accrual.accrual_id=matched.accrual_id AND accrual.account_id=matched.account_id
+            CROSS JOIN LATERAL jsonb_array_elements(accrual.data->'sourceTrades') source
+            WHERE matched.account_id=fee.account_id AND matched.activity_id=fee.activity_id
+              AND source->>'transactionId'=transaction.transaction_id
+          )
+        )`
         const brokerFeeRows = yield* sql<Record<string, unknown>>`
           SELECT fee.data,fee.cash_match_corrections, COALESCE((SELECT sum(m.accrual_cash_micros) FROM broker_fee_accrual_matches m WHERE m.account_id=fee.account_id AND m.activity_id=fee.activity_id),0)::text AS matched_cash_micros, fee.coin_cost_basis_micros::text AS coin_cost_basis_micros, fee.read_evidence, fee.content_hash, fee.ledger_plan_hash,
             fee.tigerbeetle_cluster_id::text AS tigerbeetle_cluster_id,
@@ -396,7 +406,7 @@ export const readForwardPerformancePostgres = (
             (${authorityGenerationHash === undefined} OR EXISTS (
               SELECT 1 FROM accounting_transactions AS transaction
               WHERE transaction.account_id = fee.account_id
-                AND (transaction.occurred_at AT TIME ZONE (CASE WHEN fee.data ? 'coinDebit' OR fee.data->>'cryptoCashFee'='true' THEN 'UTC' ELSE 'America/New_York' END))::date = fee.fee_date
+                AND ${feeTransactionSource}
                 AND CASE WHEN fee.data ? 'coinDebit' THEN transaction.side='BUY' AND transaction.symbol=fee.data->'coinDebit'->>'symbol'
                   WHEN fee.data->>'cryptoCashFee'='true' THEN transaction.side='SELL' AND transaction.symbol IN('BTC/USD','ETH/USD','SOL/USD')
                   ELSE transaction.symbol NOT IN('BTC/USD','ETH/USD','SOL/USD') END
@@ -405,7 +415,7 @@ export const readForwardPerformancePostgres = (
             EXISTS (
               SELECT 1 FROM accounting_transactions AS transaction
               WHERE transaction.account_id = fee.account_id
-                AND (transaction.occurred_at AT TIME ZONE (CASE WHEN fee.data ? 'coinDebit' OR fee.data->>'cryptoCashFee'='true' THEN 'UTC' ELSE 'America/New_York' END))::date = fee.fee_date
+                AND ${feeTransactionSource}
                 AND CASE WHEN fee.data ? 'coinDebit' THEN transaction.side='BUY' AND transaction.symbol=fee.data->'coinDebit'->>'symbol'
                   WHEN fee.data->>'cryptoCashFee'='true' THEN transaction.side='SELL' AND transaction.symbol IN('BTC/USD','ETH/USD','SOL/USD')
                   ELSE transaction.symbol NOT IN('BTC/USD','ETH/USD','SOL/USD') END
@@ -1002,7 +1012,9 @@ export const readForwardPerformancePostgres = (
               (row.includes_generation && row.includes_other_generation) ||
               (!row.includes_generation &&
                 !row.includes_other_generation &&
-                cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date)),
+                (row.data.cryptoCashFee === true ||
+                  row.data.coinDebit !== undefined ||
+                  cycles.some((cycle) => cycle.submissionOpenAt.slice(0, 10) === row.data.date))),
           ).length,
           transactionEvidence,
           executionEvidence,

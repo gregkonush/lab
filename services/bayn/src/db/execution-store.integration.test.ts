@@ -1769,6 +1769,11 @@ describePostgres('PostgreSQL execution persistence', () => {
           journalControl.failPosts = false
         }
         const result = yield* post
+        if (scenario === 'delayed')
+          expect((yield* readFeeAccruals(sql, accountId, config.tigerBeetle)).map((row) => row.receipt_date)).toEqual([
+            '2026-08-31',
+            '2026-08-31',
+          ])
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
@@ -1836,6 +1841,13 @@ describePostgres('PostgreSQL execution persistence', () => {
           Effect.gen(function* () {
             yield* sql`CREATE TEMP TABLE autonomous_cycles ON COMMIT DROP AS SELECT * FROM public.autonomous_cycles`
             yield* sql`UPDATE autonomous_cycles SET state='COMPLETED',terminal_at=${sellAt},execution_close_at=${sellAt}`
+            if (scenario === 'delayed') {
+              yield* sql`CREATE TEMP TABLE authority_generations ON COMMIT DROP AS SELECT * FROM public.authority_generations`
+              yield* sql`UPDATE authority_generations SET maximum='PAPER',account_id=${accountId},activated_at=${start},research_plan_hash=(SELECT qualification_run_id FROM autonomous_cycles LIMIT 1)`
+              const scoped = yield* readForwardPerformancePostgres(sql, accountId, generationHash, fence)
+              expect(scoped.generationBrokerFeeIds).toContain('settled-cash-fee')
+              expect(scoped.ambiguousBrokerFeeCount).toBe(0)
+            }
             const report = yield* readForwardPerformancePostgres(sql, accountId, undefined, fence)
             expect(report.cashReportingPrecisionKnown).toBe(true)
             expect(report.cashYieldEvidence).toMatchObject({
