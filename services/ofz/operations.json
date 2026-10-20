@@ -1007,6 +1007,12 @@
   },
   {
     "surface": "bff_auth",
+    "operation": "POST /api/auth/add-passkey",
+    "public": true,
+    "dispatch": "GitHub and an existing passkey authorize Keycloak credential enrollment; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
     "operation": "GET /api/auth/callback",
     "public": true,
     "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
