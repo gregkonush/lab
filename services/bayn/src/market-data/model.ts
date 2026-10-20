@@ -2,7 +2,7 @@ import { Context, Effect } from 'effect'
 
 import type { EvaluationBounds, FinalizedSnapshotProvenance } from '../contracts'
 import type { OperationalError } from '../errors'
-import type { DailyBar, InputManifest, IsoDate, Protocol } from '../types'
+import type { DailyBar, InputManifest, IsoDate } from '../types'
 import type { SignalSessionRow } from './rows'
 
 export interface SnapshotRequest {
@@ -18,10 +18,13 @@ export interface SnapshotRequest {
   readonly evaluationStart: IsoDate
 }
 
-export type MarketDataContract = Pick<
-  Protocol,
-  'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
->
+export interface MarketDataContract {
+  readonly universeId: FinalizedSnapshotProvenance['universeId']
+  readonly universeSymbolHash: string
+  readonly universe: readonly string[]
+  readonly historyStart: IsoDate
+  readonly evaluationStart: IsoDate
+}
 
 export interface MarketDataSnapshot {
   readonly bars: readonly DailyBar[]

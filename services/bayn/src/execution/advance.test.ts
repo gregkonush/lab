@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Exit, Logger, References, Tracer } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { CycleRunnerError, type CycleRunResult } from '../cycle/runner'
+import { CycleRunnerError, type CycleRunResult } from '../cycle/runner/model'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
 import type { AutonomousCyclePassObservation } from '../runtime-state'
 import { withObservedStage } from '../telemetry'

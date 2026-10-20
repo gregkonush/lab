@@ -1,3 +1,4 @@
+import currentJevCycles from '../../migrations/0127_current_jev_cycles'
 import entryBoundExits from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
 import focusedJevJudgments from '../../migrations/0124_focused_jev_judgments'
@@ -128,6 +129,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,

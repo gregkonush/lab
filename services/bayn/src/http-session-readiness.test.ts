@@ -2,7 +2,7 @@ import { isCryptoMarketFeature } from './market-data/features/crypto-contract'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
 import { DecisionReadinessReason, snapshotReadiness } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome } from './execution/controller-status'

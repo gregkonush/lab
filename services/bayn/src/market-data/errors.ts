@@ -1,7 +1,7 @@
 import { isSqlError } from 'effect/sql/SqlError'
 
 import { OperationalError, operationalError, retryableOperationalError } from '../errors'
-import { isMarketDataVerificationError, renderMarketDataVerificationError } from '../market-data-verification'
+import { isMarketDataVerificationError, renderMarketDataVerificationError } from './verification/errors'
 import { Pipeable } from '../pipeable'
 
 const marketDataOperationErrorDataFirst = (

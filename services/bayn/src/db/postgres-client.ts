@@ -5,7 +5,7 @@ import { Clock, Effect, Exit, FileSystem, Layer, Redacted, Schedule, Schema, Sco
 import { Statement } from 'effect/sql'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { classifyDatabaseError, databaseError, runDatabase } from './database-error'
 
 export const postgresHealthCheck = (sql: PgClient.PgClient) => runDatabase('health', sql`SELECT 1`.pipe(Effect.asVoid))

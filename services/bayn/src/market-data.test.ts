@@ -10,20 +10,18 @@ import { HistoricalSignalSnapshotConfigSchema } from './config/historical-signal
 import { canonicalHashV1 } from './hash'
 import {
   MarketData,
-  MarketDataLive,
-  marketDataOperationError,
-  verifyFinalizedCalendar,
-  verifyFinalizedManifest,
-  verifyFinalizedPublication,
-  verifyFinalizedSnapshot,
-  type SnapshotRows,
   type SnapshotRequest,
   type FinalizedPublicationRequest,
-  type SignalManifestRow,
-  type SignalSessionRow,
   type SnapshotPublicationRequest,
-  type MarketDataVerificationError,
-} from './market-data'
+} from './market-data/model'
+import { MarketDataLive } from './market-data/program'
+import { marketDataOperationError } from './market-data/errors'
+import { verifyFinalizedCalendar } from './market-data/verification/calendar'
+import { verifyFinalizedManifest } from './market-data/verification/manifest'
+import { verifyFinalizedPublication } from './market-data/verification/publications'
+import { verifyFinalizedSnapshot } from './market-data/verification/snapshot'
+import { type SnapshotRows, type SignalManifestRow, type SignalSessionRow } from './market-data/rows'
+import { type MarketDataVerificationError } from './market-data/verification/errors'
 import { decodeSnapshotRows } from './market-data/rows'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema } from './types'
 

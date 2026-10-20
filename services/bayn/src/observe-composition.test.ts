@@ -19,7 +19,8 @@ import { nativeJevBatchResult, nativeJevDecisionEvidence } from './jev/native.te
 import { makeJevDefinition } from './jev/decision'
 import { jevBehaviorHash } from './jev/protocol'
 import type { CycleDecisionDocument } from './shadow-decision-contract'
-import { CycleDecisionBuildError, CycleRunnerError, runAutonomousCyclePass } from './cycle/runner'
+import { CycleDecisionBuildError, CycleRunnerError } from './cycle/runner/model'
+import { runAutonomousCyclePass } from './cycle/runner/program'
 import type { ObserveDecisionRuntime } from './observe-composition/model'
 import {
   makeRecoveryFirstCycleDriver,
@@ -34,29 +35,27 @@ import { protectedAccountAdmission } from './observe-composition/account-admissi
 import {
   AccountStatus as BrokerAccountStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
   type Account as BrokerAccount,
   type BrokerReadShape,
   type MarketCalendarObservation,
   type ReadEvidence,
   type ReadResult,
-} from './broker/alpaca'
+} from './broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
 import { unusedAssetBySymbol } from './broker/alpaca-test-support'
-import { MutationOperation, orderRequestBody } from './broker/alpaca-mutations'
+import { MutationOperation } from './broker/alpaca-mutations/model'
+import { orderRequestBody } from './broker/alpaca-mutations/decisions'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from './broker/identity'
+import { CycleState, CycleTerminalReason, decodeAutonomousCycle } from './cycle/model'
 import {
-  CycleState,
-  CycleTerminalReason,
-  decodeAutonomousCycle,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-} from './cycle'
+} from './cycle/construction'
 import { makeStrategyProtocolHash } from './contracts.test-support'
-import { CycleStore, CycleStoreError, type CycleStoreShape } from './cycle/store'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from './cycle/store/model'
 import { decideCompletion, validateCompletionDocument } from './cycle/store/decisions'
 import type { ReconciliationWriteResult } from './db/reconciliation'
 import {
@@ -79,22 +78,25 @@ import { BrokerAccess, makeExecutionAuthority, grantedCapitalAuthority } from '.
 import {
   IntentStore,
   planExecutionIntent,
-  type BlockedCycleIntentStoreShape,
   type IntentStoreService,
   type StoredIntent,
-} from './execution/intents'
-import { MutationEventType, MutationStore, type MutationEvent, type MutationStoreShape } from './execution/mutations'
+} from './execution/intents/domain'
+import { type BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
+import {
+  MutationEventType,
+  MutationStore,
+  type MutationEvent,
+  type MutationStoreShape,
+} from './execution/mutations/model'
 import type { ExecutionProgram } from './execution/runtime-program'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { canonicalHashV1 } from './hash'
 import {
   IntradaySnapshotPurpose,
-  MarketData,
   type IntradayMarketDataService,
   type IntradaySnapshotRequest,
-  type MarketDataService,
-  type MarketDataSnapshot,
-} from './market-data'
+} from './market-data/intraday/model'
+import { MarketData, type MarketDataService, type MarketDataSnapshot } from './market-data/model'
 import { IntradayIngestionDelayDirection, IntradaySnapshotFailure } from './market-data/intraday/model'
 import { marketDataOperationError } from './market-data/errors'
 import { unusedEntryExpiresAt } from './cycle/entry-admission'
@@ -108,13 +110,11 @@ import {
   buildMutationShadowCycleDecision,
   buildClosingExecutionCycleDecision,
   makeClosingDecisionPlan,
+  loadExecutionRiskPolicy,
+} from './observe-composition/decision-builder'
+import {
   appendPendingMutationOrder,
-  blockedEntryRequiresCloseOnlyContainment,
   countOpenPositions,
-  decideExecutionCycleCloseDocument,
-  decideUnboundExecutionCycleTerminalization,
-  decideReconciledExecutionCycleCompletion,
-  decideReconciledExecutionCycleTerminalization,
   decidePendingMutationObservation,
   decideExecutionPhaseCompletion,
   decideExecutionIntentTerminalDisposition,
@@ -123,29 +123,39 @@ import {
   decidePreparedMutationIntentAdmission,
   decidePreparedMutationRecovery,
   decideMutationIntentSettlement,
-  executeMutationIntent,
   expiredExecutionPlanTerminalReason,
   mutationRecoveryIsDue,
   mutationIntentReconciliationDelayMs,
   executionSubmitExpiresAt,
-  executionMutationSubmissionAllowed,
-  isExecutionCycleReconciledFlat,
   executionCycleHasFilledIntent,
   executionClosePlanNeedsResidualReplan,
-  prepareNextMutationIntent,
   projectWorstCasePendingMutationPosition,
-  loadExecutionRiskPolicy,
+} from './observe-composition/mutation-decisions'
+import {
+  blockedEntryRequiresCloseOnlyContainment,
+  decideExecutionCycleCloseDocument,
+  decideUnboundExecutionCycleTerminalization,
+  decideReconciledExecutionCycleCompletion,
+  decideReconciledExecutionCycleTerminalization,
+  executionMutationSubmissionAllowed,
+  isExecutionCycleReconciledFlat,
+  prepareNextMutationIntent,
+  terminalizeBlockedExecutionCycle,
+} from './observe-composition/execution-cycle'
+import { executeMutationIntent } from './observe-composition/mutation-interpreter'
+import {
   loadStrategyExecutionRiskPolicy,
   makeMutationAutonomousCycleStartup as makeMutationAutonomousCycleStartupProduction,
   makeObserveAutonomousCycleStartup as makeObserveAutonomousCycleStartupProduction,
   prepareObserveStartup,
-  recoveryFirstCycleNextDelayMs,
-  terminalizeBlockedExecutionCycle,
+} from './observe-composition/startup'
+import { recoveryFirstCycleNextDelayMs } from './observe-composition/recovery-driver'
+import {
   type MutationAutonomousCycleInput,
   type ObserveAutonomousCycleInput,
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
-} from './observe-composition'
+} from './observe-composition/model'
 import { runMutationPassWithinTimeout, selectClosingSymbolPass } from './observe-composition/decision-builder'
 import { ensureExecutionCycleClosure, recoverBoundExecutionContext } from './observe-composition/execution-cycle'
 import { prepareMutationIntent } from './observe-composition/mutation-intent-interpreter'
@@ -169,10 +179,10 @@ import {
   type Reconciliation,
 } from './execution/contracts'
 import type { ReconciliationPassResult } from './reconciler'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import type { Policy } from './risk'
 import { decodeExecutionDecisionDocument, makeExecutionDecisionDocument } from './shadow-decision-contract'
-import { TargetPlanReason, TargetPlanStatus } from './target-planner'
+import { TargetPlanReason, TargetPlanStatus } from './target-planner/index'
 import { currentUtcInstant, utcInstantFromEpochMillis } from './time'
 import type { IsoDate } from './types'
 
@@ -361,7 +371,6 @@ test.each(['RecoveryOnly', 'CloseOnly'] as const)(
       readAuthoritySlot: () => forbidden('authority-slot read'),
       readOldestUnfinished: () => Effect.succeed(blockCount === 0 ? Option.some(cycle) : Option.none()),
       readDecisionDocument: () => forbidden('decision document read'),
-      bindSnapshot: () => forbidden('snapshot binding'),
       activate: () => forbidden('cycle activation'),
       bindDecision: () => forbidden('decision binding'),
       finish: () => forbidden('cycle finishing'),
@@ -461,7 +470,6 @@ test('preserves execution authority after the next bound-cycle reconciliation fa
     readAuthoritySlot: () => unusedCycleMutation,
     readDecisionDocument: () => Effect.succeed(Option.some(fixture.document)),
     readOldestUnfinished: () => Effect.succeed(Option.some(fixture.boundCycle)),
-    bindSnapshot: () => unusedCycleMutation,
     activate: () => unusedCycleMutation,
     bindDecision: () => unusedCycleMutation,
     finish: () => unusedCycleMutation,
@@ -2923,7 +2931,6 @@ describe('OBSERVE runtime composition', () => {
       readAuthoritySlot: () => unused,
       readDecisionDocument: () => unused,
       readOldestUnfinished: () => unused,
-      bindSnapshot: () => unused,
       activate: () => unused,
       bindDecision: () => unused,
       finish: () => unused,
@@ -4631,7 +4638,7 @@ describe('OBSERVE runtime composition', () => {
       reconciliationIntervalMs: 30_000,
       reconciliationPassTimeoutMs: 30_000,
       strategy: {
-        definition,
+        definition: definition as unknown as import('./strategy').StrategyRuntime['definition'],
         provenance: {
           ...fixtureRuntime.provenance,
           strategy: {
@@ -4964,7 +4971,6 @@ describe('OBSERVE runtime composition', () => {
         read: forbidden,
         readAuthoritySlot: forbidden,
         readDecisionDocument: forbidden,
-        bindSnapshot: forbidden,
         activate: forbidden,
         bindDecision: forbidden,
         finish: forbidden,
@@ -5321,7 +5327,6 @@ describe('OBSERVE runtime composition', () => {
       readAuthoritySlot: () => unused,
       readDecisionDocument: () => unused,
       readOldestUnfinished: () => Effect.succeed(Option.none()),
-      bindSnapshot: () => unused,
       activate: () => unused,
       bindDecision: () => unused,
       finish: () => unused,
@@ -5506,7 +5511,6 @@ describe('OBSERVE runtime composition', () => {
       readAuthoritySlot: () => Effect.succeed(Option.none()),
       readDecisionDocument: () => unusedCycleStore,
       readOldestUnfinished: () => Effect.succeed(Option.none()),
-      bindSnapshot: () => unusedCycleStore,
       activate: () => unusedCycleStore,
       bindDecision: () => unusedCycleStore,
       finish: () => unusedCycleStore,
@@ -5771,7 +5775,6 @@ test.each(['discovery', 'pending', 'not-ready', 'activation-expired', 'stalled']
           return { cycle: stored, changed: true }
         }),
       read: forbidden,
-      bindSnapshot: forbidden,
       finish: forbidden,
     }
     const result = await Effect.runPromise(
@@ -5893,7 +5896,6 @@ test.each(['verified', 'empty', 'contract', 'not-ready'] as const)(
       readAuthoritySlot: forbidden,
       readOldestUnfinished: forbidden,
       readDecisionDocument: forbidden,
-      bindSnapshot: forbidden,
       activate: forbidden,
       finish: forbidden,
       block: forbidden,
@@ -5970,7 +5972,6 @@ test('reads the execution closure once without weakening completion evidence', a
     readAuthoritySlot: forbidden,
     readOldestUnfinished: () => Effect.succeed(Option.some(fixture.boundCycle)),
     readDecisionDocument: () => Effect.succeed(Option.some(fixture.document)),
-    bindSnapshot: forbidden,
     activate: forbidden,
     bindDecision: forbidden,
     finish: forbidden,
@@ -6100,7 +6101,6 @@ test('recovery preserves a fresh admission for a real next strategy decision', a
     readOldestUnfinished: () =>
       Effect.sync(() => (stored.state === CycleState.Active ? Option.some(stored) : Option.none())),
     readDecisionDocument: () => Effect.sync(() => Option.fromUndefinedOr(bound)),
-    bindSnapshot: () => unavailable('bind snapshot separately'),
     activate: () => unavailable('activate'),
     bindDecision: (cycleId, document, observedAt, evidence) =>
       Effect.sync(() => {
@@ -6369,7 +6369,6 @@ test.each(['preflight', 'cycle'] as const)(
           read: forbidden,
           readAuthoritySlot: forbidden,
           readDecisionDocument: forbidden,
-          bindSnapshot: forbidden,
           activate: forbidden,
           bindDecision: forbidden,
           finish: forbidden,
@@ -6457,7 +6456,6 @@ test('a pending broker cut waits without cycle or order I/O and rechecks expiry 
     read: forbidden,
     readAuthoritySlot: forbidden,
     readDecisionDocument: forbidden,
-    bindSnapshot: forbidden,
     activate: forbidden,
     bindDecision: forbidden,
     finish: forbidden,
@@ -6573,7 +6571,6 @@ test.each([
       read: forbidden,
       readAuthoritySlot: forbidden,
       readDecisionDocument: () => (bound ? Effect.succeed(Option.some(fixture.document)) : forbidden()),
-      bindSnapshot: forbidden,
       activate: forbidden,
       bindDecision: forbidden,
       finish: forbidden,
@@ -7068,7 +7065,6 @@ test.each(['empty', 'expired', 'bound'] as const)(
       activate: forbidden,
       read: forbidden,
       readAuthoritySlot: forbidden,
-      bindSnapshot: forbidden,
       bindDecision: forbidden,
       finish: forbidden,
     }
@@ -7175,7 +7171,6 @@ test('cycle-free protection keeps reconciliation and projection checks on the ex
     read: forbidden,
     readAuthoritySlot: forbidden,
     readDecisionDocument: forbidden,
-    bindSnapshot: forbidden,
     bindDecision: forbidden,
     finish: forbidden,
     block: forbidden,

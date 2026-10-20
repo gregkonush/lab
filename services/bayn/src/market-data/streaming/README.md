@@ -290,11 +290,14 @@ closed-window economic reports.
 
 ## Continuous replay command
 
+Build the offline commands from the repository root with
+`bun run --filter @proompteng/bayn build:research`, then run:
+
 ```sh
 BAYN_BACKTEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:55432/bayn_replay \
 BAYN_BACKTEST_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
 BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID=20912 BAYN_BACKTEST_TIGERBEETLE_LEDGER=70912 \
-node dist/backtest-command.js --input session.json --arrivals source.ndjson.gz \
+bun run --filter @proompteng/bayn backtest --input session.json --arrivals source.ndjson.gz \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 

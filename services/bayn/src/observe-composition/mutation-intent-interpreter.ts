@@ -2,9 +2,9 @@ import { intentPlanSchemaVersion } from '../execution/contracts'
 import { Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import { CycleRunnerError } from '../cycle/runner'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
+import { CycleRunnerError } from '../cycle/runner/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { legacyAuthorityStateSchemaVersion } from '../execution/legacy-wire'
 import {
@@ -13,7 +13,7 @@ import {
   planExecutionIntent,
   validateCommitIdentity,
   type StoredIntent,
-} from '../execution/intents'
+} from '../execution/intents/domain'
 import {
   Authority,
   IntentState,
@@ -25,13 +25,13 @@ import {
   type Intent,
   type Position,
 } from '../execution/contracts'
-import { MutationStore, type MutationEvent } from '../execution/mutations'
+import { MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
-import { TargetPlanStatus } from '../target-planner'
+import { TargetPlanStatus } from '../target-planner/index'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
   decideExecutionPhaseCompletion,

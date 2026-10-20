@@ -4,7 +4,7 @@ import { Cause, Effect, Logger, References } from 'effect'
 
 import { provideTestLayer } from '../effect-test-support'
 
-import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca'
+import { AccountStatus, type Account, type ReadEvidence } from '../broker/alpaca/model'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { BrokerSnapshot, ReconciliationWriteResult } from '../db/reconciliation'
 import { canonicalHashV1 } from '../hash'

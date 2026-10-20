@@ -1414,10 +1414,19 @@ Compare WAL buffer-full events, WAL bytes, PostgreSQL 18 I/O counters, replica f
 before and after rollout. A configuration revert through GitOps restores the previous settings without deleting
 evidence or changing replication. Compression and larger buffers alone do not establish a faster closure path.
 
+Migration 0127 admits only current Jev cycles (`bayn.autonomous-cycle.v4`, identity v4, policy v3, window v3).
+Startup takes the cycle-writer advisory lock and an exclusive lock on `autonomous_cycles`, refuses the cutover
+if any retired cycle is unfinished, and installs a write constraint without rewriting terminal history.
+Promote while the account is flat outside the regular session; the table lock briefly pauses cycle reads and writes.
+If the precondition fails, the transaction rolls back. Settle the existing work through its owning release before
+retrying promotion. Recovery uses the previous reviewed image through Kargo; retained terminal rows and decision
+codecs remain available to historical performance reporting, and the write constraint continues to reject retired cycles.
+
 ## Replay and backtesting
 
-`bayn-gap-recovery` is an offline, original-receipt decision replay command in the
-service image. It implements the fixed gap-recovery entry rule, with a separate
+`bayn-gap-recovery` is an offline, original-receipt decision replay command built by
+`bun run --filter @proompteng/bayn build:research`. Run it with
+`bun run --filter @proompteng/bayn gap:recovery`. It implements the fixed gap-recovery entry rule, with a separate
 pure position-exit evaluator, but does not replace the active strategy or submit
 orders. See [the gap-recovery contract](../../docs/bayn/gap-recovery.md) for exact
 inputs, limitations, and the command.
@@ -1538,12 +1547,12 @@ risk history, and unresolved orders carry across UTC reporting boundaries. The b
 sessions and expiry. It does not close the crypto market. Separate experiments use separate run identities and fresh databases.
 
 ```sh
-bun run --filter @proompteng/bayn build
+bun run --filter @proompteng/bayn build:research
 BAYN_BACKTEST_POSTGRES_URL=postgresql://bayn:bayn@127.0.0.1:5432/bayn_replay \
 BAYN_BACKTEST_TIGERBEETLE_ADDRESS=127.0.0.1:53000 \
 BAYN_BACKTEST_TIGERBEETLE_CLUSTER_ID=20912 \
 BAYN_BACKTEST_TIGERBEETLE_LEDGER=70912 \
-node services/bayn/dist/backtest-command.js \
+node services/bayn/dist/research/backtest-command.js \
   --input backtest.json --arrivals source.ndjson.gz \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```

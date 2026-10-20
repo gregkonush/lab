@@ -1,7 +1,7 @@
 import * as Sentry from '@sentry/node'
 import { NodeRuntime } from '@effect/platform-node'
 import { Effect } from 'effect'
-import { CycleRunnerError } from './cycle/runner'
+import { CycleRunnerError } from './cycle/runner/model'
 import { flushErrorTracking, initializeErrorTracking, reportNativeArrivalFailure } from './error-tracking'
 import { OperationalError } from './errors'
 import { NativeArrivalCaptureError } from './market-data/streaming/native-arrival'

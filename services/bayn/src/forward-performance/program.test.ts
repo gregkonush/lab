@@ -21,7 +21,7 @@ import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
 import { canonicalHashV1, sha256 } from '../hash'
-import { readForwardPerformancePostgres } from './postgres'
+import { readForwardPerformancePostgres } from './postgres/read'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,

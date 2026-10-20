@@ -9,7 +9,7 @@ import {
   sanitizeErrorEvent,
 } from './error-tracking'
 import { DiscrepancyKind, ReconciliationStatus, type Reconciliation } from './execution/contracts'
-import { CycleRunnerError } from './cycle/runner'
+import { CycleRunnerError } from './cycle/runner/model'
 import { observePass } from './observe-composition/decision-builder'
 import { makeNativeArrivalJournal } from './market-data/streaming/native-arrival-journal'
 import { NativeArrivalCaptureError } from './market-data/streaming/native-arrival'

@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { OrderSide, OrderStatus, OrderType, TimeInForce } from '../execution/contracts'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot, nativeJevFixture } from './native.test-support'
 import { makeJevObservation } from './observation'

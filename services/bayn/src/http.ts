@@ -5,10 +5,10 @@ import { Clock, Effect, Metric, Ref, Scope } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
-import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeBuildMetadata, RuntimeConfig } from './config/model'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
@@ -1475,12 +1475,3 @@ const serveHttpDataFirst = (
   })
 
 export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
-
-export const serveHttpWithCurrentTime = (
-  config: HttpConfig,
-  state: Ref.Ref<RuntimeState>,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-  currentTimeMillis: Effect.Effect<number>,
-): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)
