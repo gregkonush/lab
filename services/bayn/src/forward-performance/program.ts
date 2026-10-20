@@ -16,7 +16,7 @@ import { decodeSnapshotRows, type SnapshotRows } from '../market-data/rows'
 import { verifyFinalizedSnapshot } from '../market-data/verification/snapshot'
 import type { BrokerIdentity } from '../broker/identity'
 import type { IsoDate } from '../schemas'
-import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } from './domain'
+import type { ForwardPerformanceDomainFailure } from './domain'
 import { makeForwardPerformanceReport, type ForwardPerformanceReport } from './report'
 import { readForwardPerformancePostgres } from './postgres/read'
 import { type ForwardPerformancePostgresEvidence, type ForwardPerformancePostgresError } from './postgres/model'
@@ -34,7 +34,6 @@ import type {
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceMarketVolumeEvidence,
   ForwardPerformanceMarketVolumeRequest,
-  ForwardPerformanceReceipt,
   ForwardPerformanceEvidenceInput,
 } from './model'
 import { readForwardInferenceExpenses } from './inference-expenses'
@@ -741,21 +740,6 @@ const readForwardPerformanceInput = (
     }
   })
 
-export const runForwardPerformance = (
-  loadedConfig: ForwardPerformanceConfig,
-  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string } = {},
-): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
-  readForwardPerformanceInput(loadedConfig, readers, options).pipe(
-    Effect.flatMap((input) =>
-      Effect.fromResult(makeForwardPerformanceReceipt(input)).pipe(
-        Effect.mapError((cause) =>
-          programError('construct-receipt', 'forward-performance receipt construction failed', cause),
-        ),
-      ),
-    ),
-  )
-
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
@@ -777,7 +761,9 @@ export const runForwardPerformanceReport = (
               options.writerFence,
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-          return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(
+          return yield* Effect.fromResult(
+            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash),
+          ).pipe(
             Effect.mapError((cause) =>
               programError('construct-receipt', 'forward-performance report construction failed', cause),
             ),

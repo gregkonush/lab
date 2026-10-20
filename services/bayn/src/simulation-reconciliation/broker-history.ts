@@ -52,6 +52,7 @@ interface OrderPageAccumulator {
   readonly rows: Chunk.Chunk<Observed<BrokerOrder>>
   readonly ids: HashSet.HashSet<string>
   readonly previousSubmittedAt: string | undefined
+  readonly oldestGroupStart: number
 }
 
 interface FillPageAccumulator {
@@ -139,24 +140,48 @@ export const decideOrderPage = (
         rows,
         ids: HashSet.add(result.success.ids, order.brokerOrderId),
         previousSubmittedAt: submittedAt,
+        oldestGroupStart:
+          normalizedPrevious !== undefined &&
+          Result.isSuccess(normalizedPrevious) &&
+          normalizedSubmittedAt.success === normalizedPrevious.success
+            ? result.success.oldestGroupStart
+            : Chunk.size(result.success.rows),
       })
     },
-    Result.succeed({ rows: Chunk.empty(), ids: state.ids, previousSubmittedAt: state.previousSubmittedAt }),
+    Result.succeed({
+      rows: Chunk.empty(),
+      ids: state.ids,
+      previousSubmittedAt: state.previousSubmittedAt,
+      oldestGroupStart: 0,
+    }),
   )
   if (Result.isFailure(pageResult)) return Result.fail(pageResult.failure)
-  const rows = [...state.rows, ...Chunk.toReadonlyArray(pageResult.success.rows)]
-  if (page.value.length < limit) return Result.succeed({ _tag: 'Complete', read: { rows, observedAt } })
-  const next = page.value[page.value.length - 1]?.submittedAt
+  const pageRows = Chunk.toReadonlyArray(pageResult.success.rows)
+  if (page.value.length < limit)
+    return Result.succeed({ _tag: 'Complete', read: { rows: [...state.rows, ...pageRows], observedAt } })
+  // Alpaca orders pages descend by submission time; exclusive `until` excludes every sibling at its timestamp.
+  // Defer the entire oldest group so the next page can enumerate hidden siblings before retaining that group.
+  // Unique timestamps reread one boundary row per full page. A full one-timestamp page cannot prove completeness.
+  const retained = pageRows.slice(0, pageResult.success.oldestGroupStart)
+  const next = retained.at(-1)?.value.submittedAt
   if (next === undefined || next === state.cursor) {
-    return Result.fail(paginationFailure('OrderCursorDidNotAdvance', 'Alpaca order cursor did not advance'))
+    return Result.fail(
+      paginationFailure(
+        'OrderCursorDidNotAdvance',
+        'Alpaca order page has no complete submission-time group for a safe cursor',
+      ),
+    )
   }
+  let ids = pageResult.success.ids
+  for (const deferred of pageRows.slice(pageResult.success.oldestGroupStart))
+    ids = HashSet.remove(ids, deferred.value.brokerOrderId)
   return Result.succeed({
     _tag: 'Continue',
     state: {
-      rows,
-      ids: pageResult.success.ids,
+      rows: [...state.rows, ...retained],
+      ids,
       cursor: next,
-      previousSubmittedAt: pageResult.success.previousSubmittedAt,
+      previousSubmittedAt: next,
       observedAt,
     },
   })
