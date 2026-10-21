@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Effect, Option, Result } from 'effect'
+import { Cause, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
@@ -19,11 +19,18 @@ const beforeCutoff = '2026-09-04T19:54:59.000Z'
 
 test.each(
   [cutoffAt, '2026-09-04T19:55:00.001Z'].flatMap((bindAt) =>
-    [false, true].map((expiresDuringBinding) => ({ bindAt, expiresDuringBinding })),
+    [
+      { expiresDuringBinding: false, rollbackFailure: undefined },
+      { expiresDuringBinding: true, rollbackFailure: undefined },
+      ...(['query', 'defect', 'interruption'] as const).map((rollbackFailure) => ({
+        expiresDuringBinding: true,
+        rollbackFailure,
+      })),
+    ].map((mode) => ({ bindAt, ...mode })),
   ),
 )(
-  'binding at $bindAt releases its unused admission after cooldown (database expiry=$expiresDuringBinding)',
-  async ({ bindAt, expiresDuringBinding }) => {
+  'binding at $bindAt preserves expiry and rollback outcomes (database expiry=$expiresDuringBinding, rollback=$rollbackFailure)',
+  async ({ bindAt, expiresDuringBinding, rollbackFailure }) => {
     const native = nativeJevFixture(undefined, beforeCutoff)
     const cycle = { ...makeInitialCycle(native.draft, beforeCutoff), state: CycleState.Active, stateVersion: 2 }
     expect(cycle.window.submissionCutoffAt).toBe(cutoffAt)
@@ -113,6 +120,24 @@ test.each(
     let latest: AutonomousCycle = cycle
     let acquisitions = 0
     const operations: string[] = []
+    const expired = Cause.fail(
+      new CycleStoreError({
+        operation: 'bind-decision',
+        failure: 'entry-expired',
+        persistenceFailure: 'constraint',
+        message: 'entry admission expired in PostgreSQL',
+      }),
+    )
+    const cleanup =
+      rollbackFailure === undefined
+        ? undefined
+        : rollbackFailure === 'query'
+          ? Cause.fail(
+              new CycleStoreError({ operation: 'bind-decision', failure: 'query', message: 'rollback failed' }),
+            )
+          : rollbackFailure === 'defect'
+            ? Cause.die(new Error('rollback defect'))
+            : Cause.interrupt()
     const store: CycleStoreShape = {
       read: forbidden,
       readOldestUnfinished: forbidden,
@@ -150,16 +175,7 @@ test.each(
                   expect(observedAt).toBe(beforeCutoff)
                 }),
               ),
-              Effect.andThen(
-                Effect.fail(
-                  new CycleStoreError({
-                    operation: 'bind-decision',
-                    failure: 'entry-expired',
-                    persistenceFailure: 'constraint',
-                    message: 'entry admission expired in PostgreSQL',
-                  }),
-                ),
-              ),
+              Effect.andThen(Effect.failCause(cleanup === undefined ? expired : Cause.combine(expired, cleanup))),
             )
           : Effect.sync(() => {
               operations.push('bind')
@@ -205,6 +221,17 @@ test.each(
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(beforeCutoff))
+        if (rollbackFailure !== undefined) {
+          const result = yield* runAutonomousCyclePass(context, cycle).pipe(Effect.exit)
+          expect(Exit.isFailure(result)).toBe(true)
+          if (Exit.isSuccess(result)) throw new Error('rollback failure must not become normal expiry')
+          expect(result.cause.reasons).toHaveLength(2)
+          expect(result.cause.reasons[1]?._tag).toBe(
+            rollbackFailure === 'query' ? 'Fail' : rollbackFailure === 'defect' ? 'Die' : 'Interrupt',
+          )
+          expect(latest).toBe(cycle)
+          return
+        }
         const result = yield* runAutonomousCyclePass(context, cycle)
         expect(result).toMatchObject({
           outcome: 'RECOVERED',
@@ -241,8 +268,10 @@ test.each(
       ),
     )
     expect(operations).toEqual(
-      expiresDuringBinding ? ['build', 'verify', 'bind', 'expire'] : ['build', 'verify', 'bind'],
+      expiresDuringBinding && rollbackFailure === undefined
+        ? ['build', 'verify', 'bind', 'expire']
+        : ['build', 'verify', 'bind'],
     )
-    expect(acquisitions).toBe(1)
+    expect(acquisitions).toBe(rollbackFailure === undefined ? 1 : 0)
   },
 )

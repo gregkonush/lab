@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer } from 'effect'
+import { Cause, Effect, Layer } from 'effect'
 import type { DatabaseClock } from '../../db/clock'
 
 import { WriterFence, WriterFenceError, type WriterFenceService } from '../../execution/writer-fence'
@@ -34,19 +34,23 @@ const fenceMutation = <A>(
   fence: WriterFenceService,
 ): Effect.Effect<A, CycleStoreError> =>
   fence.transaction(effect).pipe(
-    Effect.mapError((cause) => {
-      if (!(cause instanceof WriterFenceError)) return cause
-      const expired = operation === 'bind-decision' && isEntryAdmissionViolation(cause.cause)
-      return cycleStoreError({
-        operation,
-        failure: expired ? 'entry-expired' : 'query',
-        persistenceFailure: expired ? 'constraint' : 'transaction',
-        message: expired
-          ? 'entry admission expired before its decision binding committed'
-          : 'autonomous cycle mutation could not acquire the PostgreSQL writer fence',
-        cause,
-      })
-    }),
+    Effect.catchCause((failure) =>
+      Effect.failCause(
+        Cause.map(failure, (cause) => {
+          if (!(cause instanceof WriterFenceError)) return cause
+          const expired = operation === 'bind-decision' && isEntryAdmissionViolation(cause.cause)
+          return cycleStoreError({
+            operation,
+            failure: expired ? 'entry-expired' : 'query',
+            persistenceFailure: expired ? 'constraint' : 'transaction',
+            message: expired
+              ? 'entry admission expired before its decision binding committed'
+              : 'autonomous cycle mutation could not acquire the PostgreSQL writer fence',
+            cause,
+          })
+        }),
+      ),
+    ),
   )
 
 export const withWriterFenceCycleStore = (store: CycleStoreShape, fence: WriterFenceService): CycleStoreShape => ({

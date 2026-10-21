@@ -125,6 +125,8 @@ The database retains its row and deferred commit guards when persistence crosses
 the named entry-admission constraint becomes a normal expired-entry result after the transaction rolls back.
 Recovery then blocks the still-unused cycle with a fresh timestamp through the existing guarded store; it never
 retries the stale decision or retains its partial binding. Other constraint and persistence failures remain errors.
+Combined failures, defects and interruption remain intact across the store, writer fence and binding runner; a lease
+rejection accompanied by failed rollback cannot become normal expiry or authorize a successor.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing close-only liquidation binding after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.

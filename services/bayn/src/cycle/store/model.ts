@@ -1,6 +1,6 @@
 import type { SimulatedSnapshotReference } from '../../market-data/streaming/simulation-service'
 import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
-import { Context, Data, Effect, Option, Result, Schema } from 'effect'
+import { Cause, Context, Data, Effect, Option, Result, Schema } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
@@ -154,61 +154,65 @@ export const runCycleStore = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, CycleStoreError, R> =>
   effect.pipe(
-    Effect.mapError((cause) => {
-      if (cause instanceof CycleStoreError) return cause
-      if (Schema.isSchemaError(cause)) {
-        return cycleStoreError({
-          operation,
-          failure: 'decode',
-          message: 'autonomous cycle contract decoding failed',
-          cause,
-        })
-      }
-      if (isSqlError(cause)) {
-        if (operation === 'bind-decision' && isEntryAdmissionViolation(cause)) {
+    Effect.catchCause((failure) =>
+      Effect.failCause(
+        Cause.map(failure, (cause) => {
+          if (cause instanceof CycleStoreError) return cause
+          if (Schema.isSchemaError(cause)) {
+            return cycleStoreError({
+              operation,
+              failure: 'decode',
+              message: 'autonomous cycle contract decoding failed',
+              cause,
+            })
+          }
+          if (isSqlError(cause)) {
+            if (operation === 'bind-decision' && isEntryAdmissionViolation(cause)) {
+              return cycleStoreError({
+                operation,
+                failure: 'entry-expired',
+                message: 'entry admission expired before its decision binding committed',
+                cause,
+              })
+            }
+            const failure =
+              cause.reason._tag === 'ConstraintError' || cause.reason._tag === 'UniqueViolation' ? 'conflict' : 'query'
+            const persistenceFailure = (() => {
+              switch (cause.reason._tag) {
+                case 'AuthenticationError':
+                case 'AuthorizationError':
+                case 'ConnectionError':
+                case 'UnknownError':
+                  return 'connectivity'
+                case 'ConstraintError':
+                case 'UniqueViolation':
+                  return 'constraint'
+                case 'DeadlockError':
+                case 'LockTimeoutError':
+                case 'SerializationError':
+                case 'StatementTimeoutError':
+                  return 'transaction'
+                case 'SqlSyntaxError':
+                  return 'query'
+              }
+            })()
+            return cycleStoreError({
+              operation,
+              failure,
+              message: 'autonomous cycle PostgreSQL operation failed',
+              cause,
+              persistenceFailure,
+            })
+          }
           return cycleStoreError({
             operation,
-            failure: 'entry-expired',
-            message: 'entry admission expired before its decision binding committed',
+            failure: 'invariant',
+            message: 'autonomous cycle operation failed unexpectedly',
             cause,
           })
-        }
-        const failure =
-          cause.reason._tag === 'ConstraintError' || cause.reason._tag === 'UniqueViolation' ? 'conflict' : 'query'
-        const persistenceFailure = (() => {
-          switch (cause.reason._tag) {
-            case 'AuthenticationError':
-            case 'AuthorizationError':
-            case 'ConnectionError':
-            case 'UnknownError':
-              return 'connectivity'
-            case 'ConstraintError':
-            case 'UniqueViolation':
-              return 'constraint'
-            case 'DeadlockError':
-            case 'LockTimeoutError':
-            case 'SerializationError':
-            case 'StatementTimeoutError':
-              return 'transaction'
-            case 'SqlSyntaxError':
-              return 'query'
-          }
-        })()
-        return cycleStoreError({
-          operation,
-          failure,
-          message: 'autonomous cycle PostgreSQL operation failed',
-          cause,
-          persistenceFailure,
-        })
-      }
-      return cycleStoreError({
-        operation,
-        failure: 'invariant',
-        message: 'autonomous cycle operation failed unexpectedly',
-        cause,
-      })
-    }),
+        }),
+      ),
+    ),
   )
 
 export const failCycleStore = (
