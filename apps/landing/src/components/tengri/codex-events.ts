@@ -317,7 +317,10 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
 
   if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
     if (event.kind === 'tool-call') return codexToolText(toolCallText(item) || event.text)
-    if (event.kind === 'tool-output') return codexToolText(toolResultText(item) || event.text)
+    if (event.kind === 'tool-output')
+      return codexToolText(
+        toolResultText(item) || event.text || commandStatusText(string(item.status), number(item.exitCode)),
+      )
   }
 
   const eventText =

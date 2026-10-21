@@ -1390,3 +1390,22 @@ test('app tools expose their arguments and structured result instead of generic 
   )
   expect(history[0].text).toBe(codexEventDisplayText(output))
 })
+
+test('keeps status-only connector outcomes visible', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    for (const [status, expected] of [
+      ['completed', 'Command completed'],
+      ['failed', 'Command failed'],
+      ['declined', 'Command declined'],
+    ]) {
+      const output = {
+        ...event,
+        kind: 'tool-output' as const,
+        text: '',
+        rawJson: JSON.stringify({ params: { item: { type, status } } }),
+      }
+      expect(codexEventDisplayText(output)).toBe(expected)
+      expect(codexEventShouldRender(output, output.threadId, new Set(), 0)).toBe(true)
+    }
+  }
+})
