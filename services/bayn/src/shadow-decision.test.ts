@@ -63,6 +63,8 @@ import type { ReconciliationPassResult } from './reconciler'
 
 import { bindCycleExecutionSession } from './execution-session'
 import { canonicalHashV1Result } from './hash'
+import { CycleDecisionRow } from './forward-performance/postgres/model'
+import { verifyPerformanceDecisions } from './forward-performance/postgres/projection'
 import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data/intraday/model'
 import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { BrokerMode, Gate, PolicySchema, Reason, evaluate, type Policy, StateSchema } from './risk'
@@ -563,6 +565,57 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
+    'retains historical %s decision identities in financial reads without making them executable',
+    async (schemaVersion) => {
+      const input = fixture({ AAPL: 0.02 })
+      const document = await Effect.runPromise(
+        buildExecutionDecision({
+          ...input,
+          authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
+          executionSession: executionSession(input),
+        }),
+      )
+      const row = Schema.decodeUnknownSync(CycleDecisionRow)({
+        cycle_id: document.bindings.cycleId,
+        decision_hash: document.contentHash,
+        document,
+        created_at: new Date(document.createdAt),
+      })
+      expect(verifyPerformanceDecisions([row]).verifiedRows).toHaveLength(1)
+      const { executionTerms: _terms, allocationCapitalMicros, ...currentInput } = input.plannerInput
+      const referenceMaterial = {
+        schemaVersion: 'bayn.signal-session-reference-prices.v1',
+        signalDate: currentInput.signalDate,
+        observedAt: currentInput.referencePrices.observedAt,
+        priceMicros: currentInput.referencePrices.priceMicros,
+      }
+      const retiredInput = {
+        ...currentInput,
+        schemaVersion,
+        ...(schemaVersion.endsWith('.v2') ? { allocationCapitalMicros } : {}),
+        referencePrices: {
+          ...referenceMaterial,
+          contentHash: value(canonicalHashV1Result(referenceMaterial)),
+        },
+      }
+      const { contentHash: _contentHash, ...currentMaterial } = document
+      const retainedMaterial = { ...currentMaterial, plannerInput: retiredInput }
+      const retainedDocument = {
+        ...retainedMaterial,
+        contentHash: value(canonicalHashV1Result(retainedMaterial)),
+      }
+      const retainedRow = { ...row, decision_hash: retainedDocument.contentHash, document: retainedDocument }
+      const originalBytes = JSON.stringify(retainedRow)
+      expect(Result.isFailure(decodeExecutionDecisionDocument(retainedDocument))).toBe(true)
+      const projected = verifyPerformanceDecisions([retainedRow, row, retainedRow])
+      expect(projected.verifiedRows.map(({ decision_hash }) => decision_hash)).toEqual([document.contentHash])
+      expect(projected.unverifiedDecisionHashes).toEqual([retainedDocument.contentHash])
+      expect(JSON.stringify(retainedRow)).toBe(originalBytes)
+    },
+  )
+
   test('decision rereads reuse only exact fresh JSON and retain current database evidence', async () => {
     const original = await Effect.runPromise(buildObserveShadowDecision(fixture()))
     const alternate = await Effect.runPromise(buildObserveShadowDecision(fixture({}, false, 'another-account')))
