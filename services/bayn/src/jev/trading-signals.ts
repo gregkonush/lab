@@ -1,3 +1,4 @@
+import { jevInstructions } from './instructions'
 import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
 import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
@@ -250,8 +251,7 @@ export const commonMomentumPrices = (
 export const jevTradingQuestions = {
   action: {
     type: 'choice',
-    instructions:
-      'Using `candidate`, `benchmark`, `relativeSignals`, `entryEconomics` and `session`, choose enter, wait or avoid for a new long position in `candidate.symbol` now over `task.horizonMinutes`. There is no required positive return or benchmark outperformance. Judge whether the supplied market evidence supports the entry after estimated execution costs. Execution remains conditional on separately selected and validated stop loss and take profit prices. Code owns permission, quantity, execution and account risk limits.',
+    instructions: jevInstructions.entry,
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
