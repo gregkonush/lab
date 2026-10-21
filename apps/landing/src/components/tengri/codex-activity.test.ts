@@ -43,3 +43,8 @@ test('GitHub activity labels identify both the action and its target', () => {
     'GitHub · Create branch · codex/ui',
   )
 })
+
+test('keeps status glyphs in expanded output while using plain summary labels', () => {
+  expect(codexActivityTitle('tool-output', '✓ Terminal resize\n✓ Window drag').text).toBe('Terminal resize')
+  expect(codexActivityTitle('tool-output', '✔ Completed').text).toBe('Completed')
+})

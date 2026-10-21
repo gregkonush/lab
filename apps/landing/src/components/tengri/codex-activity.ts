@@ -21,7 +21,8 @@ export function codexActivityTitle(kind: TengriCodexEventKind, text: string) {
       icon: 'tool' as const,
     }
   }
-  if (kind !== 'tool-call') return { text: firstLine || 'Command output', icon: 'terminal' as const }
+  if (kind !== 'tool-call')
+    return { text: firstLine.replace(/^[✓✔]\s+/, '') || 'Command output', icon: 'terminal' as const }
   const shell = /^(?:\/bin\/)?(?:bash|sh|zsh) -[a-z]*c (['"])(.*)\1$/.exec(firstLine)
   const command = shell?.[2] ?? firstLine
   const read = /^cat\s+(?:--\s+)?([^\s;&|]+)$/.exec(command)
