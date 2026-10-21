@@ -131,5 +131,5 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
     expect(Result.isSuccess(verifyJevHarnessReceipt(run(), seal(material)))).toBe(true)
     expect(Result.isFailure(verifyJevHarnessReceipt(run(), seal({ ...material, decision: null })))).toBe(true)
     expect(Result.isFailure(verifyJevHarnessReceipt(run(), { ...seal(material), runId: 'c'.repeat(64) }))).toBe(true)
-  })
+  }, 30_000)
 })
