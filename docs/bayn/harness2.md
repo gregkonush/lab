@@ -4,6 +4,11 @@ Bayn uses [Google Research Harness2](https://github.com/google-research/harness2
 `1cfe254e8d25b15f37048c3730134686abe60335` to refine the question instructions consumed by its native Jev decision
 path. The former Alpha-R1 factor-selection adapter and its study format are removed.
 
+The [design audit](harness2-design-audit-2026-10-20.md) identifies an unfinished requirement: this runner compares
+native decisions but has no independent economic evaluator. It is a candidate-generation and decision-sensitivity
+instrument. The current Alpha-R1 editor role and nine-observation feasibility cohort do not qualify an improvement
+claim. Keep candidate adoption and rollout acceptance blocked on that evaluation boundary.
+
 ## Model roles and decision ownership
 
 Jev remains the typed decision model. Every probe uses the production `JevClient`, pinned model, HTTP endpoint,
@@ -41,10 +46,10 @@ native export or database receipt. Keep all inputs and outputs private.
   "sourceRevision": "<exact deployed source revision>",
   "maximumCalls": 128,
   "maximumWallSeconds": 1800,
-  "baseline": {"entry": "...", "stopLoss": "...", "takeProfit": "..."},
-  "editor": {"policy": {}, "costBasis": null},
-  "tasks": [{"id": "development", "observation": {}}],
-  "validation": [{"id": "untouched", "observation": {}}]
+  "baseline": { "entry": "...", "stopLoss": "...", "takeProfit": "..." },
+  "editor": { "policy": {}, "costBasis": null },
+  "tasks": [{ "id": "development", "observation": {} }],
+  "validation": [{ "id": "untouched", "observation": {} }]
 }
 ```
 
