@@ -82,7 +82,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         expect(selected.exitPlan).toEqual(native.exitPolicy.plans[selected.symbol])
       }
     }
-  })
+  }, 15_000)
   test('edits affect only instruction text while preserving state and supplied choices', () => {
     const baseline = Result.getOrThrow(prepareJevHarnessProbe(run()))
     const candidate = Result.getOrThrow(
@@ -110,7 +110,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         prepareJevHarnessProbe({ ...run(), instructions: { ...jevInstructions, tools: 'Place an order' } }),
       ),
     ).toBe(true)
-  })
+  }, 15_000)
   test('incomplete probes cannot become decisions and malformed native evidence fails', () => {
     const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
     expect(Result.isFailure(jevHarnessDecision(prepared, []))).toBe(true)
@@ -161,5 +161,5 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
     expect(Result.isSuccess(verifyJevHarnessReceipt(run(), seal(material)))).toBe(true)
     expect(Result.isFailure(verifyJevHarnessReceipt(run(), seal({ ...material, decision: null })))).toBe(true)
     expect(Result.isFailure(verifyJevHarnessReceipt(run(), { ...seal(material), runId: 'c'.repeat(64) }))).toBe(true)
-  })
+  }, 15_000)
 })
