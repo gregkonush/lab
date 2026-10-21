@@ -1346,6 +1346,9 @@ change the immutable per-generation receipt schema.
 Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
+Episode receipt validation matches the UTC day of validated `read_evidence.sourceCreatedAt` to the accrual's verified
+`settlement_date`. Every source trade must agree with that UTC cohort. Retained receipts without a source timestamp
+use their recorded fee date. Inventory event order continues to use the accrual's `observedAt`.
 Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
 the existing generation-scoped financial position count retains its current meaning. Either disagreement blocks measurement.
 Missing coin-fee history, unmatched activities with only a trading date, ambiguous ordering, or inconsistent quantities
@@ -1899,7 +1902,7 @@ actual successful check without backdating it to the provider observation. Histo
 by that cut withhold cash-yield evidence and financial qualification. Existing ledger records and provider clocks
 remain immutable; an earlier posting time is never inferred from a later successful verification.
 Current account reconciliation bounds cumulative ledger receipts and net inventory independently of the selected
-generation's performance cut. Position episode evidence v3 binds that current account cut and includes coin-fee
+generation's performance cut. Position episode evidence v4 binds that current account cut and includes coin-fee
 inventory debits. A fully accrued crypto cash receipt adds no incremental generation expense; its original and
 correction plans remain in the complete account ledger, while the source-bound accrual supplies the generation cost.
 Unallocated incremental fees and missing historical posting acknowledgements still prevent financial qualification.

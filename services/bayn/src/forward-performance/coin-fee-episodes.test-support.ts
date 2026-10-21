@@ -8,7 +8,17 @@ import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 
 // Synthetic fractional fills and observed debit; these are not account or profitability evidence.
-export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId = 'f'.repeat(64)) => {
+export const coinRoundTrip = (
+  offset = 0,
+  accountId = 'episode-account',
+  cycleId = 'f'.repeat(64),
+  dates: {
+    readonly sourceDate?: StoredBrokerFee['data']['date']
+    readonly observedDate?: StoredBrokerFee['data']['date']
+  } = {},
+) => {
+  const sourceDate = dates.sourceDate ?? '2026-09-18'
+  const observedDate = dates.observedDate ?? sourceDate
   const accounting = [
     { index: 1, side: OrderSide.Buy, quantityAtoms: '33050000' },
     { index: 3, side: OrderSide.Sell, quantityAtoms: '32967375' },
@@ -30,7 +40,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
             quantityAtoms,
             priceAtoms: '100000000000',
             feeMicros: '0',
-            occurredAt: `2026-09-18T15:30:${String(index).padStart(2, '0')}.000Z`,
+            occurredAt: `${side === OrderSide.Buy ? sourceDate : observedDate}T15:30:${String(index).padStart(2, '0')}.000Z`,
           },
           side === OrderSide.Buy
             ? { quantityAtoms: '0', costMicros: '0' }
@@ -49,10 +59,10 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
         kind: 'COIN',
         accountId: buy.accountId,
         symbol: buy.symbol,
-        date: '2026-09-18',
+        date: observedDate,
         cycleId,
         positionSnapshotId: 'a'.repeat(64),
-        observedAt: `2026-09-18T15:30:${String(2 + offset).padStart(2, '0')}.000Z`,
+        observedAt: `${observedDate}T15:30:${String(2 + offset).padStart(2, '0')}.000Z`,
         projectedQuantityAtoms: buy.quantityAtoms,
         observedQuantityAtoms: '32967375',
         projectedCostMicros: '3305000',
@@ -67,7 +77,7 @@ export const coinRoundTrip = (offset = 0, accountId = 'episode-account', cycleId
   const accrual = {
     accrual_id: prepared.accrualId,
     data: prepared.data,
-    settlement_date: prepared.data.date,
+    settlement_date: sourceDate,
     content_hash: prepared.contentHash,
     coin_quantity_atoms: prepared.coinQuantityAtoms,
     cash_debit_micros: prepared.cashDebitMicros,
