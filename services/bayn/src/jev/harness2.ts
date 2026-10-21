@@ -71,12 +71,7 @@ export const applyJevInstructions = (request: JevRequest, instructions: JevInstr
         name,
         {
           ...question,
-          instructions:
-            name === 'action'
-              ? instructions.entry
-              : name === 'stop_loss'
-                ? instructions.stopLoss
-                : instructions.takeProfit,
+          instructions: instructions.entry,
         },
       ]),
     ),
