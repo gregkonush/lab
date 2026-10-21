@@ -49,6 +49,10 @@ exit selected by code, and no momentum prefilter. Costs, exposure sizing, accoun
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
 constraints and the hard migration. These model decisions have no demonstrated profitable edge.
 
+Observed bar prices retain provider precision in source evidence and model context. Complete-plan construction rounds
+these historical prices down to micros before applying instrument ticks. Broker quotes and executable prices keep
+their separate precision checks; a provider bar with more than nine decimal places cannot invalidate the whole batch.
+
 For flat PAPER accounts, the same reconciled daily-loss and all-time drawdown limits also run before market-data
 reads and Jev batch admission. `ACCOUNT_PROTECTION` readiness names the existing limit that prevents an entry;
 the execution-session status and metric report `BLOCKED`, not an input outage. It does not create a model
@@ -117,6 +121,12 @@ profiles by their persisted attempt ordinal, so an empty equity session cannot h
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
+The database retains its row and deferred commit guards when persistence crosses that lease. Only rejection by
+the named entry-admission constraint becomes a normal expired-entry result after the transaction rolls back.
+Recovery then blocks the still-unused cycle with a fresh timestamp through the existing guarded store; it never
+retries the stale decision or retains its partial binding. Other constraint and persistence failures remain errors.
+Combined failures, defects and interruption remain intact across the store, writer fence and binding runner; a lease
+rejection accompanied by failed rollback cannot become normal expiry or authorize a successor.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing close-only liquidation binding after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
