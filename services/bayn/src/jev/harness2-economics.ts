@@ -1,7 +1,7 @@
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
-import { BacktestInputSchema, BacktestIssue } from '../intraday-replay/backtest'
+import { BacktestComparisonInputSchema, BacktestInputSchema, BacktestIssue } from '../intraday-replay/backtest'
 import { ReplayBrokerCheckpointSchema } from '../intraday-replay/broker-checkpoint'
 import { calculateReplayJevCosts, ReplayJevCostSummarySchema } from '../intraday-replay/jev-costs'
 import { ReplayJevCallSchema } from '../intraday-replay/jev-timing'
@@ -29,6 +29,8 @@ import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 // Decode only the consumed projection after verifying the complete original document hash.
 const NativeEconomicReportSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.backtest-report.v4'),
+  comparisonInput: BacktestComparisonInputSchema,
+  comparisonInputHash: Sha256Schema,
   jevInstructions: Schema.Struct({ contentHash: Sha256Schema, document: JevInstructionsSchema }),
   evidenceMode: Schema.Literal('simulated-production-execution'),
   runId: Sha256Schema,
@@ -122,6 +124,8 @@ export const jevHarnessBacktestOutcome = (input: {
     const { reportHash, ...material } = raw
     if (reportHash !== (yield* hash(material))) return yield* invalid('Native replay report hash differs')
     const report = yield* Schema.decodeUnknownResult(NativeEconomicReportSchema)(raw)
+    if (report.comparisonInputHash !== (yield* hash(report.comparisonInput)))
+      return yield* invalid('Native normalized replay inputs do not reproduce their comparison identity')
     if (
       report.jevInstructions.contentHash !== (yield* hash(instructions)) ||
       report.jevInstructions.contentHash !== (yield* hash(report.jevInstructions.document))
@@ -262,6 +266,7 @@ export const jevHarnessBacktestOutcome = (input: {
       executableSha256: report.executableSha256 ?? null,
       instructionsHash: yield* hash(instructions),
       contextHash: yield* hash({
+        comparisonInputHash: report.comparisonInputHash,
         source: sourceContext,
         sourceReceiptHash: report.sourceReceiptHash,
         assumptions: report.assumptions,

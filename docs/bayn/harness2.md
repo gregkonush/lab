@@ -191,8 +191,10 @@ Unknown allocations remain null. A zero allocation requires evidence just as a n
 
 The command checks each complete original report hash before decoding its economic projection. It reproduces
 request and response identities, instruction identity, provider timing bounds, per-session inference inventories,
-declared-tariff expenses, cash, inventory, execution fees and net equity carry. Source, initial capital, strategy,
-execution assumptions, tariff and dates must match across distinct runs. Reports are read sequentially, with a
+declared-tariff expenses, cash, inventory, execution fees and net equity carry. Each native report retains and hashes
+the complete normalized backtest input, excluding only the replicate identity and instruction hash. That comparison
+identity includes fractional trading, broker assets, calendar, cadence and every other replay input. It must match
+across arms alongside source, initial capital, strategy, execution assumptions, tariff and dates. Reports are read sequentially, with a
 64 KiB manifest limit and a 16 MiB limit for each report. Larger native outputs require a deliberate streaming
 consumer; they cannot be truncated to fit. Outputs use exclusive creation and private file permissions.
 

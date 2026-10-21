@@ -143,6 +143,13 @@ export const BacktestInputSchema = Schema.Struct({
   }),
 })
 
+const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparisonFields } = BacktestInputSchema.fields
+export const BacktestComparisonInputSchema = Schema.Struct(comparisonFields)
+export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) => {
+  const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparison } = input
+  return comparison
+}
+
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
@@ -599,8 +606,11 @@ export const runBacktest = (
       SELECT row_to_json(fee)::text AS json FROM broker_fee_accounting AS fee
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
+    const comparisonInput = backtestComparisonInput(prepared.input)
     const report = {
       schemaVersion: 'bayn.backtest-report.v4' as const,
+      comparisonInput,
+      comparisonInputHash: yield* Effect.fromResult(canonicalHashV1Result(comparisonInput)),
       jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
       evidenceMode: 'simulated-production-execution' as const,
       profitability: 'UNPROVEN' as const,

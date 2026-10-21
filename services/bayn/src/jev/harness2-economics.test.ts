@@ -10,6 +10,7 @@ import { jevModel } from './contract'
 import { calculateReplayJevCosts } from '../intraday-replay/jev-costs'
 import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
 import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { BacktestComparisonInputSchema } from '../intraday-replay/backtest'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { nativeJevFixture, nativeJevInference } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
@@ -263,7 +264,45 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
       },
     ],
   }
-  return { ...material, reportHash: hash(material) }
+  const comparisonInput = Schema.decodeUnknownSync(BacktestComparisonInputSchema)({
+    schemaVersion: 'bayn.backtest.v5',
+    inference: material.inference.definition,
+    allocatedDataCostPerSessionMicros: '10',
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-04T20:00:00.000Z' },
+    source: captured.manifest,
+    openingCashMicros: ledger.openingCashMicros,
+    fractionalTrading: false,
+    calendar: captured.input.input.calendar,
+    assets: captured.manifest.marketSources
+      .flatMap((source) => source.symbols)
+      .map((symbol, index) => ({
+        id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
+        symbol,
+        class: 'us_equity',
+        exchange: 'NASDAQ',
+        status: 'active',
+        tradable: true,
+        fractionable: true,
+      })),
+    assetObservationAt: '2026-09-04T13:29:00.000Z',
+    assetObservationPolicy: 'retained-as-of-session',
+    build: {
+      sourceRevision: material.build.sourceRevision,
+      imageRepository: material.build.imageRepository,
+      imageDigest: material.build.declaredImageDigest,
+      strategyBehaviorHash: material.build.strategyBehaviorHash,
+      strategyParameterHash: material.build.strategyParameterHash,
+    },
+    assumptions: material.assumptions,
+    cadence: {
+      pollIntervalMs: 30000,
+      reconciliationIntervalMs: 30000,
+      reconciliationPassTimeoutMs: 30000,
+      reconciliationStaleThresholdMs: 120000,
+    },
+  })
+  const complete = { ...material, comparisonInput, comparisonInputHash: hash(comparisonInput) }
+  return { ...complete, reportHash: hash(complete) }
 }
 const allocations = [
   {
@@ -294,6 +333,7 @@ test('changed native report bytes, cash, costs and response identities fail inst
   const report = nativeReportFixture()
   const changed = [
     { ...report, reportHash: '0'.repeat(64) },
+    reseal({ ...report, comparisonInputHash: '0'.repeat(64) }),
     reseal({ ...report, build: { ...report.build, strategyParameterHash: '0'.repeat(64) } }),
     reseal({ ...report, brokerState: { ledger: { ...report.brokerState.ledger, cashMicros: '10000000000' } } }),
     reseal({
@@ -312,6 +352,38 @@ test('changed native report bytes, cash, costs and response identities fail inst
       jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
     ),
   ).toBe(true)
+})
+
+test('fractional trading, broker assets, calendar and cadence changes cannot masquerade as instruction effects', () => {
+  const baselineReport = nativeReportFixture()
+  const repeated = nativeReportFixture(jevInstructions, 'b')
+  const candidate = nativeReportFixture(candidateInstructions, 'c')
+  const arms = {
+    baseline: Result.getOrThrow(project(baselineReport)),
+    baselineRepeat: Result.getOrThrow(project(repeated)),
+  }
+  const input = candidate.comparisonInput
+  const variants = [
+    { ...input, fractionalTrading: !input.fractionalTrading },
+    { ...input, assets: input.assets.map((asset) => ({ ...asset, fractionable: false })) },
+    { ...input, calendar: input.calendar.map((day) => ({ ...day, open: '09:31', session_open: '0931' })) },
+    { ...input, cadence: { ...input.cadence, pollIntervalMs: input.cadence.pollIntervalMs + 1 } },
+  ]
+  for (const comparisonInput of variants) {
+    const report = reseal({ ...candidate, comparisonInput, comparisonInputHash: hash(comparisonInput) })
+    const changed = Result.getOrThrow(
+      jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
+    )
+    expect(changed.contextHash).not.toBe(arms.baseline.contextHash)
+    expect(
+      Result.isFailure(
+        compareJevHarnessEconomics(
+          { ...registration(), sessionDates: ['2026-09-04'] },
+          { ...arms, candidate: changed },
+        ),
+      ),
+    ).toBe(true)
+  }
 })
 
 test('unallocated native operating expenses and missing session rows cannot complete the result', () => {
