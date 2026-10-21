@@ -19,7 +19,7 @@ import { initializeErrorTracking, reportTerminalFailure } from '../error-trackin
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
 import { validateResearchApprovalKey } from '../research-inference/approval'
-import { hashResearch, ResearchError, ResearchPolicySchema } from '../research-inference/contract'
+import { hashResearch, ResearchError, HarnessEditorPolicySchema } from '../research-inference/contract'
 import { makeResearchRunner } from '../research-inference/runner'
 import { makeResearchStore } from '../research-inference/store'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
@@ -42,7 +42,7 @@ export const researchServerConfig = Config.all({
       ? Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')
       : Config.succeed(embeddedBuildMetadata.sourceRevision),
   identityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
-  policy: Config.schema(Schema.fromJsonString(ResearchPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
+  policy: Config.schema(Schema.fromJsonString(HarnessEditorPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
   approvalKey: Config.Redacted('BAYN_RESEARCH_APPROVAL_KEY'),
   url: Config.Redacted('BAYN_POSTGRES_URL'),
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
@@ -93,6 +93,7 @@ export const researchServerProgram = Effect.gen(function* () {
           const parent = currentOpenTelemetryParentSpan()
           const attempt = Effect.gen(function* () {
             if (
+              run.schemaVersion !== 'bayn.jev-harness2-editor.v1' ||
               run.sourceRevision !== config.sourceRevision ||
               (yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash
             )

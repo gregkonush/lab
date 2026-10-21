@@ -34,6 +34,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
   '';
+  harnessProbeCommand = pkgs.writeShellScriptBin "bayn-harness2-probe" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
+  '';
   harnessPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -81,6 +86,7 @@ let
     )
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/harness2-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -149,6 +155,7 @@ import ./bun-workspace-service.nix {
     inferenceCostCommand
     researchCommand
     harnessCommand
+    harnessProbeCommand
     harnessPython
   ];
   exposedPorts = {

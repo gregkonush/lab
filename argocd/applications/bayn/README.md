@@ -184,7 +184,7 @@ separately from observed market evidence. The selected complete plan binds those
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 132 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 133 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86`.
 The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v16 image is
@@ -595,7 +595,7 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 ### Jev-selected trade-plan cutover
 
 Protocol v15 / state v14 and entry/exit targets v4 replace the geometric exit policy and momentum gate.
-Migration 132 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+Migration 133 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
 retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
 published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
 existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,

@@ -68,7 +68,7 @@ rolls back the new observation and plan. Each response receipt remains independe
 expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
-Migration 132 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
+Migration 133 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v16 strategy identity.
 
@@ -139,7 +139,7 @@ above the inference-bound ceiling is rejected before decision construction and a
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v16 and trading-signal input v15 replace their executable predecessors. Migration 132 requires flat,
+Protocol v16 and trading-signal input v15 replace their executable predecessors. Migration 133 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting new Jev
 authority generations to v16. Create a new same-account PAPER mandate against the verified published v16 image through
 its sealed GitOps path after cutover. Historical evidence remains immutable. Retired model exits and fixed-percentage
@@ -1794,9 +1794,12 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Alpha-R1 research
 
-The [Harness2 adapter](../../docs/bayn/harness2.md) refines factor-selection prompts through the existing signed
-research API and retains probes, compositions, and lessons in the private research bucket. The installed
-`bayn-harness2` command produces unqualified research artifacts. It does not change the trading strategy or its authority.
+The [Harness2 adapter](../../docs/bayn/harness2.md) refines the same Jev complete-plan entry
+question instruction used by the trading runtime. Native probes reproduce retained observations and use Bayn's
+funded entry-selection code. A separate generative editor proposes instructions; it cannot change market evidence,
+answer choices or execution controls. Frozen candidates are compared with the baseline on later observations hidden
+from the editor. The old Alpha-R1 factor-selection adapter is removed. Research output does not grant trading
+authority or establish economic improvement.
 
 `BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
 The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
@@ -1959,7 +1962,7 @@ per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. 
 quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 132 owns the
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 133 owns the
 current complete-plan v16 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
 reconciliation before activating a new same-account v16 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.

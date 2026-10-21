@@ -36,6 +36,23 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('Jev editors use native instruction text without factor-selection context', () => {
+    const { maximumFactors: _retired, ...policy } = run.policy
+    const editor = Result.getOrThrow(
+      decodeResearchRun({
+        ...run,
+        schemaVersion: 'bayn.jev-harness2-editor.v1',
+        purpose: HarnessPurpose.PromptEdit,
+        context: { memory: run.context.memory },
+        policy,
+      }),
+    )
+    const content = researchRequest(editor).messages[0]?.content
+    expect(content).toContain('<harness>')
+    expect(content).not.toContain('<alpha_list>')
+    expect(content).not.toContain('alpha001')
+    expect(Result.isFailure(decodeResearchRun({ ...editor, context: run.context }))).toBe(true)
+  })
   test('binds the harness role and verifies its original bytes through the same receipt and expense path', () => {
     const edit = Result.getOrThrow(
       decodeResearchRun({ ...run, schemaVersion: 'bayn.harness2-inference.v1', purpose: HarnessPurpose.PromptEdit }),

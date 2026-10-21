@@ -1,117 +1,130 @@
-# Harness2 research refinement
+# Harness2 refinement of Jev decisions
 
-Bayn runs [Google Research Harness2](https://github.com/google-research/harness2) at revision
-`1cfe254e8d25b15f37048c3730134686abe60335` through `bayn-harness2` in its existing image.
-The command refines Alpha-R1 factor-selection instructions. It does not change Jev, submit orders, activate a
-mandate, or promote its output into trading. Candidate promotion still requires the existing registered comparison,
-complete costs, untouched outcomes, reviewed source change, and authority gates.
+Bayn uses [Google Research Harness2](https://github.com/google-research/harness2) at revision
+`1cfe254e8d25b15f37048c3730134686abe60335` to refine the question instructions consumed by its native Jev decision
+path. The former Alpha-R1 factor-selection adapter and its study format are removed.
 
-## Execution contract
+## Model roles and decision ownership
 
-The adapter calls upstream `run_domain` with one sequential Propose–Probe–Compose step per task. The baseline,
-two proposed prompt variants, composed prompt, execution traces, and experience library are real Harness2 artifacts.
-Only `systemprompt.md` is editable, with an 8,000-character bound. Model text is never executed as code. Scripts,
-plugins, tools, and subagents are excluded. The upstream OpenCode prompt format is used for evidence construction;
-neither OpenCode nor Codex is launched.
+Jev remains the typed decision model. Every probe uses the production `JevClient`, pinned model, HTTP endpoint,
+response validation, proxy and ten-second request timeout. Probes reconstruct state and supplied answer choices from
+an original native Bayn observation. The baseline instructions must match the compiled live instructions exactly.
 
-Every probe, editor, composer, and reflection request uses `bayn-research`. That command signs the exact run with
-the existing research approval key, submits through Restate, and verifies the receipt against the original SSE bytes.
-The existing research worker enforces its pinned Alpha-R1 serving identity and decoding policy, one in-flight model
-request, durable claims, deadlines, usage, and expense projection. Probes use the active `bayn.research-run.v1`
-factor-selection contract. Editors and reflection use `bayn.harness2-inference.v1` with an explicit `prompt-edit` or
-`reflection` purpose, bound into operator approval and the run identity. Their receipts contain no selected factors.
-Quoted factor-list tags in an edited prompt remain text. The editor must return exactly one bounded `<harness>` block;
-reflection uses the upstream experience format. Both roles retain the original complete response bytes.
-Reflection asks for one component and at most 200 words within the pinned inference token budget. It must retain
-the edit row and use `NO_ENTRY` when executions show no reusable behavioral contrast. A rejected or truncated
-reflection leaves the entire study `INCONCLUSIVE`; replay retains that result without another inference attempt.
+Harness2 edits only `instructions.json`, containing one `entry` string of at most 2,000
+characters. This is the actual complete-plan question instruction used by `trade-plan-choices.ts`.
+The editor cannot change question types, candidate prices, market state, position sizing, account limits, freshness,
+broker protection or execution authority. Bayn's shared `selectJevEntryCandidates` function converts the typed answers
+into the same funded selections and protection-plan rejections used by the live strategy.
 
-The study freezes one to four ordered tasks, 8–32 model-call reservations, and a 60–3,600-second wall-time budget.
-Each task contains an existing `bayn.research-run.v1` registration. Its original context must pass Bayn's validator
-before any inference. Editor and reflection registrations cannot be used as probe tasks. An ordinary one-task run uses
-eight model calls. Invalid proposals can consume additional
-reservations within the same budget. Transport failure never authorizes another registration for the same call.
+The existing Alpha-R1 endpoint serves only as a generative editor and reflection writer. It does not execute probes,
+select factors or make trading decisions. Editor calls retain signed native registrations, original SSE bytes,
+serving identity, usage and expense evidence through the existing Restate workflow. The worker accepts only the
+`bayn.jev-harness2-editor.v1` contract. Historical factor registrations remain immutable accounting evidence; their
+formats cannot be submitted for new inference through the command or deployed worker.
 
-This is offline refinement. Each invocation receives a new bounded inference window, while the original task context,
-descriptions, timestamps, hashes, source revision, policy, study, arm, and capture references remain frozen. Refinement
-latency cannot establish that an original intraday decision was feasible. No future return labels or economic scores
-are supplied to Harness2.
+The active trading exit path enforces the protection terms selected before entry. This experiment does not optimize
+an unconsumed management question. It never submits broker orders or changes capital authority.
 
-## Run a registered study
+## Register and run
 
-Create a manifest with this shape. Replace `run` with a complete registration from the
-[research contract](alpha-r1-research-plan.md), including the exact deployed source revision and serving policy.
-Tasks in the same study share the initial prompt. Keep their original feature cutoffs in chronological order.
+Use `bayn-harness2-probe --baseline` to obtain the compiled instructions. Supply original observations exported from
+Bayn, preserving their protocol, source rows, timestamps and account context. Verify their content hashes against the
+native export or database receipt. Keep all inputs and outputs private.
 
 ```json
 {
-  "schemaVersion": "bayn.harness2-study.v1",
-  "maximumCalls": 12,
+  "schemaVersion": "bayn.jev-harness2-study.v1",
+  "sourceRevision": "<exact deployed source revision>",
+  "maximumCalls": 128,
   "maximumWallSeconds": 1800,
-  "tasks": [
-    {
-      "id": "registered-factor-selection",
-      "run": {}
-    }
-  ]
+  "baseline": { "entry": "..." },
+  "editor": { "policy": {}, "costBasis": null },
+  "tasks": [{ "id": "development", "observation": {} }],
+  "validation": [{ "id": "untouched", "observation": {} }]
 }
 ```
 
-Use the deployed `bayn-research` worker's existing environment. It supplies the research approval key, restricted
-database-backed Restate API, private bucket name, and reflected object-store credential. The command needs
-`RESTATE_INGRESS_ORIGIN`, `BAYN_PUBLIC_INFORMATION_BUCKET`, `BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT`,
-`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, and `BAYN_RESEARCH_APPROVAL_KEY`. Do not copy credentials into the manifest.
+Use the deployed `BAYN_RESEARCH_INFERENCE_POLICY` as the editor policy. It pins the generative serving and decoding
+identity and has no factor-selection limit. Do not put credentials in the manifest.
+
+A study supports one to four ordered development observations and one to 32 ordered validation observations. The
+first validation observation must follow the last development observation by at least the full 15-minute holding
+horizon. The manifest freezes both sets before model work. Validation state and outputs never enter proposal,
+composition or reflection context. The final composed instruction bytes are frozen before the validation calls.
+
+The installed command runs one real upstream Propose–Probe–Compose step per development observation:
 
 ```sh
-bayn-harness2 --manifest /tmp/study.json --output /tmp/harness2-study
+bayn-harness2 --manifest /tmp/study.json --output /tmp/jev-harness2
 ```
 
-Local artifacts live under `<output>/<studyId>/`, so separate manifests cannot reuse another study's upstream cache.
+Run it in the research worker's existing environment. It uses the existing research approval key, restricted
+Restate database identity, private object-store credentials, proxy, and the same Jev API credential as Bayn.
+A native probe can be inspected separately:
 
-The private prefix `harness2/v1/<studyId>/` retains the manifest, original per-call registrations, verified receipts,
-upstream artifacts, and terminal result. `studyId` is the SHA-256 of compact, sorted-key UTF-8 JSON for the manifest.
-Object creation uses `If-None-Match: *`; a conflict must read back identical evidence. Call slots are reserved before
-transmission. A restart reuses the original registration and its native Workflow identity, including an ambiguous
-claim. It cannot generate a new model request for that call. Use the same output path when resuming an interrupted
-study, and run it with its original Bayn image revision. An unfinished study cannot migrate to changed adapter
-instructions: a reserved call's prompt hash stays frozen, and a mismatch fails closed. Register a new study to use
-a different adapter revision. Completed studies return their retained result without model work. A terminal inconclusive study requires an
-explicit new registration for a new experiment.
+```sh
+bayn-harness2-probe --validate /tmp/probe.json
+bayn-harness2-probe --run /tmp/probe.json --output /tmp/new-receipt.json
+bayn-harness2-probe --verify /tmp/probe.json --receipt /tmp/new-receipt.json
+```
 
-The top-level result records exact integer `costPicoUsd` only when every reserved attempt has priced evidence.
-Missing receipts or an unknown cost basis leave it null. An original registration's allocation is retained only while
-its source-backed interval covers the new
-inference window. Otherwise that call explicitly records an unknown cost basis; its original historical allocation
-remains in the immutable study. No rate or effective interval is invented or extended. Upstream floating-point
-session-cost fields are diagnostic metadata, not Bayn accounting evidence. Allocated research inference cost alone does not cover preparation,
-shared capacity, data, or trading costs.
+`--validate` requires the exact compiled baseline. `--run` accepts a bounded candidate instruction document. It
+reproduces the original observation and fixes every other request field. Its receipt retains the original and
+candidate request hashes, typed responses, provider usage, inference timing and native funded decision. Verification
+recomputes the request, response and decision bindings. The installed image rejects a different source revision.
 
-`COMPLETE` means the refinement produced its artifacts without upstream fallback or incomplete model receipts.
-It does not mean that the composed prompt improves selection or returns. `INCONCLUSIVE` includes rejected edits,
-budget exhaustion, failed probes, and incomplete receipts. Every result remains `UNQUALIFIED`.
+## Reservations, recovery and artifacts
+
+The private prefix `harness2/jev-v1/<studyId>/` retains the frozen registration, call reservations, receipts,
+upstream artifacts, candidate and comparison. `studyId` is the SHA-256 of compact, sorted-key UTF-8 manifest JSON.
+Conditional object creation requires existing bytes to match. Local outputs are also namespaced by study ID.
+
+`maximumCalls` bounds reserved provider requests, including every candidate in a native probe batch and each editor
+request. Excluded candidates can make the actual count smaller than the reserved budget. Calls execute sequentially
+inside a probe. Each invocation receives a new bounded research window; original market timestamps remain frozen.
+These calls are offline reevaluations and do not prove historical execution latency.
+
+A reservation precedes transmission. An ambiguous Jev probe cannot be retransmitted under the same or a fresh slot
+within that study. Partial private response files remain evidence of attempted work. A completed receipt can be read
+and verified without model work. Editor recovery uses its original durable Restate identity. Resume interrupted
+studies with their original image and output directory. Completed studies return their retained terminal report.
+Retain inconclusive attempts; a new experiment requires a new explicit registration.
+
+## What the comparison establishes
+
+The report separates engine completion, changed native decisions and economic improvement. It compares baseline and
+candidate funded selections, quantities, protection plans and rejection reasons on the same hidden observations.
+A probability change that leaves the native selection and plan unchanged does not count as a changed decision.
+
+`NO_OBSERVED_CHANGE` means every paired validation probe completed and produced the same native decision.
+`INCONCLUSIVE` includes changed decisions without independent outcome evidence, incomplete calls or missing pairs.
+A different choice, more entries, fewer rejections, a composed prompt or a successful model call does not establish
+better decisions. The report never labels these observations profitable.
+
+Economic improvement remains `UNPROVEN` until the candidate has an independent comparison with closed execution
+outcomes, complete execution, inference and operating costs, realistic timing and capacity, and untouched evaluation
+sessions. Recorded flat-entry observations are policy-selected and do not establish coverage of every market
+opportunity. Do not sum overlapping opportunity labels into portfolio returns. Jev's `P(enter)` is not automatically
+the probability of a profitable trade.
+
+Jev research usage and all retained responses are recorded, but its price allocation remains unknown in this
+experiment. `costPicoUsd` is null when any call lacks a complete cost basis. Missing costs never become zero.
+Every study remains `UNQUALIFIED`. Promotion requires an evidence-backed reviewed change to the compiled
+`jev/instructions.ts`, with the normal strategy/protocol identity migration and existing authority gates. The runner
+does not install candidates into the trading process.
 
 ## Validation and rollout
 
-The Python tests run the pinned upstream recursion engine with a deterministic research API boundary. They verify
-probes, composition, library retention, original-registration recovery, ambiguity, budgets, and rejected edits.
-They do not establish model quality or profitability.
+Python tests execute the pinned upstream engine against a deterministic CLI boundary. Native TypeScript tests
+prove baseline request identity, parity with the live funded entry selector, immutable state/choices, and rejection
+of altered receipts. These fixtures establish implementation behavior only.
 
 ```sh
-uv venv --python 3.12 /tmp/bayn-harness2-venv
-uv pip install --python /tmp/bayn-harness2-venv/bin/python -r services/bayn/harness2/requirements.txt
 /tmp/bayn-harness2-venv/bin/python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
+bun test services/bayn/src/jev/harness2.test.ts
 ```
 
-The Nix image pins upstream by commit and archive hash. Its runtime includes Python, Harness2, the S3 client, the
-adapter, and the installed command. Image verification invokes `bayn-harness2 --help` with networking disabled.
-The research worker receives its existing Restate origin and 256 MiB of bounded temporary artifact space.
-No additional credentials, database grants, broker access, or network permissions are introduced.
-
-Roll out through reviewed main, immutable image publication, `lab-delivery/bayn`, `kargo/bayn`, and Argo. Verify the
-additive migration 129 admits the two harness roles while preserving all existing immutable research evidence.
-The normal execution activation applies it before the research worker rolls out. No research database grant changes.
-Verify the
-exact deployed image and source, run one explicitly labeled engineering study through the installed command, inspect
-its native receipts and object-store artifacts, then repeat the completed study to verify no additional inference.
-Engineering fixtures establish transport and lifecycle behavior only. Real research still requires eligible original
-captures and independently verified semantic descriptions. Recovery stops research and preserves trading authority.
+Roll out through reviewed main, immutable publication, `lab-delivery/bayn`, `kargo/bayn` and Argo. Migration 132 admits
+the new editor registration while preserving historical evidence. Verify the exact image, native installed command,
+real Jev probe receipts, held-out comparison, private object readback and completed-study replay. Confirm accounting,
+reconciliation and trading safeguards independently. Infrastructure readiness alone is insufficient.
