@@ -1586,7 +1586,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v14"`. Its `costs` object contains
+`inputDefinition: "bayn.jev-trading-signal-state.v15"`. Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
 `allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
 
