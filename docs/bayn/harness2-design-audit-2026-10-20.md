@@ -237,3 +237,17 @@ proposal method and compare it with the unchanged prompt and a fixed deliberate 
 all trials, failures and zero-trade sessions. Freeze the chosen candidate before later evaluation, preserve the
 existing prospective acceptance protocol and withhold a net verdict when required costs or market coverage are
 missing. Changing the search library cannot supply that evidence.
+
+The editor-context review found that `plan_*` labels lacked the supplied alternatives' stop, target, estimated loss
+and estimated profit terms. The bounded trajectory now retains every complete-plan alternative and all signal
+groups. Repeated immutable facts share references inside editor prompts; archived trajectories remain complete.
+A pinned Qwen tokenizer check over 19 candidates and 16 plans measured 22,304 input tokens at the largest tested
+reflection prompt. Adding the 4,096-token response allowance requires the revised 32,768-token context. The GPU
+fraction remains 0.24. This synthetic capacity check does not prove deployed startup, latency or output quality.
+
+The economic consumer also requires the frozen candidate's compiler `build.json`, with its exact file digest and
+canonical receipt hash. It checks the executable, instruction, clean-source declaration, compiler version, source,
+base image and strategy identities, then binds the receipt into the terminal comparison. A regression test shows
+that the previous consumer accepted a changed candidate with no build receipt. These checks establish consistency
+with the producer artifact. They do not authenticate an unsigned producer or replace independent source and binary
+verification.

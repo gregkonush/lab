@@ -1,4 +1,5 @@
 import copy
+import re
 import json
 import tempfile
 import unittest
@@ -9,6 +10,7 @@ from runner import (
     compare_decisions,
     encode,
     identity,
+    editor_evidence,
     native_evidence,
     run_study,
     validate_study,
@@ -124,13 +126,37 @@ class RunnerTests(unittest.TestCase):
                     "symbol": "BTC/USD",
                     "requestHash": "a" * 64,
                     "request": {
+                        "questions": {
+                            "action": {
+                                "criteria": {
+                                    "wait": "Needs confirmation",
+                                    "avoid": "Unsupported setup",
+                                    "plan_0": {
+                                        "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                        "meaning": "A complete hypothetical plan",
+                                        "stopPriceUsd": 98,
+                                        "targetPriceUsd": 103,
+                                        "estimatedLossUsd": 2,
+                                        "estimatedProfitUsd": 3,
+                                    },
+                                    "plan_1": {
+                                        "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                        "meaning": "A complete hypothetical plan",
+                                        "stopPriceUsd": 97,
+                                        "targetPriceUsd": 105,
+                                        "estimatedLossUsd": 3,
+                                        "estimatedProfitUsd": 5,
+                                    },
+                                }
+                            }
+                        },
                         "state": {
                             "candidate": {
                                 "bars1m": [{"close": 100}] * 500,
                                 "returnsBps": 25,
                             },
                             "benchmark": {"bars1m": [{"close": 200}] * 500},
-                        }
+                        },
                     },
                     "inference": {
                         "response": {
@@ -158,6 +184,24 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(row["signals"]["candidate"]["returnsBps"], 25)
         self.assertEqual(row["omittedHistory"]["candidate"]["bars1mCount"], 500)
         self.assertEqual(row["answers"]["action"]["selectedProbability"], 0.6)
+        self.assertEqual(
+            row["planCriteria"]["abstentions"],
+            {"wait": "Needs confirmation", "avoid": "Unsupported setup"},
+        )
+        self.assertEqual(
+            row["planCriteria"]["columns"],
+            [
+                "choice",
+                "stopPriceUsd",
+                "targetPriceUsd",
+                "estimatedLossUsd",
+                "estimatedProfitUsd",
+            ],
+        )
+        self.assertEqual(
+            row["planCriteria"]["plans"],
+            [["plan_0", 98, 103, 2, 3], ["plan_1", 97, 105, 3, 5]],
+        )
 
     def test_full_universe_keeps_every_signal_group_within_editor_budget(self):
         state = {
@@ -200,10 +244,32 @@ class RunnerTests(unittest.TestCase):
                 {
                     "symbol": f"C{index}",
                     "requestHash": "a" * 64,
-                    "request": {"state": copy.deepcopy(state)},
+                    "originalRequestHash": f"{index:064x}",
+                    "request": {
+                        "state": copy.deepcopy(state),
+                        "questions": {
+                            "action": {
+                                "criteria": {
+                                    "wait": "Needs confirmation",
+                                    "avoid": "Unsupported setup",
+                                    **{
+                                        f"plan_{plan}": {
+                                            "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                            "meaning": "A supplied complete hypothetical plan",
+                                            "stopPriceUsd": 83000 + plan,
+                                            "targetPriceUsd": 84000 + plan,
+                                            "estimatedLossUsd": 4.25 + plan,
+                                            "estimatedProfitUsd": 6.5 + plan,
+                                        }
+                                        for plan in range(16)
+                                    },
+                                }
+                            }
+                        },
+                    },
                     "inference": None,
                 }
-                for index in range(18)
+                for index in range(19)
             ],
         }
         summary = native_evidence(receipt)
@@ -214,7 +280,55 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertEqual(row["signals"]["candidate"]["priceWindow"]["rangeLow"], 98)
             self.assertEqual(row["signals"]["benchmark"]["latestCompletedClose"], 110)
-        self.assertLess(len(encode(summary)) * 4, 90000)
+            self.assertEqual(len(row["planCriteria"]["plans"]), 16)
+        trajectories = []
+        for execution in range(4):
+            evidence = copy.deepcopy(summary)
+            for row in evidence["observations"]:
+                row["requestHash"] = f"{execution:064x}"
+            trajectories.append(
+                (
+                    f"rollout-{execution}.md",
+                    "[BAYN_NATIVE_EVIDENCE]\n"
+                    + encode(evidence).decode()
+                    + "\n[/BAYN_NATIVE_EVIDENCE]",
+                )
+            )
+        context = editor_evidence(trajectories)
+        shared = json.loads(context.split("below.\n")[1])
+        self.assertEqual(len(shared), 19)
+        expected = {}
+        for row in summary["observations"]:
+            facts = {
+                name: row[name]
+                for name in (
+                    "symbol",
+                    "originalRequestHash",
+                    "signals",
+                    "planCriteria",
+                    "omittedHistory",
+                )
+            }
+            expected[identity(facts)] = facts
+        self.assertEqual(
+            {identity(value): value for value in shared.values()}, expected
+        )
+        executions = re.findall(
+            r"\[BAYN_EXECUTION\]\n(.*?)\n\[/BAYN_EXECUTION\]", context, flags=re.DOTALL
+        )
+        self.assertEqual(len(executions), 4)
+        for execution, document in enumerate(executions):
+            rows = json.loads(document)["observations"]
+            self.assertEqual(len(rows), 19)
+            for original, row in zip(summary["observations"], rows):
+                self.assertEqual(row["requestHash"], f"{execution:064x}")
+                self.assertEqual(
+                    shared[row["sourceFacts"]]["planCriteria"], original["planCriteria"]
+                )
+                self.assertEqual(
+                    shared[row["sourceFacts"]]["signals"], original["signals"]
+                )
+        self.assertLess(len(context.encode()), 90000)
 
     def test_all_excluded_probe_keeps_source_failures_in_editor_context(self):
         excluded = [

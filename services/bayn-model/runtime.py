@@ -85,7 +85,7 @@ def server_args(lock, cache):
         "--dtype",
         "bfloat16",
         "--max-model-len",
-        "16384",
+        "32768",
         "--gpu-memory-utilization",
         "0.24",
         "--max-num-seqs",

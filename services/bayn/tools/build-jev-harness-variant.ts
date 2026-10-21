@@ -6,15 +6,8 @@ import { canonicalHashV1Result, sha256 } from '../src/hash'
 import { JevInstructionsSchema } from '../src/jev/instructions-contract'
 import { jevInstructions } from '../src/jev/instructions'
 import { defaultJevProtocolDocument, jevBehaviorHash } from '../src/jev/protocol'
-import { GitSourceRevisionSchema, ImageDigestSchema, ImageRepositorySchema, strictParseOptions } from '../src/schemas'
-
-export const JevHarnessVariantSpecSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-harness2-variant.v1'),
-  sourceRevision: GitSourceRevisionSchema,
-  imageRepository: ImageRepositorySchema,
-  baseImageDigest: ImageDigestSchema,
-  instructions: JevInstructionsSchema,
-})
+import { strictParseOptions } from '../src/schemas'
+import { JevHarnessVariantBuildSchema, JevHarnessVariantSpecSchema } from '../src/jev/harness2-variant'
 class VariantBuildError extends Data.TaggedError('VariantBuildError')<{
   readonly message: string
   readonly cause?: unknown
@@ -135,6 +128,7 @@ export const buildJevHarnessVariant = (input: unknown, root: string, outputDirec
         qualification: 'UNQUALIFIED',
       }
       const receipt = { ...material, receiptHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
+      yield* Schema.decodeUnknownEffect(JevHarnessVariantBuildSchema, strictParseOptions)(receipt)
       yield* fs.writeFileString(path.join(outputDirectory, 'build.json'), JSON.stringify(receipt), {
         flag: 'wx',
         mode: 0o600,

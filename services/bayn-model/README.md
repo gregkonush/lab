@@ -20,7 +20,7 @@ this deployment.
 - vLLM: `v0.29.0-cu129`, immutable index
   `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`.
 - GPU: one time-sliced slot on Turin's single RTX PRO 6000 Blackwell Max-Q. Slots do not isolate GPU memory or compute.
-- Launch budget: 24% of physical VRAM, 16,384 total context tokens, 2,048 batched prefill tokens, one active sequence.
+- Launch budget: 24% of physical VRAM, 32,768 total context tokens, 2,048 batched prefill tokens, one active sequence.
 - Generation: native frozen policy uses non-thinking mode, temperature 0.7, top-p 0.8 and top-k 20, following the
   [authors' non-thinking guidance](https://huggingface.co/Qwen/Qwen3-8B#best-practices). The server-wide output
   ceiling remains 4,096 tokens, with the Qwen3 reasoning parser and prefix cache enabled.
@@ -31,6 +31,12 @@ this deployment.
   are rejected before engine admission. Streaming gives the worker token timing and uses the framework's cancellable
   response generator. The pinned vLLM non-streaming handler leaves detached tasks on parent cancellation, so that
   path is closed rather than wrapped in another serving layer.
+
+The editor retains all candidate signal groups, exclusions and complete-plan alternatives, including stop, target,
+estimated loss and estimated profit. Repeated immutable facts share references within the prompt; archived
+trajectories retain their original evidence. The pinned tokenizer measured up to 22,304 input tokens for the
+19-candidate, 16-plan synthetic composition/reflection fixture. Its 4,096-token output allowance exceeds a 16,384-token
+context and fits the 32,768-token budget. Actual serving and shared-GPU capacity still require runtime proof.
 
 The current `bayn.jev-harness2-editor.v2` contract accepts bounded instruction proposals and evidence-supported
 reflection. A proposal changes only the complete-plan `entry` instruction. Validate their schema and

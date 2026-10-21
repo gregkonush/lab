@@ -24,6 +24,7 @@ import { JevContractError, JevFailure, decodeJevResponse, prepareJevRequest } fr
 import { applyJevInstructions } from './harness2'
 import { jevInstructions } from './instructions'
 import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
+import { JevHarnessVariantBuildSchema } from './harness2-variant'
 import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 
 // Decode only the consumed projection after verifying the complete original document hash.
@@ -102,11 +103,14 @@ const NativeReportArtifactSchema = Schema.Struct({
   operatingAllocations: JevHarnessOperatingAllocationsSchema,
 })
 export const JevHarnessEconomicComparisonManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-manifest.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-manifest.v2'),
   registration: JevHarnessEconomicRegistrationSchema,
   baseline: NativeReportArtifactSchema,
   baselineRepeat: NativeReportArtifactSchema,
-  candidate: NativeReportArtifactSchema,
+  candidate: Schema.Struct({
+    ...NativeReportArtifactSchema.fields,
+    buildReceipt: Schema.Struct({ path: StrictNonEmptyStringSchema, sha256: Sha256Schema }),
+  }),
 })
 
 const invalid = (message: string) => Result.fail(new JevContractError({ message }))
@@ -117,6 +121,7 @@ export const jevHarnessBacktestOutcome = (input: {
   readonly report: unknown
   readonly instructions: JevInstructions
   readonly operatingAllocations: unknown
+  readonly variantBuild: unknown
 }) =>
   Result.gen(function* () {
     const instructions = input.instructions
@@ -124,6 +129,30 @@ export const jevHarnessBacktestOutcome = (input: {
     const { reportHash, ...material } = raw
     if (reportHash !== (yield* hash(material))) return yield* invalid('Native replay report hash differs')
     const report = yield* Schema.decodeUnknownResult(NativeEconomicReportSchema)(raw)
+    const variantBuild =
+      input.variantBuild === null
+        ? null
+        : yield* Schema.decodeUnknownResult(JevHarnessVariantBuildSchema, strictParseOptions)(input.variantBuild)
+    if (variantBuild === null && (yield* hash(instructions)) !== (yield* hash(jevInstructions)))
+      return yield* invalid('Candidate native reports require their compiler build receipt')
+    if (variantBuild !== null) {
+      const { receiptHash, ...material } = variantBuild
+      if (
+        receiptHash !== (yield* hash(material)) ||
+        variantBuild.executableSha256 !== report.executableSha256 ||
+        variantBuild.spec.sourceRevision !== report.build.sourceRevision ||
+        variantBuild.spec.imageRepository !== report.build.imageRepository ||
+        variantBuild.spec.baseImageDigest !== report.build.declaredImageDigest ||
+        variantBuild.strategyBehaviorHash !== report.build.strategyBehaviorHash ||
+        variantBuild.strategyParameterHash !== report.build.strategyParameterHash ||
+        variantBuild.baselineInstructionsHash !== (yield* hash(jevInstructions)) ||
+        variantBuild.instructionsHash !== (yield* hash(instructions)) ||
+        (yield* hash(variantBuild.spec.instructions)) !== variantBuild.instructionsHash
+      )
+        return yield* invalid(
+          'Candidate compiler receipt differs from native executable, instructions or build context',
+        )
+    }
     if (report.comparisonInputHash !== (yield* hash(report.comparisonInput)))
       return yield* invalid('Native normalized replay inputs do not reproduce their comparison identity')
     const registeredDataCost = report.comparisonInput.allocatedDataCostPerSessionMicros
@@ -281,6 +310,7 @@ export const jevHarnessBacktestOutcome = (input: {
       reportHash: report.reportHash,
       runId: report.runId,
       executableSha256: report.executableSha256,
+      variantBuildReceiptHash: variantBuild?.receiptHash ?? null,
       instructionsHash: yield* hash(instructions),
       contextHash: yield* hash({
         comparisonInputHash: report.comparisonInputHash,
@@ -339,7 +369,8 @@ export const compareJevHarnessEconomics = (
       return yield* invalid('Unchanged-prompt repeat must use the exact baseline executable')
     if (
       candidate.instructionsHash === baseline.instructionsHash ||
-      candidate.executableSha256 === baseline.executableSha256
+      candidate.executableSha256 === baseline.executableSha256 ||
+      candidate.variantBuildReceiptHash === null
     )
       return yield* invalid('Candidate requires changed instructions and a distinct compiled executable')
     const expectedDates = registration.sessionDates
@@ -414,6 +445,7 @@ export const compareJevHarnessEconomics = (
         baselineRepeat: yield* allocationHash(baselineRepeat),
         candidate: yield* allocationHash(candidate),
       },
+      candidateBuildReceiptHash: candidate.variantBuildReceiptHash,
       executableHashes: {
         baseline: baseline.executableSha256,
         baselineRepeat: baselineRepeat.executableSha256,

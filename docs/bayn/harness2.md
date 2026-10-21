@@ -192,13 +192,17 @@ backtests or obtain market coverage. The proposal runner does not yet orchestrat
 bayn-harness2-probe --compare /tmp/economic-manifest.json --output /tmp/new-comparison.json
 ```
 
-The manifest uses `bayn.jev-harness2-economic-manifest.v1`. Its `registration` contains `studyId`,
+The manifest uses `bayn.jev-harness2-economic-manifest.v2`. Its `registration` contains `studyId`,
 `evaluatorSourceRevision`, `registeredAt`, the `baseline` and `candidate` instruction documents, ordered
 `sessionDates`, and `maximumDrawdownMicros`, with registration schema
 `bayn.jev-harness2-economic-registration.v1`. Each of `baseline`, `baselineRepeat` and `candidate` contains a
 `reportPath`, its exact file `reportSha256`, and ordered `operatingAllocations`. Each allocation names its
 `sessionDate` and separate `infrastructure` and `research` entries: either null, or `{costMicros, evidenceHash}`.
 Unknown allocations remain null. A zero allocation requires evidence just as a nonzero allocation does.
+The candidate also requires `buildReceipt: {path, sha256}` for the compiler-produced `build.json`. Its raw file digest,
+canonical receipt hash, exact executable, instructions, source, base image and strategy identities must reproduce.
+The terminal comparison hash binds that receipt. This consistency check does not authenticate the compiler producer;
+verify the clean source and actual executable independently.
 
 The command checks each complete original report hash before decoding its economic projection. It reproduces
 request and response identities, instruction identity, provider timing bounds, per-session inference inventories,

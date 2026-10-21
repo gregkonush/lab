@@ -44,6 +44,7 @@ const outcome = (run: string, net: readonly (string | null)[], candidate = false
   runId: run.repeat(64),
   reportHash: run.repeat(64),
   executableSha256: (candidate ? 'c' : 'a').repeat(64),
+  variantBuildReceiptHash: candidate ? 'e'.repeat(64) : null,
   instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
   contextHash: 'd'.repeat(64),
   providerRequests: 8,
@@ -374,11 +375,67 @@ const allocations = [
   },
 ]
 const project = (report: unknown, operatingAllocations: unknown = allocations) =>
-  jevHarnessBacktestOutcome({ report, instructions: jevInstructions, operatingAllocations })
+  jevHarnessBacktestOutcome({ report, instructions: jevInstructions, operatingAllocations, variantBuild: null })
+const compilerBuildFixture = (report: ReturnType<typeof nativeReportFixture>, instructions = candidateInstructions) => {
+  const material = {
+    schemaVersion: 'bayn.jev-harness2-variant-build.v1',
+    spec: {
+      schemaVersion: 'bayn.jev-harness2-variant.v1',
+      sourceRevision: report.build.sourceRevision,
+      imageRepository: report.build.imageRepository,
+      baseImageDigest: report.build.declaredImageDigest,
+      instructions,
+    },
+    baselineInstructionsHash: hash(jevInstructions),
+    instructionsHash: hash(instructions),
+    strategyBehaviorHash: report.build.strategyBehaviorHash,
+    strategyParameterHash: report.build.strategyParameterHash,
+    executableSha256: report.executableSha256,
+    bunVersion: '1.4.2',
+    replacedSourceModule: 'services/bayn/src/jev/instructions.ts',
+    sourceVerification: 'CLEAN_COMMITTED_BUILD_INPUTS',
+    baseImageVerification: 'REQUIRES_RUNTIME_READBACK',
+    qualification: 'UNQUALIFIED',
+  }
+  return { ...material, receiptHash: hash(material) }
+}
 const reseal = <R extends { readonly reportHash: string }>(report: R) => {
   const { reportHash: _, ...material } = report
   return { ...material, reportHash: hash(material) }
 }
+
+test('candidate compiler receipts bind clean source, instruction bytes and the actual executable', () => {
+  const report = nativeReportFixture(candidateInstructions)
+  const build = compilerBuildFixture(report)
+  const check = (variantBuild: unknown) =>
+    jevHarnessBacktestOutcome({
+      report,
+      instructions: candidateInstructions,
+      operatingAllocations: allocations,
+      variantBuild,
+    })
+  const resealBuild = (value: typeof build) => {
+    const { receiptHash: _old, ...material } = value
+    return { ...material, receiptHash: hash(material) }
+  }
+  for (const invalid of [
+    null,
+    { ...build, receiptHash: '0'.repeat(64) },
+    resealBuild({ ...build, executableSha256: '0'.repeat(64) }),
+    resealBuild({ ...build, sourceVerification: 'DIRTY' }),
+    resealBuild({ ...build, baselineInstructionsHash: '0'.repeat(64) }),
+    resealBuild({ ...build, strategyBehaviorHash: '0'.repeat(64) }),
+    resealBuild({ ...build, strategyParameterHash: '0'.repeat(64) }),
+    resealBuild({ ...build, instructionsHash: '0'.repeat(64) }),
+    resealBuild({ ...build, bunVersion: '1.4.1' }),
+    resealBuild({ ...build, spec: { ...build.spec, sourceRevision: '0'.repeat(40) } }),
+    resealBuild({ ...build, spec: { ...build.spec, imageRepository: 'example.com/other' } }),
+    resealBuild({ ...build, spec: { ...build.spec, baseImageDigest: 'sha256:' + '0'.repeat(64) } }),
+    resealBuild({ ...build, spec: { ...build.spec, instructions: jevInstructions } }),
+  ])
+    expect(Result.isFailure(check(invalid))).toBe(true)
+  expect(Result.getOrThrow(check(build)).variantBuildReceiptHash).toBe(build.receiptHash)
+})
 
 test('native fills and metered calls reproduce net returns with fees booked once and operating costs added', () => {
   const report = nativeReportFixture()
@@ -503,7 +560,12 @@ test('changed native report bytes, cash, costs and response identities fail inst
   for (const value of changed) expect(Result.isFailure(project(value))).toBe(true)
   expect(
     Result.isFailure(
-      jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
+      jevHarnessBacktestOutcome({
+        report,
+        instructions: candidateInstructions,
+        operatingAllocations: allocations,
+        variantBuild: null,
+      }),
     ),
   ).toBe(true)
 })
@@ -561,7 +623,12 @@ test('fractional trading, broker assets, calendar and cadence changes cannot mas
   for (const comparisonInput of variants) {
     const report = reseal({ ...candidate, comparisonInput, comparisonInputHash: hash(comparisonInput) })
     const changed = Result.getOrThrow(
-      jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
+      jevHarnessBacktestOutcome({
+        report,
+        instructions: candidateInstructions,
+        operatingAllocations: allocations,
+        variantBuild: compilerBuildFixture(report),
+      }),
     )
     expect(changed.contextHash).not.toBe(arms.baseline.contextHash)
     expect(
@@ -602,9 +669,16 @@ test('comparison command reads digest-bound native files without provider or bro
         })
       const baseline = yield* artifact('baseline', nativeReportFixture())
       const baselineRepeat = yield* artifact('repeat', nativeReportFixture(jevInstructions, 'b'))
-      const candidate = yield* artifact('candidate', nativeReportFixture(candidateInstructions, 'c'))
+      const candidateReport = nativeReportFixture(candidateInstructions, 'c')
+      const buildPath = `${directory}/candidate-build.json`
+      const buildRaw = JSON.stringify(compilerBuildFixture(candidateReport))
+      yield* fs.writeFileString(buildPath, buildRaw)
+      const candidate = {
+        ...(yield* artifact('candidate', candidateReport)),
+        buildReceipt: { path: buildPath, sha256: sha256(buildRaw) },
+      }
       const manifest = {
-        schemaVersion: 'bayn.jev-harness2-economic-manifest.v1',
+        schemaVersion: 'bayn.jev-harness2-economic-manifest.v2',
         registration: { ...registration(), sessionDates: ['2026-09-04'] },
         baseline,
         baselineRepeat,
@@ -619,13 +693,22 @@ test('comparison command reads digest-bound native files without provider or bro
           Schema.Struct({
             observedNetEffect: Schema.Enum(JevHarnessObservedNetEffect),
             economicImprovement: Schema.Literal('UNPROVEN'),
+            candidateBuildReceiptHash: Schema.String,
           }),
         ),
       )(yield* fs.readFileString(output))
       expect(result.observedNetEffect).toBe(JevHarnessObservedNetEffect.Unchanged)
+      expect(result.candidateBuildReceiptHash).toBe(compilerBuildFixture(candidateReport).receiptHash)
       const before = yield* fs.readFileString(output)
       expect((yield* harness2Command(['--compare', path, '--output', output]).pipe(Effect.result))._tag).toBe('Failure')
       expect(yield* fs.readFileString(output)).toBe(before)
+      yield* fs.writeFileString(buildPath, '{}')
+      const rejectedBuildOutput = `${directory}/tampered-build.json`
+      expect(
+        (yield* harness2Command(['--compare', path, '--output', rejectedBuildOutput]).pipe(Effect.result))._tag,
+      ).toBe('Failure')
+      expect(yield* fs.exists(rejectedBuildOutput)).toBe(false)
+      yield* fs.writeFileString(buildPath, buildRaw)
       yield* fs.writeFileString(baseline.reportPath, '{}')
       expect(
         (yield* harness2Command(['--compare', path, '--output', `${directory}/tampered.json`]).pipe(Effect.result))

@@ -402,10 +402,43 @@ def native_evidence(receipt):
             omitted[name] = {"bars1mCount": len(source.get("bars1m", []))}
         inference = row.get("inference")
         response = inference["response"] if inference is not None else None
+        criteria = (
+            row["request"].get("questions", {}).get("action", {}).get("criteria", {})
+        )
+        plan_columns = [
+            "stopPriceUsd",
+            "targetPriceUsd",
+            "estimatedLossUsd",
+            "estimatedProfitUsd",
+        ]
+        plans = [
+            (name, value)
+            for name, value in criteria.items()
+            if name.startswith("plan_")
+        ]
         observations.append(
             {
                 "symbol": row["symbol"],
                 "requestHash": row.get("requestHash"),
+                "originalRequestHash": row.get("originalRequestHash"),
+                "planCriteria": {
+                    "columns": ["choice", *plan_columns],
+                    "plans": [
+                        [name, *[value[field] for field in plan_columns]]
+                        for name, value in plans
+                    ],
+                    "meanings": list(
+                        dict.fromkeys(value["meaning"] for _, value in plans)
+                    ),
+                    "priceBases": list(
+                        dict.fromkeys(value["priceBasis"] for _, value in plans)
+                    ),
+                    "abstentions": {
+                        name: value
+                        for name, value in criteria.items()
+                        if not name.startswith("plan_")
+                    },
+                },
                 "signals": {
                     "relativeSignals": fields(
                         state.get("relativeSignals", {}),
@@ -448,6 +481,58 @@ def native_evidence(receipt):
         "observations": observations,
         "decision": receipt["decision"],
     }
+
+
+def editor_evidence(files):
+    shared = {}
+    aliases = {}
+
+    def reference(match):
+        execution = json.loads(match.group(1))
+        observations = []
+        for row in execution["observations"]:
+            facts = {
+                name: row[name]
+                for name in (
+                    "symbol",
+                    "originalRequestHash",
+                    "signals",
+                    "planCriteria",
+                    "omittedHistory",
+                )
+            }
+            key = identity(facts)
+            alias = aliases.setdefault(key, f"facts{len(aliases)}")
+            shared[alias] = facts
+            observations.append(
+                {
+                    "sourceFacts": alias,
+                    "requestHash": row["requestHash"],
+                    "answers": row["answers"],
+                }
+            )
+        return (
+            "[BAYN_EXECUTION]\n"
+            + encode({**execution, "observations": observations}).decode()
+            + "\n[/BAYN_EXECUTION]"
+        )
+
+    parts = [
+        f"FILE {name}\n"
+        + re.sub(
+            r"\[BAYN_NATIVE_EVIDENCE\]\n(.*?)\n\[/BAYN_NATIVE_EVIDENCE\]",
+            reference,
+            value,
+            flags=re.DOTALL,
+        )
+        for name, value in files
+    ]
+    if shared:
+        parts.append(
+            "SHARED_NATIVE_FACTS\nEach sourceFacts key references the complete immutable signal and plan terms below.\n"
+            + encode(shared).decode()
+        )
+    return "\n\n".join(parts)
 
 
 class Adapter:
@@ -507,10 +592,11 @@ class Adapter:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "answer.txt").write_text(json.dumps(receipt["decision"]))
         (directory / "trajectory.md").write_text(
-            "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[OBSERVATION]\n"
+            "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[BAYN_NATIVE_EVIDENCE]\n"
             + json.dumps(
                 native_evidence(receipt), sort_keys=True, separators=(",", ":")
             )
+            + "\n[/BAYN_NATIVE_EVIDENCE]"
         )
         if run_id.endswith("/c1"):
             (self.root / "candidate-instructions.json").write_text(prompt)
@@ -542,8 +628,8 @@ class Editor(Proposer):
             for task in self.adapter.tasks()
             if self.adapter.task_prompt(task) == task_text
         )
-        evidence = "\n\n".join(
-            f"FILE {path.relative_to(context)}\n{path.read_text()}"
+        evidence = editor_evidence(
+            (str(path.relative_to(context)), path.read_text())
             for path in sorted(context.rglob("*"))
             if path.is_file()
         )

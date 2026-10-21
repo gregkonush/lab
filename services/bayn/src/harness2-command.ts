@@ -52,7 +52,11 @@ export const harness2Command = (args: readonly string[]) =>
         manifest.registration.evaluatorSourceRevision !== embeddedBuildMetadata.sourceRevision
       )
         return yield* new JevContractError({ message: 'Economic evaluator source differs from its installed image' })
-      const readArm = (artifact: typeof manifest.baseline, instructions: typeof manifest.registration.baseline) =>
+      const readArm = (
+        artifact: typeof manifest.baseline,
+        instructions: typeof manifest.registration.baseline,
+        variantBuild: unknown,
+      ) =>
         Effect.gen(function* () {
           const raw = yield* readBounded(artifact.reportPath, 16 * 1024 * 1024)
           if (sha256(raw) !== artifact.reportSha256)
@@ -62,12 +66,17 @@ export const harness2Command = (args: readonly string[]) =>
               report: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(raw),
               instructions,
               operatingAllocations: artifact.operatingAllocations,
+              variantBuild,
             }),
           )
         })
-      const baseline = yield* readArm(manifest.baseline, manifest.registration.baseline)
-      const baselineRepeat = yield* readArm(manifest.baselineRepeat, manifest.registration.baseline)
-      const candidate = yield* readArm(manifest.candidate, manifest.registration.candidate)
+      const buildRaw = yield* readBounded(manifest.candidate.buildReceipt.path, 64 * 1024)
+      if (sha256(buildRaw) !== manifest.candidate.buildReceipt.sha256)
+        return yield* new JevContractError({ message: 'Candidate compiler file differs from the manifest digest' })
+      const variantBuild = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(buildRaw)
+      const baseline = yield* readArm(manifest.baseline, manifest.registration.baseline, null)
+      const baselineRepeat = yield* readArm(manifest.baselineRepeat, manifest.registration.baseline, null)
+      const candidate = yield* readArm(manifest.candidate, manifest.registration.candidate, variantBuild)
       const comparison = yield* Effect.fromResult(
         compareJevHarnessEconomics(manifest.registration, { baseline, baselineRepeat, candidate }),
       )

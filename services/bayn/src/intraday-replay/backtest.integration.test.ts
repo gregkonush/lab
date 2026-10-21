@@ -367,6 +367,7 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
           Result.isFailure(
             jevHarnessBacktestOutcome({
               report,
+              variantBuild: null,
               instructions: jevInstructions,
               operatingAllocations: report.sessionDates.map((sessionDate) => ({
                 sessionDate,
