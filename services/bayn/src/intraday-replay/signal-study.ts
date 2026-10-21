@@ -152,7 +152,13 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        enterProbability: answer?.type === 'choice' ? (answer.probabilities['enter'] ?? null) : null,
+        enterProbability:
+          answer?.type === 'choice'
+            ? Object.entries(answer.probabilities).reduce(
+                (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
+                0,
+              )
+            : null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -221,8 +227,16 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'action' && answer.probabilities['enter'] !== undefined)
-            factors.push(['enterProbability', bin(answer.probabilities['enter'])])
+          if (name === 'action')
+            factors.push([
+              'enterProbability',
+              bin(
+                Object.entries(answer.probabilities).reduce(
+                  (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
+                  0,
+                ),
+              ),
+            ])
         }
       }
     for (const [dimension, value] of [

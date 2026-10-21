@@ -19,9 +19,7 @@ import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryQuoteExclusion, reproduceJevTradingSignalBatchEvidence } from './trading-signals'
 import { JevCandidatePlanStatus } from './batch'
-import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
-import { selectedJevTradeLevels } from './trade-price-choices'
-import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { selectedJevTradePlan } from './trade-plan-choices'
 import { type JevFundedExitPlan } from './strategy-exit-plan'
 
 export const JevDecisionEvidenceSchema = Schema.Struct({
@@ -66,55 +64,34 @@ export const decideJevEntry = (input: unknown) =>
     const { evidence, observation, inferences, calendar } = yield* reproduceDecisionEvidence(input)
     if (observation.portfolio.purpose !== JevPurpose.Entry)
       return yield* unavailable('An entry decision requires a flat entry observation')
-    const entryPlanRejections: Record<
-      string,
-      'UNFUNDED_ALLOCATION' | 'MISSING_OR_INVALID_MODEL_PRICES' | 'UNFUNDED_MODEL_PLAN'
-    > = {}
+    const entryPlanRejections: Record<string, 'MODEL_WAIT' | 'MODEL_AVOID' | 'NO_FUNDED_CANDIDATES'> = {}
     const eligible: { symbol: string; probability: number; weight: number; exitPlan: JevFundedExitPlan }[] = []
     for (const { symbol, inference } of inferences) {
       const answer = inference.response.answers['action']
       const quote = observation.snapshot.latestQuotes[symbol]
       if (answer?.type !== 'choice' || quote === undefined)
         return yield* unavailable('Jev entry has no typed action or verified quote')
-      const probability = answer.probabilities['enter']
-      if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
+      const probability = answer.probabilities[answer.choice]
+      if (probability === undefined) return yield* unavailable('Jev plan answer is missing its chosen probability')
       const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
-      const request = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === symbol)
-      if (answer.choice !== 'enter' || !quoteEligible) continue
-      if (request?.status !== JevCandidatePlanStatus.Requested)
+      const candidate = evidence.batchPlan.candidates.find((entry) => entry.symbol === symbol)
+      if (candidate?.status !== JevCandidatePlanStatus.Requested)
         return yield* unavailable('Jev selected entry has no sealed request')
-      const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
-      const economics = yield* jevEntryEconomics({
-        protocol: observation.protocol,
-        symbol,
-        bidMicros: bid,
-        askMicros: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        capitalMicros: observation.portfolio.brokerState.account.equityMicros,
-      })
-      if (economics === null) {
-        entryPlanRejections[symbol] = 'UNFUNDED_ALLOCATION'
+      const plan = yield* selectedJevTradePlan(candidate.request.request, inference.response)
+      if (plan === null) {
+        const question = candidate.request.request.questions['action']
+        const hasPlans =
+          question?.type === 'choice' && Object.keys(question.criteria).some((key) => key.startsWith('plan_'))
+        entryPlanRejections[symbol] = !hasPlans
+          ? 'NO_FUNDED_CANDIDATES'
+          : answer.choice === 'wait'
+            ? 'MODEL_WAIT'
+            : 'MODEL_AVOID'
         continue
       }
-      const levels = yield* selectedJevTradeLevels({
-        request: request.request.request,
-        response: inference.response,
-        symbol,
-        bidMicros: bid,
-        maximumEntryPriceMicros: BigInt(economics.maximumEntryPriceMicros),
-        sourceStartAt: observation.snapshot.manifest.rangeStartAt,
-        sourceEndAt: observation.snapshot.manifest.rangeEndAt,
-        protocol: observation.protocol,
-      })
-      if (levels === null) {
-        entryPlanRejections[symbol] = 'MISSING_OR_INVALID_MODEL_PRICES'
-        continue
-      }
-      const funded = yield* fundJevTradePlan({ protocol: observation.protocol, economics, levels })
-      if (funded === null) {
-        entryPlanRejections[symbol] = 'UNFUNDED_MODEL_PLAN'
-        continue
-      }
-      eligible.push({ symbol, probability, weight: funded.maximumTargetWeight, exitPlan: funded.exitPlan })
+      if (plan.levels.symbol !== symbol) return yield* unavailable('Selected Jev plan belongs to another symbol')
+      if (!quoteEligible) continue
+      eligible.push({ symbol, probability, weight: observation.protocol.maximumSymbolWeight, exitPlan: plan })
     }
     eligible.sort(
       (left, right) =>
@@ -123,7 +100,7 @@ export const decideJevEntry = (input: unknown) =>
     const selected = eligible.slice(0, observation.protocol.maximumPositions)
     const selectedSymbols = selected.map(({ symbol }) => symbol)
     return {
-      schemaVersion: 'bayn.jev-entry-target.v4' as const,
+      schemaVersion: 'bayn.jev-entry-target.v5' as const,
       strategy: 'jev' as const,
       entryPlanRejections,
       exitPolicy: jevPositionExitPolicy(
@@ -147,11 +124,11 @@ export const decideJevEntry = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev entry target could not be derived', cause })))
 
 const TargetBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-target.v4'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-target.v5'),
   strategy: Schema.Literal('jev'),
   entryPlanRejections: Schema.Record(
     SymbolSchema,
-    Schema.Literals(['UNFUNDED_ALLOCATION', 'MISSING_OR_INVALID_MODEL_PRICES', 'UNFUNDED_MODEL_PLAN']),
+    Schema.Literals(['MODEL_WAIT', 'MODEL_AVOID', 'NO_FUNDED_CANDIDATES']),
   ),
   exitPolicy: JevPositionExitPolicySchema,
   sessionDate: IsoDateSchema,

@@ -227,7 +227,7 @@ const seedManagedPosition = (
           ...portfolio,
           entryDecisionHash: options.entryDocument.contentHash,
           exitPolicy:
-            options.entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v4'
+            options.entryDocument.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v5'
               ? options.entryDocument.strategyDecision.exitPolicy
               : portfolio.exitPolicy,
           entryIntentIds: [entryId],
@@ -258,7 +258,7 @@ const seedManagedPosition = (
         policyHash: '3'.repeat(64),
         authorityGenerationHash: nativeInput.authorityGenerationHash,
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v4', exitPolicy: portfolio.exitPolicy },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v5', exitPolicy: portfolio.exitPolicy },
       orderedIntentIds: portfolio.entryIntentIds,
     }
     yield* acquireEntryCycle(entryAt)
@@ -352,7 +352,7 @@ const prepareManagementBatch = Effect.gen(function* () {
     makeJevTradingSignalBatch({
       observation: observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const candidate = plan.candidates[0]
@@ -412,7 +412,7 @@ const prepareEntryBatch = (symbols: readonly string[]) =>
       makeJevTradingSignalBatch({
         observation: observation.payload,
         expiresAt: utcInstantFromEpochMillis(observed + entry.protocol.inferenceValidityMs),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -965,7 +965,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           portfolio: candidate.portfolio,
           snapshot: candidate.snapshot,
         })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V5)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V6)
         expect(calls.toSorted()).toEqual([...equityMarketProfile.candidateSymbols].sort())
         expect(result.batchPlan.candidates.filter((candidate) => candidate.status === 'EXCLUDED')).toHaveLength(0)
         expect(Result.getOrThrow(decideJevEntry(result)).selectedSymbols).toEqual(['AAPL'])
@@ -978,7 +978,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           makeJevTradingSignalBatch({
             observation: { ...result.observation, authorityGenerationHash: '0'.repeat(64) },
             expiresAt: result.batchPlan.expiresAt,
-            planVersion: JevBatchPlanVersion.V5,
+            planVersion: JevBatchPlanVersion.V6,
           }),
         )
         const wrongIdentity = Result.getOrThrow(
@@ -1040,7 +1040,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v15' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v16' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(
@@ -1132,7 +1132,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           }
           const recovered = yield* evaluateJevObservation({ ...input, snapshot: selected.managed.snapshot })
           expect(recovered.batchPlan.observedAt).toBe(query.observedAt)
-          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V5)
+          expect(recovered.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V6)
           expect(calls).toBe(purpose === JevPurpose.Entry ? 15 : 1)
         }).pipe(
           Effect.provideService(JevClient, {
@@ -1198,7 +1198,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           expect.objectContaining({ symbol: 'AMD', reason: 'freshness' }),
         )
         const result = yield* evaluateJevObservation({ ...nativeInput, portfolio, snapshot })
-        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V5)
+        expect(result.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V6)
         expect(result.batchPlan.candidates).toContainEqual(
           expect.objectContaining({ symbol: 'AMD', status: 'EXCLUDED' }),
         )
@@ -1697,7 +1697,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           makeJevTradingSignalBatch({
             observation: fixture.observation.payload,
             expiresAt: new Date(observed + fixture.protocol.inferenceValidityMs).toISOString(),
-            planVersion: JevBatchPlanVersion.V5,
+            planVersion: JevBatchPlanVersion.V6,
           }),
         )
         const store = yield* JevBatchStore
@@ -1827,7 +1827,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           },
         }).pipe(Effect.tapError((error) => Effect.logError(error)))
         expect(reconciliations).toBe(2)
-        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v4')
+        expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v5')
         expect(document.dispatchable).toBe(true)
         expect(document.orderedIntentIds).toHaveLength(1)
         expect(document.createdAt).toBe(new Date(observed + 7000).toISOString())
@@ -1837,9 +1837,9 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         expect(document.deltaRisk[0]?.evaluation.decision.expiresAt).toBe(
           new Date(Date.parse(entryQuote.eventAt) + fixture.protocol.maximumQuoteAgeMs).toISOString(),
         )
-        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v4')
+        if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5')
           throw new Error('Expected native Jev entry target')
-        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V5)
+        expect(document.strategyDecision.evidence.batchPlan.schemaVersion).toBe(JevBatchPlanVersion.V6)
         expect(Date.parse(document.deltaRisk[0].evaluation.decision.expiresAt)).toBeGreaterThan(
           Date.parse(document.strategyDecision.evidence.batchPlan.expiresAt),
         )

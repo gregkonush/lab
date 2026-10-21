@@ -1,38 +1,40 @@
 # Jev-selected trade plans and broker protection
 
-Jev chooses the entry action, stop loss and take profit before execution. Protocol v15 / signal state v14,
-batch v5, entry/exit targets v4 and position-exit policy v3 replace the earlier executable contracts.
-There is no positive-return or benchmark-outperformance admission gate, range extension target,
-fixed percentage stop, five-percent stop-distance cap or 0.1-percent capital-risk sizing rule.
+Jev selects a complete entry, stop loss and take profit before execution. Protocol v16 / signal state v15,
+batch v6, entry/exit targets v5 and position-exit policy v4 replace the earlier executable contracts.
+Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
 
-The current Jev API returns typed judgments and closed choices, not arbitrary generated numeric prices.
-Each candidate request includes an `action` choice and independent `stop_loss` and `take_profit` choices.
-Price choices come from the actual completed OHLC observations available in that candidate's verified snapshot,
-rounded conservatively to the instrument's executable precision. They are not an extrapolated price grid.
-Each price question includes `none`; when a role has no valid observed price, its question is absent and
-entry cannot be funded. The entry action still reaches Jev. This limitation can leave a setup without a
-profit choice beyond a fresh high; it must never be hidden by inventing a replacement target.
+Jev returns typed judgments over supplied state. One `action` Choice selects a complete funded plan, `wait` or `avoid`.
+A plan option contains its stop, stop-limit, take-profit, immutable funded quantity ceiling and estimated net loss/profit.
+The model judges support for the whole plan within the holding horizon. No independent protection answer can disagree
+with an entry answer. No `enter` option exists without a complete funded plan. Management still asks whether to hold or exit.
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
-[value extraction pattern](https://docs.typesafe.ai/cookbooks/pre_parsed_value_extraction_cookbook).
+[System One programming model](https://docs.typesafe.ai/concepts/system-one).
 
-The questions run independently over the same state and cannot see one another's answers. Each price question
-explicitly assumes a new long entry and judges its own price from the supplied evidence. Code consumes those
-speculative answers only for a chosen `enter` with both selected prices; the action question cannot choose or
-coordinate other answers. See [speculative fan-out](https://docs.typesafe.ai/patterns/fan-out).
-Code checks that the stop is positive and below the current bid and entry ceiling, that the take profit is
-above that ceiling, and that estimated target proceeds cover the modeled entry and exit costs. An unsupported,
-missing, inverted or unfunded plan cannot create an order. Code never substitutes another stop or target.
-The immutable request, raw response and selected prices reproduce the exact sealed entry plan.
-The batch question identity binds each symbol's distinct choices; a different price menu changes its identity.
+Code builds at most sixteen plans from four representative stop levels and four target levels. The candidate menu combines
+observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed OHLC range,
+with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid. Target scenarios
+lie those steps above the modeled break-even exit bid. Deduplication, conservative instrument rounding and four evenly spaced
+representatives bound each set. The model selects the actual plan; these construction rules never select a default exit.
 
-Quantity retains the existing capital allocation and instrument precision. Its immutable funded quantity ceiling
-prevents a cheaper refreshed ask from expanding it. Account loss, drawdown, turnover, notional, exposure, open-order,
-authority and reconciliation limits remain enforced. The existing maximum holding/session deadlines and five-second
-protection cadence remain execution safeguards. They are distinct from the removed price-selection formula.
-No model action overrides those safeguards or proves predictive edge. Model probabilities are not calibrated
-probabilities of a profitable trade.
+Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
+nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
+have candidate targets without inventing historical highs. Candidate coverage and predictive usefulness still need empirical
+validation; a supplied candidate is not evidence that the market will reach it.
+
+Code funds every complete plan before inference. Target proceeds must exceed acquisition cost after modeled entry and exit
+fees and adverse execution allowances. Stop proceeds must be positive and below acquisition cost. If allocation or prices
+cannot fund any plan, only abstention remains. The exact sealed request, response and deterministic reconstruction bind the
+chosen plan. A missing, foreign, altered, stale or unsupported choice cannot authorize an order. Model abstention remains
+explicit in `entryPlanRejections`, and public no-trade status distinguishes `JEV_MODEL_ABSTAINED` from
+`JEV_NO_FUNDED_CANDIDATES` instead of describing an empty account as satisfied targets.
+
+Quantity retains existing capital allocation and instrument precision. The funded quantity ceiling prevents a cheaper
+refreshed ask from expanding it. Account loss, drawdown, turnover, notional, exposure, open-order, authority and reconciliation
+limits remain enforced. The maximum holding/session deadlines and five-second protection cadence remain safeguards.
+Model probabilities compare supplied alternatives; they are not calibrated probabilities of profitable trades.
 
 ## Venue behavior
 
@@ -83,9 +85,9 @@ make its remaining children disappear. Unknown submissions are recovered by thei
 
 ## Hard cutover
 
-Migration 131 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v15, and accepts only current batch and
+Migration 132 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v16, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
-No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v9 rejects
+No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects
 pre-cutover checkpoints. Broker order, fill and accounting history are preserved.

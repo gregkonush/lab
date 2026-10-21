@@ -4751,8 +4751,8 @@ describe('OBSERVE runtime composition', () => {
     expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed', 'pricing'])
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
-    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v4')
-    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v4') throw new Error('expected Jev entry')
+    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v5')
+    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
     expect(
       Result.getOrThrow(canonicalHashV1Result(document.strategyDecision.evidence.observation.portfolio.brokerState)),
     ).toBe(Result.getOrThrow(canonicalHashV1Result(result.initial.brokerState)))
@@ -4817,7 +4817,7 @@ describe('OBSERVE runtime composition', () => {
     expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
     expect(result.refreshes).toBe(0)
     const decision = result.exit.value.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v4') throw new Error('expected Jev entry')
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
     expect(decision.selectedSymbols).toEqual(['NVDA'])
     expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
   })
@@ -5001,7 +5001,7 @@ describe('OBSERVE runtime composition', () => {
         decisionMarketData: { symbols: equityMarketProfile.universe },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v4', selectedSymbols: ['NVDA'] },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v5', selectedSymbols: ['NVDA'] },
       targetPlan: { status: TargetPlanStatus.Planned },
     })
     expect(fixture.document.orderedIntentIds).toHaveLength(1)
@@ -7220,7 +7220,7 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const decision = fixture.document.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v4') throw new Error('Entry fixture required')
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('Entry fixture required')
     const levels = decision.exitPolicy.plans[fixture.intent.symbol]?.levels
     if (levels === undefined) throw new Error('Bound strategy prices required')
     const intent = await Effect.runPromise(

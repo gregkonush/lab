@@ -31,7 +31,7 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
-import { jevTradePriceQuestions } from './trade-price-choices'
+import { jevTradePlanQuestion } from './trade-plan-choices'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -247,19 +247,6 @@ export const commonMomentumPrices = (
     }
   })
 
-export const jevTradingQuestions = {
-  action: {
-    type: 'choice',
-    instructions:
-      'Using `candidate`, `benchmark`, `relativeSignals`, `entryEconomics` and `session`, choose enter, wait or avoid for a new long position in `candidate.symbol` now over `task.horizonMinutes`. There is no required positive return or benchmark outperformance. Judge whether the supplied market evidence supports the entry after estimated execution costs. Execution remains conditional on separately selected and validated stop loss and take profit prices. Code owns permission, quantity, execution and account risk limits.',
-    criteria: {
-      enter: 'Evidence supports entering a long position now.',
-      wait: 'A possible setup needs further confirmation.',
-      avoid: 'The setup is adverse, exhausted, contradictory or unsupported.',
-    },
-  },
-} satisfies JevRequest['questions']
-
 export const jevManagementQuestions = {
   action: {
     type: 'choice',
@@ -380,12 +367,7 @@ const requestFromSnapshot = (
         native.portfolio.purpose === JevPurpose.Manage
           ? jevManagementQuestions
           : {
-              ...jevTradingQuestions,
-              ...(yield* jevTradePriceQuestions({
-                snapshot,
-                symbol,
-                maximumEntryPriceMicros: BigInt(economics?.maximumEntryPriceMicros ?? '0'),
-              })),
+              action: yield* jevTradePlanQuestion({ snapshot, symbol, economics, protocol: native.protocol }),
             },
     })
   })
@@ -434,8 +416,8 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V5)
-      return yield* unavailable('The current trading protocol requires batch v5')
+    if (planVersion !== JevBatchPlanVersion.V6)
+      return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)

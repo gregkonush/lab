@@ -98,7 +98,7 @@ const plan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: fixture.observation.payload,
     expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-    planVersion: JevBatchPlanVersion.V5,
+    planVersion: JevBatchPlanVersion.V6,
   }),
 )
 const requested = plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
@@ -126,7 +126,7 @@ const excludedPlan = Result.getOrThrow(
   makeJevTradingSignalBatch({
     observation: excludedFixture.observation.payload,
     expiresAt: plan.expiresAt,
-    planVersion: JevBatchPlanVersion.V5,
+    planVersion: JevBatchPlanVersion.V6,
   }),
 )
 const first = requested[0]
@@ -683,7 +683,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const foreignFirst = foreignPlan.candidates.find(
@@ -772,14 +772,14 @@ describePostgres('PostgreSQL complete Jev batches', () => {
       makeJevTradingSignalBatch({
         observation: nextObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const foreignPlan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation: foreignObservation.payload,
         expiresAt: plan.expiresAt,
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     await runtime.runPromise(
@@ -822,7 +822,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
     )
   })
 
-  for (const planVersion of [JevBatchPlanVersion.V5]) {
+  for (const planVersion of [JevBatchPlanVersion.V6]) {
     test(`persists ${planVersion} under the expanded database constraint`, async () => {
       const { batchId: _, ...material } = plan
       const versioned = Result.getOrThrow(makeJevBatchPlan({ ...material, schemaVersion: planVersion }))
@@ -993,7 +993,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             makeJevTradingSignalBatch({
               observation: fixture.observation.payload,
               expiresAt: utcInstantFromEpochMillis(observed + 6000),
-              planVersion: JevBatchPlanVersion.V5,
+              planVersion: JevBatchPlanVersion.V6,
             }),
           ),
         ).toBe(true)

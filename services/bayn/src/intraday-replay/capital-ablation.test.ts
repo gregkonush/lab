@@ -92,7 +92,7 @@ const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOp
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const completedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -206,16 +206,23 @@ test('cost hurdle rejects an expensive low-proxy opportunity while preserving bo
 })
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} excludes an unfunded source window without inventing fills under fee stress`, () => {
+  test(`${symbol} executes the selected complete plan and retains actual losses under fee stress`, () => {
     const opp = cryptoOpportunity(symbol)
+    let previousNet: bigint | undefined
     for (const chosen of [scenario, { ...scenario, id: 'double-fees', feeMultiplierPpm: 2_000_000 }]) {
       const base = evaluate([opp], chosen)[0]
       expect(base?.metrics.executionComplete).toBe(true)
-      expect(base?.metrics.filledEntries).toBe(0)
-      expect(base?.metrics.netExecutionPnlMicros).toBe('0')
-      expect(base?.metrics.netAfterAllCostsMicros).toBe('-11000')
-      expect(base?.ledger.fills).toEqual([])
-      expect(base?.ledger.positions).toEqual([])
+      expect(base?.metrics.filledEntries).toBe(1)
+      if (base?.metrics.netExecutionPnlMicros === undefined || base.metrics.netExecutionPnlMicros === null)
+        throw new Error('Expected complete fee-accounted replay')
+      const net = BigInt(base.metrics.netExecutionPnlMicros)
+      expect(net).toBeLessThan(0n)
+      expect(base.metrics.netAfterAllCostsMicros).toBe((net - 11000n).toString())
+      expect(base.ledger.fills.some((fill) => fill.side === 'buy' && fill.symbol === symbol)).toBe(true)
+      expect(base.ledger.fills.some((fill) => fill.side === 'sell' && fill.symbol === symbol)).toBe(true)
+      expect(base.ledger.positions).toEqual([])
+      if (previousNet !== undefined) expect(net).toBeLessThan(previousNet)
+      previousNet = net
     }
   })
 }
@@ -325,8 +332,8 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v15')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('chosen-model-action')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v16')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('chosen-complete-model-plan')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)
@@ -435,7 +442,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(equityAt + 9900).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, new Date(equityAt).toISOString())
@@ -554,19 +561,20 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
       const reports = replayed.contexts.flatMap((context) => [...context.states.values()].map(finishCapitalState))
       if (reports[0]?.metrics.executionComplete === false) expect(reports).toHaveLength(2)
       expect(reports[0]?.opportunities.map((row) => String(row.status))).toEqual([
-        CapitalAdmission.Abstain,
+        CapitalAdmission.Admitted,
         CapitalAdmission.Admitted,
       ])
       expect(reports[0]?.eligibleOpportunityIds).toEqual(reports[1]?.eligibleOpportunityIds)
       expect(reports[0]?.ledger.fills.filter((fill) => fill.side === 'buy').map((fill) => fill.symbol)).toEqual([
+        'BTC/USD',
         'AAPL',
       ])
       expect(BigInt(reports[0]?.ledger.cashMicros ?? '0') - BigInt(terms.openingCashMicros)).toBe(
         reports[0]?.trades.reduce((sum, trade) => sum + BigInt(trade.result.netExecutionPnlMicros ?? '0'), 0n),
       )
       expect(reports[0]?.metrics).toMatchObject({
-        filledEntries: 1,
-        closedEpisodes: 1,
+        filledEntries: 2,
+        closedEpisodes: 2,
         executionComplete: true,
         knownInferenceCostMicros: '20000',
       })

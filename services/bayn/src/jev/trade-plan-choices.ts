@@ -1,0 +1,126 @@
+import { Result, Schema } from 'effect'
+
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
+import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { JevContractError, type JevRequest, type JevResponse } from './contract'
+import { fundJevTradePlan, type JevEntryEconomics } from './entry-economics'
+import type { JevProtocol } from './protocol'
+import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from './strategy-exit-plan'
+
+const representativePrices = (values: readonly bigint[]) => {
+  const prices = [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
+  return prices.filter((_, index) =>
+    Array.from({ length: Math.min(4, prices.length) }, (_, slot) =>
+      Math.floor((slot * (prices.length - 1)) / Math.max(1, Math.min(4, prices.length) - 1)),
+    ).includes(index),
+  )
+}
+
+export const jevTradePlanQuestion = (input: {
+  readonly snapshot: StrategyMarketSnapshot
+  readonly symbol: string
+  readonly economics: JevEntryEconomics | null
+  readonly protocol: JevProtocol
+}) =>
+  Result.gen(function* () {
+    const { snapshot, symbol, economics, protocol } = input
+    const criteria: Record<
+      string,
+      Extract<JevRequest['questions'][string], { readonly type: 'choice' }>['criteria'][string]
+    > = {
+      wait: 'No supplied complete plan is supported now; a possible setup needs more confirmation.',
+      avoid: 'No supplied complete plan is supported; the setup is adverse, exhausted or unsupported.',
+    }
+    if (economics !== null) {
+      const quote = snapshot.latestQuotes[symbol]
+      if (quote === undefined)
+        return yield* Result.fail(new JevContractError({ message: 'Trade plans require a verified quote' }))
+      const bid = yield* priceNumberToMicros(quote.bidPrice, 'plan bid', 'DOWN')
+      const values = yield* Result.all(
+        snapshot.bars
+          .filter((bar) => bar.symbol === symbol)
+          .flatMap((bar) => [bar.open, bar.high, bar.low, bar.close])
+          .map((price) => priceNumberToMicros(price, 'observed plan context', 'DOWN')),
+      )
+      if (values.length === 0)
+        return yield* Result.fail(new JevContractError({ message: 'Trade plans require completed price history' }))
+      const high = values.reduce((left, right) => (left > right ? left : right))
+      const low = values.reduce((left, right) => (left < right ? left : right))
+      const tick =
+        quantizeInstrumentPriceMicros(symbol, bid + 1n, 'UP') - quantizeInstrumentPriceMicros(symbol, bid, 'DOWN')
+      const rangeStep = (high - low + 3n) / 4n
+      const step = rangeStep > tick ? rangeStep : tick
+      const breakEven = yield* priceNumberToMicros(economics.breakEvenExitBidUsd, 'break-even plan bid', 'UP')
+      const moves = [1n, 2n, 4n, 8n]
+      const stops = representativePrices(
+        [...values.filter((price) => price < bid), ...moves.map((multiple) => bid - step * multiple)]
+          .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'DOWN'))
+          .filter((price) => price > 0n && price < bid),
+      )
+      const profits = representativePrices(
+        [...values.filter((price) => price > breakEven), ...moves.map((multiple) => breakEven + step * multiple)]
+          .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'UP'))
+          .filter((price) => price > breakEven),
+      )
+      for (const stop of stops) {
+        for (const profit of profits) {
+          const levels = yield* Schema.decodeUnknownResult(JevStrategyExitPlanSchema)({
+            schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
+            rule: 'model-selected-complete-plan',
+            symbol,
+            sourceStartAt: snapshot.manifest.rangeStartAt,
+            sourceEndAt: snapshot.manifest.rangeEndAt,
+            maximumHoldingMinutes: protocol.maximumHoldingMinutes,
+            maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+            stopPriceMicros: stop.toString(),
+            stopLimitPriceMicros: quantizeInstrumentPriceMicros(
+              symbol,
+              (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
+              'UP',
+            ).toString(),
+            profitLimitPriceMicros: profit.toString(),
+          }).pipe(
+            Result.mapError((cause) => new JevContractError({ message: 'Proposed trade plan is invalid', cause })),
+          )
+          const funded = yield* fundJevTradePlan({ protocol, economics, levels })
+          if (funded === null) continue
+          criteria[`plan_${Object.keys(criteria).length - 2}`] = {
+            priceBasis: 'HYPOTHETICAL_ORDER_PRICES',
+            meaning:
+              'Enter now with this complete stop and target only if the supplied evidence supports the whole plan over the holding horizon. These proposed future order prices are not observed or predicted market outcomes.',
+            plan: funded.exitPlan,
+            stopPriceUsd: Number(stop) / 1_000_000,
+            targetPriceUsd: Number(profit) / 1_000_000,
+            estimatedLossUsd:
+              Number(BigInt(economics.acquisitionCostMicros) - BigInt(funded.exitPlan.estimatedStopNetMicros)) /
+              1_000_000,
+            estimatedProfitUsd:
+              Number(BigInt(funded.exitPlan.estimatedTargetNetMicros) - BigInt(economics.acquisitionCostMicros)) /
+              1_000_000,
+          }
+        }
+      }
+    }
+    return {
+      type: 'choice' as const,
+      instructions:
+        'Using `candidate`, `benchmark`, `relativeSignals`, `entryEconomics` and `session`, select one supplied complete long entry plan only when the evidence supports both its thesis-invalidation stop and reaching its target within `task.horizonMinutes` after estimated execution costs. The options are hypothetical order terms, not forecasts or additional observed data. A plan being funded does not make it likely or profitable. Choose wait or avoid when no complete plan is supported. No positive historical return or benchmark outperformance is required. Code owns permission, quantity, freshness, broker protection and account risk.',
+      criteria,
+    }
+  })
+
+export const selectedJevTradePlan = (request: JevRequest, response: JevResponse) =>
+  Result.gen(function* () {
+    const answer = response.answers['action']
+    const question = request.questions['action']
+    if (answer?.type !== 'choice' || question?.type !== 'choice')
+      return yield* Result.fail(new JevContractError({ message: 'Entry requires a typed complete-plan choice' }))
+    if (answer.choice === 'wait' || answer.choice === 'avoid') return null
+    const selected = question.criteria[answer.choice]
+    if (selected === null || typeof selected !== 'object' || Array.isArray(selected) || !('plan' in selected))
+      return yield* Result.fail(new JevContractError({ message: 'Jev selected a plan outside its sealed request' }))
+    return yield* Schema.decodeUnknownResult(JevFundedExitPlanSchema)(selected['plan']).pipe(
+      Result.mapError((cause) => new JevContractError({ message: 'Selected complete plan is invalid', cause })),
+    )
+  })
