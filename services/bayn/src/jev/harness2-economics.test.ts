@@ -43,7 +43,7 @@ const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const outcome = (run: string, net: readonly (string | null)[], candidate = false): JevHarnessBacktestOutcome => ({
   runId: run.repeat(64),
   reportHash: run.repeat(64),
-  executableSha256: run.repeat(64),
+  executableSha256: (candidate ? 'c' : 'a').repeat(64),
   instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
   contextHash: 'd'.repeat(64),
   providerRequests: 8,
@@ -100,6 +100,18 @@ test('unchanged-prompt variability can explain an apparent candidate gain', () =
   expect(report.pairedNetDeltaMicros).toBe('4000')
   expect(report.unchangedPromptNetDeltaMicros).toBe('8000')
   expect(report.economicImprovement).toBe('UNPROVEN')
+})
+
+test('an unchanged-prompt repeat using another executable cannot measure provider repeatability', () => {
+  expect(
+    Result.isFailure(
+      compareJevHarnessEconomics(registration(), {
+        baseline: outcome('a', flat('1000')),
+        baselineRepeat: { ...outcome('b', flat('1000')), executableSha256: 'f'.repeat(64) },
+        candidate: outcome('c', flat('1500'), true),
+      }),
+    ),
+  ).toBe(true)
 })
 
 test('late declared registration and drawdown prevent a complete descriptive result', () => {
@@ -206,7 +218,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
   const material = {
     schemaVersion: 'bayn.backtest-report.v4',
-    executableSha256: sha256('SYNTHETIC economic fixture executable ' + run),
+    executableSha256: sha256('SYNTHETIC economic fixture executable ' + hash(instructions)),
     jevInstructions: { document: instructions, contentHash: hash(instructions) },
     evidenceMode: 'simulated-production-execution',
     runId: run.repeat(64),
