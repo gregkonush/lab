@@ -11,7 +11,6 @@ import {
   type StableBrokerSnapshot,
 } from './broker-reconciler-model'
 import { prepareNormalizedSnapshot } from './broker-normalization'
-import { Pipeable } from '../pipeable'
 
 const ingestBrokerEvents = (store: ReconciliationPersistence, normalized: NormalizedBrokerSnapshot) =>
   Effect.gen(function* () {
@@ -151,7 +150,7 @@ const writeReconciliation = (
     return result
   })
 
-const persistStableSnapshotDataFirst = (
+export const persistStableSnapshot = (
   store: ReconciliationPersistence,
   snapshot: StableBrokerSnapshot,
   now: Effect.Effect<string, ReconciliationError>,
@@ -160,5 +159,3 @@ const persistStableSnapshotDataFirst = (
     const normalized = yield* prepareNormalizedSnapshot(store, snapshot)
     return yield* writeReconciliation(store, normalized, snapshot.history.orders.observedAt, now)
   })
-
-export const persistStableSnapshot = Pipeable.dual(3, persistStableSnapshotDataFirst)

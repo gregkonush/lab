@@ -19,7 +19,7 @@ test('raises sandbox turnover and cumulative drawdown budgets while preserving t
   )
   expect(live).toEqual(legacy)
   expect(Result.getOrThrow(canonicalHashV1Result(live))).toBe(
-    '9d97ea59475004b664b745683932addeb687ab16ca4f627f93825becad334f12',
+    '75f41cdcde135541b3f65ae243d5b550e974e2074112e39f250b16e780591108',
   )
   expect(live.maxDailyTradedNotionalMicros).toBe('200000000000')
   expect(paper).toEqual({ ...live, maxDailyTradedNotionalMicros: '1000000000000', maxDrawdownMicros: '10000000000' })
@@ -101,8 +101,8 @@ test('unknown, foreign-account and live increased-policy hashes fail closed', as
 test('pipeable policy loaders preserve explicit sandbox selection', async () => {
   const [quote, execution] = await Effect.runPromise(
     Effect.all([
-      loadExecutionRiskPolicy(fixtureProtocol.universe, BrokerEnvironment.Sandbox)('test-account'),
-      loadExecutionRiskPolicy(fixtureProtocol.universe, BrokerEnvironment.Sandbox)('test-account'),
+      loadExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
+      loadExecutionRiskPolicy('test-account', fixtureProtocol.universe, BrokerEnvironment.Sandbox),
     ]),
   )
   expect(quote.maxDailyTradedNotionalMicros).toBe('1000000000000')

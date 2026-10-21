@@ -1,6 +1,5 @@
 import { Result, Schema } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
 import { CycleDecisionDocumentSchema, type CycleDecisionDocument } from '../../shadow-decision-contract'
 import { TargetPlanStatus } from '../../target-planner/index'
@@ -88,7 +87,7 @@ const fail = (
 
 const shadowDecisionEquivalent = Schema.toEquivalence(CycleDecisionDocumentSchema)
 
-const makeInitialCycleDataFirst = (draft: CycleDraft, observedAt: string): AutonomousCycle => ({
+export const makeInitialCycle = (draft: CycleDraft, observedAt: string): AutonomousCycle => ({
   ...draft,
   state: CycleState.Pending,
   bindings: {},
@@ -97,9 +96,7 @@ const makeInitialCycleDataFirst = (draft: CycleDraft, observedAt: string): Auton
   updatedAt: observedAt,
 })
 
-export const makeInitialCycle = Pipeable.dual(2, makeInitialCycleDataFirst)
-
-const decideAcquireDataFirst = (
+export const decideAcquire = (
   stored: AutonomousCycle,
   draft: CycleDraft,
   created: boolean,
@@ -110,9 +107,7 @@ const decideAcquireDataFirst = (
   return Result.succeed({ cycle: stored, created })
 }
 
-export const decideAcquire = Pipeable.dual(3, decideAcquireDataFirst)
-
-const decideActivationDataFirst = (
+export const decideActivation = (
   cycle: AutonomousCycle,
   observedAt: string,
 ): Result.Result<ActivationDecision, CycleStoreDecisionFailure> => {
@@ -134,9 +129,7 @@ const decideActivationDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle })
 }
 
-export const decideActivation = Pipeable.dual(2, decideActivationDataFirst)
-
-const decideDecisionBindingDataFirst = (
+export const decideDecisionBinding = (
   cycle: AutonomousCycle,
   document: CycleDecisionDocument,
   observedAt: string,
@@ -193,9 +186,7 @@ const decideDecisionBindingDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle, document })
 }
 
-export const decideDecisionBinding = Pipeable.dual(4, decideDecisionBindingDataFirst)
-
-const decideCompletionDataFirst = (
+export const decideCompletion = (
   cycle: AutonomousCycle,
   state: CycleCompletionState,
   observedAt: string,
@@ -211,9 +202,7 @@ const decideCompletionDataFirst = (
     : Result.succeed({ _tag: 'VerifyDecision', cycle, decisionHash, state })
 }
 
-export const decideCompletion = Pipeable.dual(3, decideCompletionDataFirst)
-
-const validateCompletionDocumentDataFirst = (
+export const validateCompletionDocument = (
   decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   executionCompletionEvidenceMatches?: boolean,
@@ -239,17 +228,7 @@ const validateCompletionDocumentDataFirst = (
     : fail('invariant', 'cycle terminal state must match its exact durable shadow decision')
 }
 
-export const validateCompletionDocument = Pipeable.by<
-  (
-    storedDocuments: readonly CycleDecisionDocument[],
-    executionCompletionEvidenceMatches?: boolean,
-  ) => (
-    decision: Extract<CompletionDecision, { readonly _tag: 'VerifyDecision' }>,
-  ) => ReturnType<typeof validateCompletionDocumentDataFirst>,
-  typeof validateCompletionDocumentDataFirst
->((arguments_) => !Array.isArray(arguments_[0]), validateCompletionDocumentDataFirst)
-
-const decideBlockDataFirst = (
+export const decideBlock = (
   cycle: AutonomousCycle,
   reason: CycleTerminalReason,
   observedAt: string,
@@ -280,9 +259,7 @@ const decideBlockDataFirst = (
     : Result.succeed({ _tag: 'Persist', cycle, reason })
 }
 
-export const decideBlock = Pipeable.dual(3, decideBlockDataFirst)
-
-const validateBlockedDecisionDataFirst = (
+export const validateBlockedDecision = (
   decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
   storedDocuments: readonly CycleDecisionDocument[],
   executionGenerationIsSuperseded?: boolean,
@@ -328,13 +305,3 @@ const validateBlockedDecisionDataFirst = (
   }
   return fail('invariant', 'decision-bound cycle may block only from its exact blocked or expired execution decision')
 }
-
-export const validateBlockedDecision = Pipeable.by<
-  (
-    storedDocuments: readonly CycleDecisionDocument[],
-    executionGenerationIsSuperseded?: boolean,
-  ) => (
-    decision: Extract<BlockDecision, { readonly _tag: 'VerifyDecision' }>,
-  ) => ReturnType<typeof validateBlockedDecisionDataFirst>,
-  typeof validateBlockedDecisionDataFirst
->((arguments_) => !Array.isArray(arguments_[0]), validateBlockedDecisionDataFirst)

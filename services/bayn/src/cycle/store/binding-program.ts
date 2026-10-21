@@ -3,7 +3,7 @@ import type { StreamingVerifiedSnapshotReference } from '../../market-data/strea
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
-import { Pipeable } from '../../pipeable'
+
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
 import { CycleState } from '../model'
 import { decideDecisionBinding, type DecisionBindingDecision } from './decisions'
@@ -24,7 +24,7 @@ export interface CycleBindingPrograms {
   readonly bindDecision: CycleStoreShape['bindDecision']
 }
 
-const makeCycleBindingProgramsDataFirst = (
+export const makeCycleBindingPrograms = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
@@ -209,5 +209,3 @@ const makeCycleBindingProgramsDataFirst = (
 
   return { bindDecision }
 }
-
-export const makeCycleBindingPrograms = Pipeable.dual(3, makeCycleBindingProgramsDataFirst)

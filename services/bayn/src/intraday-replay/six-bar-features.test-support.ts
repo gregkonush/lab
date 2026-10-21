@@ -2,7 +2,7 @@ import { equityMarketProfile } from '../jev/markets'
 import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { IntradayCandidateEvidencePolicy, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import {
@@ -136,9 +136,9 @@ export const sixBarFixture = (
     })
     projection = next
   }
-  const eventsHash = canonicalHashV1(events)
+  const eventsHash = Result.getOrThrow(canonicalHashV1Result(events))
   const source = {
-    runId: canonicalHashV1({ fixture: 'six-bar-research', eventsHash }),
+    runId: Result.getOrThrow(canonicalHashV1Result({ fixture: 'six-bar-research', eventsHash })),
     sourceManifestHash: eventsHash,
     marketSources: [sixBarUniverse],
     deliveryModel: {
@@ -148,7 +148,7 @@ export const sixBarFixture = (
       captureId: 'SYNTHETIC-six-bar-contract',
       consumerEpoch: 'SYNTHETIC-epoch-1',
       exportManifestHash: eventsHash,
-      intervalReceiptHash: canonicalHashV1(events.map((event) => event.receipt)),
+      intervalReceiptHash: Result.getOrThrow(canonicalHashV1Result(events.map((event) => event.receipt))),
       finalConsumerSequence: events.length,
     },
   } satisfies NonNullable<HistoricalMarketCursor['source']>

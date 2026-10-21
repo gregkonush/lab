@@ -5,9 +5,9 @@ import { spawnSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { Exit, ManagedRuntime } from 'effect'
+import { Exit, ManagedRuntime, Result } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../src/hash'
+import { sha256, canonicalHashV1Result } from '../src/hash'
 import { equityEdgeScreenProgram, equityEdgeScreenUsage } from './equity-edge-screen'
 
 test('standalone research help needs no broker, model, database or input files', () => {
@@ -72,7 +72,11 @@ test('offline command validates pins, preserves zero-activity sessions and never
     const input = JSON.stringify({
       schemaVersion: 'bayn.equity-edge-screen-input.v2',
       sourceSha256: sha256(source),
-      calendar: { start: '2026-08-03', end: '2026-08-19', expectedHash: canonicalHashV1(calendar) },
+      calendar: {
+        start: '2026-08-03',
+        end: '2026-08-19',
+        expectedHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
+      },
       symbols: ['SPY', 'AAPL'],
       development: { start: '2026-08-17', end: '2026-08-17' },
       validation: { start: '2026-08-18', end: '2026-08-18' },
@@ -98,7 +102,7 @@ test('offline command validates pins, preserves zero-activity sessions and never
         adverseBpsPerSide: 20,
       })),
     )
-    expect(report.selection.developmentReportHash).toBe(canonicalHashV1(report.development))
+    expect(report.selection.developmentReportHash).toBe(Result.getOrThrow(canonicalHashV1Result(report.development)))
     expect(before).toContain('"allInProfit":null')
     expect(before).toContain('"missing":390')
     const rerun = await runtime.runPromiseExit(equityEdgeScreenProgram(args))

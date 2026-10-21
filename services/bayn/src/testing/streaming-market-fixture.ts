@@ -10,7 +10,7 @@ import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { StreamingVerifiedSnapshotReference } from '../market-data/streaming/reference'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   featureBarContentHash,
   decodeRollingMarketFeature,
@@ -182,7 +182,7 @@ export const streamingFixtureFromRaw = (
     const feature = Result.getOrThrow(
       decodeRollingMarketFeature({
         material,
-        featureId: canonicalHashV1(material),
+        featureId: Result.getOrThrow(canonicalHashV1Result(material)),
         computedAtMs: observed,
         producerRevision: 'fixture',
       }),

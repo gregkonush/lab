@@ -16,7 +16,7 @@ import {
   type MutationEvidence,
   type PartialMutationEvidence,
 } from '../broker/alpaca-mutations/model'
-import { cancelRequestHash, orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { orderRequestBody, prepareCancel } from '../broker/alpaca-mutations/decisions'
 import {
   AssetClass,
   AccountStatus,
@@ -38,7 +38,7 @@ import {
 import { BrokerObservations, observationUnavailable } from '../broker/alpaca/observed-snapshot'
 import { captureBrokerObservation, makeProjectedBrokerRead } from '../broker/alpaca/snapshot-cache'
 import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   Authority,
   IntentState,
@@ -86,7 +86,7 @@ const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const initialTime = '1969-12-31T23:59:59.000Z'
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -150,7 +150,7 @@ const brokerOrder = (
 const evidence = (status: number, observedAt: string): MutationEvidence => ({
   requestId: `request-${status}`,
   status,
-  contentHash: canonicalHashV1({ status, observedAt }),
+  contentHash: Result.getOrThrow(canonicalHashV1Result({ status, observedAt })),
   observedAt,
 })
 
@@ -207,7 +207,7 @@ const decisionEvent = (
   overrides: Partial<MutationEvent> = {},
 ): MutationEvent => ({
   schemaVersion: 'bayn.paper-mutation-event.v1',
-  eventId: canonicalHashV1({ operation, eventType, overrides }),
+  eventId: Result.getOrThrow(canonicalHashV1Result({ operation, eventType, overrides })),
   mutationId: resultSuccess(mutationIdResult(intentId, operation)),
   intentId,
   sequence: 1,
@@ -1339,7 +1339,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
     const effectiveBrokerOrderId = brokerOrderId ?? previous?.brokerOrderId
     const value: MutationEvent = {
       schemaVersion: 'bayn.paper-mutation-event.v1',
-      eventId: canonicalHashV1({ operation, sequence, eventType, occurredAt }),
+      eventId: Result.getOrThrow(canonicalHashV1Result({ operation, sequence, eventType, occurredAt })),
       mutationId: resultSuccess(mutationIdResult(intentId, operation)),
       intentId,
       sequence,
@@ -1371,6 +1371,8 @@ const makeHarness = (options: HarnessOptions = {}) => {
   }
 
   const intentStore: IntentStoreService = {
+    protectionForCycle: () => Effect.succeed([]),
+    beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
     commit: () => Effect.die(new Error('unexpected commit')),
     read: (id) => Effect.succeed(id === intentId ? Option.some(stored) : Option.none()),
   }
@@ -1600,7 +1602,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
           retryable: false,
           status: 404,
           requestId: 'lookup-not-found',
-          contentHash: canonicalHashV1({ code: 404, message: 'order not found' }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 404, message: 'order not found' })),
           observedAt,
         })
       }
@@ -1636,7 +1638,7 @@ const makeHarness = (options: HarnessOptions = {}) => {
       }
       if (options.crashAfterSubmit === true) return Effect.die(new Error('injected crash after send'))
       if (options.submitError !== undefined) return Effect.fail(options.submitError)
-      const hash = canonicalHashV1(encodedRequest(submitted))
+      const hash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(submitted)))
       if (options.unknownSubmit === true) {
         return Effect.fail(
           new BrokerMutationError({
@@ -1654,7 +1656,11 @@ const makeHarness = (options: HarnessOptions = {}) => {
     cancel: (brokerOrderId) => {
       cancelCalls += 1
       const response = evidence(204, '1970-01-01T00:00:01.100Z')
-      return Effect.succeed({ requestHash: cancelRequestHash(brokerOrderId), brokerOrderId, evidence: response })
+      return Effect.succeed({
+        requestHash: Result.getOrThrow(prepareCancel(brokerOrderId)).requestHash,
+        brokerOrderId,
+        evidence: response,
+      })
     },
   }
 
@@ -1664,16 +1670,16 @@ const makeHarness = (options: HarnessOptions = {}) => {
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerMutation, mutation),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
   const provideIntentRead = <A, E>(effect: Effect.Effect<A, E, IntentStore>) =>
-    effect.pipe(Effect.provideService(IntentStore, intentStore), provideTestLayer(TestClock.layer()))
+    effect.pipe(Effect.provideService(IntentStore, intentStore), (self) => provideTestLayer(self, TestClock.layer()))
   const provideRecovery = <A, E>(effect: Effect.Effect<A, E, IntentStore | MutationStore | BrokerRead>) =>
     effect.pipe(
       Effect.provideService(IntentStore, intentStore),
       Effect.provideService(MutationStore, mutationStore),
       Effect.provideService(BrokerRead, read),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
   return {
@@ -1695,7 +1701,7 @@ const mismatchedSubmissionError = () =>
     failure: MutationFailure.Unknown,
     outcome: MutationOutcome.Unknown,
     message: 'accepted order differs from durable intent',
-    requestHash: canonicalHashV1(encodedRequest(intent)),
+    requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
     evidence: evidence(200, '1970-01-01T00:00:00.100Z'),
     brokerOrderId: orderId,
   })
@@ -1805,7 +1811,7 @@ describe('execution coordinator', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(encodedRequest(intent)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
       request: encodedRequest(intent),
     })
     expect(harness.calls()).toEqual({ submit: 0, cancel: 0, lookup: 0 })
@@ -1886,7 +1892,7 @@ describe('execution coordinator', () => {
 
     expect(accepted).toMatchObject({
       eventType: MutationEventType.SubmitAccepted,
-      requestHash: canonicalHashV1(encodedRequest(intent)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
     })
     expect(encodedRequest(intent)).toMatchObject({
       side: 'buy',
@@ -2261,7 +2267,10 @@ describe('execution coordinator', () => {
           harness.read.orderByClientId(clientOrderId).pipe(
             Effect.map((result) => {
               const { observedAt: _observedAt, ...material } = result.value
-              return { ...result, evidence: { ...result.evidence, contentHash: canonicalHashV1(material) } }
+              return {
+                ...result,
+                evidence: { ...result.evidence, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) },
+              }
             }),
           ),
         account: observe(
@@ -2314,14 +2323,25 @@ describe('execution coordinator', () => {
                 }),
               }),
             )
-            const requestHash = canonicalHashV1(encodedRequest(intent))
+            const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
             yield* harness.mutations.beginSubmit(intentId, requestHash, 1_000, initialTime)
             if (operation === MutationOperation.Submit) {
               yield* harness.mutations.submitUnknown(intentId, requestHash, initialTime)
             } else {
               yield* harness.mutations.submitAccepted(intentId, requestHash, orderId, evidence(200, initialTime))
-              yield* harness.mutations.beginCancel(intentId, cancelRequestHash(orderId), orderId, 1_000, initialTime)
-              yield* harness.mutations.cancelUnknown(intentId, cancelRequestHash(orderId), orderId, initialTime)
+              yield* harness.mutations.beginCancel(
+                intentId,
+                Result.getOrThrow(prepareCancel(orderId)).requestHash,
+                orderId,
+                1_000,
+                initialTime,
+              )
+              yield* harness.mutations.cancelUnknown(
+                intentId,
+                Result.getOrThrow(prepareCancel(orderId)).requestHash,
+                orderId,
+                initialTime,
+              )
             }
             yield* TestClock.adjust(2_000)
             expect((yield* readStableBrokerSnapshot(cached, Effect.succeed(initialTime))).history.orders.rows).toEqual(
@@ -2354,7 +2374,7 @@ describe('execution coordinator', () => {
 
   test('recovers SUBMIT_UNKNOWN through verified read capability after mutation authority is removed', async () => {
     const harness = makeHarness({ lookupOrder: brokerOrder(OrderStatus.Filled) })
-    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
     const { found, unknown } = await Effect.runPromise(
       harness.provideRecovery(
         Effect.gen(function* () {
@@ -2377,7 +2397,7 @@ describe('execution coordinator', () => {
 
   test('recovers CANCEL_UNKNOWN through verified read capability after mutation authority is removed', async () => {
     const harness = makeHarness()
-    const requestHash = canonicalHashV1(encodedRequest(intent))
+    const requestHash = Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent)))
     const { found, unknown } = await Effect.runPromise(
       harness.provideRecovery(
         Effect.gen(function* () {
@@ -2390,14 +2410,14 @@ describe('execution coordinator', () => {
           )
           yield* harness.mutations.beginCancel(
             intentId,
-            cancelRequestHash(orderId),
+            Result.getOrThrow(prepareCancel(orderId)).requestHash,
             orderId,
             1_000,
             '1970-01-01T00:00:00.200Z',
           )
           const unknown = yield* harness.mutations.cancelUnknown(
             intentId,
-            cancelRequestHash(orderId),
+            Result.getOrThrow(prepareCancel(orderId)).requestHash,
             orderId,
             '1970-01-01T00:00:00.200Z',
           )

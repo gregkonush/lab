@@ -15,7 +15,7 @@ import { PostgresClientLive } from '../../db/postgres-client'
 import { runDatabase } from '../../db/database-error'
 import { postgresMigrations } from '../../db/postgres-migrations'
 import { Authority, KillState } from '../../execution/contracts'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { intradayMomentumExecutionModel } from '../../strategy/intraday-momentum/protocol'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../../market-hours'
@@ -150,7 +150,7 @@ const draft = () => {
       entryAttemptOrdinal: 1,
       strategyName: 'jev',
       qualificationRunId,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'jev', version: 1 }),
+      strategyProtocolHash: Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 1 })),
       accountId,
       executionSessionDate: sessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
@@ -218,7 +218,7 @@ const seedUnresolvedMutation = (cycleId: string, startedAt = '2026-08-28T14:32:0
         decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
         quantity_atoms, notional_limit_micros, limit_price_micros, state, terminal_outcome, state_version, created_at, updated_at
       ) VALUES (
-        ${intentId}, 'bayn.execution-intent.v4', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
+        ${intentId}, 'bayn.execution-intent.v5', ${authorityGenerationHash}, NULL, 'intraday-momentum', ${cycleId},
         ${'7'.repeat(64)}, ${'8'.repeat(64)}, ${accountId}, 'bayn-observability-unresolved', 'SPY', 'BUY',
         'LIMIT', 'DAY', 1000000, 1000000, 1000000000, 'PLANNED', NULL, 1,
         '2026-08-28T14:32:00.000Z', '2026-08-28T14:32:00.000Z'

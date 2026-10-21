@@ -172,7 +172,8 @@ const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            begin: (plan, observation) =>
+              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
           })
         } else complete = false
@@ -471,24 +472,6 @@ const logEffect = (
   )
 }
 
-export const makeNativeExecutionRuntimeAdapter = (
-  driver: Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
-  statusStore: ExecutionControllerStatusStoreShape,
-  runner: ExecutionEffectRunner,
-  planHash: string,
-): NativeExecutionRuntime => ({
-  advance: (command, signal) => {
-    const parent = currentOpenTelemetryParentSpan()
-    const advance = driver.pipe(
-      Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash)),
-    )
-    return runner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), { signal })
-  },
-  log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
-  projectState: (controllerKey, state, signal) =>
-    runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
-})
-
 const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
     ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
@@ -586,18 +569,6 @@ const runManagedControllerStateProjection = <R, E>(
     { signal },
   )
 
-export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-  logRunner: ExecutionEffectRunner,
-  planHash: string,
-): NativeExecutionRuntime => ({
-  advance: (command, signal) =>
-    runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, currentOpenTelemetryParentSpan()),
-  log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
-  projectState: (controllerKey, state, signal) =>
-    runManagedControllerStateProjection(executionRunner, controllerKey, state, signal),
-})
-
 const ownManagedRuntime = <R, E>(
   managed: ManagedRuntime.ManagedRuntime<R, E>,
 ): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
@@ -615,23 +586,6 @@ export const initializeNativeExecutionProjectionRuntime = <R, E>(
         : Effect.failCause(
             Cause.map(exit.cause, (cause) =>
               runtimeError('initialize', 'native execution controller persistence bootstrap failed', cause),
-            ),
-          ),
-    ),
-  )
-
-export const initializeNativeExecutionRuntime = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-): Effect.Effect<void, NativeExecutionRuntimeError> =>
-  Effect.promise((signal) =>
-    executionRunner.runPromiseExit(PublishedExecutionCycleDriver.pipe(Effect.asVoid), { signal }),
-  ).pipe(
-    Effect.flatMap((exit) =>
-      Exit.isSuccess(exit)
-        ? Effect.void
-        : Effect.failCause(
-            Cause.map(exit.cause, (cause) =>
-              runtimeError('initialize', 'native execution controller runtime bootstrap failed', cause),
             ),
           ),
     ),

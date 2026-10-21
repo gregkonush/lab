@@ -2,7 +2,7 @@ import { exchangeSessions } from '../../market-hours'
 import { describe, expect, test } from 'bun:test'
 import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../../contracts'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { makeExecutionCalendarObservation } from '../../cycle/construction'
 import { streamingFixture, fixtureStreamingReference } from '../../testing/streaming-market-fixture'
 import {
@@ -94,7 +94,7 @@ describe('streaming strategy and recorded decision replay', () => {
         verifyIntradayMomentumDecisionEnvelope(
           { snapshot: replay, session: boundSession },
           protocol,
-          canonicalHashV1(live),
+          Result.getOrThrow(canonicalHashV1Result(live)),
         ),
       ),
     ).toBe(true)
