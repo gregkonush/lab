@@ -42,6 +42,8 @@ export const ResearchPolicySchema = Schema.Struct({
   stop: Schema.Array(Text).check(Schema.isMaxLength(8)),
   maximumFactors: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(82)),
 })
+const { maximumFactors: _factorLimit, ...editorPolicyFields } = ResearchPolicySchema.fields
+export const HarnessEditorPolicySchema = Schema.Struct(editorPolicyFields)
 const Evidence = Schema.Struct({ sha256: Sha256Schema, availableAt: UtcInstantSchema })
 const FactorResearchRunSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-run.v1'),
@@ -89,7 +91,15 @@ export enum HarnessPurpose {
   PromptEdit = 'prompt-edit',
   Reflection = 'reflection',
 }
+export const HarnessEditorRunSchema = Schema.Struct({
+  ...FactorResearchRunSchema.fields,
+  schemaVersion: Schema.Literal('bayn.jev-harness2-editor.v1'),
+  purpose: Schema.Enum(HarnessPurpose),
+  context: Schema.Struct({ memory: Schema.Struct({ ...Evidence.fields, text: Text }) }),
+  policy: HarnessEditorPolicySchema,
+})
 export const ResearchRunSchema = Schema.Union([
+  HarnessEditorRunSchema,
   FactorResearchRunSchema,
   Schema.Struct({
     ...FactorResearchRunSchema.fields,
@@ -106,7 +116,9 @@ export const ResearchServingIdentitySchema = Schema.Struct({
   tokenizerRevision: GitSourceRevisionSchema,
   chatTemplateRevision: GitSourceRevisionSchema,
 })
-export const researchServingIdentity = (policy: ResearchPolicy) => ({
+export const researchServingIdentity = (
+  policy: Pick<ResearchPolicy, 'model' | 'checkpoint' | 'servingImage' | 'tokenizerRevision' | 'chatTemplateRevision'>,
+) => ({
   model: policy.model,
   checkpoint: policy.checkpoint,
   servingImage: policy.servingImage,
@@ -129,7 +141,8 @@ export const decodeResearchRun = (input: unknown) =>
       return yield* Result.fail(new ResearchError({ message: 'Research registration exceeds 256 KiB' }))
     if (
       sha256(run.context.memory.text) !== run.context.memory.sha256 ||
-      run.context.factors.some((factor) => sha256(factor.description) !== factor.descriptionHash)
+      (run.schemaVersion !== 'bayn.jev-harness2-editor.v1' &&
+        run.context.factors.some((factor) => sha256(factor.description) !== factor.descriptionHash))
     )
       return yield* Result.fail(
         new ResearchError({ message: 'Research context bytes differ from their retained hashes' }),
@@ -143,20 +156,22 @@ export const decodeResearchRun = (input: unknown) =>
         new ResearchError({ message: 'Research registration or deadline is outside the decision window' }),
       )
     if (
-      run.policy.maximumFactors > run.context.factors.length ||
-      new Set(run.context.factors.map((factor) => factor.id)).size !== run.context.factors.length
+      run.schemaVersion !== 'bayn.jev-harness2-editor.v1' &&
+      (run.policy.maximumFactors > run.context.factors.length ||
+        new Set(run.context.factors.map((factor) => factor.id)).size !== run.context.factors.length)
     )
       return yield* Result.fail(
         new ResearchError({ message: 'Research factor pool is duplicated or smaller than the output limit' }),
       )
     if (
       run.context.memory.availableAt > run.featureCutoff ||
-      run.context.factors.some(
-        (factor) =>
-          factor.availableAt > run.featureCutoff ||
-          factor.performance.availableAt > run.featureCutoff ||
-          factor.performance.labelsMaturedAt > run.featureCutoff,
-      )
+      (run.schemaVersion !== 'bayn.jev-harness2-editor.v1' &&
+        run.context.factors.some(
+          (factor) =>
+            factor.availableAt > run.featureCutoff ||
+            factor.performance.availableAt > run.featureCutoff ||
+            factor.performance.labelsMaturedAt > run.featureCutoff,
+        ))
     )
       return yield* Result.fail(
         new ResearchError({ message: 'Research context contains evidence unavailable at its cutoff' }),
@@ -216,7 +231,7 @@ export const researchRequest = (run: ResearchRun) => {
     messages: [
       {
         role: 'user',
-        content: `${run.promptTemplate}\n\n${run.context.memory.text}\n\n${run.context.factors.map((factor) => `${factor.id}\n${factor.description}`).join('\n\n')}\n\n${outputInstruction}`,
+        content: `${run.promptTemplate}\n\n${run.context.memory.text}\n\n${run.schemaVersion === 'bayn.jev-harness2-editor.v1' ? '' : run.context.factors.map((factor) => `${factor.id}\n${factor.description}`).join('\n\n')}\n\n${outputInstruction}`,
       },
     ],
   }
@@ -288,7 +303,7 @@ export const parseResearchOutput = (run: ResearchRun, output: string) =>
     const visible = output.replace(/<think>[\s\S]*?<\/think>/g, '')
     if (visible.trim() === '' || visible.includes('<think>'))
       return yield* Result.fail(new ResearchError({ message: 'Research output is empty or has incomplete reasoning' }))
-    if (run.schemaVersion === 'bayn.harness2-inference.v1') {
+    if (run.schemaVersion !== 'bayn.research-run.v1') {
       if (run.purpose === HarnessPurpose.PromptEdit) {
         const proposals = [...visible.matchAll(/<harness>([\s\S]*?)<\/harness>/g)]
         const prompt = proposals[0]?.[1]?.trim()

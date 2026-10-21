@@ -1,4 +1,4 @@
-"""Run upstream Harness2 against Bayn's signed, non-executable research API."""
+"""Run upstream Harness2 against Bayn's native typed Jev decisions."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from harness2.core.spec import BenchPrompts, BenchSpec, ChannelSpec
 from harness2.core.tree import SurfaceSpec
 
 UPSTREAM_REVISION = "1cfe254e8d25b15f37048c3730134686abe60335"
-MAX_BYTES = 262144
+MAX_BYTES = 16 * 1024 * 1024
 
 
 def encode(value):
@@ -47,60 +47,94 @@ def instant(seconds):
 def read_json(path):
     raw = path.read_bytes()
     if len(raw) > MAX_BYTES:
-        raise ValueError("Study input exceeds 256 KiB")
+        raise ValueError("Study input exceeds 16 MiB")
     return json.loads(raw)
 
 
 def validate_study(value):
-    if not isinstance(value, dict) or set(value) != {
-        "schemaVersion",
-        "maximumCalls",
-        "maximumWallSeconds",
-        "tasks",
-    }:
-        raise ValueError("Malformed Harness2 study")
-    if value["schemaVersion"] != "bayn.harness2-study.v1":
-        raise ValueError("Unsupported Harness2 study version")
+    if (
+        not isinstance(value, dict)
+        or set(value)
+        != {
+            "schemaVersion",
+            "sourceRevision",
+            "maximumCalls",
+            "maximumWallSeconds",
+            "baseline",
+            "editor",
+            "tasks",
+            "validation",
+        }
+        or value["schemaVersion"] != "bayn.jev-harness2-study.v1"
+    ):
+        raise ValueError(
+            "Malformed Jev Harness2 study; factor-selection studies are removed"
+        )
+    if not re.fullmatch(r"[0-9a-f]{40}", value["sourceRevision"]):
+        raise ValueError("A study requires its exact deployed source revision")
     for name, lower, upper in (
-        ("maximumCalls", 8, 32),
+        ("maximumCalls", 8, 512),
         ("maximumWallSeconds", 60, 3600),
     ):
         if type(value[name]) is not int or not lower <= value[name] <= upper:
             raise ValueError(f"{name} is outside its supported bound")
-    tasks = value["tasks"]
-    if not isinstance(tasks, list) or not 1 <= len(tasks) <= 4:
-        raise ValueError("A study requires one to four ordered tasks")
-    seen = set()
-    for task in tasks:
-        if not isinstance(task, dict) or set(task) != {"id", "run"}:
-            raise ValueError("Malformed Harness2 task")
-        if not isinstance(task["id"], str) or not re.fullmatch(
-            r"[a-z][a-z0-9-]{0,63}", task["id"]
-        ):
-            raise ValueError("Invalid task ID")
-        if task["id"] in seen:
-            raise ValueError("Duplicate task ID")
-        seen.add(task["id"])
-        if not isinstance(task["run"], dict):
-            raise ValueError("Task requires a Bayn research registration")
-        if task["run"].get("schemaVersion") != "bayn.research-run.v1":
-            raise ValueError("Study tasks require factor-selection registrations")
+    validate_instructions(value["baseline"])
+    if not isinstance(value["editor"], dict) or set(value["editor"]) != {
+        "policy",
+        "costBasis",
+    }:
+        raise ValueError("A study requires a frozen editor policy and cost basis")
+    if not 1 <= len(value["tasks"]) <= 4 or not 1 <= len(value["validation"]) <= 32:
+        raise ValueError(
+            "A study requires development and untouched validation observations"
+        )
+    seen, cutoffs = set(), []
+    for group in (value["tasks"], value["validation"]):
+        times = []
+        for task in group:
+            if not isinstance(task, dict) or set(task) != {"id", "observation"}:
+                raise ValueError("Tasks require original native Bayn observations")
+            if (
+                not re.fullmatch(r"[a-z][a-z0-9-]{0,63}", task["id"])
+                or task["id"] in seen
+            ):
+                raise ValueError("Invalid or duplicate task ID")
+            seen.add(task["id"])
+            observation = task["observation"]
+            if observation.get("schemaVersion") != "bayn.jev-observation.v1":
+                raise ValueError("Only native Jev observations can be probed")
+            times.append(observation["observedAt"])
+        if times != sorted(times) or len(set(times)) != len(times):
+            raise ValueError("Observations must have unique chronological cutoffs")
+        cutoffs.append(times)
+    last = datetime.fromisoformat(cutoffs[0][-1].replace("Z", "+00:00")).timestamp()
+    first = datetime.fromisoformat(cutoffs[1][0].replace("Z", "+00:00")).timestamp()
+    horizon = max(
+        task["observation"]["protocol"]["maximumHoldingMinutes"]
+        for task in value["tasks"]
+    )
+    if type(horizon) is not int or not 1 <= horizon <= 60:
+        raise ValueError(
+            "Development observations require their native holding horizon"
+        )
+    if first < last + horizon * 60:
+        raise ValueError(
+            "Validation must follow development by the full native holding horizon"
+        )
     if len(encode(value)) > MAX_BYTES:
-        raise ValueError("Study input exceeds 256 KiB")
-    prompts = [task["run"].get("promptTemplate") for task in tasks]
-    cutoffs = [task["run"].get("featureCutoff") for task in tasks]
+        raise ValueError("Study input exceeds 16 MiB")
+    return value
+
+
+def validate_instructions(value):
+    if not isinstance(value, dict) or set(value) != {"entry", "stopLoss", "takeProfit"}:
+        raise ValueError("Only the three native Jev question instructions are editable")
     if any(
-        not isinstance(prompt, str) or not 1 <= len(prompt) <= 8000
-        for prompt in prompts
-    ):
-        raise ValueError("Initial prompts must contain one to 8000 characters")
-    if len(set(prompts)) != 1:
-        raise ValueError("Study tasks must share the same initial prompt")
-    if any(not isinstance(cutoff, str) for cutoff in cutoffs) or cutoffs != sorted(
-        cutoffs
+        not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000
+        for text in value.values()
     ):
         raise ValueError(
-            "Study tasks must retain chronological original feature cutoffs"
+            "Jev question instructions must contain one to 2000 characters"
         )
     return value
 
@@ -108,7 +142,7 @@ def validate_study(value):
 class Storage:
     def __init__(self, bucket, endpoint, study_id):
         self.bucket = bucket
-        self.prefix = f"harness2/v1/{study_id}/"
+        self.prefix = f"harness2/jev-v1/{study_id}/"
         self.client = boto3.client(
             "s3",
             endpoint_url=endpoint,
@@ -125,7 +159,9 @@ class Storage:
                 return None
             raise RuntimeError("Harness2 storage read failed") from None
         with response["Body"] as body:
-            raw = body.read(6 * 1024 * 1024)
+            raw = body.read(64 * 1024 * 1024 + 1)
+        if len(raw) > 64 * 1024 * 1024:
+            raise ValueError("Retained Harness2 object exceeds 64 MiB")
         return json.loads(raw)
 
     def create(self, key, value):
@@ -154,13 +190,16 @@ def retain(storage, key, value):
         raise ValueError("Retained Harness2 evidence conflicts")
 
 
-def cli(args, timeout):
+def cli(kind, args, timeout):
     completed = subprocess.run(
-        ["bayn-research", *args],
+        ["bayn-research" if kind == "editor" else "bayn-harness2-probe", *args],
         capture_output=True,
         timeout=timeout,
         check=False,
     )
+    path = Path(args[1])
+    path.with_suffix(".stdout.txt").write_bytes(completed.stdout)
+    path.with_suffix(".stderr.txt").write_bytes(completed.stderr)
     if completed.returncode:
         raise RuntimeError(
             "Bayn research command failed; inspect the private retained attempt"
@@ -193,6 +232,8 @@ class Calls:
                 for i, slot in enumerate(slots)
                 if slot and slot["scope"] == scope
             ]
+            kind = "editor" if purpose is not None else "probe"
+            fresh = not matches
             if matches:
                 index, slot = matches[0]
                 if slot["promptHash"] != prompt_hash:
@@ -202,68 +243,111 @@ class Calls:
                 if now >= self.deadline:
                     raise ValueError("Harness2 wall-time budget exhausted")
                 task = next(
-                    task for task in self.study["tasks"] if task["id"] == task_id
+                    task
+                    for task in self.study["tasks"] + self.study["validation"]
+                    if task["id"] == task_id
                 )
-                run = copy.deepcopy(task["run"])
-                run.update(
-                    promptTemplate=prompt,
-                    registeredAt=instant(now),
-                    featureCutoff=instant(now),
-                    deadlineAt=instant(min(now + 179, self.deadline)),
-                )
-                basis = run["costBasis"]
-                if basis is not None and (
-                    basis["effectiveFrom"] > run["featureCutoff"]
-                    or basis["effectiveUntil"] < run["deadlineAt"]
-                ):
-                    run["costBasis"] = None
-                if purpose is not None:
-                    run.update(
-                        schemaVersion="bayn.harness2-inference.v1", purpose=purpose
-                    )
+                if kind == "editor":
+                    run = {
+                        "schemaVersion": "bayn.jev-harness2-editor.v1",
+                        "sourceRevision": self.study["sourceRevision"],
+                        "studyHash": identity(self.study),
+                        "armManifestHashes": [identity(self.study["baseline"])],
+                        "captureManifestHash": identity(self.study["tasks"]),
+                        "registeredAt": instant(now),
+                        "featureCutoff": instant(now),
+                        "deadlineAt": instant(min(now + 179, self.deadline)),
+                        "attempt": 0,
+                        "promptTemplate": prompt,
+                        "purpose": purpose,
+                        "context": {
+                            "memory": {
+                                "text": "Only frozen development evidence may guide Jev instruction edits.",
+                                "sha256": hashlib.sha256(
+                                    b"Only frozen development evidence may guide Jev instruction edits."
+                                ).hexdigest(),
+                                "availableAt": instant(now),
+                            }
+                        },
+                        **copy.deepcopy(self.study["editor"]),
+                    }
+                    basis = run["costBasis"]
+                    if basis is not None and (
+                        basis["effectiveFrom"] > run["featureCutoff"]
+                        or basis["effectiveUntil"] < run["deadlineAt"]
+                    ):
+                        run["costBasis"] = None
+                    budget = 1
+                else:
+                    run = {
+                        "schemaVersion": "bayn.jev-harness2-probe.v1",
+                        "sourceRevision": self.study["sourceRevision"],
+                        "studyId": identity(self.study),
+                        "registeredAt": instant(now),
+                        "deadlineAt": instant(min(now + 179, self.deadline)),
+                        "observation": task["observation"],
+                        "instructions": validate_instructions(json.loads(prompt)),
+                    }
+                    budget = len(task["observation"]["manifest"]["candidateSymbols"])
                 if (
-                    not prompt.strip()
-                    or len(prompt) > 100000
-                    or len(encode(run)) > MAX_BYTES
+                    sum(slot["requestBudget"] for slot in slots if slot) + budget
+                    > self.study["maximumCalls"]
                 ):
-                    raise ValueError(
-                        "Harness2 context exceeds the research request bound"
-                    )
-                slot = {"scope": scope, "promptHash": prompt_hash, "run": run}
+                    raise ValueError("Harness2 model-call budget exhausted")
+                slot = {
+                    "scope": scope,
+                    "promptHash": prompt_hash,
+                    "kind": kind,
+                    "requestBudget": budget,
+                    "run": run,
+                }
                 for index, previous in enumerate(slots):
                     if previous is None:
-                        if self.storage.create(f"calls/{index}.json", slot):
-                            break
-                        winner = self.storage.read(f"calls/{index}.json")
-                        if winner and winner["scope"] == scope:
-                            if winner["promptHash"] != prompt_hash:
-                                raise ValueError(
-                                    "A concurrent Harness2 call changed its input"
-                                )
-                            slot = winner
-                            break
+                        if not self.storage.create(f"calls/{index}.json", slot):
+                            raise ValueError(
+                                "A concurrent invocation reserved this study; resume from its retained evidence"
+                            )
+                        break
                 else:
                     raise ValueError("Harness2 model-call budget exhausted")
             receipt_key = f"receipts/{index}.json"
             receipt = self.storage.read(receipt_key)
+            if receipt is not None:
+                if kind == "probe":
+                    directory = self.root / "verification" / str(index)
+                    directory.mkdir(parents=True, exist_ok=True)
+                    request, output = directory / "run.json", directory / "receipt.json"
+                    request.write_bytes(encode(slot["run"]))
+                    output.write_bytes(encode(receipt))
+                    self.invoke(
+                        "probe",
+                        ["--verify", str(request), "--receipt", str(output)],
+                        30,
+                    )
+                if receipt["outcome"] != "COMPLETE":
+                    raise ValueError("Retained Harness2 attempt is incomplete")
+                return receipt
+            if kind == "probe" and not fresh:
+                raise ValueError("An ambiguous Jev probe cannot be retransmitted")
             remaining = self.deadline - self.clock()
-            if receipt is None and remaining <= 0:
+            if remaining <= 0:
                 raise ValueError("Harness2 wall-time budget exhausted")
             directory = self.root / "calls" / str(index)
             directory.mkdir(parents=True, exist_ok=True)
-            request = directory / "run.json"
-            output = directory / "receipt.json"
+            request, output = directory / "run.json", directory / "receipt.json"
             request.write_bytes(encode(slot["run"]))
-            output.unlink(missing_ok=True)
+            if kind == "editor":
+                output.unlink(missing_ok=True)
             self.invoke(
+                kind,
                 ["--run", str(request), "--output", str(output)],
-                min(195, remaining) if receipt is None else 10,
+                min(195, remaining),
             )
             receipt = json.loads(output.read_bytes())
             retain(self.storage, receipt_key, receipt)
             if receipt["outcome"] != "COMPLETE":
                 raise ValueError(
-                    "Harness2 model attempt is incomplete; it cannot be retried as a new call"
+                    "Harness2 attempt is incomplete; its original evidence is retained"
                 )
             return receipt
 
@@ -274,13 +358,13 @@ class Substrate:
     def surface(self):
         return SurfaceSpec(
             name="opencode",
-            always_on=("systemprompt.md",),
+            always_on=("instructions.json",),
             always_on_max=8000,
             always_on_cap_reason="Bayn permits a bounded prompt only",
             skill_dir="skills",
             skill_name_rule="",
             trigger_hint="",
-            autotrigger_file="systemprompt.md",
+            autotrigger_file="instructions.json",
             trigger_line="",
             subagent_requires_mode=False,
             plugin_dir=None,
@@ -293,15 +377,15 @@ class Adapter:
     def __init__(self, study, root, calls):
         self.study, self.root, self.calls = study, root, calls
         self.substrate = Substrate()
-        channel = ChannelSpec("opencode", "bayn/alpha-r1")
+        channel = ChannelSpec("opencode", "bayn/jev-instructions")
         self.spec = BenchSpec(
             name="bayn",
             runs_root=root / "runs",
             install_mode="workspace_config",
             prompts=BenchPrompts(
-                work="select factors from frozen semantic descriptions and past evidence",
-                inv_levers="Only edit systemprompt.md. Keep the factor IDs and output contract.",
-                dom_levers="Only edit factor-selection instructions in systemprompt.md.",
+                work="evaluate typed Jev decisions from frozen native market signals",
+                inv_levers="Only edit the three Jev question instructions in instructions.json. Keep state, criteria, quantities and risk rules fixed.",
+                dom_levers="Refine native Jev entry, stop-loss and take-profit question wording.",
                 yardstick="Use the supplied source material and behavioral contrasts. Never invent future returns.",
             ),
             channels={"proposer": channel, "selector": channel},
@@ -312,12 +396,13 @@ class Adapter:
         return [task["id"] for task in self.study["tasks"]]
 
     def domain_of(self, task_id):
-        return "factor-selection"
+        return "jev-decisions"
 
     def task_prompt(self, task_id):
         task = next(task for task in self.study["tasks"] if task["id"] == task_id)
         return json.dumps(
-            {"taskId": task_id, "context": task["run"]["context"]}, sort_keys=True
+            {"taskId": task_id, "observedAt": task["observation"]["observedAt"]},
+            sort_keys=True,
         )
 
     def task_files(self, task_id):
@@ -326,30 +411,33 @@ class Adapter:
     def base_harness(self):
         directory = self.root / "base"
         directory.mkdir(exist_ok=True)
-        prompt = self.study["tasks"][0]["run"]["promptTemplate"]
-        (directory / "systemprompt.md").write_text(prompt)
+        prompt = json.dumps(self.study["baseline"], sort_keys=True)
+        (directory / "instructions.json").write_text(prompt)
         return directory
 
     def validate_tree(self, tree):
-        if (
-            set(tree) != {"systemprompt.md"}
-            or not 1 <= len(tree["systemprompt.md"].strip()) <= 8000
-        ):
-            raise ValueError(
-                "Only a nonempty systemprompt.md of at most 8000 characters is editable"
-            )
+        if set(tree) != {"instructions.json"}:
+            raise ValueError("Only instructions.json is editable")
+        validate_instructions(json.loads(tree["instructions.json"]))
 
     def execute(self, task_id, harness_dir, run_id, *, timeout=None):
-        prompt = ((harness_dir or self.base_harness()) / "systemprompt.md").read_text()
-        self.validate_tree({"systemprompt.md": prompt})
+        prompt = (
+            (harness_dir or self.base_harness()) / "instructions.json"
+        ).read_text()
+        self.validate_tree({"instructions.json": prompt})
         receipt = self.calls.call(task_id, f"probe/{run_id}", prompt)
         directory = self.root / "executions" / identity(run_id)
         directory.mkdir(parents=True, exist_ok=True)
-        (directory / "answer.txt").write_text(json.dumps(receipt["factors"]))
+        (directory / "answer.txt").write_text(json.dumps(receipt["decision"]))
         (directory / "trajectory.md").write_text(
-            "[ACTION] Select factors with the signed Bayn research API\n[OBSERVATION]\n"
-            + receipt["responseText"]
+            "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[OBSERVATION]\n"
+            + json.dumps(
+                {"requests": receipt["requests"], "decision": receipt["decision"]},
+                sort_keys=True,
+            )
         )
+        if run_id.endswith("/c1"):
+            (self.root / "candidate-instructions.json").write_text(prompt)
         return directory
 
     def delivered(self, run_dir):
@@ -362,7 +450,7 @@ class Adapter:
         return (run_dir / "answer.txt").read_text()
 
     def deliverable_files(self, run_dir):
-        return {"factors.json": self.deliverable_text(run_dir)}
+        return {"decision.json": self.deliverable_text(run_dir)}
 
 
 class Editor(Proposer):
@@ -384,14 +472,13 @@ class Editor(Proposer):
             if path.is_file()
         )
         instruction = (
-            "Return the complete revised systemprompt.md inside exactly one <harness>...</harness> block, "
-            "followed by <notes>...</notes>. The Bayn executor only receives prompt text and factor "
-            "descriptions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
+            "Return a JSON object with exactly entry, stopLoss and takeProfit string fields, inside exactly one <harness>...</harness> block. Each string is bounded to 2000 characters and should use at most 100 words. Keep analysis brief and return the complete JSON within the token budget. "
+            "followed by <notes>...</notes>. The Bayn executor only receives immutable market state and typed Jev questions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
             "References to those capabilities in the generic upstream mission do not apply to Bayn. "
             "Never instruct the executor to use them or invent a fallback path. "
             if kwargs.get("harvest")
             else "Follow the mission's reflection format. "
-            "Only systemprompt.md can change in Bayn, so report one component. "
+            "Only instructions.json can change in Bayn, so report one component. "
             "Keep analysis brief and finish the requested reflection within 200 words. "
             "Compare only the supplied executions; if they show no reusable behavioral "
             "contrast, retain the edit row and use NO_ENTRY instead of inventing a lesson. "
@@ -417,13 +504,51 @@ class Editor(Proposer):
                 raise ProposerError(
                     "Editor must return exactly one harness", attempts=1
                 )
-            tree = {"systemprompt.md": proposals[0].strip()}
+            tree = {"instructions.json": proposals[0].strip()}
             self.adapter.validate_tree(tree)
             workspace = context / "harness"
-            (workspace / "systemprompt.md").write_text(tree["systemprompt.md"])
+            (workspace / "instructions.json").write_text(tree["instructions.json"])
         reply = Reply(label=label, text=text, ok=True, attempts=1, workspace=workspace)
         self._calls.append(reply)
         return reply
+
+
+def compare_decisions(pairs):
+    complete = [
+        p
+        for p in pairs
+        if all(p[arm].get("outcome") == "COMPLETE" for arm in ("baseline", "candidate"))
+    ]
+
+    def decision_material(receipt):
+        decision = copy.deepcopy(receipt["decision"])
+        for selected in decision.get("selected", []):
+            selected.pop("probability", None)
+        return decision
+
+    changed = sum(
+        decision_material(p["baseline"]) != decision_material(p["candidate"])
+        for p in complete
+    )
+    selections = {}
+    for arm in ("baseline", "candidate"):
+        selections[arm] = sum(
+            len(p[arm]["decision"].get("selected", [])) for p in complete
+        )
+    return {
+        "schemaVersion": "bayn.jev-harness2-comparison.v1",
+        "pairs": pairs,
+        "completePairs": len(complete),
+        "incompletePairs": len(pairs) - len(complete),
+        "changedDecisions": changed,
+        "selectedEntries": selections,
+        "decisionImprovement": "NO_OBSERVED_CHANGE"
+        if complete and len(complete) == len(pairs) and changed == 0
+        else "INCONCLUSIVE",
+        "economicImprovement": "UNPROVEN",
+        "qualification": "UNQUALIFIED",
+        "reason": "Native decision changes are measured. Closed execution outcomes, complete costs and prospective validation are required to establish improvement.",
+    }
 
 
 def run_study(study, root, storage, invoke=cli, clock=time.time):
@@ -431,18 +556,34 @@ def run_study(study, root, storage, invoke=cli, clock=time.time):
     root.mkdir(parents=True, exist_ok=True)
     previous = storage.read("result.json")
     if previous is not None:
-        if previous["studyId"] != identity(study):
+        if previous["studyId"] != identity(study) or previous.get(
+            "reportHash"
+        ) != identity(
+            {key: value for key, value in previous.items() if key != "reportHash"}
+        ):
             raise ValueError("Retained result belongs to another study")
         (root / "result.json").write_bytes(encode(previous))
         return previous
-    for task in study["tasks"]:
+    for task in study["tasks"] + study["validation"]:
         path = root / f"{task['id']}.json"
-        path.write_bytes(encode(task["run"]))
-        invoke(["--validate", str(path)], 10)
+        path.write_bytes(
+            encode(
+                {
+                    "schemaVersion": "bayn.jev-harness2-probe.v1",
+                    "sourceRevision": study["sourceRevision"],
+                    "studyId": identity(study),
+                    "registeredAt": instant(clock()),
+                    "deadlineAt": instant(clock() + 179),
+                    "observation": task["observation"],
+                    "instructions": study["baseline"],
+                }
+            )
+        )
+        invoke("probe", ["--validate", str(path)], 10)
     calls = Calls(study, root, storage, invoke, clock)
     adapter = Adapter(study, root, calls)
     result = run_domain(
-        "factor-selection",
+        "jev-decisions",
         adapter.tasks(),
         1,
         adapter=adapter,
@@ -459,13 +600,47 @@ def run_study(study, root, storage, invoke=cli, clock=time.time):
         for summary in summaries
         for stage in summary.get("modes", {}).get("seq", {}).get("stages", [])
     )
+    comparison = []
+    candidate = root / "candidate-instructions.json"
+    if result["failed"] == 0 and not fallback and candidate.exists():
+        frozen = candidate.read_text()
+        retain(
+            storage,
+            "frozen-candidate.json",
+            {
+                "instructions": json.loads(frozen),
+                "sha256": identity(json.loads(frozen)),
+            },
+        )
+        for task in study["validation"]:
+            pair = {}
+            for arm, prompt in (
+                ("baseline", json.dumps(study["baseline"], sort_keys=True)),
+                ("candidate", frozen),
+            ):
+                try:
+                    pair[arm] = calls.call(task["id"], f"validation/{arm}", prompt)
+                except (ValueError, RuntimeError, subprocess.TimeoutExpired) as error:
+                    pair[arm] = {
+                        "outcome": "INCONCLUSIVE",
+                        "reason": type(error).__name__,
+                    }
+            comparison.append(
+                {
+                    "taskId": task["id"],
+                    "observedAt": task["observation"]["observedAt"],
+                    **pair,
+                }
+            )
+    comparison_report = compare_decisions(comparison)
+    retain(storage, "comparison.json", comparison_report)
     slots = [storage.read(f"calls/{i}.json") for i in range(study["maximumCalls"])]
     receipts = [
         storage.read(f"receipts/{i}.json") for i, slot in enumerate(slots) if slot
     ]
     complete = [receipt for receipt in receipts if receipt is not None]
     report = {
-        "schemaVersion": "bayn.harness2-result.v1",
+        "schemaVersion": "bayn.jev-harness2-result.v1",
         "upstreamRevision": UPSTREAM_REVISION,
         "studyId": identity(study),
         "qualification": "UNQUALIFIED",
@@ -474,8 +649,14 @@ def run_study(study, root, storage, invoke=cli, clock=time.time):
         and not fallback
         and len(complete) == len(receipts)
         and all(r["outcome"] == "COMPLETE" for r in complete)
+        and comparison_report["completePairs"] == len(study["validation"])
         else "INCONCLUSIVE",
-        "modelCalls": len(receipts),
+        "reservedModelCalls": sum(slot["requestBudget"] for slot in slots if slot),
+        "attempts": len(receipts),
+        "verifiedJevRequests": sum(len(r.get("requests", [])) for r in complete),
+        "verifiedEditorRequests": sum("responseText" in r for r in complete),
+        "unverifiedAttempts": len(receipts) - len(complete),
+        "comparison": comparison_report,
         "receiptHashes": sorted(r["receiptHash"] for r in complete),
         "costPicoUsd": str(sum(int(r["costPicoUsd"]) for r in complete))
         if receipts
@@ -491,6 +672,7 @@ def run_study(study, root, storage, invoke=cli, clock=time.time):
                 f"artifacts/{path.relative_to(root)}",
                 {"text": path.read_text()},
             )
+    report["reportHash"] = identity(report)
     retain(storage, "result.json", report)
     (root / "result.json").write_bytes(encode(report))
     return report
@@ -513,7 +695,7 @@ def main():
         json.dumps(
             {
                 key: report[key]
-                for key in ("studyId", "outcome", "modelCalls", "qualification")
+                for key in ("studyId", "outcome", "reservedModelCalls", "qualification")
             }
         )
     )
