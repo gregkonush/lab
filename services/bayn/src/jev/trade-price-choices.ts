@@ -1,3 +1,4 @@
+import { jevInstructions } from './instructions'
 import { Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
@@ -46,10 +47,7 @@ export const jevTradePriceQuestions = (input: {
       )
       questions[role] = {
         type: 'choice',
-        instructions:
-          role === 'stop_loss'
-            ? 'Assume a new long position in `candidate.symbol` is entered now under `entryEconomics`, with a holding horizon of `task.horizonMinutes`. Using `candidate`, `benchmark` and `relativeSignals`, select the supplied observed price below `candidate.quote.bid` at which the market evidence would invalidate that long thesis. Choose none if the evidence does not support any supplied stop price. No positive return or benchmark outperformance is required. Code uses this speculative answer only when entering a long position is separately supported.'
-            : 'Assume a new long position in `candidate.symbol` is entered now under `entryEconomics`, with a holding horizon of `task.horizonMinutes`. Using `candidate`, `benchmark` and `relativeSignals`, select the supplied observed price above `entryEconomics.maximumEntryPriceUsd` that the evidence supports reaching to realize a profit after estimated execution costs. Consider `entryEconomics.breakEvenExitBidUsd`. Choose none if no supplied price is supported or covers estimated costs. Code uses this speculative answer only when entering a long position is separately supported.',
+        instructions: role === 'stop_loss' ? jevInstructions.stopLoss : jevInstructions.takeProfit,
         criteria: { none: 'No supplied price supports this trade.', ...criteria },
       }
     }

@@ -13,7 +13,7 @@ import {
 } from '../schemas'
 import type { StrategyDefinition } from '../strategy/core'
 import { JevBatchPlanSchema, JevBatchResultSchema, usableJevBatchInferences } from './batch'
-import { JevContractError } from './contract'
+import { JevContractError, type JevRequest } from './contract'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
 import type { JevProtocol } from './protocol'
@@ -61,11 +61,16 @@ export const reproduceDecisionEvidence = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev decision evidence does not reproduce', cause })),
   )
 
-export const decideJevEntry = (input: unknown) =>
+export const selectJevEntryCandidates = (
+  observation: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['observation'],
+  inferences: Result.Result.Success<ReturnType<typeof reproduceDecisionEvidence>>['inferences'],
+  requests: readonly {
+    readonly symbol: string
+    readonly request: { readonly request: JevRequest }
+    readonly status: JevCandidatePlanStatus.Requested
+  }[],
+) =>
   Result.gen(function* () {
-    const { evidence, observation, inferences, calendar } = yield* reproduceDecisionEvidence(input)
-    if (observation.portfolio.purpose !== JevPurpose.Entry)
-      return yield* unavailable('An entry decision requires a flat entry observation')
     const entryPlanRejections: Record<
       string,
       'UNFUNDED_ALLOCATION' | 'MISSING_OR_INVALID_MODEL_PRICES' | 'UNFUNDED_MODEL_PLAN'
@@ -79,7 +84,7 @@ export const decideJevEntry = (input: unknown) =>
       const probability = answer.probabilities['enter']
       if (probability === undefined) return yield* unavailable('Jev entry answer is missing its enter probability')
       const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null
-      const request = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === symbol)
+      const request = requests.find((candidate) => candidate.symbol === symbol)
       if (answer.choice !== 'enter' || !quoteEligible) continue
       if (request?.status !== JevCandidatePlanStatus.Requested)
         return yield* unavailable('Jev selected entry has no sealed request')
@@ -121,6 +126,19 @@ export const decideJevEntry = (input: unknown) =>
         right.probability - left.probability || (left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0),
     )
     const selected = eligible.slice(0, observation.protocol.maximumPositions)
+    return { entryPlanRejections, selected }
+  })
+
+export const decideJevEntry = (input: unknown) =>
+  Result.gen(function* () {
+    const { evidence, observation, inferences, calendar } = yield* reproduceDecisionEvidence(input)
+    if (observation.portfolio.purpose !== JevPurpose.Entry)
+      return yield* unavailable('An entry decision requires a flat entry observation')
+    const { entryPlanRejections, selected } = yield* selectJevEntryCandidates(
+      observation,
+      inferences,
+      evidence.batchPlan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested),
+    )
     const selectedSymbols = selected.map(({ symbol }) => symbol)
     return {
       schemaVersion: 'bayn.jev-entry-target.v4' as const,
