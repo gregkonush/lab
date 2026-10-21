@@ -10,8 +10,9 @@ Measurements were collected on October 20 Pacific time, October 21 UTC. They des
 not a retention policy or a continuing health guarantee.
 
 The source audit followed executable service and research entries, broker ingestion, SQL functions and triggers,
-migrations, historical readers, tests, tools, and deployment consumers. A table without a TypeScript reference
-can still serve an active SQL trigger.
+migrations, historical readers, tests, tools, and deployment consumers. The relative-import inventory left only
+dedicated test helpers, fixtures and the documented manual projection benchmark outside the command roots.
+A table without a TypeScript reference can still serve an active SQL trigger.
 
 ## Removed contracts
 
@@ -22,8 +23,10 @@ Migration 133 removes six tables after locking them and verifying that each is e
   `opening_drive_qualification_results`, and `opening_drive_qualification_session_replays`.
 
 Exact production counts were zero for all six. Current broker inputs and adapters produce account, position,
-order and fill events. The old `Error` and `RateLimit` event codecs had only contract-test consumers.
-Provider failures retain their typed operational paths, including rate limits and unknown mutation outcomes.
+order and fill events. Only contract tests constructed the decoded `Error` and `RateLimit` variants.
+A query-performance fixture also used a SQL `ERROR` row; it now uses an `ORDER` row and retains its non-account
+filter and scan-budget assertion. Provider failures retain their typed operational paths, including rate limits
+and unknown mutation outcomes.
 
 The migration narrows `broker_events.event_kind` to the four active kinds and updates
 `enforce_broker_event_payload()` before removing its obsolete branches. The deferred exactly-one-payload
@@ -72,6 +75,11 @@ was present, valid and ready. All eight cache alert rules were healthy and inact
 The Valkey log query returned no streams over 48 hours, so log collection remains unproven.
 Notification delivery and profitability were not tested. No metric or alert was removed solely because
 it was quiet or lacked a dashboard panel.
+
+The integration baseline later advanced to `8bed05c8f6ca87e428522e76716e75e85cb40f5c`, which owns migration 132.
+Cleanup was rebased and numbered 133. Read-only verification of that deployed revision observed four fresh
+heartbeats, 656 histogram series, five replica-acknowledgement traces and the same eight healthy inactive alerts.
+Both checked Loki endpoints returned no matching Valkey log streams.
 
 The status projection reported PAPER authority, an active controller, exact reconciliation, zero positions,
 zero unfinished cycles and zero unresolved mutations. These are operational observations, not economic
