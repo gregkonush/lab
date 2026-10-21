@@ -2,8 +2,8 @@ import { Result } from 'effect'
 import { sha256 } from '../hash'
 import { alphaCheckpoint, alphaModel, decodeResearchRun } from './contract'
 
-export const researchFixture = () =>
-  Result.getOrThrow(
+export const researchFixture = () => {
+  const run = Result.getOrThrow(
     decodeResearchRun({
       schemaVersion: 'bayn.research-run.v1',
       sourceRevision: 'a'.repeat(40),
@@ -67,6 +67,9 @@ export const researchFixture = () =>
       },
     }),
   )
+  if (run.schemaVersion !== 'bayn.research-run.v1') throw new Error('Invalid factor fixture')
+  return run
+}
 export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
   [
     {

@@ -121,6 +121,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
+  const [recoveryFailed, setRecoveryFailed] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
@@ -288,6 +289,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setPrompt('')
     setFollowingConversation(true)
     setReplayRecovering(false)
+    setRecoveryFailed(false)
     setError('')
     setEventStreamState('connecting')
     completedTurns.current.clear()
@@ -401,6 +403,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const commitThreadState = useCallback(
     (thread: TengriCodexThread, commitActiveTurn = true) => {
       const restored = commitThread(agentId, thread, threadIdRef, setThreadId, setHistoryItems)
+      setRecoveryFailed(false)
+      lastScrollTop.current = 0
+      setFollowingConversation(true)
       const sequence = thread.eventSequence
       const restoredById = new Map(restored.historyItems.map((item) => [item.id, item]))
       const itemSequences = new Map(Object.entries(thread.itemEventSequences ?? {}))
@@ -449,6 +454,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, threadId, threadIdRef.current)
     const resume = async () => {
       if (!current()) return
+      setRecoveryFailed(false)
       const resumeSequence = lastEventSequence.current
       try {
         const thread = await runTengriAction<TengriCodexThread>(
@@ -461,6 +467,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         setError('')
       } catch (cause: unknown) {
         if (current()) {
+          setRecoveryFailed(true)
           setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
           if (retryableReadFailure(cause)) {
             timer = window.setTimeout(() => void resume(), retryDelay)
@@ -485,6 +492,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const generation = ++threadResumeGeneration.current
     setThreadReady(false)
     setReplayRecovering(true)
+    setRecoveryFailed(false)
+    setError('')
     try {
       const thread = await runTengriAction<TengriCodexThread>({
         action: 'resume-thread',
@@ -506,6 +515,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         mountedRef.current &&
         codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
       ) {
+        setRecoveryFailed(true)
         setError(cause instanceof Error ? cause : 'Codex thread state could not be refreshed')
       }
     } finally {
@@ -619,7 +629,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [accountChecked, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
 
   useEffect(() => {
-    if (!active || !followingConversation) return
+    if (!active || !followingConversation || (threadId && !threadReady)) return
     const conversation = conversationRef.current
     const content = conversationContentRef.current
     if (!conversation || !content) return
@@ -639,7 +649,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       observer.disconnect()
       cancelAnimationFrame(frame)
     }
-  }, [account?.authenticated, active, followingConversation])
+  }, [account?.authenticated, active, followingConversation, threadId, threadReady])
 
   const resizePrompt = useCallback(() => {
     const textarea = promptRef.current
@@ -1037,6 +1047,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setEvents(retainedEvents.current.filter((event) => codexEventMatchesThread(event, nextThreadId)))
     setFollowingConversation(true)
     setReplayRecovering(false)
+    setRecoveryFailed(false)
     replayRecoveryRef.current = false
     setError('')
     completedTurns.current.clear()
@@ -1270,6 +1281,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
               onScroll={(event) => {
                 const conversation = event.currentTarget
+                if (threadId && !threadReady) {
+                  lastScrollTop.current = conversation.scrollTop
+                  return
+                }
                 const atBottom = conversation.scrollHeight - conversation.scrollTop - conversation.clientHeight < 64
                 if (atBottom) setFollowingConversation(true)
                 else if (conversation.scrollTop < lastScrollTop.current) setFollowingConversation(false)
@@ -1290,7 +1305,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ) : null}
               <div
                 ref={conversationContentRef}
-                className="mx-auto w-full max-w-3xl space-y-4"
+                className="mx-auto w-full max-w-3xl space-y-2"
                 role="log"
                 aria-label="Conversation"
                 aria-live="polite"
@@ -1308,11 +1323,28 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               <div className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
                 <button
                   type="button"
-                  className="pointer-events-auto inline-flex min-h-7 items-center gap-1.5 rounded-full border border-white/[0.08] bg-zinc-950/95 px-2.5 text-label-12 text-zinc-300 outline-none transition-colors hover:bg-zinc-900 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
+                  aria-label="Jump to latest"
+                  className="group pointer-events-auto inline-flex size-8 items-center justify-center rounded-full border border-white/[0.08] bg-zinc-950/95 text-zinc-400 outline-none transition-colors hover:bg-zinc-900 hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none"
                   onClick={() => setFollowingConversation(true)}
                 >
-                  <ArrowDown className="size-3" aria-hidden="true" />
-                  Jump to latest
+                  <span
+                    aria-hidden="true"
+                    data-testid="jump-to-latest-dots"
+                    className="inline-flex items-center gap-1 group-hover:hidden group-focus-visible:hidden"
+                  >
+                    {[0, 1, 2].map((index) => (
+                      <span
+                        key={index}
+                        className="size-1 rounded-full bg-current motion-safe:animate-bounce"
+                        style={{ animationDelay: `${index * 150}ms` }}
+                      />
+                    ))}
+                  </span>
+                  <ArrowDown
+                    aria-hidden="true"
+                    data-testid="jump-to-latest-arrow"
+                    className="hidden size-3.5 group-hover:block group-focus-visible:block"
+                  />
                 </button>
               </div>
             ) : null}
@@ -1330,7 +1362,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
                   Recovering the active conversation…
                 </p>
-              ) : threadId && !threadReady ? (
+              ) : threadId && !threadReady && recoveryFailed ? (
                 <div className="mx-auto mb-3 w-full text-label-12">
                   {conversationMissing ? (
                     <p className="mb-2 text-zinc-400">
@@ -1460,13 +1492,23 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     <SelectTrigger
                       aria-label="Approvals"
                       title="Automatically approve command, file and connected-app actions while this chat is open. Questions still need your answer."
-                      className="h-8 w-auto shrink-0 border-transparent bg-transparent px-2 text-label-12 text-zinc-400"
+                      className={cn(composerSelectTriggerClass, 'mb-0.5 shrink-0')}
                     >
                       <SelectValue>{approvalMode === 'auto' ? 'Auto approve' : 'Ask first'}</SelectValue>
                     </SelectTrigger>
-                    <SelectContent side="top">
-                      <SelectItem value="ask">Ask first</SelectItem>
-                      <SelectItem value="auto">Auto approve</SelectItem>
+                    <SelectContent
+                      side="top"
+                      align="start"
+                      sideOffset={8}
+                      alignItemWithTrigger={false}
+                      className={cn(composerSelectMenuClass, 'w-48')}
+                    >
+                      <SelectItem value="ask" className={composerSelectItemClass}>
+                        Ask first
+                      </SelectItem>
+                      <SelectItem value="auto" className={composerSelectItemClass}>
+                        Auto approve
+                      </SelectItem>
                     </SelectContent>
                   </Select>
                   <CodexModelPicker
@@ -1647,6 +1689,13 @@ function EmptyConversation({ onSelectPrompt }: { onSelectPrompt: (text: string) 
   )
 }
 
+const composerSelectTriggerClass =
+  'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
+const composerSelectMenuClass =
+  'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
+const composerSelectItemClass =
+  'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
+
 function CodexModelPicker({
   disabled,
   error,
@@ -1664,18 +1713,7 @@ function CodexModelPicker({
 }) {
   const model = models?.find((model) => model.model === selection.model)
   const validSelection = models && codexOptionsForSelection(selection, models)
-  const triggerClass =
-    'min-w-0 max-w-full gap-2 rounded-lg border-transparent bg-transparent px-2.5 text-button-12 text-zinc-400 data-[size=default]:h-8 hover:bg-white/5 hover:text-zinc-200 dark:bg-transparent dark:hover:bg-white/5 focus-visible:border-transparent focus-visible:ring-white/15 data-popup-open:bg-white/5 data-popup-open:text-zinc-200 motion-reduce:transition-none'
-  const menuClass =
-    'font-geist w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-white/[0.08] bg-zinc-950 p-1 text-zinc-200 shadow-none motion-reduce:animate-none'
-  const itemClass =
-    'min-h-10 rounded-lg px-3 py-2 pr-8 text-label-14 focus:bg-white/8 focus:text-zinc-100 data-highlighted:bg-white/8 data-highlighted:text-zinc-100'
-  const reasoningLabel =
-    selection.reasoningEffort === 'default'
-      ? model
-        ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})`
-        : 'Default'
-      : `${codexReasoningLabels[selection.reasoningEffort]}${model?.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? '' : ' (unavailable)'}`
+  const reasoningLabel = `${codexReasoningLabels[selection.reasoningEffort]}${model && !model.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort) ? ' (unavailable)' : ''}`
   return (
     <div className="min-w-0 flex-1 space-y-1">
       <div className="flex flex-wrap items-center justify-end gap-0.5 rounded-lg p-0.5">
@@ -1684,18 +1722,18 @@ function CodexModelPicker({
           onValueChange={(value) => {
             const next = models?.find((model) => model.model === value)
             if (!next) return
-            const reasoningEffort =
-              selection.reasoningEffort === 'default' ||
-              next.supportedReasoningEfforts.some((effort) => effort.reasoningEffort === selection.reasoningEffort)
-                ? selection.reasoningEffort
-                : 'default'
+            const reasoningEffort = next.supportedReasoningEfforts.some(
+              (effort) => effort.reasoningEffort === selection.reasoningEffort,
+            )
+              ? selection.reasoningEffort
+              : next.defaultReasoningEffort
             onChange({ model: next.model, reasoningEffort })
           }}
           value={selection.model}
         >
           <SelectTrigger
             aria-label="Model"
-            className={triggerClass}
+            className={composerSelectTriggerClass}
             title={
               disabled
                 ? 'Model settings are available when the response and conversation recovery finish.'
@@ -1707,11 +1745,22 @@ function CodexModelPicker({
                 (models ? `${selection.model} (unavailable)` : error ? 'Models unavailable' : 'Loading models…')}
             </SelectValue>
           </SelectTrigger>
-          <SelectContent side="top" align="end" sideOffset={8} alignItemWithTrigger={false} className={menuClass}>
+          <SelectContent
+            side="top"
+            align="end"
+            sideOffset={8}
+            alignItemWithTrigger={false}
+            className={composerSelectMenuClass}
+          >
             <SelectGroup>
               <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Model</SelectLabel>
               {models?.map((model) => (
-                <SelectItem key={model.model} value={model.model} className={itemClass} title={model.description}>
+                <SelectItem
+                  key={model.model}
+                  value={model.model}
+                  className={composerSelectItemClass}
+                  title={model.description}
+                >
                   {model.displayName}
                 </SelectItem>
               ))}
@@ -1727,7 +1776,7 @@ function CodexModelPicker({
         >
           <SelectTrigger
             aria-label="Reasoning effort"
-            className={triggerClass}
+            className={composerSelectTriggerClass}
             title={
               disabled
                 ? 'Reasoning settings are available when the response and conversation recovery finish.'
@@ -1741,18 +1790,15 @@ function CodexModelPicker({
             align="end"
             sideOffset={8}
             alignItemWithTrigger={false}
-            className={`${menuClass} w-60`}
+            className={`${composerSelectMenuClass} w-60`}
           >
             <SelectGroup>
               <SelectLabel className="px-3 pt-2 pb-1.5 text-label-12 text-zinc-400">Reasoning effort</SelectLabel>
-              <SelectItem value="default" className={itemClass}>
-                {model ? `Default (${codexReasoningLabels[model.defaultReasoningEffort]})` : 'Default'}
-              </SelectItem>
               {model?.supportedReasoningEfforts.map((effort) => (
                 <SelectItem
                   key={effort.reasoningEffort}
                   value={effort.reasoningEffort}
-                  className={itemClass}
+                  className={composerSelectItemClass}
                   title={effort.description}
                 >
                   {codexReasoningLabels[effort.reasoningEffort]}

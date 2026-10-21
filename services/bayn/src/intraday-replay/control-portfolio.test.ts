@@ -1,3 +1,4 @@
+import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
@@ -5,13 +6,13 @@ import { Effect, Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
-import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
+
 import {
   applyControlOrder,
   controlEntryQuantity,
@@ -44,7 +45,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 1000,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: atMs, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const order = (side: OrderSide, atMs = at, shares = 10n) => ({
   symbol: 'AAPL',
@@ -60,9 +61,7 @@ const order = (side: OrderSide, atMs = at, shares = 10n) => ({
 const flat = () => Result.getOrThrow(createControlPortfolio('100000000000'))
 
 test('fixed principal sizing retains one budget across different equity and includes adverse price and cash fees', async () => {
-  const policy = await Effect.runPromise(
-    loadQuoteBoundExecutionRiskPolicy('fixed-budget-test', equityMarketProfile.universe),
-  )
+  const policy = await Effect.runPromise(loadExecutionRiskPolicy('fixed-budget-test', equityMarketProfile.universe))
   const quantities = []
   for (const cashMicros of ['100000000000', '200000000000', '50000000000']) {
     quantities.push(
@@ -143,9 +142,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
 )
 
 test('the explicit reserve experiment lowers late entry size while the legacy/default path is unchanged', async () => {
-  const policy = await Effect.runPromise(
-    loadQuoteBoundExecutionRiskPolicy('control-fixture', equityMarketProfile.universe),
-  )
+  const policy = await Effect.runPromise(loadExecutionRiskPolicy('control-fixture', equityMarketProfile.universe))
   const portfolio = { ...flat(), tradedNotionalMicros: BigInt(policy.maxDailyTradedNotionalMicros) - 21_000_000_000n }
   const input = {
     instruments: replayTestInstruments,
@@ -174,6 +171,7 @@ const entry = () => Result.getOrThrow(applyControlOrder(flat(), order(OrderSide.
 const exiting = () =>
   Result.getOrThrow(
     triggerControlExit({
+      feeMultiplierPpm: 1_000_000,
       portfolio: entry(),
       policy: ControlPolicy.RelativeMomentum,
       protocol: fixture.protocol,
@@ -182,6 +180,46 @@ const exiting = () =>
       quote: quote(at + 1_000_000),
     }),
   )
+
+test('net profit target retains its trigger through partial exits and adverse follow-up quotes', () => {
+  const atMs = at + 1000
+  const trigger = (portfolio: ReturnType<typeof entry>, feeMultiplierPpm = 1_000_000, bidPrice = 102) =>
+    Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm,
+        portfolio,
+        policy: ControlPolicy.RelativeMomentum,
+        protocol: fixture.protocol,
+        atMs,
+        cutoffMs: at + 2_000_000,
+        quote: quote(atMs, { bidPrice, askPrice: bidPrice + 0.02 }),
+      }),
+    )
+  expect(trigger(entry(), 1_000_000, 100.2).inventory.status).toBe('HOLDING')
+  const triggered = trigger(entry())
+  expect(triggered.inventory).toMatchObject({ status: 'EXITING', reason: ControlExit.ProfitTarget })
+  const sell = order(OrderSide.Sell, atMs)
+  const partial = Result.getOrThrow(
+    applyControlOrder(triggered, {
+      ...sell,
+      decisionQuote: quote(atMs, { bidPrice: 102, askPrice: 102.02 }),
+      arrivalQuote: quote(atMs + 100, { bidPrice: 102, askPrice: 102.02, bidSize: 1 }),
+    }),
+  ).portfolio
+  expect(partial.episodes).toHaveLength(0)
+  expect(partial.inventory).toEqual(triggered.inventory)
+  expect(trigger(partial, 2_000_000, 98).inventory).toEqual(triggered.inventory)
+  const closed = Result.getOrThrow(
+    applyControlOrder(partial, {
+      ...order(OrderSide.Sell, atMs + 1000, 9n),
+      decisionQuote: quote(atMs + 1000, { bidPrice: 102, askPrice: 102.02 }),
+      arrivalQuote: quote(atMs + 1100, { bidPrice: 102, askPrice: 102.02 }),
+    }),
+  ).portfolio
+  expect(closed.episodes).toHaveLength(1)
+  expect(closed.episodes[0]?.reason).toBe(ControlExit.ProfitTarget)
+  expect(BigInt(closed.episodes[0]?.netExecutionPnlMicros ?? '0')).toBeGreaterThan(10_000_000n)
+})
 
 test('control counts only flat-to-flat episodes and never overlaps capital', () => {
   const entered = entry()
@@ -206,6 +244,7 @@ test('partial entry and exit preserve inventory, original basis, trigger and one
   expect(partialEntry.ledger.positions[0]?.quantityAtoms).toBe('4000000000')
   const triggered = Result.getOrThrow(
     triggerControlExit({
+      feeMultiplierPpm: 1_000_000,
       portfolio: partialEntry,
       policy: ControlPolicy.RelativeMomentum,
       protocol: fixture.protocol,
@@ -297,12 +336,15 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
     quote: quote(at + 1000, { bidPrice: 98, askPrice: 98.02 }),
   }
   expect(
-    Result.getOrThrow(triggerControlExit({ ...common, policy: ControlPolicy.RelativeMomentum })).inventory,
+    Result.getOrThrow(
+      triggerControlExit({ feeMultiplierPpm: 1_000_000, ...common, policy: ControlPolicy.RelativeMomentum }),
+    ).inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.ProtectiveStop })
 
   expect(
     Result.getOrThrow(
       triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
         ...common,
         policy: ControlPolicy.RelativeMomentum,
         quote: quote(at - 20_000, { bidPrice: 98, askPrice: 98.02 }),
@@ -310,12 +352,24 @@ test('mechanical stops require fresh quotes and retained policy holds until the 
     ).inventory.status,
   ).toBe('HOLDING')
   expect(
-    Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 1_000_000, policy: ControlPolicy.RetainedBreakout }))
-      .inventory.status,
+    Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
+        ...common,
+        atMs: at + 1_000_000,
+        policy: ControlPolicy.RetainedBreakout,
+      }),
+    ).inventory.status,
   ).toBe('HOLDING')
   expect(
-    Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 2_000_000, policy: ControlPolicy.RetainedBreakout }))
-      .inventory,
+    Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
+        ...common,
+        atMs: at + 2_000_000,
+        policy: ControlPolicy.RetainedBreakout,
+      }),
+    ).inventory,
   ).toMatchObject({ status: 'EXITING', reason: ControlExit.SessionClose })
 })
 
@@ -331,9 +385,23 @@ test('residual shock target starts at first partial fill and follows protective 
     cutoffMs: at + 2_000_000,
   }
   expect(
-    Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_099, quote: quote(at + 60_099) })).inventory.status,
+    Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
+        ...common,
+        atMs: at + 5100,
+        quote: quote(at + 5100, { bidPrice: 102, askPrice: 102.02 }),
+      }),
+    ).inventory.status,
   ).toBe('HOLDING')
-  const triggered = Result.getOrThrow(triggerControlExit({ ...common, atMs: at + 60_100, quote: quote(at + 60_100) }))
+  expect(
+    Result.getOrThrow(
+      triggerControlExit({ feeMultiplierPpm: 1_000_000, ...common, atMs: at + 60_099, quote: quote(at + 60_099) }),
+    ).inventory.status,
+  ).toBe('HOLDING')
+  const triggered = Result.getOrThrow(
+    triggerControlExit({ feeMultiplierPpm: 1_000_000, ...common, atMs: at + 60_100, quote: quote(at + 60_100) }),
+  )
   expect(triggered.inventory).toMatchObject({
     status: 'EXITING',
     reason: ControlExit.SignalHorizon,
@@ -342,6 +410,7 @@ test('residual shock target starts at first partial fill and follows protective 
   expect(
     Result.getOrThrow(
       triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
         ...common,
         atMs: at + 60_100,
         quote: quote(at + 60_100, { bidPrice: 98, askPrice: 98.02 }),
@@ -351,6 +420,7 @@ test('residual shock target starts at first partial fill and follows protective 
   expect(
     Result.getOrThrow(
       triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
         ...common,
         atMs: at + 60_100,
         cutoffMs: at + 60_100,
@@ -359,12 +429,20 @@ test('residual shock target starts at first partial fill and follows protective 
     ).inventory,
   ).toMatchObject({ reason: ControlExit.SessionClose })
   expect(
-    Result.getOrThrow(triggerControlExit({ ...common, portfolio: triggered, atMs: at + 120_100, quote: undefined }))
-      .inventory,
+    Result.getOrThrow(
+      triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
+        ...common,
+        portfolio: triggered,
+        atMs: at + 120_100,
+        quote: undefined,
+      }),
+    ).inventory,
   ).toEqual(triggered.inventory)
   expect(
     Result.getOrThrow(
       triggerControlExit({
+        feeMultiplierPpm: 1_000_000,
         ...common,
         policy: ControlPolicy.RelativeMomentum,
         atMs: at + 60_100,
@@ -375,7 +453,7 @@ test('residual shock target starts at first partial fill and follows protective 
 })
 
 test('entry sizing obeys order and daily turnover bounds including the adverse limit and fees', async () => {
-  const risk = await Effect.runPromise(loadQuoteBoundExecutionRiskPolicy('control-test', equityMarketProfile.universe))
+  const risk = await Effect.runPromise(loadExecutionRiskPolicy('control-test', equityMarketProfile.universe))
   const size = (portfolio = flat(), policy = risk, targetWeight = 0.2) =>
     Result.getOrThrow(
       controlEntryQuantity({
@@ -473,7 +551,16 @@ test('relative momentum preserves candidate quote freshness while using a real o
 })
 
 test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {
-  const later = nativeJevFixture(undefined, new Date(at + 30_000).toISOString())
+  const later = nativeJevFixture(
+    undefined,
+    new Date(at + 30_000).toISOString(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+  )
   const observedAtMs = Date.parse(later.snapshot.manifest.observedAt)
   const snapshot = {
     ...later.snapshot,

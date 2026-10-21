@@ -28,6 +28,7 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
+  HARNESS2_RESULT: 'success',
   EFFECT_RESULT: 'success',
   BROKER_RESULT: 'success',
   POSTGRES_RESULT: 'success',
@@ -118,16 +119,21 @@ test('market-data fixture runs for Bayn changes and participates in the existing
   expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
   expect(required.needs).toContain('market-data-replay')
   expect(gate.env?.MARKET_DATA_REPLAY_RESULT).toBe('${{ needs.market-data-replay.result }}')
+  expect(required.needs).toContain('harness2')
+  expect(gate.env?.HARNESS2_RESULT).toBe('${{ needs.harness2.result }}')
 })
 
-test('a relevant change cannot pass without successful market-data replay acceptance', async () => {
-  expect((await run({})).exit).toBe(0)
-  for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
-    const result = await run({ MARKET_DATA_REPLAY_RESULT: outcome })
-    expect(result.exit).not.toBe(0)
-    expect(result.stderr).toContain('MARKET_DATA_REPLAY_RESULT must be success')
-  }
-})
+test.each(['MARKET_DATA_REPLAY_RESULT', 'HARNESS2_RESULT'])(
+  'a relevant change cannot pass without successful %s',
+  async (resultName) => {
+    expect((await run({})).exit).toBe(0)
+    for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
+      const result = await run({ [resultName]: outcome })
+      expect(result.exit).not.toBe(0)
+      expect(result.stderr).toContain(`${resultName} must be success`)
+    }
+  },
+)
 
 test('irrelevant changes retain the existing skip policy but detection and required image failures still fail', async () => {
   expect((await run({ BAYN_RELEVANT: 'false', MARKET_DATA_REPLAY_RESULT: 'skipped' })).exit).toBe(0)

@@ -1,26 +1,13 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import {
-  MICROS,
-  accrueCashYield,
-  calculateSessionFees,
-  defaultExecutionModel,
-  desiredQuantityAtoms,
-  elapsedCalendarDays,
-  makeFillTerms,
-  makeOrderOutcome,
-  notionalMicros,
-  referencePriceMicros,
-  saleCostBasisMicros,
-  scaleQuantityAtoms,
-  type ExecutionModelFailure,
-} from './execution-model'
-import {
-  CycleExecutionModelSchema,
-  ExecutionModelSchema,
-  SupportedExecutionModelSchema,
-} from './execution-model-contract'
+import { MICROS, type ExecutionModelFailure } from './strategy/execution-model/model'
+import { intradayExecutionModel } from './strategy/intraday-market'
+import { saleCostBasisMicros } from './strategy/execution-model/cash'
+import { calculateSessionFees } from './strategy/execution-model/fees'
+import { desiredQuantityAtoms, notionalMicros, referencePriceMicros } from './strategy/execution-model/fixed-point'
+
+import { CycleExecutionModelSchema, ExecutionModelSchema } from './execution-model-contract'
 import { strictParseOptions } from './schemas'
 import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 
@@ -37,31 +24,34 @@ const failure = <A>(result: Result.Result<A, ExecutionModelFailure>): ExecutionM
 }
 
 describe('explicit execution model', () => {
-  test('uses one environment-neutral base model and one active intraday cycle model', () => {
-    const decodeExecutionModel = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
-    const decodeSupportedExecutionModel = Schema.decodeUnknownResult(SupportedExecutionModelSchema, strictParseOptions)
-    const decodeCycleExecutionModel = Schema.decodeUnknownResult(CycleExecutionModelSchema, strictParseOptions)
-    const legacy = {
-      ...defaultExecutionModel,
-      schemaVersion: 'bayn.execution-model.v2',
-      venue: 'alpaca-paper',
-    }
-
-    expect(defaultExecutionModel).toMatchObject({
+  test('decodes retained daily execution models without treating them as the active model', () => {
+    const decode = Schema.decodeUnknownResult(ExecutionModelSchema, strictParseOptions)
+    const historical = {
+      ...intradayExecutionModel,
       schemaVersion: 'bayn.execution-model.v3',
       venue: 'alpaca-us-equity',
-    })
-    expect(Result.isSuccess(decodeExecutionModel(legacy))).toBeTrue()
-    expect(Result.isSuccess(decodeSupportedExecutionModel(legacy))).toBeTrue()
-    expect(Result.isSuccess(decodeSupportedExecutionModel(defaultExecutionModel))).toBeTrue()
-    expect(Result.isFailure(decodeSupportedExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
-    expect(Result.isSuccess(decodeCycleExecutionModel(intradayMomentumExecutionModel))).toBeTrue()
+      assetClass: 'us-equity',
+      order: {
+        type: 'market',
+        timeInForce: 'day',
+        extendedHours: false,
+        planAfter: 'signal-session-finalized',
+        submitAfter: 'plan-committed',
+        submitBefore: 'fixed-pre-open-cutoff',
+        planningPriceReference: 'signal-session-close',
+        planningBrokerStateReference: 'reconciled-pre-plan-broker-state',
+        fillPriceReference: 'next-session-open',
+        buyingPowerPolicy: 'pre-submit-cash-without-sell-proceeds',
+        submissionCutoffLeadMinutes: 15,
+      },
+      precision: { ...intradayExecutionModel.precision, quantityIncrementAtoms: '1000' },
+    }
+    expect(Result.isSuccess(decode(historical))).toBeTrue()
     expect(
-      Result.isFailure(
-        decodeCycleExecutionModel({ ...intradayMomentumExecutionModel, schemaVersion: 'bayn.execution-model.v5' }),
-      ),
+      Result.isSuccess(decode({ ...historical, schemaVersion: 'bayn.execution-model.v2', venue: 'alpaca-paper' })),
     ).toBeTrue()
-    expect(Result.isFailure(decodeExecutionModel({ ...defaultExecutionModel, venue: 'alpaca-paper' }))).toBeTrue()
+    expect(Result.isFailure(decode({ ...historical, venue: 'alpaca-paper' }))).toBeTrue()
+    expect(intradayExecutionModel.schemaVersion).toBe('bayn.execution-model.v6')
   })
 
   test('binds rolling intraday execution to session-relative warmup and cutoff boundaries', () => {
@@ -110,30 +100,10 @@ describe('explicit execution model', () => {
     }
   })
 
-  test('rounds price adversely and separates spread from slippage', () => {
-    const reference = success(referencePriceMicros(100, defaultExecutionModel))
-    const buy = success(makeFillTerms('buy', 1_000_000_000n, reference, defaultExecutionModel, MICROS))
-    const sell = success(makeFillTerms('sell', 1_000_000_000n, reference, defaultExecutionModel, MICROS))
-
-    expect(buy).toMatchObject({
-      referencePriceMicros: 100_000_000n,
-      fillPriceMicros: 100_050_000n,
-      spreadCostMicros: 25_000n,
-      slippageCostMicros: 25_000n,
-    })
-    expect(sell).toMatchObject({
-      referencePriceMicros: 100_000_000n,
-      fillPriceMicros: 99_950_000n,
-      spreadCostMicros: 25_000n,
-      slippageCostMicros: 25_000n,
-    })
-    expect(success(referencePriceMicros(100.123456, defaultExecutionModel))).toBe(100_123_500n)
-  })
-
   test('preserves half-up arithmetic and its exact failure data', () => {
     const u128Maximum = (1n << 128n) - 1n
 
-    expect(success(referencePriceMicros(100.12345, defaultExecutionModel))).toBe(100_123_500n)
+    expect(success(referencePriceMicros(100.12345, intradayExecutionModel))).toBe(100_123_500n)
     expect(success(notionalMicros(500_000_000n, 100_000_001n))).toBe(50_000_001n)
     expect(success(saleCostBasisMicros(1n, 1n, 2n))).toBe(1n)
     expect(success(notionalMicros(u128Maximum * 1000n, 1_000_001n))).toBe(
@@ -147,46 +117,6 @@ describe('explicit execution model', () => {
     })
   })
 
-  test('makes full, partial, and rejected outcomes deterministic', () => {
-    const fullModel = {
-      ...defaultExecutionModel,
-      partialFills: { ...defaultExecutionModel.partialFills, probabilityPpm: 0 },
-    }
-    const partialModel = {
-      ...defaultExecutionModel,
-      partialFills: { ...defaultExecutionModel.partialFills, probabilityPpm: 1_000_000 },
-    }
-    const input = {
-      identity: { decisionId: 'a'.repeat(64), symbol: 'SPY', side: 'buy' },
-      side: 'buy' as const,
-      requestedQuantityAtoms: 2000000000n,
-      referencePriceMicros: 100_000_000n,
-    }
-
-    expect(success(makeOrderOutcome({ ...input, model: fullModel }))).toMatchObject({
-      filledQuantityAtoms: 2000000000n,
-      status: 'filled',
-      unfilledRemainder: 'none',
-    })
-    const partial = success(makeOrderOutcome({ ...input, model: partialModel }))
-    expect(partial).toEqual(success(makeOrderOutcome({ ...input, model: partialModel })))
-    expect(partial).toMatchObject({
-      filledQuantityAtoms: 1000000000n,
-      status: 'partially-filled',
-      unfilledRemainder: 'canceled',
-    })
-    expect(
-      success(
-        makeOrderOutcome({
-          ...input,
-          requestedQuantityAtoms: 5000000n,
-          referencePriceMicros: 100_000_000n,
-          model: fullModel,
-        }),
-      ),
-    ).toMatchObject({ status: 'rejected', rejectionReason: 'below-minimum-buy-notional' })
-  })
-
   test('aggregates regulatory fees by session, applies caps, and rounds each type upward to a cent', () => {
     const fees = success(
       calculateSessionFees(
@@ -194,7 +124,7 @@ describe('explicit execution model', () => {
           { symbol: 'NVDA', side: 'buy', quantityAtoms: 1000000000n, notionalMicros: 100_000_000n },
           { symbol: 'NVDA', side: 'sell', quantityAtoms: 10000000000n, notionalMicros: 1_000_000_000n },
         ],
-        defaultExecutionModel,
+        intradayExecutionModel,
         MICROS,
       ),
     )
@@ -218,28 +148,19 @@ describe('explicit execution model', () => {
             notionalMicros: 100_000_000n * MICROS,
           },
         ],
-        defaultExecutionModel,
+        intradayExecutionModel,
         MICROS,
       ),
     )
     expect(capped.tafMicros).toBe(9_790_000n)
   })
 
-  test('keeps cash yield explicit for both zero and nonzero rates', () => {
-    expect(success(accrueCashYield(1_000n * MICROS, 3, defaultExecutionModel))).toBe(0n)
-    const yielding = {
-      ...defaultExecutionModel,
-      cash: { ...defaultExecutionModel.cash, annualYieldBps: 500 },
-    }
-    expect(success(accrueCashYield(1_000n * MICROS, 3, yielding))).toBe(410_958n)
-  })
-
   test('accepts exact twelve-decimal weights despite binary floating-point representation', () => {
     expect(
-      success(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012, 100n * MICROS, defaultExecutionModel)),
-    ).toBe(1234567000n)
+      success(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012, 100n * MICROS, intradayExecutionModel)),
+    ).toBe(1234567890n)
     expect(
-      failure(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012_3, 100n * MICROS, defaultExecutionModel)),
+      failure(desiredQuantityAtoms(1_000n * MICROS, 0.123_456_789_012_3, 100n * MICROS, intradayExecutionModel)),
     ).toMatchObject({
       _tag: 'InvalidFixedPointNumber',
       field: 'target weight',
@@ -247,91 +168,17 @@ describe('explicit execution model', () => {
     })
   })
 
-  test('doubles declared execution costs without changing fill selection', () => {
-    const identity = { decisionId: 'a'.repeat(64), symbol: 'SPY', side: 'sell' }
-    const outcome = success(
-      makeOrderOutcome({
-        identity,
-        side: 'sell',
-        requestedQuantityAtoms: 2000000000n,
-        referencePriceMicros: 100_000_000n,
-        model: defaultExecutionModel,
-      }),
-    )
-    const base = success(
-      makeFillTerms('sell', outcome.filledQuantityAtoms, 100_000_000n, defaultExecutionModel, MICROS),
-    )
-    const doubled = success(
-      makeFillTerms('sell', outcome.filledQuantityAtoms, 100_000_000n, defaultExecutionModel, 2n * MICROS),
-    )
-
-    expect(doubled.spreadCostMicros).toBe(2n * base.spreadCostMicros)
-    expect(doubled.slippageCostMicros).toBe(2n * base.slippageCostMicros)
-    expect(
-      success(
-        makeOrderOutcome({
-          identity,
-          side: 'sell',
-          requestedQuantityAtoms: 2000000000n,
-          referencePriceMicros: 100_000_000n,
-          model: defaultExecutionModel,
-        }),
-      ),
-    ).toEqual(outcome)
-  })
-
-  test('returns discriminated failures for every invalid public decision family', () => {
-    expect(failure(referencePriceMicros(Number.NaN, defaultExecutionModel))).toMatchObject({
+  test('returns discriminated failures for invalid prices, fees and cost basis', () => {
+    expect(failure(referencePriceMicros(Number.NaN, intradayExecutionModel))).toMatchObject({
       _tag: 'InvalidReferencePrice',
       reason: 'not-positive',
     })
-    expect(failure(makeFillTerms('buy', 0n, MICROS, defaultExecutionModel, MICROS))).toMatchObject({
-      _tag: 'InvalidFillTerms',
-      reason: 'invalid-quantity-or-price',
-    })
-    expect(failure(calculateSessionFees([], defaultExecutionModel, 0n))).toMatchObject({
+    expect(failure(calculateSessionFees([], intradayExecutionModel, 0n))).toMatchObject({
       _tag: 'InvalidFeeCostMultiplier',
-    })
-    expect(failure(accrueCashYield(-1n, 1, defaultExecutionModel))).toMatchObject({
-      _tag: 'InvalidCashYield',
-      reason: 'negative-cash',
-    })
-    expect(failure(elapsedCalendarDays('2026-01-02', '2026-01-01'))).toEqual({
-      _tag: 'InvalidCashAccrualPeriod',
-      from: '2026-01-02',
-      to: '2026-01-01',
     })
     expect(failure(saleCostBasisMicros(100n, 2n, 1n))).toMatchObject({
       _tag: 'InvalidSaleCostBasis',
       reason: 'quantity-exceeds-position',
-    })
-    expect(failure(scaleQuantityAtoms(1n, 1_000_001n, defaultExecutionModel))).toMatchObject({
-      _tag: 'InvalidQuantityScale',
-    })
-  })
-
-  test('retains canonicalization failure evidence without throwing', () => {
-    const partialModel = {
-      ...defaultExecutionModel,
-      partialFills: { ...defaultExecutionModel.partialFills, probabilityPpm: 1_000_000 },
-    }
-    const result = makeOrderOutcome({
-      identity: { invalid: 1n },
-      side: 'sell',
-      requestedQuantityAtoms: MICROS,
-      referencePriceMicros: 100n * MICROS,
-      model: partialModel,
-    })
-
-    expect(failure(result)).toMatchObject({
-      _tag: 'OrderOutcomeCanonicalizationFailed',
-      identity: { invalid: 1n },
-      cause: {
-        _tag: 'CanonicalJsonFailure',
-        path: '$.invalid',
-        reason: 'non-json-type',
-        actualType: 'bigint',
-      },
     })
   })
 })

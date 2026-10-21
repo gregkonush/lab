@@ -278,6 +278,11 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   const params = record(raw.params)
   const item = record(params.item)
 
+  if (event.kind === 'user-message' && item.type === 'userMessage' && Array.isArray(item.content)) {
+    const text = item.content.map(userInputText).filter(Boolean).join('\n')
+    if (text) return text
+  }
+
   if (event.kind === 'approval') {
     const text = approvalDisplayText(params, event.text)
     return raw.rawOmitted === true && event.method === 'mcpServer/elicitation/request'

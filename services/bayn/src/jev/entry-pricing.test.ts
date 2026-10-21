@@ -27,7 +27,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const decision = Result.getOrThrow(
@@ -78,12 +78,7 @@ describe('Jev entry execution quote eligibility', () => {
     expect(decision.selectedSymbols).toEqual(['AAPL'])
     const compiled = Result.getOrThrow(compileJevEntry(decision, fixture.snapshot, pricing))
     expect(compiled.priceMicros['AAPL']).toBe('100020000')
-    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(
-      (
-        (BigInt(decision.evidence.observation.portfolio.brokerState.account.equityMicros) / 5n / 100020000n) *
-        1_000_000_000n
-      ).toString(),
-    )
+    expect(compiled.maximumBuyQuantityAtoms['AAPL']).toBe(decision.exitPolicy.plans['AAPL']?.maximumQuantityAtoms)
   })
 
   test.each([
@@ -162,28 +157,26 @@ describe('Jev entry execution quote eligibility', () => {
         expect(calls).toEqual({ snapshots: 1, observations: 1, batches: 1 })
       }).pipe(
         Effect.provideService(CandidateObservationStore, {
-          record: (observation) =>
-            Effect.sync(() => {
-              calls.observations += 1
-              latestWindow = Option.some(observation.payload.manifest.rangeEndAt)
-            }),
+          record: () => Effect.die('Observation admission must be owned by the batch store'),
           latestJevWindowEnd: () => Effect.sync(() => latestWindow),
         }),
         Effect.provideService(JevBatchStore, {
           pending: () => Effect.succeed([]),
           read: () => unused,
           finish: () => unused,
-          begin: (plan) =>
+          begin: (plan, observation) =>
             Effect.gen(function* () {
+              calls.observations += 1
+              latestWindow = Option.some(observation.manifest.rangeEndAt)
               calls.batches += 1
               yield* TestClock.adjust(100)
               const now = yield* Clock.currentTimeMillis
-              return { plan, result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
+              return { plan, dispatches: [], result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
             }),
         }),
         Effect.provideService(JevEvaluationStore, {
           read: () => unused,
-          begin: () => unused,
+
           record: () => unused,
           abandon: () => unused,
         }),

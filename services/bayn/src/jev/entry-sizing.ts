@@ -4,6 +4,7 @@ import { instrumentMarket, MarketKind } from '../instruments'
 import type { ExecutionModel } from '../execution-model-contract'
 import { quantityScale } from '../quantity'
 import { desiredQuantityAtoms } from '../strategy/execution-model/fixed-point'
+import type { JevFundedExitPlan } from './strategy-exit-plan'
 import { JevContractError } from './contract'
 
 export const maximumAllocatedBuyQuantities = (input: {
@@ -37,6 +38,30 @@ export const maximumAllocatedBuyQuantities = (input: {
                   new JevContractError({ message: `Allocated entry quantity for ${symbol} is invalid`, cause }),
               ),
             )).toString()
+    }
+    return Object.freeze(quantities)
+  })
+
+export const maximumFundedBuyQuantities = (
+  input: Parameters<typeof maximumAllocatedBuyQuantities>[0] & {
+    readonly plans: Readonly<Record<string, JevFundedExitPlan>>
+  },
+) =>
+  Result.gen(function* () {
+    const allocated = yield* maximumAllocatedBuyQuantities(input)
+    const quantities: Record<string, string> = {}
+    for (const [symbol, quantity] of Object.entries(allocated)) {
+      if (quantity === '0') {
+        quantities[symbol] = '0'
+        continue
+      }
+      const plan = input.plans[symbol]
+      if (plan === undefined)
+        return yield* Result.fail(
+          new JevContractError({ message: `Entry quantity for ${symbol} has no funded strategy plan` }),
+        )
+      const ceiling = BigInt(plan.maximumQuantityAtoms)
+      quantities[symbol] = (BigInt(quantity) < ceiling ? BigInt(quantity) : ceiling).toString()
     }
     return Object.freeze(quantities)
   })

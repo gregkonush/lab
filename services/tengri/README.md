@@ -14,13 +14,14 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
-Controller ownership uses a 60-second SQL and Kubernetes lease, renewed every five seconds. Acquisition and renewal
+Controller ownership uses one 60-second SQL lease, renewed every five seconds. Kubernetes Leases only track slot
+claims; they do not elect the controller. Acquisition and renewal
 measure their local deadline from the start of the attempt, so a delayed commit never grants an extra lease window.
 Acquisition waits within that window for the durable result; an unconfirmed acquisition grants no authority. Renewal
 keeps its in-flight commit until the previously confirmed deadline, then fences all controller work. This covers the
 observed 20.9-second commit tail without changing request lifetimes or synchronous database durability. After a crash,
-ownership expires after 60 seconds; election polling and durable acquisition can add failover time. A known ownership
-loss still stops the controller immediately.
+ownership expires after 60 seconds; SQL acquisition polling and durable acquisition can add failover time. A known
+ownership loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
 Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
@@ -52,6 +53,9 @@ signature path. Regenerate the independent Rust/TypeScript vector with
 `node services/tengri/fixtures/generate-ofz-request-v2.mjs`.
 The SQL replay schema remains required for the BFF's shared OAuth and one-use capability state. Controller request
 authentication no longer adds a WAL commit before Ofz can evaluate the request.
+Only the five-minute OAuth attempt table is unlogged. It preserves shared atomic consumption without waiting for
+WAL or a synchronous standby. A database crash or failover drops unfinished attempts, which fail closed and require
+a new sign-in. Established sessions, replay nonces, tickets, previews, policies and audit records remain logged.
 Repeated metadata and observation requests reuse an already committed Ofz audit receipt for the exact actor,
 session, grant, origin, workspace/runtime, action, resource, target and recovery generation. Every request still calls
 Ofz for a fresh fully consistent policy decision and checks the receipt binding. The bounded 4096-entry process
@@ -154,13 +158,15 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.6`; journals from another VMM revision require fenced recovery. Disk writes start on the
+`1.16.1+tengri-async-io.7`; journals from another VMM revision require fenced recovery. Disk writes start on the
 bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
 The ring requires pre-registered files and permits only read, write, and flush operations.
 New full memory snapshots retain zero pages as file holes, with the same logical length and byte contents. Existing
 nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
 snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
-snapshot pages during sleep. Snapshot restore uses upstream demand paging and normal read-ahead. Snapshot restore consumes the
+snapshot pages during sleep. Interactive restore uses demand paging with speculative read-ahead disabled. Full capture
+uses normal read-ahead for its sequential scan, then restores the interactive hint on success and failure so the live
+VM can recover from a failed save or flush. Snapshot restore consumes the
 generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
@@ -354,11 +360,14 @@ Supervisor readiness checks the shared database schema and runner state together
 A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
 unavailable. Process liveness remains independent of that dependency.
 
-The namespace reserves seven Leases for six slots and the controller election. Its twelve-Secret quota covers
+The namespace allows seven Leases for six slot claims and rolling-upgrade headroom, including a retired
+controller-election Lease left by older releases. The old Lease is ignored; it grants no controller authority.
+Its twelve-Secret quota covers
 six slot bootstraps, four Ofz credentials and the two old keys retained until the fenced cutover. NetworkPolicy
 permits the controller to call Ofz on 9443 and both controller and supervisors to reach only Ofz PostgreSQL on 5432.
 
-The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
+The controller acquires its generation and lease deadline atomically from shared SQL. Contending replicas use that
+single authority; a retired Kubernetes controller Lease cannot block acquisition or renewal. Its work futures
 are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks
 the installed database fence before and after lifecycle or guest forwarding. SQL failure or expired leadership rejects
 protected requests. Leadership alone is not proof of a guest execution permit; the complete execution fencing and

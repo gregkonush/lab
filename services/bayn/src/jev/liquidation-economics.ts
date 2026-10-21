@@ -1,8 +1,8 @@
 import { Result } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
-import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { quantityScale } from '../quantity'
 import { calculateSessionFees, cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
@@ -13,28 +13,27 @@ import type { JevProtocol } from './protocol'
 interface LiquidationInput {
   readonly protocol: JevProtocol
   readonly symbol: string
+  readonly costMultiplierMicros?: bigint
   readonly quantityAtoms: bigint
 }
 
 export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicros: bigint }) =>
   Result.gen(function* () {
     const market = instrumentMarket(input.symbol)
-    const orderType = cashSpotClosingOrderType(market, input.quantityAtoms)
     const pricing = yield* deriveExecutionIntentPricing({
       symbol: input.symbol,
       side: OrderSide.Sell,
-      orderType,
-      timeInForce: orderType === OrderType.Market ? TimeInForce.Day : cashSpotLimitTimeInForce(market),
+      orderType: OrderType.Limit,
+      timeInForce: cashSpotLimitTimeInForce(market),
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: input.bidMicros,
-      executionModel: input.protocol.executionModel,
-      limitSlippageBps: orderType === OrderType.Market ? 0n : BigInt(input.protocol.maximumEntryLimitSlippageBps),
+      limitSlippageBps: BigInt(input.protocol.maximumEntryLimitSlippageBps),
     })
     const proceedsMicros = (pricing.expectedExecutionPriceMicros * input.quantityAtoms) / quantityScale
     const fees = yield* calculateSessionFees(
       [{ symbol: input.symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceedsMicros }],
       input.protocol.executionModel,
-      1_000_000n,
+      input.costMultiplierMicros ?? 1_000_000n,
     )
     const schedule = input.protocol.executionModel.fees
     const crypto = instrumentMarket(input.symbol) === MarketKind.Crypto
@@ -48,7 +47,10 @@ export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicr
         BigInt(Number(schedule.commissionBps > 0) + Number(schedule.secSellBps > 0))
     const fixedFees = crypto ? 0n : fees.cashMicros - fees.commissionMicros - fees.secMicros
     // One combined linear rate plus rounding reserves bounds stepped fees without making net cash decrease.
-    const conservativeFees = fixedFees + (proceedsMicros * variableRate) / 10_000_000_000n + roundingReserve
+    const conservativeFees =
+      fixedFees +
+      (proceedsMicros * variableRate * (input.costMultiplierMicros ?? 1_000_000n)) / 10_000_000_000_000_000n +
+      roundingReserve
     return {
       proceedsMicros,
       feesMicros: fees.cashMicros,

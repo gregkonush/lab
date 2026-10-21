@@ -20,10 +20,12 @@ export const tengriPowerSettingsSchema = z.strictObject({
 
 export type TengriPowerSettings = z.infer<typeof tengriPowerSettingsSchema>
 
-const filePath = z
+export const workspaceFilePathSchema = z
   .string()
-  .startsWith('/')
+  .regex(/^\/workspace(?:\/[^/]+)*$/)
   .max(4096)
+  .refine((value) => Buffer.byteLength(value, 'utf8') <= 4096, 'Workspace path exceeds 4096 bytes')
+  .refine((value) => !value.split('/').some((segment) => segment === '.' || segment === '..'), 'Invalid workspace path')
   .refine((value) => !value.includes('\u0000') && !value.includes('\r') && !value.includes('\n'), 'Invalid file path')
 const fileContent = z
   .string()
@@ -119,22 +121,27 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('sleep-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('resume-agent'), operationId: z.uuid(), workspaceUid: z.uuid(), agentId }),
   z.strictObject({ action: z.literal('update-power-settings'), agentId, power: tengriPowerSettingsSchema }),
-  z.strictObject({ action: z.literal('list-files'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('read-file'), agentId, path: filePath }),
+  z.strictObject({ action: z.literal('list-files'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({ action: z.literal('read-file'), agentId, path: workspaceFilePathSchema }),
   z.strictObject({
     action: z.literal('write-file'),
     agentId,
-    path: filePath,
+    path: workspaceFilePathSchema,
     content: fileContent,
     expectedRevision: fileRevision,
   }),
-  z.strictObject({ action: z.literal('create-directory'), agentId, path: filePath }),
-  z.strictObject({ action: z.literal('move-file'), agentId, sourcePath: filePath, destinationPath: filePath }),
-  z.strictObject({ action: z.literal('delete-file'), agentId, path: filePath, recursive: z.boolean() }),
+  z.strictObject({ action: z.literal('create-directory'), agentId, path: workspaceFilePathSchema }),
+  z.strictObject({
+    action: z.literal('move-file'),
+    agentId,
+    sourcePath: workspaceFilePathSchema,
+    destinationPath: workspaceFilePathSchema,
+  }),
+  z.strictObject({ action: z.literal('delete-file'), agentId, path: workspaceFilePathSchema, recursive: z.boolean() }),
   z.strictObject({
     action: z.literal('search-files'),
     agentId,
-    path: filePath,
+    path: workspaceFilePathSchema,
     query: z
       .string()
       .trim()
@@ -150,7 +157,7 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
     action: z.literal('create-terminal'),
     agentId,
     creationId: terminalCreationId,
-    cwd: filePath,
+    cwd: workspaceFilePathSchema,
     columns: z.number().int().min(20).max(400),
     rows: z.number().int().min(6).max(200),
   }),

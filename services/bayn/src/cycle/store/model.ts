@@ -3,9 +3,8 @@ import type { StreamingVerifiedSnapshotReference } from '../../market-data/strea
 import { Context, Data, Effect, Option, Result, Schema } from 'effect'
 import { isSqlError, type SqlError } from 'effect/sql/SqlError'
 
-import { Pipeable } from '../../pipeable'
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { InputManifest, IsoDate } from '../../types'
+import type { IsoDate } from '../../types'
 import type { AutonomousCycle, CycleCompletionState, CycleDraft, CycleTerminalReason } from '../model'
 import type { CycleStoreDecisionFailure } from './decision-contract'
 
@@ -43,11 +42,7 @@ interface CycleAuthoritySlotScope {
   readonly accountId: string
 }
 
-export type CycleAuthoritySlot = CycleAuthoritySlotScope &
-  (
-    | { readonly signalSessionDate: IsoDate; readonly executionSessionDate?: never }
-    | { readonly signalSessionDate?: never; readonly executionSessionDate: IsoDate }
-  )
+export type CycleAuthoritySlot = CycleAuthoritySlotScope & { readonly executionSessionDate: IsoDate }
 
 export interface CycleRecoveryScope {
   readonly qualificationRunId: string
@@ -59,7 +54,6 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'acquire'
     | 'activate'
     | 'bind-decision'
-    | 'bind-snapshot'
     | 'block'
     | 'finish'
     | 'read'
@@ -84,11 +78,6 @@ export interface CycleStoreShape {
   readonly readOldestUnfinished: (
     scope: CycleRecoveryScope,
   ) => Effect.Effect<Option.Option<AutonomousCycle>, CycleStoreError>
-  readonly bindSnapshot: (
-    cycleId: string,
-    inputManifest: InputManifest,
-    observedAt: string,
-  ) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly activate: (cycleId: string, observedAt: string) => Effect.Effect<CycleMutationReceipt, CycleStoreError>
   readonly bindDecision: (
     cycleId: string,
@@ -151,7 +140,7 @@ export const cycleStoreError = (input: CycleStoreErrorInput): CycleStoreError =>
   })
 }
 
-const runCycleStoreDataFirst = <A, E, R>(
+export const runCycleStore = <A, E, R>(
   operation: CycleStoreError['operation'],
   effect: Effect.Effect<A, E, R>,
 ): Effect.Effect<A, CycleStoreError, R> =>
@@ -205,22 +194,13 @@ const runCycleStoreDataFirst = <A, E, R>(
     }),
   )
 
-export const runCycleStore = Pipeable.generic<
-  <A, E, R>(
-    effect: Effect.Effect<A, E, R>,
-  ) => (operation: CycleStoreError['operation']) => Effect.Effect<A, CycleStoreError, R>,
-  typeof runCycleStoreDataFirst
->(2, runCycleStoreDataFirst)
-
-const failCycleStoreDataFirst = (
+export const failCycleStore = (
   operation: CycleStoreError['operation'],
   failure: CycleStoreError['failure'],
   message: string,
 ): Effect.Effect<never, CycleStoreError> => Effect.fail(cycleStoreError({ operation, failure, message }))
 
-export const failCycleStore = Pipeable.dual(3, failCycleStoreDataFirst)
-
-const liftCycleDecisionDataFirst = <A>(
+export const liftCycleDecision = <A>(
   operation: CycleStoreError['operation'],
   decision: Result.Result<A, CycleStoreDecisionFailure>,
 ): Effect.Effect<A, CycleStoreError> =>
@@ -228,14 +208,7 @@ const liftCycleDecisionDataFirst = <A>(
     Effect.mapError(({ failure, message }) => cycleStoreError({ operation, failure, message })),
   )
 
-export const liftCycleDecision = Pipeable.generic<
-  <A>(
-    decision: Result.Result<A, CycleStoreDecisionFailure>,
-  ) => (operation: CycleStoreError['operation']) => Effect.Effect<A, CycleStoreError>,
-  typeof liftCycleDecisionDataFirst
->(2, liftCycleDecisionDataFirst)
-
-const exactlyOneCycleDataFirst = (
+export const exactlyOneCycle = (
   operation: CycleStoreError['operation'],
   rows: readonly AutonomousCycle[],
 ): Effect.Effect<AutonomousCycle, CycleStoreError> => {
@@ -249,5 +222,3 @@ const exactlyOneCycleDataFirst = (
   }
   return Effect.succeed(cycle)
 }
-
-export const exactlyOneCycle = Pipeable.dual(2, exactlyOneCycleDataFirst)

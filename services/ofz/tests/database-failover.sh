@@ -70,6 +70,15 @@ prepare_database_failover() {
 
 promote_database_containers() {
   local primary="$1" standby="$2" network="$3" primary_ip="$4"
+  fixture_docker exec -i "$primary" psql -XqAt -U postgres -d tengri_control -v ON_ERROR_STOP=1 >/dev/null <<'SQL'
+SET ROLE tengri_bff;
+SELECT tengri.begin_oauth(decode(repeat('51',32),'hex'),decode(repeat('52',32),'hex'),repeat('v',43),repeat('n',43),gen_random_uuid());
+DO $$ BEGIN
+  IF NOT EXISTS (SELECT 1 FROM tengri.oauth_attempts WHERE state_hash=decode(repeat('51',32),'hex')) THEN
+    RAISE EXCEPTION 'unfinished OAuth attempt missing before promotion';
+  END IF;
+END $$;
+SQL
   fixture_docker kill --signal KILL "$primary" >/dev/null
   fixture_docker network disconnect --force "$network" "$primary"
   fixture_docker network disconnect "$network" "$standby"
@@ -77,6 +86,7 @@ promote_database_containers() {
   fixture_docker network connect --ip "$primary_ip" --alias "$primary" "$network" "$standby"
   fixture_docker exec "$standby" pg_ctl -D /tmp/ofz-standby promote --wait --timeout=5 >/dev/null
   [[ "$(fixture_docker exec "$standby" psql -XAt -U postgres -c 'SELECT pg_is_in_recovery()')" == f ]]
+  [[ "$(fixture_docker exec "$standby" psql -XAt -U postgres -d tengri_control -c 'SELECT count(*) FROM tengri.oauth_attempts')" == 0 ]]
 }
 
 promote_database() {

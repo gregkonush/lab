@@ -5,7 +5,7 @@ import {
   MutationOperation,
   type MutationEvidence,
   type PartialMutationEvidence,
-} from '../../broker/alpaca-mutations'
+} from '../../broker/alpaca-mutations/model'
 import type { CanonicalHashFailure } from '../../hash'
 import { Authority, IntentState, KillState, OrderSide, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion } from '../legacy-wire'

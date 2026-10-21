@@ -25,6 +25,8 @@ import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
+import { recordCandidateObservation } from './candidate-observation-postgres'
+import type { JevObservation } from '../jev/observation'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
 const StoredEvaluationRow = Schema.Struct({
@@ -88,10 +90,12 @@ export const makeJevBatchStore = Effect.gen(function* () {
       return { plan, result } satisfies JevBatchEvidence
     }).pipe(Effect.mapError(persistError))
 
-  const begin = (input: JevBatchPlan) =>
+  const begin = (input: JevBatchPlan, suppliedObservation: JevObservation) =>
     Effect.gen(function* () {
       yield* requireAutocommit
       const plan = yield* Effect.fromResult(decodeJevBatchPlan(input))
+      if ((yield* Effect.fromResult(canonicalHashV1Result(suppliedObservation))) !== plan.observationHash)
+        return yield* persistError('Jev admission observation differs from its sealed plan')
       yield* Effect.annotateCurrentSpan({
         'bayn.jev.batch_id': plan.batchId,
         'bayn.cycle.id': plan.cycleId,
@@ -99,44 +103,102 @@ export const makeJevBatchStore = Effect.gen(function* () {
         'bayn.jev.expires_at': plan.expiresAt,
       })
       const observations = yield* Schema.decodeUnknownEffect(
-        Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })]),
+        Schema.Array(Schema.Struct({ payload: Schema.Unknown })),
         strictParseOptions,
       )(yield* sql`SELECT payload FROM intraday_candidate_observations WHERE content_hash = ${plan.observationHash}`)
-      const observation = observations[0].payload
+      const storedObservation = observations[0]
+      const observation = storedObservation === undefined ? suppliedObservation : storedObservation.payload
       if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash)
         return yield* persistError('Jev batch observation bytes differ from their stored hash')
       yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
-        return existing
+        return { ...existing, dispatches: [] }
       }
-      const now = yield* Clock.currentTimeMillis
-      const checkedAt = utcInstantFromEpochMillis(now)
-      yield* Effect.annotateCurrentSpan({
-        'bayn.jev.admission.checked_at': checkedAt,
-        'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
-      })
-      if (now < Date.parse(plan.observedAt)) return yield* persistError('Jev batch clock regressed before observation')
-      if (now >= Date.parse(plan.expiresAt)) {
-        yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
-        return yield* new JevBatchExpired({
-          batchId: plan.batchId,
-          cycleId: plan.cycleId,
-          observedAt: plan.observedAt,
-          expiresAt: plan.expiresAt,
-          checkedAt,
+      const checkWindow = Effect.gen(function* () {
+        const now = yield* Clock.currentTimeMillis
+        const checkedAt = utcInstantFromEpochMillis(now)
+        yield* Effect.annotateCurrentSpan({
+          'bayn.jev.admission.checked_at': checkedAt,
+          'bayn.jev.admission.lag_ms': now - Date.parse(plan.observedAt),
         })
-      }
-      yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
-      yield* sql`
+        if (now < Date.parse(plan.observedAt))
+          return yield* persistError('Jev batch clock regressed before observation')
+        if (now >= Date.parse(plan.expiresAt)) {
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'expired')
+          return yield* new JevBatchExpired({
+            batchId: plan.batchId,
+            cycleId: plan.cycleId,
+            observedAt: plan.observedAt,
+            expiresAt: plan.expiresAt,
+            checkedAt,
+          })
+        }
+        return checkedAt
+      })
+      yield* checkWindow
+      const dispatches = yield* sql.withTransaction(
+        Effect.gen(function* () {
+          yield* recordCandidateObservation(sql, { contentHash: plan.observationHash, payload: suppliedObservation })
+          const checkedAt = yield* checkWindow
+          yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
+          if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {
+            const result = yield* Effect.fromResult(
+              makeJevBatchResult(plan, {
+                schemaVersion: 'bayn.jev-batch-result.v1',
+                batchId: plan.batchId,
+                completedAt: checkedAt,
+                candidates: plan.candidates.map(({ symbol }) => ({
+                  symbol,
+                  status: JevCandidateResultStatus.Excluded,
+                })),
+              }),
+            )
+            // With no inference claims to wait for, admission can commit the plan and
+            // final result together. RETURNING keeps a racing retry from rewriting an
+            // existing plan or result, including unfinished plans from older workers.
+            yield* sql`
+          WITH admitted AS (
+            INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
+            VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
+            ON CONFLICT DO NOTHING
+            RETURNING batch_id
+          )
+          INSERT INTO jev_batch_results (batch_id, result_hash, payload)
+          SELECT admitted.batch_id, ${result.resultHash}, ${sql.json(result)} FROM admitted
+        `
+          } else {
+            const inserted = yield* Schema.decodeUnknownEffect(
+              Schema.Array(Schema.Struct({ batch_id: Sha256Schema })),
+              strictParseOptions,
+            )(
+              yield* sql`
         INSERT INTO jev_batch_plans (batch_id, cycle_id, authority_generation_hash, observation_hash, payload)
         VALUES (${plan.batchId}, ${plan.cycleId}, ${plan.authorityGenerationHash}, ${plan.observationHash}, ${sql.json(plan)})
-        ON CONFLICT (batch_id) DO NOTHING
-      `
+        ON CONFLICT DO NOTHING RETURNING batch_id
+      `,
+            )
+            if (inserted.length === 0) return []
+            const requests = plan.candidates.flatMap((candidate) =>
+              candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
+            )
+            yield* sql`INSERT INTO jev_evaluation_requests ${sql.insert(
+              requests.map((request) => ({
+                request_id: request.requestId,
+                cycle_id: request.cycleId,
+                authority_generation_hash: request.authorityGenerationHash,
+                payload: sql.json(request),
+              })),
+            )}`
+            return requests.map((request) => ({ request, claimedAt: checkedAt }))
+          }
+          return []
+        }),
+      )
       const saved = yield* read(plan.batchId)
       if (saved === null) return yield* persistError('Committed Jev batch plan is missing')
-      return saved
+      return { ...saved, dispatches }
     }).pipe(
       Effect.mapError((cause) => (cause instanceof JevBatchExpired ? cause : persistError(cause))),
       withObservedStage('bayn.jev.batch-admission', { dependency: 'postgresql' }),
@@ -146,8 +208,8 @@ export const makeJevBatchStore = Effect.gen(function* () {
     Effect.gen(function* () {
       yield* requireAutocommit
       const batchId = yield* Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)(input)
-      // A single-request receipt may have committed its final batch atomically. Its
-      // immutable, decoded result needs no new transaction or durability wait.
+      // An all-excluded admission or single-request receipt may have committed the
+      // final batch atomically. Its immutable result needs no new durability wait.
       const committed = yield* read(batchId)
       if (committed !== null && committed.result !== null) return committed
       return yield* sql.withTransaction(
