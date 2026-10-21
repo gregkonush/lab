@@ -186,8 +186,6 @@ async fn main() -> anyhow::Result<()> {
     let controller_client = client.clone();
     let controller_namespace = namespace.clone();
     let election = leadership::Election::new(
-        client.clone(),
-        namespace.clone(),
         own_pod
             .uid()
             .context("controller Pod UID required")?
