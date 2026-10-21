@@ -5,7 +5,7 @@ decides what should happen, Effect interprets one bounded pass, PostgreSQL store
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
 The [October 20 system cleanup](../../docs/bayn/system-cleanup-2026-10-20.md) records the database and
-observability audit. Migration 133 removes six empty retired tables and the obsolete broker-error/rate-limit
+observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
 event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.
 `tools/audit-database.sql` provides bounded read-only table sizes, exact retirement counts and migration readback.
 

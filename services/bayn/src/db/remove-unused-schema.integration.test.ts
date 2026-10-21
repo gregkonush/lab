@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted } from 'effect'
 
-import removeUnusedSchema from '../../migrations/0133_remove_unused_schema'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
@@ -49,7 +49,7 @@ describePostgres('unused schema hard cutover', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 133))),
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 134))),
           table: 'schema_migrations',
         })
       }),
@@ -75,7 +75,7 @@ describePostgres('unused schema hard cutover', () => {
         const before = yield* evidence
         yield* postgresMigrations
         expect(yield* evidence).toEqual(before)
-        expect(yield* sql`SELECT max(migration_id)::integer AS id FROM schema_migrations`).toEqual([{ id: 133 }])
+        expect(yield* sql`SELECT max(migration_id)::integer AS id FROM schema_migrations`).toEqual([{ id: 134 }])
         for (const table of retiredTables)
           expect(yield* sql`SELECT to_regclass(${`public.${table}`}) AS relation`).toEqual([{ relation: null }])
         for (const table of [

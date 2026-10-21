@@ -16,7 +16,7 @@ A table without a TypeScript reference can still serve an active SQL trigger.
 
 ## Removed contracts
 
-Migration 133 removes six tables after locking them and verifying that each is empty:
+Migration 134 removes six tables after locking them and verifying that each is empty:
 
 - `broker_errors` and `rate_limits`.
 - `opening_drive_qualification_locks`, `opening_drive_qualification_replay_versions`,
@@ -77,9 +77,12 @@ Notification delivery and profitability were not tested. No metric or alert was 
 it was quiet or lacked a dashboard panel.
 
 The integration baseline later advanced to `8bed05c8f6ca87e428522e76716e75e85cb40f5c`, which owns migration 132.
-Cleanup was rebased and numbered 133. Read-only verification of that deployed revision observed four fresh
+Cleanup was rebased and numbered 134. Read-only verification of that deployed revision observed four fresh
 heartbeats, 656 histogram series, five replica-acknowledgement traces and the same eight healthy inactive alerts.
 Both checked Loki endpoints returned no matching Valkey log streams.
+
+Before delivery, `main` advanced to `4cede0109a7ac22d0b849b75c82fe3c7d9291b45` and already owned
+`133_complete_plan_choice`. The cleanup uses `134_remove_unused_schema` to preserve that deployed migration.
 
 The status projection reported PAPER authority, an active controller, exact reconciliation, zero positions,
 zero unfinished cycles and zero unresolved mutations. These are operational observations, not economic
@@ -96,7 +99,7 @@ kubectl -n bayn exec -i <verified-primary> -c postgres -- \
 ```
 
 The audit labels catalog row counts as estimates and separately counts retained and retired candidates.
-It handles the removed tables both before and after migration 133. Statements have deadlines, and failures
+It handles the removed tables both before and after migration 134. Statements have deadlines, and failures
 stop execution. Output contains sizes, counts and schema names, without account identifiers or payloads.
 
 Run `tools/verify-cache-observability.py` with the deployed full source revision and verified Mimir,
