@@ -1,9 +1,9 @@
 import { jevInstructions } from './instructions'
-import { Result, Schema } from 'effect'
+import { BigDecimal, Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import { JevContractError, type JevRequest, type JevResponse } from './contract'
 import { fundJevTradePlan, type JevEntryEconomics } from './entry-economics'
 import type { JevProtocol } from './protocol'
@@ -51,7 +51,13 @@ export const jevTradePlanQuestion = (input: {
         snapshot.bars
           .filter((bar) => bar.symbol === symbol)
           .flatMap((bar) => [bar.open, bar.high, bar.low, bar.close])
-          .map((price) => priceNumberToMicros(price, 'observed plan context', 'DOWN')),
+          .map((price) =>
+            Result.gen(function* () {
+              yield* numberToMicros(price, 'observed plan context')
+              const rounded = BigDecimal.round(BigDecimal.fromNumberUnsafe(price), { scale: 6, mode: 'floor' })
+              return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), 'observed plan context', 1)
+            }),
+          ),
       )
       if (values.length === 0)
         return yield* Result.fail(new JevContractError({ message: 'Trade plans require completed price history' }))
