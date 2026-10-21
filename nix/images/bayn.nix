@@ -39,6 +39,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
   '';
+  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
+  '';
   harnessPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
@@ -61,6 +66,15 @@ let
     exec ${harnessPython}/bin/python "$root/app/services/bayn/harness2/runner.py" "$@"
   '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+  buildDefines = lib.concatStringsSep " " [
+    (buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision)
+    (buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository)
+    (buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash)
+    (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
+  ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     x86_64-linux = "sha256-1EnepW+Xt4wRX2Aa/JVb9RpvTqKU+t5SQpd7leIOhUY=";
@@ -68,25 +82,12 @@ let
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    (
-      "bun --cwd=services/bayn run build "
-      + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
-      + " "
-      + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash
-      + " "
-      + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
-    )
+    "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun build services/bayn/src/backtest-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --outfile services/bayn/dist/backtest-command.js ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/harness2-command.js --help"
+    "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -156,6 +157,7 @@ import ./bun-workspace-service.nix {
     researchCommand
     harnessCommand
     harnessProbeCommand
+    backtestCommand
     harnessPython
   ];
   exposedPorts = {

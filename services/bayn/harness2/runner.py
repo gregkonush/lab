@@ -249,7 +249,7 @@ class Calls:
                 )
                 if kind == "editor":
                     run = {
-                        "schemaVersion": "bayn.jev-harness2-editor.v1",
+                        "schemaVersion": "bayn.jev-harness2-editor.v2",
                         "sourceRevision": self.study["sourceRevision"],
                         "studyHash": identity(self.study),
                         "armManifestHashes": [identity(self.study["baseline"])],

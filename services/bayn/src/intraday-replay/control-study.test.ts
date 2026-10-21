@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
@@ -760,9 +761,11 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v4',
+      schemaVersion: 'bayn.backtest.v5',
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
         inputDefinition: 'bayn.jev-trading-signal-state.v14',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },

@@ -10,10 +10,17 @@ import {
   ResearchOutcome,
   researchServingIdentity,
 } from './contract'
-import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
+import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
 
 const fixture = researchFixture()
 const id = Result.getOrThrow(hashResearch(fixture))
+const activeFixture = harnessEditorFixture()
+const activeId = Result.getOrThrow(hashResearch(activeFixture))
+const activeStream = () =>
+  streamFixture(
+    '<harness>{"entry":"Assess","stopLoss":"Choose stop","takeProfit":"Choose target"}</harness>',
+    activeFixture.policy.model,
+  )
 const encode = (text: string) => new TextEncoder().encode(text)
 const finalUsageFrame = `data: ${JSON.stringify({
   id: 'chatcmpl-synthetic',
@@ -22,6 +29,21 @@ const finalUsageFrame = `data: ${JSON.stringify({
   usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
 })}\n\n`
 describe('bounded native inference stream', () => {
+  test('retired factor registrations cannot transmit even when invoked directly', async () => {
+    let calls = 0
+    const http = HttpClient.make((request) => {
+      calls++
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
+    })
+    const result = await Effect.runPromise(
+      inferResearch(fixture, id, 'http://fixture.invalid').pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.result,
+      ),
+    )
+    expect(result._tag).toBe('Failure')
+    expect(calls).toBe(0)
+  })
   test('treats quoted factor tags in a prompt proposal as text without selecting factors', () => {
     const run = Result.getOrThrow(
       decodeResearchRun({
@@ -147,11 +169,11 @@ describe('bounded native inference stream', () => {
     async (changed) => {
       const { TestClock } = await import('effect/testing')
       const identity: Record<string, string> = {
-        model: fixture.policy.model,
-        checkpoint: fixture.policy.checkpoint,
-        servingImage: fixture.policy.servingImage,
-        tokenizerRevision: fixture.policy.tokenizerRevision,
-        chatTemplateRevision: fixture.policy.chatTemplateRevision,
+        model: activeFixture.policy.model,
+        checkpoint: activeFixture.policy.checkpoint,
+        servingImage: activeFixture.policy.servingImage,
+        tokenizerRevision: activeFixture.policy.tokenizerRevision,
+        chatTemplateRevision: activeFixture.policy.chatTemplateRevision,
       }
       if (changed !== null)
         identity[changed] =
@@ -160,14 +182,14 @@ describe('bounded native inference stream', () => {
         Effect.succeed(
           HttpClientResponse.fromWeb(
             request,
-            new Response(streamFixture(), {
+            new Response(activeStream(), {
               headers: changed === null ? {} : { 'x-bayn-serving-identity': JSON.stringify(identity) },
             }),
           ),
         ),
       )
       const result = await Effect.runPromise(
-        inferResearch(fixture, id, 'http://fixture.invalid').pipe(
+        inferResearch(activeFixture, activeId, 'http://fixture.invalid').pipe(
           Effect.provideService(HttpClient.HttpClient, http),
           Effect.provide(TestClock.layer()),
         ),
@@ -177,20 +199,20 @@ describe('bounded native inference stream', () => {
   )
   test('retains a matching serving attestation independently of JSON key order', async () => {
     const { TestClock } = await import('effect/testing')
-    const identity = researchServingIdentity(fixture.policy)
+    const identity = researchServingIdentity(activeFixture.policy)
     const header = JSON.stringify(Object.fromEntries(Object.entries(identity).reverse()))
     const http = HttpClient.make((request) =>
       Effect.succeed(
         HttpClientResponse.fromWeb(
           request,
-          new Response(streamFixture(), {
+          new Response(activeStream(), {
             headers: { 'x-bayn-serving-identity': header },
           }),
         ),
       ),
     )
     const result = await Effect.runPromise(
-      inferResearch(fixture, id, 'http://fixture.invalid').pipe(
+      inferResearch(activeFixture, activeId, 'http://fixture.invalid').pipe(
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.provide(TestClock.layer()),
       ),
@@ -206,10 +228,12 @@ describe('bounded native inference stream', () => {
     let calls = 0
     const http = HttpClient.make((request) => {
       calls++
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(activeStream())))
     })
     const result = await Effect.runPromise(
-      inferResearch(fixture, id, 'http://fixture.invalid').pipe(Effect.provideService(HttpClient.HttpClient, http)),
+      inferResearch(activeFixture, activeId, 'http://fixture.invalid').pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+      ),
     )
     expect(result.outcome).toBe(ResearchOutcome.Expired)
     expect(calls).toBe(0)
@@ -219,9 +243,9 @@ describe('bounded native inference stream', () => {
     let calls = 0
     const http = HttpClient.make((request) => {
       calls++
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(activeStream())))
     })
-    const future = { ...fixture, featureCutoff: '1970-01-01T00:00:00.001Z' }
+    const future = { ...activeFixture, featureCutoff: '1970-01-01T00:00:00.001Z' }
     const result = await Effect.runPromise(
       inferResearch(future, Result.getOrThrow(hashResearch(future)), 'http://fixture.invalid').pipe(
         Effect.provideService(HttpClient.HttpClient, http),
@@ -255,11 +279,11 @@ test.each(['deadline', 'interruption'] as const)(
           new Response(body, {
             headers: {
               'x-bayn-serving-identity': JSON.stringify({
-                model: fixture.policy.model,
-                checkpoint: fixture.policy.checkpoint,
-                servingImage: fixture.policy.servingImage,
-                tokenizerRevision: fixture.policy.tokenizerRevision,
-                chatTemplateRevision: fixture.policy.chatTemplateRevision,
+                model: activeFixture.policy.model,
+                checkpoint: activeFixture.policy.checkpoint,
+                servingImage: activeFixture.policy.servingImage,
+                tokenizerRevision: activeFixture.policy.tokenizerRevision,
+                chatTemplateRevision: activeFixture.policy.chatTemplateRevision,
               }),
             },
           }),
@@ -269,7 +293,7 @@ test.each(['deadline', 'interruption'] as const)(
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          const fiber = yield* inferResearch(fixture, id, 'http://fixture.invalid').pipe(
+          const fiber = yield* inferResearch(activeFixture, activeId, 'http://fixture.invalid').pipe(
             Effect.provideService(HttpClient.HttpClient, http),
             Effect.forkScoped({ startImmediately: true }),
           )

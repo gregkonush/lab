@@ -243,7 +243,7 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    run["schemaVersion"] == "bayn.jev-harness2-editor.v1"
+                    run["schemaVersion"] == "bayn.jev-harness2-editor.v2"
                     for run in editors
                 )
             )

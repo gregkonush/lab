@@ -13,7 +13,7 @@ import {
   type JevRequest,
 } from './contract'
 import { selectJevEntryCandidates } from './decision'
-import { JevInstructionsSchema, type JevInstructions } from './instructions'
+import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'

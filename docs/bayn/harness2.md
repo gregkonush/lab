@@ -6,7 +6,7 @@ path. The former Alpha-R1 factor-selection adapter and its study format are remo
 
 The [design audit](harness2-design-audit-2026-10-20.md) identifies an unfinished requirement: this runner compares
 native decisions but has no completed independent economic evaluation. It is a candidate-generation and decision-sensitivity
-instrument. The current Alpha-R1 editor role and nine-observation feasibility cohort do not qualify an improvement
+instrument. The former Alpha-R1 editor role and nine-observation feasibility cohort do not qualify an improvement
 claim. Keep candidate adoption and rollout acceptance blocked on that evaluation boundary.
 
 ## Model roles and decision ownership
@@ -25,10 +25,10 @@ Jev receives the complete original state. The editor cannot change question type
 broker protection or execution authority. Bayn's shared `selectJevEntryCandidates` function converts the typed answers
 into the same funded selections and protection-plan rejections used by the live strategy.
 
-The existing Alpha-R1 endpoint serves only as a generative editor and reflection writer. It does not execute probes,
+The pinned Qwen3-8B general instruction endpoint serves as the generative editor and reflection writer. It does not execute probes,
 select factors or make trading decisions. Editor calls retain signed native registrations, original SSE bytes,
 serving identity, usage and expense evidence through the existing Restate workflow. The worker accepts only the
-`bayn.jev-harness2-editor.v1` contract. Historical factor registrations remain immutable accounting evidence; their
+`bayn.jev-harness2-editor.v2` contract. Historical Alpha-R1 editor and factor registrations remain immutable accounting evidence; their
 formats cannot be submitted for new inference through the command or deployed worker.
 
 The active trading exit path enforces the protection terms selected before entry. This experiment does not optimize
@@ -122,6 +122,55 @@ Every study remains `UNQUALIFIED`. Promotion requires an evidence-backed reviewe
 `jev/instructions.ts`, with the normal strategy/protocol identity migration and existing authority gates. The runner
 does not install candidates into the trading process.
 
+## Compile a native portfolio variant
+
+The research compiler replaces the data-only `src/jev/instructions.ts` module before bundling the ordinary
+`backtest-command.ts` entry point. Every request builder, decision decoder, persistence path and recovery check
+therefore consumes the same frozen instruction document. The trading build has no environment or request switch
+for these strings. The compiler accepts three strings as data and has no editable source path or executable-code
+parameter.
+
+Use the pinned Bun 1.4.2 toolchain and committed source. The compiler verifies the requested Git revision and clean
+consumed inputs both before and after compilation. It fails if the instruction module is not replaced exactly once.
+Create a private specification:
+
+```json
+{
+  "schemaVersion": "bayn.jev-harness2-variant.v1",
+  "sourceRevision": "<exact reviewed source revision>",
+  "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
+  "baseImageDigest": "sha256:<runtime image digest>",
+  "instructions": { "entry": "...", "stopLoss": "...", "takeProfit": "..." }
+}
+```
+
+Compile from the repository root:
+
+```sh
+bun services/bayn/tools/build-jev-harness-variant.ts --spec /tmp/variant.json --output /tmp/new-variant
+node /tmp/new-variant/backtest.js --instructions
+```
+
+`build.json` binds the specification, baseline and candidate instruction hashes, source revision, compiler version,
+unchanged strategy hashes and exact executable SHA-256. It is evidence from the compiler invocation, not a signed
+attestation. Verify its bytes and trusted producer independently. The base image requires deployed runtime readback;
+a successful local compilation does not establish that image's publication or execution. The local output links
+to the checkout's native dependencies. When moving the artifact to its verified runtime image, bind `node_modules`
+to that image's `/app/services/bayn/node_modules`, preserving the executable bytes and recorded digest.
+
+The normal image installs `bayn-backtest` for the reviewed baseline. Candidate executables use the same native
+command arguments. Each arm needs its own empty local PostgreSQL replay database, local TigerBeetle target,
+unique replicate identity and private output directory. Never target the restricted research worker's production
+database. It has no permission to produce native portfolio replays.
+
+Input `bayn.backtest.v5` binds `jevInstructionsHash` to the compiled document and `inference.maximumCalls` to the
+provider dispatch ceiling. All other inputs, capital, market sources, cadence, risk and execution assumptions stay
+fixed across arms. The provider uses the existing Jev credential and `BAYN_PUBLIC_INFORMATION_PROXY` adapter.
+Failed or interrupted dispatches consume their budget; exhausted slots cannot transmit. Report
+`bayn.backtest-report.v4` records the compiled instructions, provider dispatch inventory and native outcomes.
+The command retains its actual executable hash and writes full evidence privately; stdout contains a small summary.
+Broker operations use the simulated broker. This command acquires no Alpaca trading credential and expands no capital authority.
+
 ## Native economic report comparison
 
 The native command can compare reports from three independent full backtest runs: the unchanged baseline,
@@ -171,7 +220,7 @@ python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
 bun test services/bayn/src/jev/harness2.test.ts
 ```
 
-Roll out through reviewed main, immutable publication, `lab-delivery/bayn`, `kargo/bayn` and Argo. Migration 132 admits
-the new editor registration while preserving historical evidence. Verify the exact image, native installed command,
+Roll out through reviewed main, immutable publication, `lab-delivery/bayn`, `kargo/bayn` and Argo. Migration 133 admits
+the general editor registration while preserving historical evidence. Verify the exact image, native installed command,
 real Jev probe receipts, held-out comparison, private object readback and completed-study replay. Confirm accounting,
 reconciliation and trading safeguards independently. Infrastructure readiness alone is insufficient.

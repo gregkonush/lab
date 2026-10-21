@@ -7,6 +7,27 @@ import { Sha256Schema, UtcInstantSchema } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
 
+export const makeBoundedReplayJevProvider = (provider: JevClient['Service'], maximumCalls: number) => {
+  let dispatchCount = 0
+  return {
+    dispatchCount: () => dispatchCount,
+    provider: {
+      evaluate: (request: unknown) =>
+        Effect.suspend(() => {
+          if (dispatchCount >= maximumCalls)
+            return Effect.fail(
+              new JevError({
+                failure: JevFailure.NotDispatched,
+                message: 'Frozen replay provider-call budget exhausted',
+              }),
+            )
+          dispatchCount++
+          return provider.evaluate(request)
+        }),
+    },
+  }
+}
+
 export const ReplayJevCallSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.replay-jev-call.v1'),
   request: JevRequestSchema,

@@ -9,6 +9,11 @@ Bayn decision-improvement experiment. Its request reproduction and funded select
 comparison cannot establish economic improvement. Delivering another healthy image would not close that gap.
 PR [#15233](https://github.com/proompteng/lab/pull/15233) is held in draft while the experiment is corrected.
 
+The follow-up source now replaces the active Alpha-R1 policy with a pinned general instruction editor, supplies a
+research-only compiler for the native portfolio executable, binds its instruction hash and provider-call budget,
+and reads native economic reports. These implementation changes address parts of the gaps below. Full orchestration,
+real editor qualification, independent market coverage and a completed economic experiment remain unverified.
+
 The original research question remains: does a frozen Harness2-generated change improve Bayn's actual decisions,
 after execution and operating costs, relative to the unchanged strategy and appropriate controls?
 

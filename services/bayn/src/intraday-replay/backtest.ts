@@ -1,6 +1,7 @@
 import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { jevInstructions } from '../jev/instructions'
 
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
@@ -21,6 +22,7 @@ import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   PositiveMicrosSchema,
+  Sha256Schema,
   StrictNonEmptyStringSchema,
   UnsignedMicrosSchema,
   UtcInstantSchema,
@@ -34,7 +36,7 @@ import {
 } from '../strategy'
 import { JevClient } from '../jev/client'
 import { jevModel } from '../jev/contract'
-import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeBoundedReplayJevProvider, makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 import { calculateReplayJevCosts, ReplayJevCostModelSchema } from './jev-costs'
 import {
   BacktestSourceManifestSchema,
@@ -106,12 +108,14 @@ export const assessBacktestSession = (input: {
 }
 
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v4'),
+  schemaVersion: Schema.Literal('bayn.backtest.v5'),
+  jevInstructionsHash: Sha256Schema,
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
     inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
     costs: ReplayJevCostModelSchema,
+    maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
   }),
   allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
   replicate: StrictNonEmptyStringSchema,
@@ -150,6 +154,10 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
     const baselineProtocol = yield* loadActiveStrategyProtocol()
+    if (decoded.jevInstructionsHash !== (yield* canonicalHashV1Result(jevInstructions)))
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'Replay instructions differ from its compiled executable' }),
+      )
     const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
     if (
       decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
@@ -368,9 +376,10 @@ export const runBacktest = (
     )
     yield* advanceTo(initializationStartedAtMs)
     const inferenceCalls: ReplayJevCall[] = []
+    const boundedProvider = makeBoundedReplayJevProvider(yield* JevClient, prepared.input.inference.maximumCalls)
     const timing = yield* makeReplayJevTiming({
       measureDatabaseTime: clock.measure,
-      provider: yield* JevClient,
+      provider: boundedProvider.provider,
       providerClock,
       advanceTo,
       advanceDeadlineTo,
@@ -591,7 +600,8 @@ export const runBacktest = (
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
     const report = {
-      schemaVersion: 'bayn.backtest-report.v3' as const,
+      schemaVersion: 'bayn.backtest-report.v4' as const,
+      jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
       evidenceMode: 'simulated-production-execution' as const,
       profitability: 'UNPROVEN' as const,
       completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
@@ -601,7 +611,12 @@ export const runBacktest = (
         complete && executionPnl !== null
           ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
           : null,
-      inference: { definition: prepared.input.inference, costs: modelCosts, calls: inferenceCalls },
+      inference: {
+        definition: prepared.input.inference,
+        costs: modelCosts,
+        calls: inferenceCalls,
+        providerDispatchCount: boundedProvider.dispatchCount(),
+      },
       dataCostMicros,
       issues,
       runId: prepared.runId,

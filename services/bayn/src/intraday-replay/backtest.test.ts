@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
@@ -14,16 +15,18 @@ import {
 import { jevModel } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
 import { backtestSourcePartitions, validateBacktestSourceReceipt } from './source'
-import { sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
 import { makeStrategyProtocolHashResult } from '../contracts'
 const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v4',
+    schemaVersion: 'bayn.backtest.v5',
+    jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
     inference: {
       mode: 'measured-provider',
+      maximumCalls: 1000,
       model: jevModel,
       inputDefinition: 'bayn.jev-trading-signal-state.v14',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -147,6 +150,8 @@ test('native backtest rejects retired momentum inputs, missing inference provena
     { ...input, schemaVersion: 'bayn.backtest.v2', exitTiming: 'current' },
     { ...input, exitTiming: 'current' },
     { ...input, inference: undefined },
+    { ...input, jevInstructionsHash: '0'.repeat(64) },
+    { ...input, inference: { ...input.inference, maximumCalls: 0 } },
     { ...input, inference: { ...input.inference, mode: 'constant-response' } },
     { ...input, inference: { ...input.inference, model: 'unverified' } },
     { ...input, inference: { ...input.inference, inputDefinition: 'bayn.jev-trading-signal-state.v4' } },

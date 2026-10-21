@@ -11,6 +11,7 @@ import {
   GitSourceRevisionSchema,
   ImageDigestSchema,
   IsoDateSchema,
+  NonNegativeIntegerSchema,
   PositiveMicrosSchema,
   Sha256Schema,
   SignedMicrosSchema,
@@ -21,18 +22,22 @@ import {
 } from '../schemas'
 import { JevContractError, decodeJevResponse, prepareJevRequest } from './contract'
 import { applyJevInstructions } from './harness2'
-import { jevInstructions, JevInstructionsSchema, type JevInstructions } from './instructions'
+import { jevInstructions } from './instructions'
+import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
 import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 
 // Decode only the consumed projection after verifying the complete original document hash.
 const NativeEconomicReportSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest-report.v3'),
+  schemaVersion: Schema.Literal('bayn.backtest-report.v4'),
+  jevInstructions: Schema.Struct({ contentHash: Sha256Schema, document: JevInstructionsSchema }),
   evidenceMode: Schema.Literal('simulated-production-execution'),
   runId: Sha256Schema,
+  executableSha256: Schema.optionalKey(Sha256Schema),
   reportHash: Sha256Schema,
   inference: Schema.Struct({
     definition: BacktestInputSchema.fields.inference,
     calls: Schema.Array(ReplayJevCallSchema),
+    providerDispatchCount: NonNegativeIntegerSchema,
     costs: ReplayJevCostSummarySchema,
   }),
   completion: Schema.Literals(['COMPLETE', 'INCOMPLETE']),
@@ -118,12 +123,22 @@ export const jevHarnessBacktestOutcome = (input: {
     if (reportHash !== (yield* hash(material))) return yield* invalid('Native replay report hash differs')
     const report = yield* Schema.decodeUnknownResult(NativeEconomicReportSchema)(raw)
     if (
+      report.jevInstructions.contentHash !== (yield* hash(instructions)) ||
+      report.jevInstructions.contentHash !== (yield* hash(report.jevInstructions.document))
+    )
+      return yield* invalid('Native report does not bind the registered compiled Jev instructions')
+    if (
       report.build.strategyBehaviorHash !== jevBehaviorHash ||
       report.build.strategyParameterHash !== (yield* hash(defaultJevProtocolDocument))
     )
       return yield* invalid('Native report strategy differs from the compiled execution and cost model')
     if (report.source.runId !== report.runId) return yield* invalid('Native source belongs to another replay run')
     const costs = calculateReplayJevCosts(report.inference.calls, report.inference.definition.costs)
+    if (
+      report.inference.providerDispatchCount > report.inference.definition.maximumCalls ||
+      report.inference.providerDispatchCount > report.inference.calls.length
+    )
+      return yield* invalid('Native provider dispatch inventory exceeds its frozen budget or retained calls')
     if ((yield* hash(costs)) !== (yield* hash(report.inference.costs)))
       return yield* invalid('Native replay inference expense does not reproduce')
     for (const call of report.inference.calls) {
@@ -244,6 +259,7 @@ export const jevHarnessBacktestOutcome = (input: {
     return {
       reportHash: report.reportHash,
       runId: report.runId,
+      executableSha256: report.executableSha256 ?? null,
       instructionsHash: yield* hash(instructions),
       contextHash: yield* hash({
         source: sourceContext,
@@ -261,7 +277,7 @@ export const jevHarnessBacktestOutcome = (input: {
         strategyParameterHash: report.build.strategyParameterHash,
         sessionDates: report.sessionDates,
       }),
-      providerRequests: report.inference.calls.length,
+      providerRequests: report.inference.providerDispatchCount,
       conservativeMaximumDrawdownMicros:
         report.maximumObservedDrawdownMicros === null || !operatingComplete
           ? null
@@ -361,6 +377,11 @@ export const compareJevHarnessEconomics = (
         baseline: baseline.reportHash,
         baselineRepeat: baselineRepeat.reportHash,
         candidate: candidate.reportHash,
+      },
+      executableHashes: {
+        baseline: baseline.executableSha256,
+        baselineRepeat: baselineRepeat.executableSha256,
+        candidate: candidate.executableSha256,
       },
       observedNetEffect,
       reasons,

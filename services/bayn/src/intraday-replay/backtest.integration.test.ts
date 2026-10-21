@@ -240,10 +240,12 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v4',
+          schemaVersion: 'bayn.backtest.v5',
+          jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
+            maximumCalls: 1000,
             model: jevModel,
             inputDefinition: 'bayn.jev-trading-signal-state.v14',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },

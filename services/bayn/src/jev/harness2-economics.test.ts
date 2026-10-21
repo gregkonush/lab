@@ -42,6 +42,7 @@ const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const outcome = (run: string, net: readonly (string | null)[], candidate = false): JevHarnessBacktestOutcome => ({
   runId: run.repeat(64),
   reportHash: run.repeat(64),
+  executableSha256: null,
   instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
   contextHash: 'd'.repeat(64),
   providerRequests: 8,
@@ -203,18 +204,21 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   if (ledger.netRealizedPnlAfterCostsMicros === null) throw Error('Fixture must close')
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
   const material = {
-    schemaVersion: 'bayn.backtest-report.v3',
+    schemaVersion: 'bayn.backtest-report.v4',
+    jevInstructions: { document: instructions, contentHash: hash(instructions) },
     evidenceMode: 'simulated-production-execution',
     runId: run.repeat(64),
     inference: {
       definition: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
         inputDefinition: defaultJevProtocolDocument.inputDefinition,
         costs: tariff,
       },
       costs,
       calls: [call],
+      providerDispatchCount: 1,
     },
     completion: 'COMPLETE',
     issues: [],
