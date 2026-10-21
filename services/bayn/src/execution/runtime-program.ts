@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
-import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
 import { canonicalHashV1Result } from '../hash'
 import type { Policy } from '../risk'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordinator-decisions'
 import type { Intent } from './contracts'
@@ -17,8 +17,8 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
-import { MutationStore, type MutationStoreShape } from './mutations'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
+import { MutationStore, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,
@@ -29,7 +29,7 @@ import {
   type FinalSubmitAuthorizationFailure,
 } from './mutation-authority'
 import { WriterFenceError, type WriterFenceService } from './writer-fence'
-import { Pipeable } from '../pipeable'
+
 import type { BrokerStateCache, BrokerStateVersion } from './broker-state-cache'
 import { withObservedStage } from '../telemetry'
 
@@ -58,11 +58,6 @@ export interface ExecutionProgramDependencies {
   /** Close-only intents may finish recovery until this separate close lease expires. */
   readonly closeSubmitExpiresAt?: string
   readonly isCloseOnlyIntent?: (intentId: string) => Effect.Effect<boolean, FinalSubmitAuthorizationFailure>
-}
-
-export interface ExecutionProgramConstructionFailure {
-  readonly _tag: 'ExecutionProgramRequiresMutationAuthority'
-  readonly brokerAccess: BrokerAccess
 }
 
 interface FinalExecutionCapitalAuthorization {
@@ -186,7 +181,7 @@ const validateFinalSubmitTime = (
     return yield* Effect.fail({ _tag: 'ExecutionWindowExpired' as const, expiresAt, observedAt })
   })
 
-const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
+export const authorizeFinalBrokerSubmit = <A, E, R>(
   authority: MutationExecutionAuthority,
   intent: Intent,
   transmit: Effect.Effect<A, E, R>,
@@ -224,15 +219,6 @@ const authorizeFinalBrokerSubmitDataFirst = <A, E, R>(
     )
 }
 
-export const authorizeFinalBrokerSubmit = Pipeable.generic<
-  <A, E, R>(
-    intent: Intent,
-    transmit: Effect.Effect<A, E, R>,
-    dependencies: ExecutionProgramDependencies,
-  ) => (authority: MutationExecutionAuthority) => Effect.Effect<A, E | FinalSubmitAuthorizationFailure, R>,
-  typeof authorizeFinalBrokerSubmitDataFirst
->(4, authorizeFinalBrokerSubmitDataFirst)
-
 const provideCoordinatorDependencies = <A, E, R>(
   effect: Effect.Effect<A, E, R>,
   dependencies: ExecutionProgramDependencies,
@@ -264,7 +250,7 @@ const scopeSubmitDeadline = (
   }
 }
 
-const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
+export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies: ExecutionProgramDependencies) => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) {
     return Result.fail({
       _tag: 'ExecutionProgramRequiresMutationAuthority' as const,
@@ -302,6 +288,17 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
         ),
       )
     },
+    cancelProtectionOrder: (intentId: string, brokerOrderId: string) =>
+      dependencies.brokerStateCache.invalidate.pipe(
+        Effect.andThen(
+          Effect.gen(function* () {
+            const observedAt = yield* dependencies.currentUtcInstant
+            const allowed = yield* dependencies.intentStore.beginProtectionCancel(intentId, brokerOrderId, observedAt)
+            if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
+            return allowed
+          }),
+        ),
+      ),
     cancel: (intentId: string, consistencyDelayMs: number) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
@@ -314,7 +311,5 @@ const makeExecutionProgramDataFirst = (authority: ExecutionAuthority, dependenci
       ),
   })
 }
-
-export const makeExecutionProgram = Pipeable.dual(2, makeExecutionProgramDataFirst)
 
 export type ExecutionProgram = Result.Result.Success<ReturnType<typeof makeExecutionProgram>>

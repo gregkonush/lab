@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { Cause, Clock, Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevError, type JevClient } from '../jev/client'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { utcInstantFromEpochMillis } from '../time'
@@ -70,7 +70,7 @@ test('provider receipts start after measured clock synchronization', async () =>
               yield* f.providerClock.adjust(50)
               return {
                 requestHash: prepared.requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(startedAt),
                 completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
                 response,
@@ -237,7 +237,7 @@ test('concurrent inference advances source time by elapsed batch time and preser
               activeCalls--
               return {
                 requestHash: prepared.requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(startedAt),
                 completedAt: utcInstantFromEpochMillis(yield* Clock.currentTimeMillis),
                 response,
@@ -446,7 +446,7 @@ test('a substituted response identity fails the replay after preserving the actu
             evaluate: () =>
               Effect.succeed({
                 requestHash: request('AMZN').requestHash,
-                responseHash: canonicalHashV1OrThrow(response),
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                 startedAt: utcInstantFromEpochMillis(providerAt),
                 completedAt: utcInstantFromEpochMillis(providerAt),
                 response,

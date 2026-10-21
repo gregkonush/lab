@@ -2,9 +2,9 @@ import { intentPlanSchemaVersion } from '../execution/contracts'
 import { Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import { CycleRunnerError } from '../cycle/runner'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
+import { CycleRunnerError } from '../cycle/runner/model'
 import { executionCycleRestrictionSubject } from '../execution/mandate'
 import { legacyAuthorityStateSchemaVersion } from '../execution/legacy-wire'
 import {
@@ -13,7 +13,7 @@ import {
   planExecutionIntent,
   validateCommitIdentity,
   type StoredIntent,
-} from '../execution/intents'
+} from '../execution/intents/domain'
 import {
   Authority,
   IntentState,
@@ -25,13 +25,13 @@ import {
   type Intent,
   type Position,
 } from '../execution/contracts'
-import { MutationStore, type MutationEvent } from '../execution/mutations'
+import { MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
 import type { ExecutionDecisionDocument } from '../shadow-decision-contract'
-import { TargetPlanStatus } from '../target-planner'
+import { TargetPlanStatus } from '../target-planner/index'
 import type { CycleExecutionModel } from '../execution-model-contract'
 import {
   decideExecutionPhaseCompletion,
@@ -50,7 +50,6 @@ import {
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
-import { Pipeable } from '../pipeable'
 
 export type MutationPreparationFacts = {
   readonly snapshot: {
@@ -291,7 +290,7 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
   input: I,
   preparation: P,
   policy: Policy,
@@ -395,6 +394,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
           limitPriceMicros: lookup.riskBinding.limitPriceMicros,
+          ...(lookup.riskBinding.protection === undefined ? {} : { protection: lookup.riskBinding.protection }),
           ...(document.replanGenerationHash === undefined
             ? {}
             : { replanGenerationHash: document.replanGenerationHash }),
@@ -754,6 +754,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           if (observation._tag === 'StableOpen') {
             if (
               drainOpenOrders ||
+              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
@@ -909,17 +910,3 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
       : { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: completion.reason }
   })
-
-export const prepareMutationIntent = Pipeable.generic<
-  <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
-    preparation: P,
-    policy: Policy,
-    cycle: AutonomousCycle,
-    document: ExecutionDecisionDocument,
-    reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
-    allowSubmit: boolean,
-    drainOpenOrders: boolean,
-    dependencies: MutationPreparationDependencies<R, E, I, P>,
-  ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
-  typeof prepareMutationIntentDataFirst
->(9, prepareMutationIntentDataFirst)

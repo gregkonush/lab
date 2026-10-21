@@ -12,8 +12,9 @@ import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
@@ -24,7 +25,7 @@ import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/
 import { config } from '../testing/runtime-fixtures'
 import { prepareBacktest, runBacktest, type BacktestPass } from './backtest'
 import { postgresMigrations } from '../db/postgres-migrations'
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { IntentState, OrderSide, OrderType, TimeInForce } from '../execution/contracts'
@@ -53,8 +54,8 @@ durableTest(
     if (original === undefined) throw new Error('Missing closing-cut quote')
     const closeMs = Date.parse('2026-09-04T20:00:00.000Z')
     const startMs = closeMs - 1000
-    const runId = canonicalHashV1OrThrow({ test: 'measured-closing-cut', run: randomUUID() })
-    const sourceHash = canonicalHashV1OrThrow({ runId })
+    const runId = Result.getOrThrow(canonicalHashV1Result({ test: 'measured-closing-cut', run: randomUUID() }))
+    const sourceHash = Result.getOrThrow(canonicalHashV1Result({ runId }))
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* postgresMigrations
@@ -140,7 +141,7 @@ durableTest(
           quoteAt: (symbol, atMs, source) => Effect.sync(() => observedQuoteAt(projection, symbol, atMs, source)),
         })
         yield* broker.mutation.submit({
-          schemaVersion: 'bayn.execution-intent.v4',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: '1'.repeat(64),
           riskDecisionId: '2'.repeat(64),
           authorityGenerationHash: '3'.repeat(64),
@@ -242,7 +243,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v10',
+            inputDefinition: 'bayn.jev-trading-signal-state.v14',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',

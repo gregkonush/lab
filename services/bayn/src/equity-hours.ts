@@ -1,7 +1,6 @@
 import { Data, DateTime, Result } from 'effect'
 
 export const equityDataHours = Object.freeze({ feed: 'iex', openMinute: 8 * 60, closeMinute: 17 * 60 })
-export const equityFeatureSessionPolicy = 'alpaca.iex-clock-segments.new-york.v2'
 const timeZone = 'America/New_York'
 
 export class EquityHoursError extends Data.TaggedError('EquityHoursError')<{

@@ -10,7 +10,7 @@ import { Result } from 'effect'
 import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import {
   AccountStatus,
   DiscrepancyKind,
@@ -24,7 +24,7 @@ import {
   type Position,
   type Reconciliation,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   TargetPlanReason,
   TargetPlanStatus,
@@ -37,7 +37,7 @@ import {
   type TargetPlanResult,
   type TargetPlannerInput,
   type TargetPlannerInputV1,
-} from './target-planner'
+} from './target-planner/index'
 
 const hash = (digit: string): string => digit.repeat(64)
 const accountId = 'paper-account-1'
@@ -128,7 +128,7 @@ const referencePrices = (
     observedAt: referenceObservedAt,
     priceMicros,
   }
-  return { ...material, contentHash: canonicalHashV1(material) }
+  return { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }
 
 const reconciliation = (
@@ -157,14 +157,16 @@ const reconciliation = (
     discrepancies: [],
     reconciledAt,
   }
-  const reconciliationId = canonicalHashV1({
-    schemaVersion: 'bayn.paper-reconciliation-id.v1',
-    material,
-  })
+  const reconciliationId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'bayn.paper-reconciliation-id.v1',
+      material,
+    }),
+  )
   return {
     ...material,
     reconciliationId,
-    contentHash: canonicalHashV1({ ...material, reconciliationId }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
   }
 }
 
@@ -243,7 +245,7 @@ const fixture = (options: FixtureOptions = {}): TargetPlannerInput => {
         return {
           schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
           ...common,
-          referencePrices: { ...priceMaterial, contentHash: canonicalHashV1(priceMaterial) },
+          referencePrices: { ...priceMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(priceMaterial)) },
           allocationCapitalMicros: options.allocationCapitalMicros ?? '1000000000',
           precision: { ...common.precision, quantityIncrementAtoms: '1000000000' as const },
           executionTerms: {
@@ -508,7 +510,12 @@ describe('causal target planner', () => {
     }
 
     expect(
-      Result.isFailure(decodeTargetPlanResult({ ...mislabeledLegacy, outputHash: canonicalHashV1(mislabeledLegacy) })),
+      Result.isFailure(
+        decodeTargetPlanResult({
+          ...mislabeledLegacy,
+          outputHash: Result.getOrThrow(canonicalHashV1Result(mislabeledLegacy)),
+        }),
+      ),
     ).toBe(true)
   })
 
@@ -594,7 +601,11 @@ describe('causal target planner', () => {
       })),
     }
 
-    expect(Result.isFailure(decodeTargetPlanResult({ ...tampered, outputHash: canonicalHashV1(tampered) }))).toBe(true)
+    expect(
+      Result.isFailure(
+        decodeTargetPlanResult({ ...tampered, outputHash: Result.getOrThrow(canonicalHashV1Result(tampered)) }),
+      ),
+    ).toBe(true)
   })
 
   test('permits only the exactly reconciled short quantity in a forced buy-to-cover', () => {
@@ -955,7 +966,7 @@ describe('causal target planner', () => {
     const futureSignal = {
       ...input,
       signalDate: material.signalDate,
-      referencePrices: { ...material, contentHash: canonicalHashV1(material) },
+      referencePrices: { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) },
     }
 
     expect(planSuccess(futureSignal).reason).toBe(TargetPlanReason.IdentityMismatch)
@@ -1055,10 +1066,12 @@ describe('causal target planner', () => {
       discrepancies: [discrepancy],
       reconciledAt,
     }
-    const reconciliationId = canonicalHashV1({
-      schemaVersion: 'bayn.paper-reconciliation-id.v1',
-      material,
-    })
+    const reconciliationId = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.paper-reconciliation-id.v1',
+        material,
+      }),
+    )
     const discrepantInput = {
       ...input,
       brokerState: {
@@ -1066,7 +1079,7 @@ describe('causal target planner', () => {
         reconciliation: {
           ...material,
           reconciliationId,
-          contentHash: canonicalHashV1({ ...material, reconciliationId }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ ...material, reconciliationId })),
         },
       },
     }
@@ -1193,7 +1206,7 @@ describe('causal target planner', () => {
     const valid = planSuccess(fixture())
     const rehash = (candidate: Omit<typeof valid, 'outputHash'>) => ({
       ...candidate,
-      outputHash: canonicalHashV1(candidate),
+      outputHash: Result.getOrThrow(canonicalHashV1Result(candidate)),
     })
     const { outputHash: _, ...material } = valid
     const candidates: readonly unknown[] = [
@@ -1237,7 +1250,7 @@ describe('causal target planner', () => {
         const noTrade = planSuccess(fixture({ positions: [], targetWeights: { AMD: 0, NVDA: 0 } }))
         const { outputHash: _, ...noTradeMaterial } = noTrade
         const impossible = { ...noTradeMaterial, targets: [] }
-        return { ...impossible, outputHash: canonicalHashV1(impossible) }
+        return { ...impossible, outputHash: Result.getOrThrow(canonicalHashV1Result(impossible)) }
       })(),
       (() => {
         const impossible = {
@@ -1251,7 +1264,7 @@ describe('causal target planner', () => {
           availableBuyingPowerMicros: '-1',
           residualBuyingPowerMicros: '-1',
         }
-        return { ...impossible, outputHash: canonicalHashV1(impossible) }
+        return { ...impossible, outputHash: Result.getOrThrow(canonicalHashV1Result(impossible)) }
       })(),
     ]
 

@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { defaultExecutionModel, desiredQuantityAtoms, notionalMicros } from '../execution-model'
+import { intradayExecutionModel } from '../strategy/intraday-market'
+import { desiredQuantityAtoms, notionalMicros } from '../strategy/execution-model/fixed-point'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,
@@ -153,7 +154,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
     )
     const quantity = Result.getOrThrow(
       desiredQuantityAtoms(capital, weight, 1_000_000n, {
-        precision: { ...defaultExecutionModel.precision, quantityIncrementAtoms: '1000' },
+        precision: { ...intradayExecutionModel.precision, quantityIncrementAtoms: '1000' },
       }),
     )
     expect(Result.getOrThrow(notionalMicros(quantity, 1_000_000n))).toBeLessThanOrEqual(20_000_000_000n)

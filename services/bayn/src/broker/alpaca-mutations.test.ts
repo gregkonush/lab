@@ -6,7 +6,7 @@ import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
 import { provideTestLayer } from '../effect-test-support'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   BrokerAccess,
   BrokerEnvironment,
@@ -22,24 +22,18 @@ import {
   BrokerMutationError,
   MutationFailure,
   MutationOperation,
+  type BrokerMutationShape,
+} from './alpaca-mutations/model'
+import {
   authorizeMutationAccess,
-  makeMutation,
   orderPriceBoundaryMicros,
   orderRequestBody,
   submitBody,
-  type BrokerMutationShape,
-} from './alpaca-mutations'
-import {
-  AccountStatus,
-  BrokerProvider,
-  OrderStatus,
-  alpacaLiveBaseUrl,
-  alpacaSandboxBaseUrl,
-  decodeBrokerConnection,
-  type BrokerReadShape,
-  type BrokerSessionShape,
-  type ReadPreflight,
-} from './alpaca'
+} from './alpaca-mutations/decisions'
+import { makeMutation } from './alpaca-mutations/interpreter'
+import { AccountStatus, OrderStatus, type BrokerReadShape, type ReadPreflight } from './alpaca/model'
+import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl, decodeBrokerConnection } from './connection'
+import { type BrokerSessionShape } from './alpaca/session'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './alpaca-test-support'
 import { decodeOrder } from './alpaca/model'
 import { normalizeOrderResult } from './alpaca/normalizers'
@@ -164,7 +158,7 @@ const projectedSession = (
 }
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId: 'a'.repeat(64),
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: 'b'.repeat(64),
@@ -624,7 +618,7 @@ describe('Alpaca broker mutations', () => {
     }
     expect(requests).toEqual([{ body, method: 'POST', url: 'https://paper-api.alpaca.markets/v2/orders' }])
     expect(receipt).toMatchObject({
-      requestHash: canonicalHashV1(body),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(body)),
       order: {
         accountId,
         brokerOrderId: orderId,
@@ -635,7 +629,7 @@ describe('Alpaca broker mutations', () => {
       evidence: {
         requestId: 'req-123',
         status: 200,
-        contentHash: canonicalHashV1(orderResponse),
+        contentHash: Result.getOrThrow(canonicalHashV1Result(orderResponse)),
       },
     })
   })
@@ -684,7 +678,7 @@ describe('Alpaca broker mutations', () => {
     }
     expect(requests).toEqual([{ body, method: 'POST', url: 'https://paper-api.alpaca.markets/v2/orders' }])
     expect(receipt).toMatchObject({
-      requestHash: canonicalHashV1(body),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(body)),
       order: {
         accountId,
         brokerOrderId: orderId,
@@ -735,7 +729,7 @@ describe('Alpaca broker mutations', () => {
       },
     ])
     expect(receipt).toMatchObject({
-      requestHash: canonicalHashV1(requests[0]),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(requests[0])),
       order: {
         orderType: 'limit',
         timeInForce: 'day',
@@ -830,7 +824,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(provideTestLayer(TestClock.layer()))
+    ).pipe((self) => provideTestLayer(self, TestClock.layer()))
 
     const receipt = await Effect.runPromise(program)
     expect(receipt.evidence.observedAt).toBe('1970-01-01T00:00:02.000Z')
@@ -848,7 +842,11 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       brokerOrderId: orderId,
-      evidence: { status: 200, requestId: 'req-123', contentHash: canonicalHashV1(mismatched) },
+      evidence: {
+        status: 200,
+        requestId: 'req-123',
+        contentHash: Result.getOrThrow(canonicalHashV1Result(mismatched)),
+      },
     })
   })
 
@@ -904,14 +902,22 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       message: 'Alpaca submit response violates the order contract',
-      evidence: { status: 200, requestId: 'req-123', contentHash: canonicalHashV1(malformedAccepted) },
+      evidence: {
+        status: 200,
+        requestId: 'req-123',
+        contentHash: Result.getOrThrow(canonicalHashV1Result(malformedAccepted)),
+      },
     })
     expect(rejectedFailure).toMatchObject({
       operation: MutationOperation.Submit,
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       message: 'Alpaca submit error response is invalid',
-      evidence: { status: 422, requestId: 'req-123', contentHash: canonicalHashV1(malformedRejected) },
+      evidence: {
+        status: 422,
+        requestId: 'req-123',
+        contentHash: Result.getOrThrow(canonicalHashV1Result(malformedRejected)),
+      },
     })
     expect(calls).toBe(2)
   })
@@ -931,7 +937,7 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Rejected,
       outcome: MutationOutcome.Known,
       brokerCode: '40310000',
-      evidence: { status: 422, requestId: 'req-123', contentHash: canonicalHashV1(error) },
+      evidence: { status: 422, requestId: 'req-123', contentHash: Result.getOrThrow(canonicalHashV1Result(error)) },
     })
     expect(calls).toBe(1)
   })
@@ -967,7 +973,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -1027,7 +1033,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       ),
-      provideTestLayer(TestClock.layer()),
+      (self) => provideTestLayer(self, TestClock.layer()),
     )
 
     const failure = await Effect.runPromise(program)
@@ -1082,7 +1088,7 @@ describe('Alpaca broker mutations', () => {
     const receipt = await Effect.runPromise(withMutation(client, (mutation) => mutation.cancel(orderId)))
     expect(receipt).toMatchObject({
       brokerOrderId: orderId,
-      evidence: { status: 204, requestId: 'req-123', contentHash: canonicalHashV1(null) },
+      evidence: { status: 204, requestId: 'req-123', contentHash: Result.getOrThrow(canonicalHashV1Result(null)) },
     })
 
     status = 500
@@ -1094,7 +1100,7 @@ describe('Alpaca broker mutations', () => {
       evidence: {
         status: 500,
         requestId: 'req-123',
-        contentHash: canonicalHashV1({ code: 500, message: 'unknown' }),
+        contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 500, message: 'unknown' })),
       },
     })
     expect(requests).toEqual([
@@ -1153,7 +1159,7 @@ describe('Alpaca broker mutations', () => {
           return yield* Fiber.join(fiber)
         }),
       { operationTimeoutMs: 5_000 },
-    ).pipe(provideTestLayer(TestClock.layer()))
+    ).pipe((self) => provideTestLayer(self, TestClock.layer()))
 
     const failure = await Effect.runPromise(program)
     expect(failure).toMatchObject({
@@ -1161,7 +1167,7 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       evidence: {
-        contentHash: canonicalHashV1(error),
+        contentHash: Result.getOrThrow(canonicalHashV1Result(error)),
         observedAt: '1970-01-01T00:00:02.000Z',
         requestId: 'req-123',
         status: 500,
@@ -1184,7 +1190,7 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       evidence: {
-        contentHash: canonicalHashV1(body),
+        contentHash: Result.getOrThrow(canonicalHashV1Result(body)),
         requestId: 'req-123',
         status: 502,
       },
@@ -1206,7 +1212,7 @@ describe('Alpaca broker mutations', () => {
       failure: MutationFailure.Unknown,
       outcome: MutationOutcome.Unknown,
       evidence: {
-        contentHash: canonicalHashV1(body),
+        contentHash: Result.getOrThrow(canonicalHashV1Result(body)),
         requestId: 'req-123',
         status: 502,
       },

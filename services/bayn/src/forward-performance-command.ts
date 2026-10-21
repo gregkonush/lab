@@ -10,8 +10,6 @@ import { evaluateAndPersistForwardPerformanceReceipt } from './db/forward-perfor
 import { WriterFenceLive } from './execution/writer-fence'
 import { makeConfiguredTelemetryRuntimeLayer, withObservedSpan } from './telemetry'
 
-export { runForwardPerformance } from './forward-performance'
-
 export const FORWARD_PERFORMANCE_COMMAND_USAGE =
   'Usage: bayn-forward-performance --authority-generation <sha256> [--persist-receipt] | --help'
 

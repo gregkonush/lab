@@ -1,10 +1,10 @@
 import { equityMarketProfile } from '../jev/markets'
-import { Effect, Schema } from 'effect'
+import { Effect, Schema, Result } from 'effect'
 import { CycleState } from '../cycle/model'
 import { makeInitialCycle } from '../cycle/store/decisions'
 import { Authority, KillState, OrderType, TimeInForce } from '../execution/contracts'
 import { bindCycleExecutionSession } from '../execution-session'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
 import { type nativeJevDecisionEvidence, type nativeJevFixture } from '../jev/native.test-support'
 import { compileJevEntry } from '../jev/runtime'
@@ -15,7 +15,7 @@ import {
   planTargets,
   quoteBoundTargetPlannerInputSchemaVersion,
   type QuoteBoundTargetPlannerInput,
-} from '../target-planner'
+} from '../target-planner/index'
 
 export const matchedCommittedDecisionFixture = (
   native: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
@@ -31,7 +31,7 @@ export const matchedCommittedDecisionFixture = (
     const at = decision.decidedAt
     const cycle = { ...makeInitialCycle(native.draft, native.observation.payload.observedAt), state: CycleState.Active }
     const policy = yield* Schema.decodeUnknownEffect(PolicySchema)({
-      schemaVersion: 'bayn.execution-risk-policy.v3',
+      schemaVersion: 'bayn.execution-risk-policy.v4',
       accountId: broker.account.accountId,
       brokerMode: BrokerMode.Execution,
       allowedSymbols: equityMarketProfile.candidateSymbols,
@@ -67,12 +67,12 @@ export const matchedCommittedDecisionFixture = (
       schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
       strategyName: 'jev',
       cycleId: cycle.identity.cycleId,
-      decisionHash: canonicalHashV1(decision),
-      policyHash: canonicalHashV1(policy),
+      decisionHash: Result.getOrThrow(canonicalHashV1Result(decision)),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       accountId: broker.account.accountId,
       signalDate: native.snapshot.manifest.sessionDate,
       targetWeights: compiled.planningTargetWeights,
-      referencePrices: { ...prices, contentHash: canonicalHashV1(prices) },
+      referencePrices: { ...prices, contentHash: Result.getOrThrow(canonicalHashV1Result(prices)) },
       brokerState: broker,
       precision: { ...native.protocol.executionModel.precision, quantityIncrementAtoms: '1' },
       allocationCapitalMicros,

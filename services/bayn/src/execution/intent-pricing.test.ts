@@ -1,10 +1,10 @@
 import { instrumentMarket } from '../instruments'
-import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations/decisions'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { defaultExecutionModel } from '../execution-model'
+import { intradayExecutionModel } from '../strategy/intraday-market'
 import { simulateIntradayReplayExecution } from '../intraday-replay/execution-core'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
@@ -17,7 +17,7 @@ const input = {
   timeInForce: TimeInForce.Day,
   quantityAtoms: 2000000000n,
   referencePriceMicros: 100_000_000n,
-  executionModel: defaultExecutionModel,
+  executionModel: intradayExecutionModel,
   limitSlippageBps: 0n,
 } as const
 

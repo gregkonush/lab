@@ -13,7 +13,7 @@ import {
   type ExecutionControllerState,
 } from '../execution/controller'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from './model'
-import { selectCycleRecovery } from './recovery'
+import { selectCycleRecovery } from './runner/recovery-selection'
 
 const { draft } = nativeJevFixture()
 const openMs = Date.parse(draft.window.submissionOpenAt)

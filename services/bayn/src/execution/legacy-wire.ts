@@ -6,11 +6,8 @@
  */
 export const legacyObserveAuthorityToken = 'OBSERVE' as const
 export const legacyExecutionAuthorityToken = 'PAPER' as const
-export const legacyCandidateDiscoveryOperationToken = 'PAPER_CANDIDATE_DISCOVERY' as const
-export type LegacyAuthorityToken = typeof legacyObserveAuthorityToken | typeof legacyExecutionAuthorityToken
 
 export const legacyAccountSnapshotSchemaVersion = 'bayn.paper-account-snapshot.v1' as const
-export const legacyOrderV1SchemaVersion = 'bayn.order.v3' as const
 export const legacyOrderV2SchemaVersion = 'bayn.order.v3' as const
 export const legacyFillSchemaVersion = 'bayn.fill.v2' as const
 export const legacyBrokerErrorSchemaVersion = 'bayn.paper-broker-error.v1' as const
@@ -23,7 +20,6 @@ export const legacyRiskEvaluationInputV3SchemaVersion = 'bayn.paper-risk-evaluat
 export const legacyAccountingReceiptSchemaVersion = 'bayn.paper-accounting-receipt.v1' as const
 export const legacyAccountingTransactionSchemaVersion = 'bayn.accounting-transaction.v2' as const
 export const legacyAccountingTransactionIdSchemaVersion = 'bayn.paper-accounting-transaction-id.v1' as const
-export const legacyAccountingStateSchemaVersion = 'bayn.paper-accounting-state.v1' as const
 export const legacyValuationSchemaVersion = 'bayn.paper-valuation.v1' as const
 export const legacyReconciliationSchemaVersion = 'bayn.paper-reconciliation.v1' as const
 export const legacyReconciliationIdSchemaVersion = 'bayn.paper-reconciliation-id.v1' as const
@@ -38,7 +34,6 @@ export const legacyCycleClosureSchemaVersion = 'bayn.paper-cycle-closure.v1' as 
 export const legacyRiskStateSchemaVersion = 'bayn.paper-risk-state.v2' as const
 export const legacyTargetPlannerInputV1SchemaVersion = 'bayn.paper-target-planner-input.v1' as const
 export const legacyTargetPlannerInputV2SchemaVersion = 'bayn.paper-target-planner-input.v2' as const
-export const legacyCloseDecisionSessionsSchemaVersion = 'bayn.paper-close-decision-sessions.v1' as const
 export const legacyReferenceTargetPlanSchemaVersion = 'bayn.paper-reference-target-plan.v1' as const
 export const legacySubmitDryRunSchemaVersion = 'bayn.paper-submit-dry-run.v1' as const
 export const legacyObserveSuccessorGenerationSchemaVersion = 'bayn.paper-observe-successor-generation.v1' as const

@@ -15,7 +15,7 @@ import { makeExecutionPersistence } from '../db/execution-store/postgres'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { JournalLive } from '../ledger'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { canonicalHashV1Result } from '../hash'
@@ -234,7 +234,7 @@ durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL
         }).pipe(Effect.provide(stores()), Effect.provide(NodeServices.layer))
         yield* TestClock.setTime(entryMs)
         const order = (side: OrderSide): Intent => ({
-          schemaVersion: 'bayn.execution-intent.v4',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: (side === OrderSide.Buy ? '1' : '2').repeat(64),
           authorityGenerationHash,
           riskDecisionId: '3'.repeat(64),

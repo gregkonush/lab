@@ -16,7 +16,7 @@ import type {
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
-import { Pipeable } from '../../pipeable'
+
 import {
   ForwardPerformancePostgresError,
   ReconciliationRow,
@@ -47,7 +47,7 @@ import {
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
-export const readForwardPerformanceUnclosedCycleCountDataFirst = (
+export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -191,7 +191,7 @@ export const readForwardPerformanceStrategyRows = (
   SELECT * FROM research_strategy
 `.pipe(Effect.flatMap(decodeStrategy))
 
-export const readForwardPerformancePostgresDataFirst = (
+export const readForwardPerformancePostgres = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -706,7 +706,7 @@ export const readForwardPerformancePostgresDataFirst = (
             COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
         `.pipe(Effect.flatMap(decodeDurableExecutions))
 
-        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCount(
           sql,
           accountId,
           authorityGenerationHash,
@@ -1051,12 +1051,3 @@ export const readForwardPerformancePostgresDataFirst = (
       }),
     )
     .pipe(Effect.mapError(postgresError))
-
-export const readForwardPerformancePostgres = Pipeable.by<
-  (
-    accountId: string,
-    authorityGenerationHash?: string,
-    writerFence?: WriterFenceService,
-  ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
-  typeof readForwardPerformancePostgresDataFirst
->((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

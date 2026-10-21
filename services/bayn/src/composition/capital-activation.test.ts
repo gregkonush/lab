@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Effect, Redacted, Result } from 'effect'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -14,7 +14,7 @@ import {
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
-import type { ReconciledBrokerState } from '../reconciliation'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
 import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
@@ -63,7 +63,7 @@ const request = (
     }),
   )
 }
-const plan = (serialized?: string): ApplicationPlanFor<'AutonomousService'> => ({
+const plan = (serialized?: string): ApplicationPlan => ({
   _tag: 'AutonomousService',
   config: {
     ...config,

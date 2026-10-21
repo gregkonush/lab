@@ -1,13 +1,14 @@
+import { strictParseOptions } from '../../schemas'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Option, Result } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca'
-import { makeCycleDraft, makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
-import { CycleState, CycleTerminalReason, decodeAutonomousCycle, type AutonomousCycle } from '../model'
-import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store'
+import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca/model'
+import { makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
+import { CycleState, CycleTerminalReason, type AutonomousCycle, AutonomousCycleSchema } from '../model'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
 import { makeInitialCycle } from '../store/decisions'
 import { makeIntradayCycleDraft } from './calendar-decisions'
 import type { CycleRunContext } from './model'
@@ -56,7 +57,10 @@ const blockedAt = '2026-09-18T13:05:00.000Z'
 const rearmAt = '2026-09-18T14:06:00.000Z'
 const blockedCycle = (ordinal = 1, overrides: Record<string, unknown> = {}): AutonomousCycle =>
   Effect.runSync(
-    decodeAutonomousCycle({
+    Schema.decodeUnknownEffect(
+      AutonomousCycleSchema,
+      strictParseOptions,
+    )({
       ...Result.getOrThrow(makeIntradayCycleDraft(context, calendar, session, ordinal)),
       state: CycleState.Blocked,
       bindings: {},
@@ -104,7 +108,6 @@ const fixture = (
     readDecisionDocument,
     readOldestUnfinished: forbidden,
     activate: forbidden,
-    bindSnapshot: forbidden,
     bindDecision: forbidden,
     finish: forbidden,
     block: forbidden,
@@ -151,28 +154,18 @@ describe('unbound pre-submission cycle recovery', () => {
     })
   })
 
-  test('rejects reinterpreting a retired v3 cycle under the current execution context', async () => {
-    const candidate = { ...context, strategyName: 'intraday-momentum' as const }
-    const current = Result.getOrThrow(makeIntradayCycleDraft(candidate, calendar, session))
-    if (current.identity.schemaVersion !== 'bayn.autonomous-cycle-identity.v4') throw new Error('expected v4 fixture')
+  test('rejects constructing a retired strategy cycle under the current execution contract', () => {
+    const current = Result.getOrThrow(makeIntradayCycleDraft(context, calendar, session))
     const { cycleId: _id, schemaVersion: _schema, entryAttemptOrdinal: _ordinal, ...material } = current.identity
-    const original = Result.getOrThrow(
-      makeCycleDraft(
-        Result.getOrThrow(makeCycleIdentity({ ...material, schemaVersion: 'bayn.autonomous-cycle-identity.v3' })),
-        current.window,
+    expect(
+      Result.isFailure(
+        makeCycleIdentity({
+          ...material,
+          schemaVersion: 'bayn.autonomous-cycle-identity.v3',
+          strategyName: 'intraday-momentum',
+        }),
       ),
-    )
-    const prior = blockedCycle(1, original)
-    const f = fixture(prior)
-    const result = await f.run(candidate)
-    expect(result.outcome).toBe('ALREADY_TERMINAL')
-    expect(f.acquisitions()).toBe(0)
-    expect(f.cycles.get(prior.identity.cycleId)).toEqual(prior)
-    const mismatched = fixture(prior)
-    expect((await mismatched.run({ ...candidate, strategyProtocolHash: 'a'.repeat(64) })).outcome).toBe(
-      'ALREADY_TERMINAL',
-    )
-    expect(mismatched.acquisitions()).toBe(0)
+    ).toBe(true)
   })
 
   test('acquires a distinct same-session successor without changing the blocked historical cycle', async () => {
@@ -238,7 +231,6 @@ describe('unbound pre-submission cycle recovery', () => {
     ['protocol', { ...context, strategyProtocolHash: '9'.repeat(64) }],
     ['mandate', { ...context, cycleBindingId: '9'.repeat(64) }],
     ['account', { ...context, accountId: 'another-sandbox-account' }],
-    ['strategy', { ...context, strategyName: 'intraday-momentum' as const }],
     ['policy', { ...context, executionPolicy: changedPolicy }],
   ] as const) {
     test(`does not replace changed immutable ${name}`, async () => {

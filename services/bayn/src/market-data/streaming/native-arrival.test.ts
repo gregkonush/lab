@@ -4,7 +4,7 @@ import { Deferred, Effect, Exit, Fiber, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
-import { canonicalHashV1OrThrow, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import {
   decodeNativeArrivalChunk,
   makeNativeArrivalChunk,
@@ -77,7 +77,9 @@ test('native chunk validation rejects changed bytes, missing deliveries and rewr
       compressedHash: sha256(compressed),
     }
     expect(
-      Result.isFailure(decodeNativeArrivalChunk({ header, contentHash: canonicalHashV1OrThrow(header), compressed })),
+      Result.isFailure(
+        decodeNativeArrivalChunk({ header, contentHash: Result.getOrThrow(canonicalHashV1Result(header)), compressed }),
+      ),
     ).toBe(true)
   }
 })

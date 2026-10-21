@@ -4,19 +4,19 @@ import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
+import { loadConfig } from './config/load'
+import { resolveRuntimeConfig } from './config/resolution'
 import {
-  loadConfig,
-  resolveRuntimeConfig,
   type ParsedRuntimeConfig,
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
-} from './config'
+} from './config/model'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
-import { canonicalHashV1OrThrow } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
 
@@ -449,7 +449,7 @@ describe('runtime configuration loading', () => {
 
   test('keeps strategy and controller identities independent of stale historical settings', async () => {
     const environment = new Map(runtimeEnvironment)
-    const parameterHash = canonicalHashV1OrThrow(Result.getOrThrow(loadActiveStrategyProtocol()))
+    const parameterHash = Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(loadActiveStrategyProtocol())))
     environment.set('BAYN_PROVENANCE_MODE', 'development')
     environment.set('BAYN_STRATEGY_BEHAVIOR_HASH', activeStrategyBehaviorHash)
     environment.set('BAYN_STRATEGY_PARAMETER_HASH', parameterHash)
@@ -467,7 +467,7 @@ describe('runtime configuration loading', () => {
       environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
     const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
 
-    expect(stale.parameterHash).toBe('3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6')
+    expect(stale.parameterHash).toBe('563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d')
     expect(stale.parameterHash).toBe(baseline.parameterHash)
     expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
     const firstController = Result.getOrThrow(executionControllerConfig(baseline))

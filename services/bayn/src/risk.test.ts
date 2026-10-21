@@ -5,7 +5,7 @@ import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
 import {
   AccountStatus,
@@ -25,9 +25,10 @@ import {
   type Intent,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { utcInstantFromEpochMillis } from './time'
 import {
+  accountLossMicros,
   BrokerMode,
   EvaluationSchema,
   Gate,
@@ -46,6 +47,31 @@ import {
 import { strictParseOptions } from './schemas'
 
 const evaluatedAt = '2026-07-21T19:30:00.000Z'
+
+test('property: absolute account loss limits retain micro-dollar precision after capital translations', () => {
+  checkProperty(
+    'account-loss-capital-translation',
+    fc.property(
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 15n }),
+      (equity, addition, loss) => {
+        const original = accountLossMicros({
+          accountEquityMicros: equity,
+          dayStartEquityMicros: equity + loss,
+          peakEquityMicros: equity + loss + 1n,
+        })
+        const translated = accountLossMicros({
+          accountEquityMicros: equity + addition,
+          dayStartEquityMicros: equity + addition + loss,
+          peakEquityMicros: equity + addition + loss + 1n,
+        })
+        expect(translated).toEqual(original)
+        expect(original.drawdownMicros - original.dailyLossMicros).toBe(1n)
+      },
+    ),
+  )
+})
 const observedAt = '2026-07-21T19:29:30.000Z'
 const hash = (character: string): string => character.repeat(64)
 
@@ -86,7 +112,7 @@ type ExecutionSession = State['executionSession']
 type ExecutionSessionWithoutHash = Omit<ExecutionSession, 'bindingHash'>
 const rehashExecutionSession = (material: ExecutionSessionWithoutHash): ExecutionSession => ({
   ...material,
-  bindingHash: canonicalHashV1(material),
+  bindingHash: Result.getOrThrow(canonicalHashV1Result(material)),
 })
 const changeExecutionWindow = (
   binding: ExecutionSession,
@@ -105,7 +131,7 @@ const changeExecutionWindow = (
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
-    schemaVersion: 'bayn.execution-risk-policy.v3',
+    schemaVersion: 'bayn.execution-risk-policy.v4',
     accountId: 'paper-account-1',
     brokerMode: BrokerMode.Execution,
     allowedSymbols: ['AMD', 'NVDA'],
@@ -192,7 +218,7 @@ const baseState = (): State => {
   const executionSession = rehashExecutionSession({
     schemaVersion: 'bayn.execution-session-binding.v3',
     planningBrokerState: { observedAt, contentHash: reconciledStateHashValue },
-    calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+    calendar: { ...calendar, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
     executionSession: calendar.sessions[0],
     submissionOpenAt: observedAt,
     submissionCutoffAt: '2026-07-21T20:00:00.000Z',
@@ -282,13 +308,13 @@ const makeState = (overrides: Partial<State> = {}): State => {
 
 const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
   const value = {
-    schemaVersion: 'bayn.execution-intent.v4',
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: hash('6'),
     authorityGenerationHash: hash('4'),
     strategyName: 'risk-balanced-trend',
     cycleId: hash('7'),
     decisionHash: hash('8'),
-    policyHash: canonicalHashV1(makePolicy()),
+    policyHash: Result.getOrThrow(canonicalHashV1Result(makePolicy())),
     accountId: 'paper-account-1',
     clientOrderId: 'risk-test-order-1',
     symbol: 'NVDA',
@@ -316,7 +342,7 @@ const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
 
 const makeReferenceIntent = (): ReferenceIntent => {
   const { authorityGenerationHash: _, ...intent } = makeIntent()
-  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.reference-intent.v3' })
+  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.reference-intent.v4' })
 }
 
 const evaluateSuccess = (
@@ -423,13 +449,13 @@ describe('entry risk properties', () => {
         const policy = makePolicy({ maxOrderNotionalMicros: String(notional) })
         const intent = makeIntent({
           quantityAtoms: String(BigInt(quantity) * 1000n),
-          policyHash: canonicalHashV1(policy),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
         const stricter = makePolicy({ maxOrderNotionalMicros: String(notional - 1n) })
         expectBlocked(
           Reason.OrderNotionalExceeded,
-          { ...intent, policyHash: canonicalHashV1(stricter) },
+          { ...intent, policyHash: Result.getOrThrow(canonicalHashV1Result(stricter)) },
           state,
           stricter,
         )
@@ -490,7 +516,7 @@ describe('bounded execution risk', () => {
   })
 
   test('strictly decodes complete policy and coherent state', () => {
-    expect(makePolicy().schemaVersion).toBe('bayn.execution-risk-policy.v3')
+    expect(makePolicy().schemaVersion).toBe('bayn.execution-risk-policy.v4')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
 
     const rawPolicy = { ...makePolicy() }
@@ -590,7 +616,7 @@ describe('bounded execution risk', () => {
       ...current,
       decision: {
         ...legacyDecisionMaterial,
-        decisionId: canonicalHashV1(legacyDecisionMaterial),
+        decisionId: Result.getOrThrow(canonicalHashV1Result(legacyDecisionMaterial)),
       },
       gates: current.gates.map((gate) =>
         gate.name === Gate.Authority ? { ...gate, reason: Reason.LegacyAuthorityNotGranted } : gate,
@@ -615,8 +641,8 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: '9a2622911cc023551e45280181d48a1357f43740445a3b323b504a234782b9f9',
-      decisionId: '215f247ecca441728bf73de8bfab2bb06e7a36c7780a3db393db2d5f096949eb',
+      inputHash: 'acb60a82ba11b214095ff908f3668cb6cd6a1f94923e8e54c26c7442d1604092',
+      decisionId: '6069b135c81daf3f3f3bb25f6dba37f57412d04c97f16a119114f3a8729a2c83',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({
@@ -676,7 +702,7 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Sell,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -714,7 +740,7 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
@@ -753,7 +779,7 @@ describe('bounded execution risk', () => {
         closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
       })
       const close = makeIntent({
-        policyHash: canonicalHashV1(policy),
+        policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         symbol,
         side: OrderSide.Sell,
         orderType: OrderType.Limit,
@@ -1514,7 +1540,7 @@ test('property: fractional LIMIT buys honor a spending ceiling and sells honor a
           quantityAtoms: String(quantity),
           notionalLimitMicros: String(pricing.notionalLimitMicros),
           limitPriceMicros: String(pricing.expectedExecutionPriceMicros),
-          policyHash: canonicalHashV1(policy),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         const state = makeState({
           marketDataSymbol: symbol,

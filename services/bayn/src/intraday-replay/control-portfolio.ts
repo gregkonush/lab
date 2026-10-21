@@ -1,6 +1,7 @@
+import { jevLiquidationValue } from '../jev/liquidation-economics'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
-import { jevMomentumEntryCandidates } from '../jev/trading-signals'
+import { momentumControlCandidates } from './momentum-control'
 import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
 import { quantityFromNumber } from '../quantity'
 import { equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
@@ -15,8 +16,8 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
-import { jevProtectiveStopCrossed } from '../jev/exit'
+import { MICROS } from '../strategy/execution-model/model'
+import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { JevProtocol } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
@@ -30,6 +31,8 @@ import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type Repl
 import { studyOrder } from './signal-study'
 import { RidgeControlPolicy } from './control-ridge'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
+
+export const controlExitDefinition = { protectiveStopBps: 50, profitTargetNetBps: 100 } as const
 
 export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
@@ -47,6 +50,7 @@ export enum ControlExit {
   SessionClose = 'SESSION_CLOSE',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
+  ProfitTarget = 'PROFIT_TARGET',
   SignalHorizon = 'SIGNAL_HORIZON',
 }
 
@@ -129,7 +133,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
       })
       return decision.selectedSymbols[0] ?? null
     }
-    return (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null
+    return (yield* momentumControlCandidates(snapshot))[0]?.symbol ?? null
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot select control signal', cause })))
 
 export const controlEntryQuantity = (input: {
@@ -256,6 +260,7 @@ export const controlEntryQuantity = (input: {
 export const triggerControlExit = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: ControlPolicy
+  readonly feeMultiplierPpm: number
   readonly protocol: JevProtocol
   readonly atMs: number
   readonly cutoffMs: number
@@ -276,16 +281,32 @@ export const triggerControlExit = (input: {
         quote !== undefined &&
         quote.value.bidSize > 0 &&
         replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...jevMarketForSymbol(position.symbol) }) ===
-          null &&
-        jevProtectiveStopCrossed(
-          BigInt(position.costBasisMicros),
-          BigInt(position.quantityAtoms),
-          yield* numberToMicros(quote.value.bidPrice),
-          protocol.protectiveStopBps,
+          null
+      ) {
+        const bid = yield* numberToMicros(quote.value.bidPrice)
+        if (
+          bid * BigInt(position.quantityAtoms) * 10_000n <=
+          BigInt(position.costBasisMicros) * 1_000_000_000n * BigInt(10_000 - controlExitDefinition.protectiveStopBps)
         )
-      )
-        reason = ControlExit.ProtectiveStop
-      else if (
+          reason = ControlExit.ProtectiveStop
+        else if (input.policy !== ControlPolicy.ResidualShock) {
+          const liquidation = yield* jevLiquidationValue({
+            protocol,
+            symbol: position.symbol,
+            quantityAtoms: BigInt(position.quantityAtoms),
+            bidMicros: bid,
+            costMultiplierMicros: BigInt(input.feeMultiplierPpm),
+          })
+          const acquisition = BigInt(portfolio.inventory.openingCashMicros) - BigInt(portfolio.ledger.cashMicros)
+          if (
+            liquidation.conservativeNetMicros >=
+            (acquisition * BigInt(10_000 + controlExitDefinition.profitTargetNetBps) + 9_999n) / 10_000n
+          )
+            reason = ControlExit.ProfitTarget
+        }
+      }
+      if (
+        reason === undefined &&
         input.policy === ControlPolicy.ResidualShock &&
         atMs - portfolio.inventory.enteredAtMs >= residualShockDefinition.targetHoldingMs
       )

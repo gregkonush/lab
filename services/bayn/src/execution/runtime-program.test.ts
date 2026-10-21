@@ -13,9 +13,9 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
+import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
@@ -39,7 +39,7 @@ import {
   type Intent,
   type RiskDecision,
 } from './contracts'
-import type { StoredIntent } from './intents'
+import type { StoredIntent } from './intents/domain'
 import {
   authorizeFinalBrokerSubmit as authorizeCachedFinalBrokerSubmit,
   makeExecutionProgram,
@@ -83,7 +83,7 @@ const strategy: ExecutionStrategyIdentity = {
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
 const riskPolicy: Policy = {
-  schemaVersion: 'bayn.execution-risk-policy.v3',
+  schemaVersion: 'bayn.execution-risk-policy.v4',
   accountId,
   brokerMode: BrokerMode.Execution,
   allowedSymbols: ['AMD'],
@@ -231,7 +231,7 @@ const finalLiveFixture = () => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
   const riskDecisionId = '6'.repeat(64)
   const intent: Intent = {
-    schemaVersion: 'bayn.execution-intent.v4',
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: '5'.repeat(64),
     authorityGenerationHash,
     riskDecisionId,
@@ -1091,7 +1091,7 @@ describe('same-code execution program composition', () => {
     const intentId = 'a'.repeat(64)
     const decisionId = 'b'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.execution-intent.v4',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1134,6 +1134,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('final-risk'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1212,6 +1214,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-position'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1276,6 +1280,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-quote'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1323,7 +1329,7 @@ describe('same-code execution program composition', () => {
     const intentId = '7'.repeat(64)
     const decisionId = '8'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.execution-intent.v4',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1369,6 +1375,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('post-transmit'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },
