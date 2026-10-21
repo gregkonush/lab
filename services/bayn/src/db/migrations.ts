@@ -1,3 +1,8 @@
+import jevHarness2 from '../../migrations/0132_jev_harness2'
+import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
+import harness2Research from '../../migrations/0129_harness2_research'
+import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
 import currentJevCycles from '../../migrations/0127_current_jev_cycles'
 import entryBoundExits from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
@@ -131,6 +136,11 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 export const migrationLoader = PgMigrator.fromRecord({
   '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
+  '128_strategy_native_protection': strategyNativeProtection,
+  '132_jev_harness2': jevHarness2,
+  '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,
   '125_market_management_judgment': marketManagementJudgment,

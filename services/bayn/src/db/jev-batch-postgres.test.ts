@@ -28,12 +28,11 @@ test.each([
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   const statements: string[] = []
   let providerCalls = 0
-  let claims = 0
   await Effect.runPromise(
     Effect.scoped(
       Effect.gen(function* () {
@@ -61,7 +60,10 @@ test.each([
         }) as PgClient.PgClient
         yield* TestClock.setTime(observed + scenario.elapsedMs)
         const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-        const result = yield* evaluateJevBatch(plan).pipe(Effect.provideService(JevBatchStore, store), Effect.result)
+        const result = yield* evaluateJevBatch(plan, fixture.observation.payload).pipe(
+          Effect.provideService(JevBatchStore, store),
+          Effect.result,
+        )
         expect(Result.isFailure(result)).toBe(true)
         if (Result.isFailure(result)) {
           expect(result.failure).toMatchObject({ _tag: scenario.expectedTag })
@@ -78,10 +80,6 @@ test.each([
     ).pipe(
       Effect.provideService(JevEvaluationStore, {
         read: () => Effect.die('Admission must not read a candidate request'),
-        begin: () =>
-          Effect.sync(() => {
-            claims += 1
-          }).pipe(Effect.andThen(Effect.die('Admission must not claim a candidate request'))),
         record: () => Effect.die('Admission must not record inference'),
         abandon: () => Effect.die('Admission must not abandon inference'),
       }),
@@ -98,7 +96,6 @@ test.each([
   expect(statements).toHaveLength(scenario.queries)
   expect(statements.every((query) => query.trimStart().startsWith('SELECT'))).toBe(true)
   expect(providerCalls).toBe(0)
-  expect(claims).toBe(0)
 })
 
 test('batch finalization binds its observation lookup to the indexed cycle and millisecond timestamp', async () => {
@@ -108,7 +105,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   const symbols = plan.candidates.flatMap((candidate) =>
@@ -154,7 +151,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
           Effect.provideService(PgClient.PgClient, sql),
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('Finalization must use its bulk evidence read'),
-            begin: () => Effect.die('Finalization must not acquire inference'),
+
             record: () => Effect.die('Finalization must not record inference'),
             abandon: () => Effect.die('Finalization must not call the independent abandonment writer'),
           }),

@@ -10,7 +10,7 @@ import { TestClock } from 'effect/testing'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1 as hash, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
@@ -182,15 +182,17 @@ const fixture = (
       schemaVersion: 'bayn.six-bar-ridge-artifact.v2',
       qualification: 'UNQUALIFIED',
       controllerCoverage: 'UNKNOWN',
-      recipeHash: hash(sixBarRidgeRecipe),
-      featureDefinitionHash: hash(sixBarResearchDefinition),
+      recipeHash: Result.getOrThrow(canonicalHashV1Result(sixBarRidgeRecipe)),
+      featureDefinitionHash: Result.getOrThrow(canonicalHashV1Result(sixBarResearchDefinition)),
       featureOrder: sixBarResearchDefinition.features,
       solver: sixBarRidgeRecipe.solver,
       provenance: {
         sourceRevision: '1'.repeat(40),
         sourceManifestHash: sha256('SYNTHETIC training source'),
         calendarHash: calendar.normalizedResponseHash,
-        labelDefinitionHash: hash(ridgeExecutionLabelDefinition(context, allocationBudgetMicros)),
+        labelDefinitionHash: Result.getOrThrow(
+          canonicalHashV1Result(ridgeExecutionLabelDefinition(context, allocationBudgetMicros)),
+        ),
       },
       allocationBudgetMicros,
       manifestHash: sha256('SYNTHETIC frozen training manifest'),
@@ -213,7 +215,7 @@ const fixture = (
       intercept: options.intercept ?? 5,
       trainingTargetMeanBps: options.mean ?? 5,
     }
-    const artifact = { ...payload, artifactHash: hash(payload) }
+    const artifact = { ...payload, artifactHash: Result.getOrThrow(canonicalHashV1Result(payload)) }
     const input = {
       artifact,
       expectedArtifact: {
@@ -223,11 +225,14 @@ const fixture = (
       },
       calendar: fullCalendar,
       expectedCalendarHash: calendar.normalizedResponseHash,
-      evaluationSourceManifestHash: hash(source),
+      evaluationSourceManifestHash: Result.getOrThrow(canonicalHashV1Result(source)),
       partition: SixBarRidgePartition.Validation,
     }
     const bound = yield* Effect.fromResult(prepareBoundRidge(input, context))
-    const actualCapture = { ...captured, source: { ...captured.source, sourceManifestHash: hash(source) } }
+    const actualCapture = {
+      ...captured,
+      source: { ...captured.source, sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(source)) },
+    }
     const query = makeJevEntryQuery({
       protocol,
       calendar: executionCalendar,
@@ -463,7 +468,7 @@ test('artifact, source, calendar, partition, label and actual successor mismatch
   const data = await Effect.runPromise(fixture())
   const rehash = (artifact: typeof data.input.artifact) => {
     const { artifactHash: _, ...payload } = artifact
-    return { ...payload, artifactHash: hash(payload) }
+    return { ...payload, artifactHash: Result.getOrThrow(canonicalHashV1Result(payload)) }
   }
   for (const input of [
     { ...data.input, expectedArtifact: { ...data.input.expectedArtifact, artifactHash: 'f'.repeat(64) } },
@@ -542,7 +547,7 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v7',
+          schemaVersion: 'bayn.control-study-input.v8',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,
           management: ControlManagementMode.Mechanical,
@@ -557,7 +562,7 @@ test.each(['cash', 'filled'] as const)(
             inference: {
               mode: 'measured-provider',
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v12',
+              inputDefinition: 'bayn.jev-trading-signal-state.v14',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
@@ -673,7 +678,12 @@ const simulate = (
             askSize: options.canceled === true ? 0 : 100,
             bidSize: 25,
           }
-          return { value, availableAtMs: atMs, sequence: 1, recordHash: hash(value) }
+          return {
+            value,
+            availableAtMs: atMs,
+            sequence: 1,
+            recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          }
         }),
     }
     const result = yield* runControlSession({
@@ -868,7 +878,7 @@ test('the constant validates source and content without depending on Ridge norma
   const data = await Effect.runPromise(fixture())
   const { artifactHash: _, ...payload } = data.input.artifact
   const changed = { ...payload, scales: [Number.MIN_VALUE, 0, 0, 0, 0, 0, 0], coefficients: [1, 0, 0, 0, 0, 0, 0] }
-  const artifact = { ...changed, artifactHash: hash(changed) }
+  const artifact = { ...changed, artifactHash: Result.getOrThrow(canonicalHashV1Result(changed)) }
   const bound = Result.getOrThrow(
     prepareBoundRidge(
       {

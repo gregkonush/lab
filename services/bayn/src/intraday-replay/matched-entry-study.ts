@@ -1,3 +1,4 @@
+import { controlExitDefinition } from './control-portfolio'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { jevMarketForFeed } from '../jev/markets'
 import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
@@ -47,7 +48,7 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v6',
+  schemaVersion: 'bayn.matched-entry-definition.v7',
   cryptoFees: cryptoTakerFeeSchedule,
   inventory:
     'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
@@ -469,8 +470,8 @@ export const runMatchedEntryStudy = (
       const protocol = batch.observation.protocol
       if (
         protocol.maximumHoldingMinutes !== 15 ||
-        protocol.protectiveStopBps !== 50 ||
-        protocol.profitTargetNetBps !== 100 ||
+        controlExitDefinition.protectiveStopBps !== 50 ||
+        controlExitDefinition.profitTargetNetBps !== 100 ||
         protocol.flattenBeforeCloseMinutes !== 5
       )
         return yield* new SignalStudyFailure({ message: 'Matched lifecycle requires the frozen protective protocol' })
@@ -598,7 +599,7 @@ export const runMatchedEntryStudy = (
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (
         decision.contentHash !== retained.decisionHash ||
-        native?.schemaVersion !== 'bayn.jev-entry-target.v2' ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v4' ||
         native.evidence.batchPlan.batchId !== batch.plan.batchId ||
         native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
         decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||
@@ -800,7 +801,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v6',
+      schemaVersion: 'bayn.matched-entry-study.v7',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

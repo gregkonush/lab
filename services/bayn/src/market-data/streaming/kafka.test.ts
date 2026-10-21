@@ -104,7 +104,7 @@ class FakeTransport implements KafkaProjectionTransport {
   }
 }
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
-  Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+  Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
 
 test('native retention observes the trading consumer cut, including rejected records and repeated deliveries', async () => {
   await program(

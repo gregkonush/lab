@@ -169,3 +169,5 @@ export const makeJevObservation = (input: {
     const reproduced = yield* reproduceJevCandidateObservation(payload)
     return { contentHash: reproduced.contentHash, payload }
   })
+
+export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']

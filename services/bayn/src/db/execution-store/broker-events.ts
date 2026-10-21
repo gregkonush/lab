@@ -135,13 +135,13 @@ export const makeBrokerEventInterpreter = (
           INSERT INTO orders (
             event_id, account_id, schema_version, broker_order_id, client_order_id, intent_id, symbol,
             side, order_type, time_in_force, quantity_atoms, notional_micros,
-            filled_quantity_atoms, limit_price_micros, status
+            filled_quantity_atoms, limit_price_micros, stop_price_micros, parent_broker_order_id, status
           ) VALUES (
             ${eventId}, ${input.order.accountId}, ${input.order.schemaVersion}, ${input.order.brokerOrderId},
             ${input.order.clientOrderId}, ${input.order.intentId ?? null}, ${input.order.symbol}, ${input.order.side},
             ${input.order.orderType}, ${input.order.timeInForce}, ${input.order.quantityAtoms ?? null},
             ${input.order.notionalMicros ?? null},
-            ${input.order.filledQuantityAtoms}, ${input.order.limitPriceMicros ?? null}, ${input.order.status}
+            ${input.order.filledQuantityAtoms}, ${input.order.limitPriceMicros ?? null}, ${input.order.stopPriceMicros ?? null}, ${input.order.parentBrokerOrderId ?? null}, ${input.order.status}
           )
         `.pipe(Effect.asVoid)
       case 'Fill':

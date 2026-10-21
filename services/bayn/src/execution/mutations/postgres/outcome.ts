@@ -28,7 +28,7 @@ import { decodeAcknowledged, decodeIntentIds, decodeOutcomeIntentSnapshot } from
 import type { MutationEventPostgres } from './events'
 import { fromDecision } from './shared'
 import type { WriterFenceError, WriterFenceService } from '../../writer-fence'
-import { Pipeable } from '../../../pipeable'
+
 import type { SubmissionDenialReason } from '../../submission-denial'
 
 export interface MutationOutcomePostgres {
@@ -43,7 +43,7 @@ export interface MutationOutcomePostgres {
   ) => Effect.Effect<MutationEvent, MutationStoreError | SqlError | WriterFenceError>
 }
 
-const makeMutationOutcomePostgresDataFirst = (
+export const makeMutationOutcomePostgres = (
   sql: PgClient.PgClient,
   fence: WriterFenceService,
   events: MutationEventPostgres,
@@ -296,5 +296,3 @@ const makeMutationOutcomePostgresDataFirst = (
 
   return { appendOutcome }
 }
-
-export const makeMutationOutcomePostgres = Pipeable.dual(3, makeMutationOutcomePostgresDataFirst)

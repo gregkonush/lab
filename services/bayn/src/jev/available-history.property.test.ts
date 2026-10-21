@@ -36,7 +36,7 @@ test('property: a valid chosen model action controls entry without an additional
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V5,
     }),
   )
   checkProperty(
@@ -51,9 +51,9 @@ test('property: a valid chosen model action controls entry without an additional
         }),
       )
       expect(target.selectedSymbols).toEqual(action === 'enter' ? ['AAPL'] : [])
-      expect(Object.values(target.targetWeights).reduce((sum, weight) => sum + weight, 0)).toBe(
-        action === 'enter' ? 0.2 : 0,
-      )
+      const weight = Object.values(target.targetWeights).reduce((sum, value) => sum + value, 0)
+      expect(weight).toBeLessThanOrEqual(0.2)
+      expect(action === 'enter' ? weight > 0 : weight === 0).toBe(true)
     }),
   )
 }, 150_000)

@@ -5,7 +5,7 @@ import fc from 'fast-check'
 import { MarketCalendarResponseSchema } from './broker/alpaca/model'
 import { normalizeMarketCalendarResult } from './broker/alpaca/normalizers'
 import { equityClockSession, equityDataSession, equityFeatureSegmentStartMs } from './equity-hours'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { marketHoursAreCanonical, executionCloseRecoveryExpiry } from './market-hours'
 import { IsoDateSchema } from './schemas'
 import { checkProperty } from './testing/property-test-support'
@@ -78,7 +78,7 @@ test('missing provider hours and forged selected hours cannot authorize an equit
     marketHoursAreCanonical({
       ...original,
       sessions: [{ ...original.sessions[0]!, openAt: material.sessions[0]!.openAt }],
-      normalizedResponseHash: canonicalHashV1(material),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)),
     }),
   ).toBe(false)
 })

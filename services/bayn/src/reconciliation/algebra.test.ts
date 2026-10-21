@@ -8,7 +8,7 @@ import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { MutationEventType } from '../execution/mutations/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   AccountStatus,
   Authority,
@@ -58,7 +58,7 @@ const failureOf = <A>(result: Result.Result<A, ReconciliationAlgebraFailure>): R
   return result.failure
 }
 
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const accountId = 'paper-account'
 const openingObservedAt = '2026-07-22T15:29:59.000Z'
 const observedAt = '2026-07-22T15:30:00.000Z'
@@ -100,7 +100,7 @@ const receiptMaterial = {
 const receipt: AccountingReceipt = {
   ...receiptMaterial,
   receiptId: hash('receipt-1'),
-  contentHash: canonicalHashV1(receiptMaterial),
+  contentHash: Result.getOrThrow(canonicalHashV1Result(receiptMaterial)),
   recordedAt: observedAt,
 }
 
@@ -158,16 +158,20 @@ const requestIntent = {
   timeInForce: TimeInForce.Day as const,
 } as const
 
-const currentSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
-const historicalGtcSubmitRequestHash = canonicalHashV1({
-  symbol: requestIntent.symbol,
-  qty: '1',
-  type: 'market',
-  side: 'buy',
-  time_in_force: 'gtc',
-  client_order_id: requestIntent.clientOrderId,
-  extended_hours: false,
-})
+const currentSubmitRequestHash = Result.getOrThrow(
+  canonicalHashV1Result(Result.getOrThrow(orderRequestBody(requestIntent))),
+)
+const historicalGtcSubmitRequestHash = Result.getOrThrow(
+  canonicalHashV1Result({
+    symbol: requestIntent.symbol,
+    qty: '1',
+    type: 'market',
+    side: 'buy',
+    time_in_force: 'gtc',
+    client_order_id: requestIntent.clientOrderId,
+    extended_hours: false,
+  }),
+)
 
 const intentRow = {
   intent_id: fill.intentId ?? hash('missing-intent'),
@@ -421,7 +425,7 @@ describe('PostgreSQL reconciliation algebra', () => {
     const market = { ...terms, type: 'market', extended_hours: false }
     const recorded = [market, limit].map((body) => ({
       ...intentRow,
-      submit_request_hash: canonicalHashV1(body),
+      submit_request_hash: Result.getOrThrow(canonicalHashV1Result(body)),
       submit_request_body: body,
     }))
     const projection = successOf(projectIntentExpectations(recorded))
@@ -474,7 +478,9 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(verification.plans).toEqual([prepared.ledger])
     expect(verification.exactReceipts.get(prepared.transaction.brokerEventId)).toBe(true)
     expect(canonicalAccountingReceiptMaterial(receipt)).toEqual(receiptMaterial)
-    expect(canonicalHashV1(canonicalAccountingReceiptMaterial(receipt))).toBe(receipt.contentHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(canonicalAccountingReceiptMaterial(receipt)))).toBe(
+      receipt.contentHash,
+    )
 
     const inexact = successOf(
       verifyAccountingReceipts([prepared.transaction], [{ ...receipt, contentHash: hash('wrong-receipt-content') }], {
@@ -544,20 +550,22 @@ describe('PostgreSQL reconciliation algebra', () => {
     const result = makeComparison()
 
     expect(result.accountingHash).toBe(
-      canonicalHashV1({
-        schemaVersion: 'bayn.accounting-state.v4',
-        cashReportingQuantumMicros: '1',
-        accountId,
-        openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
-        transactions: [prepared.transaction],
-        receipts: [receipt],
-        ledgerExact: true,
-        brokerFeeAccruals: [],
-        cashReportingOffsetMicros: '0',
-        cashSettlementDeltaMicros: '0',
-        brokerCashSettlements: [],
-        brokerFeeCashDeltaMicros: '0',
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          schemaVersion: 'bayn.accounting-state.v4',
+          cashReportingQuantumMicros: '1',
+          accountId,
+          openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
+          transactions: [prepared.transaction],
+          receipts: [receipt],
+          ledgerExact: true,
+          brokerFeeAccruals: [],
+          cashReportingOffsetMicros: '0',
+          cashSettlementDeltaMicros: '0',
+          brokerCashSettlements: [],
+          brokerFeeCashDeltaMicros: '0',
+        }),
+      ),
     )
     expect(result.comparison.discrepancies).toEqual([])
     expect(result.comparison.metrics).toMatchObject({

@@ -57,8 +57,28 @@ const scenario = (
     ordersObservedAt: at,
   }
   const hash = Result.getOrThrow(reconciledStateHash(material))
+  const symbol = options.symbol ?? 'AAPL'
+  const planned = original.exitPolicy.plans['AAPL']
+  if (planned === undefined) throw new Error('Expected an immutable entry plan')
+  const firstFillAt = options.firstFillAt ?? original.entryFills[0]?.occurredAt
+  if (firstFillAt === undefined) throw new Error('Expected first entry fill')
+  const sourceEnd = Math.floor(Date.parse(firstFillAt) / 60_000) * 60_000
   const portfolio = {
     ...original,
+    exitPolicy: {
+      ...original.exitPolicy,
+      plans: {
+        [symbol]: {
+          ...planned,
+          levels: {
+            ...planned.levels,
+            symbol,
+            sourceEndAt: utcInstantFromEpochMillis(sourceEnd),
+            sourceStartAt: utcInstantFromEpochMillis(sourceEnd - planned.levels.maximumHoldingMinutes * 60_000),
+          },
+        },
+      },
+    },
     brokerState: {
       ...material,
       reconciliation: {
@@ -148,7 +168,7 @@ const scenario = (
 describe('entry-bound native position exits', () => {
   test.each([
     [-0.02, JevExitReason.ProtectiveStop],
-    [0.02, JevExitReason.ProfitTarget],
+    [0.051, JevExitReason.ProfitTarget],
   ] as const)('a premium of %f triggers %s without any model or inference store', async (premium, reason) => {
     const check = scenario({ premium })
     expect(await check.run()).toMatchObject({ _tag: 'Exit', target: { reason, targetWeights: { AAPL: 0 } } })
@@ -275,7 +295,7 @@ describe('entry observation admission', () => {
           ),
           Effect.result,
           Effect.provideService(CandidateObservationStore, {
-            record: () => TestClock.adjust(fixture.protocol.inferenceValidityMs + 100),
+            record: () => Effect.die('Observation admission must be owned by the batch store'),
             latestJevWindowEnd: () => Effect.succeed(Option.none()),
           }),
           Effect.provideService(JevBatchStore, {
@@ -283,7 +303,8 @@ describe('entry observation admission', () => {
             read: () => Effect.die('No batch was recorded'),
             finish: () => Effect.die('An expired admission cannot finalize an unrecorded batch'),
             begin: (plan) =>
-              Clock.currentTimeMillis.pipe(
+              TestClock.adjust(fixture.protocol.inferenceValidityMs + 100).pipe(
+                Effect.andThen(Clock.currentTimeMillis),
                 Effect.flatMap((now) =>
                   Effect.fail(
                     new JevBatchExpired({
@@ -299,7 +320,7 @@ describe('entry observation admission', () => {
           }),
           Effect.provideService(JevEvaluationStore, {
             read: () => Effect.die('No request can exist'),
-            begin: () => Effect.die('No request can be claimed'),
+
             record: () => Effect.die('No inference can be recorded'),
             abandon: () => Effect.die('No inference can be abandoned'),
           }),
@@ -337,7 +358,7 @@ describe('entry observation admission', () => {
       expect(planning?.attributes.get('bayn.entry_timing.observation_hash')).toBe(fixture.observation.contentHash)
       if (purpose === JevPurpose.Entry)
         expect(planning?.attributes.get('bayn.entry_timing.deterministic_selected_at')).toBe(
-          warning?.annotations['checkedAt'],
+          fixture.observation.payload.observedAt,
         )
       else expect(planning?.attributes.has('bayn.entry_timing.deterministic_selected_at')).toBe(false)
     },

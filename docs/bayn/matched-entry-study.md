@@ -107,7 +107,7 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v6` and `bayn.matched-entry-study.v6`. Input is v2;
+Definition and report are `bayn.matched-entry-definition.v7` and `bayn.matched-entry-study.v7`. Input is v2;
 registration is v2 with the new definition hash and frozen native profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
@@ -224,3 +224,7 @@ With complete prospective evidence, nonpositive Jev net budget return or total i
 scenario or an additional ten bps per filled leg stops prioritizing this entry hypothesis. Positive results only earn
 the separate frozen portfolio acceptance test. No outcome grants authority or strategy promotion. Preserve all five
 scheduled sessions and failed runs; do not retune thresholds, prompts, universe, exits, sampling or costs mid-window.
+
+The v7 definition uses an independent mechanical control exit profile. Its results do not qualify the v14 strategy's
+range-derived prices or broker-held bracket, OCO or stop-limit lifecycle. Historical registrations cannot be reused
+against a changed definition hash. Native lifecycle acceptance requires the production engine and broker evidence.

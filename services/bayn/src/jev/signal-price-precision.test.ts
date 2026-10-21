@@ -1,3 +1,4 @@
+import { momentumControlCandidates } from '../intraday-replay/momentum-control'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
@@ -6,7 +7,7 @@ import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { checkProperty } from '../testing/property-test-support'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
-import { jevBenchmarkSignalFor, jevMomentumEntryCandidates, jevSignalFor } from './trading-signals'
+import { jevBenchmarkSignalFor, jevSignalFor } from './trading-signals'
 
 const observedPrices = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD', price = 100.123456789012) => {
   const { snapshot } = cryptoMarketFixture(symbol)
@@ -60,7 +61,7 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     expect(benchmark.prices).toEqual({ reference: 100123457n, bid: 100123457n, ask: 100123457n })
     expect(candidate.state.bars1m[0]?.open).toBe(100.123456789012)
     expect(candidate.state.latestTrade.price).toBe(103.123456789012)
-    expect(Result.getOrThrow(jevMomentumEntryCandidates(snapshot)).map((entry) => entry.symbol)).toEqual([symbol])
+    expect(Result.getOrThrow(momentumControlCandidates(snapshot)).map((entry) => entry.symbol)).toEqual([symbol])
   },
 )
 

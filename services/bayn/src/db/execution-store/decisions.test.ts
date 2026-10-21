@@ -4,7 +4,7 @@ import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../../accounting/domain'
 import type { BrokerEventInput, PositionEventInput, PositionSnapshotInput } from '../../broker/observations'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { AccountStatus, Broker, OrderSide, type AccountingReceipt, type Fill } from '../../execution/contracts'
 import {
   brokerEventIdResult,
@@ -28,7 +28,7 @@ import type { EventRow, PositionRow, PositionSnapshotRow } from './rows'
 const accountId = 'paper-account-1'
 const occurredAt = '2026-07-22T15:30:00.000Z'
 const observedAt = '2026-07-22T15:30:01.000Z'
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const sqlTimestamp = (value: string): Date => DateTime.toDateUtc(DateTime.makeUnsafe(value))
 const invalidSqlTimestamp = (): Date => {
   const value = Object.create(Date.prototype) as Date

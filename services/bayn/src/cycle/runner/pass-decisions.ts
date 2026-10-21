@@ -1,6 +1,5 @@
 import { Result } from 'effect'
 
-import { Pipeable } from '../../pipeable'
 import { CycleState, type AutonomousCycle } from '../model'
 import type { CycleRecoverySelection } from './recovery-model'
 import { runnerError, type CyclePassObservation, type CycleRunnerError, type CycleRunResult } from './model'
@@ -8,7 +7,7 @@ import type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
 export type { RetainedAutonomousCyclePassObservation } from './pass-observation'
 
-const finishRecoveryResultDataFirst = (
+export const finishRecoveryResult = (
   selection: Extract<CycleRecoverySelection, { readonly action: 'FINISH' }>,
   cycle: AutonomousCycle,
 ): Result.Result<CycleRunResult, CycleRunnerError> => {
@@ -32,8 +31,6 @@ const finishRecoveryResultDataFirst = (
       )
   }
 }
-
-export const finishRecoveryResult = Pipeable.dual(2, finishRecoveryResultDataFirst)
 
 export interface CyclePassLogFacts {
   readonly level: 'INFO' | 'ERROR'

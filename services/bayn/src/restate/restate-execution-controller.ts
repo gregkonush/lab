@@ -69,12 +69,6 @@ export const executionControllerCommandRetryPolicy = {
 } as const satisfies restate.RetryPolicy
 export const executionControllerInitialTickDelayMs = 0
 export const executionControllerRecoveryTickDelayMs = 30_000
-export const executionControllerRecoveryMaximumDelayMs = 24 * 60 * 60_000
-export const executionControllerRecoveryDelayMs = (recoveryWindow: number): number =>
-  Math.min(
-    executionControllerRecoveryTickDelayMs * 4 ** Math.max(0, recoveryWindow - 1),
-    executionControllerRecoveryMaximumDelayMs,
-  )
 export const executionControllerDeploymentCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
@@ -612,7 +606,7 @@ export const makeBaynExecutionController = (
             }
             const nextRecoveryWindow = currentRecoveryWindow + 1
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
-            const recoveryDelayMs = executionControllerRecoveryDelayMs(nextRecoveryWindow)
+            const recoveryDelayMs = executionControllerRecoveryTickDelayMs
             scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
               controllerKey: ctx.key,

@@ -7,7 +7,7 @@ import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observa
 import { DecisionReadinessReason, snapshotReadiness } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
-import { executionSessionPreflightReady, renderPrometheusMetrics, statusResponseDecision } from './http'
+import { executionSessionPreflightReady, renderPrometheusMetrics, statusFacts } from './http'
 import type { RuntimeState } from './runtime-state'
 import { config, provenance, readyState } from './testing/runtime-fixtures'
 import { streamingFixture } from './testing/streaming-market-fixture'
@@ -113,16 +113,14 @@ const sessionState = (checkedAt = '2026-10-01T13:20:00.000Z'): RuntimeState => {
 }
 
 const expectSession = (state: RuntimeState, condition: string, ready: boolean) =>
-  expect(statusResponseDecision(state, config.execution, provenance, config.build.verification)).toMatchObject({
-    body: {
-      executionSession: {
-        condition,
-        ready,
-        executionSessionDate: '2026-10-01',
-        controllerPlanHash: 'f'.repeat(64),
-        firstObservationAt: '2026-10-01T13:31:02.000Z',
-        decisionDeadlineAt: '2026-10-01T13:32:02.000Z',
-      },
+  expect(statusFacts(state, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: {
+      condition,
+      ready,
+      executionSessionDate: '2026-10-01',
+      controllerPlanHash: 'f'.repeat(64),
+      firstObservationAt: '2026-10-01T13:31:02.000Z',
+      decisionDeadlineAt: '2026-10-01T13:32:02.000Z',
     },
   })
 
@@ -341,7 +339,7 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
   const cycle = state.cycle.current
   if (cycle === null) throw new Error('fixture cycle missing')
   expect(
-    statusResponseDecision(
+    statusFacts(
       {
         ...state,
         cycle: { ...state.cycle, current: { ...cycle, createdAt: '2026-10-01T15:00:00.000Z' } },
@@ -351,9 +349,7 @@ test('a new intraday attempt gets its own bounded decision deadline', () => {
       config.build.verification,
     ),
   ).toMatchObject({
-    body: {
-      executionSession: { condition: 'AWAITING_DECISION', ready: true, decisionDeadlineAt: '2026-10-01T15:01:00.000Z' },
-    },
+    executionSession: { condition: 'AWAITING_DECISION', ready: true, decisionDeadlineAt: '2026-10-01T15:01:00.000Z' },
   })
 })
 
@@ -397,11 +393,9 @@ const protectedAdmissionState = (): RuntimeState => {
 test('current cycle-free account protection takes precedence over historical closed cycles and absent history', () => {
   const state = protectedAdmissionState()
   for (const candidate of [state, { ...state, cycle: { ...state.cycle, last: null } }]) {
-    expect(statusResponseDecision(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
-      body: {
-        operational: { ready: true },
-        executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
-      },
+    expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      operational: { ready: true },
+      executionSession: { condition: 'BLOCKED', ready: false, cycleId: candidate.cycle.last?.cycleId ?? null },
     })
     const metrics = renderPrometheusMetrics(candidate, config, provenance, config.build.verification)
     expect(metrics).toContain('bayn_execution_session_condition{condition="blocked"} 1\n')
@@ -424,8 +418,8 @@ test('expired or superseded cycle-free protection cannot override current sessio
       ...state,
       autonomousCycleLoop: { ...state.autonomousCycleLoop, lastPass: { ...pass, admissionProtection } },
     }
-    expect(statusResponseDecision(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
-      body: { executionSession: { condition: 'CLOSED', ready: false } },
+    expect(statusFacts(candidate, config.execution, provenance, config.build.verification)).toMatchObject({
+      executionSession: { condition: 'CLOSED', ready: false },
     })
   }
   const future = {
@@ -435,8 +429,8 @@ test('expired or superseded cycle-free protection cannot override current sessio
       lastPass: { ...pass, observedAt: '2026-10-01T20:01:00.001Z' },
     },
   }
-  expect(statusResponseDecision(future, config.execution, provenance, config.build.verification)).toMatchObject({
-    body: { executionSession: { condition: 'CLOSED', ready: false } },
+  expect(statusFacts(future, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: { condition: 'CLOSED', ready: false },
   })
   const last = state.cycle.last
   if (last === null) throw new Error('fixture cycle missing')
@@ -456,8 +450,8 @@ test('expired or superseded cycle-free protection cannot override current sessio
       unfinishedCycleCount: 1,
     },
   }
-  expect(statusResponseDecision(executing, config.execution, provenance, config.build.verification)).toMatchObject({
-    body: { executionSession: { condition: 'EXECUTING', ready: true } },
+  expect(statusFacts(executing, config.execution, provenance, config.build.verification)).toMatchObject({
+    executionSession: { condition: 'EXECUTING', ready: true },
   })
 })
 
@@ -486,17 +480,15 @@ test('controller startup without a durable completion cannot establish session r
 test('a healthy runtime with no eligible session does not imply session readiness', () => {
   const state = sessionState()
   expect(
-    statusResponseDecision(
+    statusFacts(
       { ...state, cycle: { ...state.cycle, current: null, last: null } },
       config.execution,
       provenance,
       config.build.verification,
     ),
   ).toMatchObject({
-    body: {
-      operational: { ready: true },
-      executionSession: { condition: 'UNAVAILABLE', ready: false, executionSessionDate: null },
-    },
+    operational: { ready: true },
+    executionSession: { condition: 'UNAVAILABLE', ready: false, executionSessionDate: null },
   })
 })
 
@@ -611,14 +603,12 @@ test.each([
               },
       },
     }
-    expect(statusResponseDecision(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
-      body: {
-        executionSession: {
-          condition,
-          ready,
-          firstObservationAt: current.submissionOpenAt,
-          decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
-        },
+    expect(statusFacts(continuous, config.execution, provenance, config.build.verification)).toMatchObject({
+      executionSession: {
+        condition,
+        ready,
+        firstObservationAt: current.submissionOpenAt,
+        decisionDeadlineAt: '2026-10-01T13:31:00.000Z',
       },
     })
   },
@@ -649,20 +639,18 @@ test('equity admission uses the later of the first completed minute and submissi
   const state = sessionState('2026-10-01T13:45:00.000Z')
   const current = state.cycle.current
   if (current === null) throw new Error('fixture cycle missing')
-  const result = statusResponseDecision(
+  const result = statusFacts(
     { ...state, cycle: { ...state.cycle, current: { ...current, submissionOpenAt: '2026-10-01T13:45:00.000Z' } } },
     config.execution,
     provenance,
     config.build.verification,
   )
   expect(result).toMatchObject({
-    body: {
-      executionSession: {
-        condition: 'AWAITING_DECISION',
-        ready: true,
-        firstObservationAt: '2026-10-01T13:45:00.000Z',
-        decisionDeadlineAt: '2026-10-01T13:46:00.000Z',
-      },
+    executionSession: {
+      condition: 'AWAITING_DECISION',
+      ready: true,
+      firstObservationAt: '2026-10-01T13:45:00.000Z',
+      decisionDeadlineAt: '2026-10-01T13:46:00.000Z',
     },
   })
 })

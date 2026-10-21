@@ -5,18 +5,14 @@ import { canonicalHashV1Result, renderCanonicalJsonFailure } from './hash'
 import { ExecutionModelSchema } from './execution-model-contract'
 import {
   DigitsSchema as Micros,
-  ImageDigestSchema as ImageDigest,
   NonNegativeFiniteSchema as NonNegativeFinite,
-  NonNegativeIntegerSchema as NonNegativeInteger,
   PositiveIntegerSchema as PositiveInteger,
   SignedMicrosSchema as SignedMicros,
   SourceRevisionSchema as SourceRevision,
   SymbolSchema as Symbol,
   UnitIntervalSchema as UnitIntervalFinite,
-  strictParseOptions as StrictParseOptions,
 } from './schemas'
 import { MARKED_EQUITY_TOLERANCE_MICROS } from './simulation-reconciliation/constants'
-import { Pipeable } from './pipeable'
 
 const Scalar = Schema.Union([Schema.Finite, Schema.Boolean, Schema.String])
 
@@ -242,8 +238,6 @@ export const EvaluationEventSchema = Schema.Union([
   CashYieldEventSchema,
 ])
 
-export const EvaluationEventsSchema = Schema.Array(EvaluationEventSchema)
-
 export const SimulatedOrdersArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.simulated-orders.v2'),
   executionModel: ExecutionModelSchema,
@@ -378,39 +372,6 @@ export const DailyPerformanceSeriesArtifactSchema = Schema.Struct({
   items: Schema.Array(DailyPerformancePointSchema).check(Schema.isMinLength(1)),
 })
 
-export const QualificationArtifactManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.qualification-artifact-manifest.v1'),
-  identity: Schema.Struct({
-    runId: Sha256Schema,
-    evaluationSchemaVersion: Schema.Literal('bayn.evaluation.v6'),
-    protocolHash: Sha256Schema,
-    sourceRevision: SourceRevision,
-    image: Schema.Struct({ repository: Schema.String, digest: ImageDigest }),
-    snapshotId: Sha256Schema,
-    publicationId: Sha256Schema,
-    inputManifestHash: Sha256Schema,
-    bounds: EvaluationBoundsSchema,
-    calendarVersion: Schema.String,
-  }),
-  execution: Schema.Struct({
-    parameterSchemaVersion: Schema.String,
-    parameterHash: Sha256Schema,
-    simulationSchemaVersion: Schema.Literal('bayn.simulation-trace.v3'),
-    executionModel: ExecutionModelSchema,
-    costMultiplierMicros: Micros,
-  }),
-  artifacts: Schema.Array(
-    Schema.Struct({
-      name: Schema.String,
-      schemaVersion: Schema.String,
-      itemCount: NonNegativeInteger,
-      contentHash: Sha256Schema,
-    }),
-  ).check(Schema.isMinLength(1)),
-  events: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
-  gates: Schema.Struct({ count: PositiveInteger, contentHash: Sha256Schema }),
-})
-
 export const EquitySeriesArtifactSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.equity-series.v1'),
   items: Schema.Array(
@@ -422,11 +383,6 @@ export const EquitySeriesArtifactSchema = Schema.Struct({
     }),
   ).check(Schema.isMinLength(1)),
 })
-const decodeInputManifestArtifactDataFirst = Schema.decodeUnknownEffect(InputManifestArtifactSchema, StrictParseOptions)
-
-export const decodeInputManifestArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeInputManifestArtifactDataFirst(input),
-)
 
 export type InputManifest = typeof InputManifestArtifactSchema.Type
 export type SymbolCoverage = InputManifest['symbols'][number]
