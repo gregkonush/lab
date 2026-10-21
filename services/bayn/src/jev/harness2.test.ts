@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -8,6 +8,8 @@ import { jevInstructions } from './instructions'
 import { jevHarnessDecision, prepareJevHarnessProbe, verifyJevHarnessReceipt } from './harness2'
 import { nativeJevDecisionEvidence, nativeJevFixture, nativeJevInference } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
+
+setDefaultTimeout(30_000)
 
 const fixture = nativeJevFixture()
 const run = () => ({
@@ -96,40 +98,49 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
       ),
     ).toBe(true)
   })
-  test('retained receipts reproduce their requests, inference evidence and native decision', () => {
-    const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
-    const inferences = prepared.requests.map(({ symbol, request }) => ({
-      symbol,
-      inference: nativeJevInference(request, at),
-    }))
-    const material = {
-      schemaVersion: 'bayn.jev-harness2-receipt.v1',
-      runId: prepared.runId,
-      sourceRevision: run().sourceRevision,
-      observationHash: prepared.observation.contentHash,
-      instructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
-      startedAtMs: Date.parse(run().registeredAt),
-      completedAtMs: Date.parse(at),
-      outcome: 'COMPLETE',
-      requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
+  test.each(['valid', 'missing-decision', 'wrong-run'] as const)(
+    'retained receipts reproduce their requests, inference evidence and native decision: %s',
+    (scenario) => {
+      const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
+      const inferences = prepared.requests.map(({ symbol, request }) => ({
         symbol,
-        originalRequestHash,
-        request,
-        requestHash,
-        inference: inferences[index]?.inference,
-        failure: null,
-      })),
-      decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
-      costPicoUsd: null,
-      qualification: 'UNQUALIFIED',
-      timingQualification: 'OFFLINE_REEVALUATION',
-    }
-    const seal = (value: Omit<typeof material, 'decision'> & { readonly decision: unknown }) => ({
-      ...value,
-      receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),
-    })
-    expect(Result.isSuccess(verifyJevHarnessReceipt(run(), seal(material)))).toBe(true)
-    expect(Result.isFailure(verifyJevHarnessReceipt(run(), seal({ ...material, decision: null })))).toBe(true)
-    expect(Result.isFailure(verifyJevHarnessReceipt(run(), { ...seal(material), runId: 'c'.repeat(64) }))).toBe(true)
-  }, 30_000)
+        inference: nativeJevInference(request, at),
+      }))
+      const material = {
+        schemaVersion: 'bayn.jev-harness2-receipt.v1',
+        runId: prepared.runId,
+        sourceRevision: run().sourceRevision,
+        observationHash: prepared.observation.contentHash,
+        instructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
+        startedAtMs: Date.parse(run().registeredAt),
+        completedAtMs: Date.parse(at),
+        outcome: 'COMPLETE',
+        requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
+          symbol,
+          originalRequestHash,
+          request,
+          requestHash,
+          inference: inferences[index]?.inference,
+          failure: null,
+        })),
+        decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
+        costPicoUsd: null,
+        qualification: 'UNQUALIFIED',
+        timingQualification: 'OFFLINE_REEVALUATION',
+      }
+      const seal = (value: Omit<typeof material, 'decision'> & { readonly decision: unknown }) => ({
+        ...value,
+        receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),
+      })
+      if (scenario === 'valid') {
+        expect(Result.isSuccess(verifyJevHarnessReceipt(run(), seal(material)))).toBe(true)
+      } else if (scenario === 'missing-decision') {
+        expect(Result.isFailure(verifyJevHarnessReceipt(run(), seal({ ...material, decision: null })))).toBe(true)
+      } else {
+        expect(Result.isFailure(verifyJevHarnessReceipt(run(), { ...seal(material), runId: 'c'.repeat(64) }))).toBe(
+          true,
+        )
+      }
+    },
+  )
 })

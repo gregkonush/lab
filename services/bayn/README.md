@@ -12,6 +12,12 @@ Effect decoder wrappers have been removed; tests decode the shared schemas with
 the same strict parse options. Immutable historical documents and the decoders
 used to read them remain supported.
 
+New target planning accepts only quote-bound inputs with an explicit allocation, verified bid/ask prices and
+per-symbol liquidity limits. Retired `bayn.paper-target-planner-input.v1` and `v2` inputs cannot construct new plans;
+there is no full-equity or daily-reference-price fallback. Existing target-plan output decoding remains available
+for immutable historical evidence. Financial reports retain unsupported historical decision identities and accounting
+totals, while withholding unverifiable execution measurements rather than replaying retired planning contracts.
+
 Execution deadlines preserve the reconciliation preflight boundary. If the outer generation deadline interrupts
 preflight first, the pass reports a reconciliation failure and retries with a fresh broker reconciliation. It cannot
 enter cycle execution. Timeouts after that boundary retain fail-closed mutation authority restrictions. See the
