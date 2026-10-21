@@ -1,6 +1,10 @@
 import { Result, Schema } from 'effect'
 
-import { MutationOperation, type MutationEvidence, type PartialMutationEvidence } from '../../broker/alpaca-mutations'
+import {
+  MutationOperation,
+  type MutationEvidence,
+  type PartialMutationEvidence,
+} from '../../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../../hash'
 import { Authority, IntentState, KillState, TerminalOutcome } from '../contracts'
 import { legacyMutationEventSchemaVersion, legacyMutationIdentitySchemaVersion } from '../legacy-wire'

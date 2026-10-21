@@ -12,8 +12,9 @@ import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from '../db/postgres-client'
 import { ExecutionCycleClosureStoreLive } from '../db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
@@ -242,7 +243,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           inference: {
             mode: 'measured-provider',
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v9',
+            inputDefinition: 'bayn.jev-trading-signal-state.v12',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',

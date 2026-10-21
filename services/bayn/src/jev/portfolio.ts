@@ -1,8 +1,9 @@
+import { JevPositionExitPolicySchema } from './exit-policy'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { Context, Effect, Result, Schema } from 'effect'
 
 import type { OperationalError } from '../errors'
-import type { ReconciledBrokerState } from '../reconciliation'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 
 import {
   AccountSnapshotSchema,
@@ -15,7 +16,7 @@ import {
   ReconciliationSchema,
   ReconciliationStatus,
 } from '../execution/contracts'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 import { JevContractError } from './contract'
 
@@ -46,6 +47,7 @@ const Base = Schema.Union([
     purpose: Schema.Literal(JevPurpose.Manage),
     brokerState: ReconciledStateSchema,
     entryDecisionHash: Sha256Schema,
+    exitPolicy: JevPositionExitPolicySchema,
     entryIntentIds: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     entryFills: Schema.Array(FillSchema).check(Schema.isMinLength(1)),
     entryInventoryDebit: JevInventoryDebitSchema,

@@ -4,13 +4,13 @@ import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
+import { loadConfig } from './config/load'
+import { resolveRuntimeConfig } from './config/resolution'
 import {
-  loadConfig,
-  resolveRuntimeConfig,
   type ParsedRuntimeConfig,
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
-} from './config'
+} from './config/model'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
@@ -467,7 +467,7 @@ describe('runtime configuration loading', () => {
       environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
     const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
 
-    expect(stale.parameterHash).toBe('6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b')
+    expect(stale.parameterHash).toBe('e8efe1ed01ca88afb5ca016a48027b0d04dd54af91ee8024d5a23eee8822ecaf')
     expect(stale.parameterHash).toBe(baseline.parameterHash)
     expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
     const firstController = Result.getOrThrow(executionControllerConfig(baseline))

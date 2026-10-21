@@ -2,12 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Option, Result } from 'effect'
 
-import {
-  MutationOperation,
-  cancelRequestHash,
-  orderRequestBody,
-  type MutationEvidence,
-} from '../broker/alpaca-mutations'
+import { MutationOperation, type MutationEvidence } from '../broker/alpaca-mutations/model'
+import { cancelRequestHash, orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import {
   AssetClass,
   OrderClass,
@@ -16,7 +12,7 @@ import {
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
   type Order,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { canonicalHashV1 } from '../hash'
 import {
   IntentState,
@@ -45,8 +41,9 @@ import {
 } from './coordinator-decisions'
 
 const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
-import type { StoredIntent } from './intents'
-import { MutationEventType, mutationIdResult, type MutationEvent } from './mutations'
+import type { StoredIntent } from './intents/domain'
+import { MutationEventType, type MutationEvent } from './mutations/model'
+import { mutationIdResult } from './mutations/decisions'
 
 const intentId = 'a'.repeat(64)
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'

@@ -3,7 +3,7 @@ import { Result, Schema } from 'effect'
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import { InstrumentSymbolSchema, instrumentMarket, type Instrument } from '../instruments'
 import { OrderSide } from '../execution/contracts'
-import { notionalMicros } from '../execution-model'
+import { notionalMicros } from '../strategy/execution-model/fixed-point'
 import { PositiveMicrosSchema } from '../schemas'
 import type { IntradayMomentumProtocol } from '../strategy/intraday-momentum/protocol'
 

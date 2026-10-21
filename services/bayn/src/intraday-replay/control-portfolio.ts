@@ -1,3 +1,5 @@
+import { jevProfitTargetProceeds } from '../jev/exit-policy'
+import { jevLiquidationValue } from '../jev/liquidation-economics'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { jevMomentumEntryCandidates } from '../jev/trading-signals'
@@ -15,7 +17,8 @@ import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { MICROS, notionalMicros, numberToMicros } from '../execution-model'
+import { MICROS } from '../strategy/execution-model/model'
+import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
 import { jevProtectiveStopCrossed } from '../jev/exit'
 import type { JevProtocol } from '../jev/protocol'
 import { type IntradayQuote } from '../market-data/intraday/model'
@@ -47,6 +50,7 @@ export enum ControlExit {
   SessionClose = 'SESSION_CLOSE',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
+  ProfitTarget = 'PROFIT_TARGET',
   SignalHorizon = 'SIGNAL_HORIZON',
 }
 
@@ -256,6 +260,7 @@ export const controlEntryQuantity = (input: {
 export const triggerControlExit = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: ControlPolicy
+  readonly feeMultiplierPpm: number
   readonly protocol: JevProtocol
   readonly atMs: number
   readonly cutoffMs: number
@@ -276,16 +281,33 @@ export const triggerControlExit = (input: {
         quote !== undefined &&
         quote.value.bidSize > 0 &&
         replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...jevMarketForSymbol(position.symbol) }) ===
-          null &&
-        jevProtectiveStopCrossed(
-          BigInt(position.costBasisMicros),
-          BigInt(position.quantityAtoms),
-          yield* numberToMicros(quote.value.bidPrice),
-          protocol.protectiveStopBps,
+          null
+      ) {
+        const bid = yield* numberToMicros(quote.value.bidPrice)
+        if (
+          jevProtectiveStopCrossed(
+            BigInt(position.costBasisMicros),
+            BigInt(position.quantityAtoms),
+            bid,
+            protocol.protectiveStopBps,
+          )
         )
-      )
-        reason = ControlExit.ProtectiveStop
-      else if (
+          reason = ControlExit.ProtectiveStop
+        else if (input.policy !== ControlPolicy.ResidualShock) {
+          const liquidation = yield* jevLiquidationValue({
+            protocol,
+            symbol: position.symbol,
+            quantityAtoms: BigInt(position.quantityAtoms),
+            bidMicros: bid,
+            costMultiplierMicros: BigInt(input.feeMultiplierPpm),
+          })
+          const acquisition = BigInt(portfolio.inventory.openingCashMicros) - BigInt(portfolio.ledger.cashMicros)
+          if (liquidation.conservativeNetMicros >= jevProfitTargetProceeds(acquisition, protocol.profitTargetNetBps))
+            reason = ControlExit.ProfitTarget
+        }
+      }
+      if (
+        reason === undefined &&
         input.policy === ControlPolicy.ResidualShock &&
         atMs - portfolio.inventory.enteredAtMs >= residualShockDefinition.targetHoldingMs
       )

@@ -1,21 +1,22 @@
+import { jevPositionExitPolicy } from '../jev/exit-policy'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { receivedCryptoFee } from '../strategy/execution-model/fees'
 import { Result, Schema } from 'effect'
 import { AccountStatus, OrderSide, OrderStatus, OrderType, ReconciliationStatus } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import { canonicalHashV1Result } from '../hash'
 import { applyControlOrder, ControlExit, type ControlPortfolio, ControlStudyFailure } from './control-portfolio'
 import { signalStudyDefinition } from './signal-study'
 import { JevBatchPlanVersion } from '../jev/batch'
-import { JevManagementAction, JevManagementDecisionSchema } from '../jev/decision'
-import { jevProtectiveQuoteIsFresh, jevProtectiveStopCrossed, decideJevExit, JevExitReason } from '../jev/exit'
+import { JevManagementAction, JevManagementDecisionSchema } from './research-management'
+import { jevProtectiveQuoteIsFresh, jevProtectiveStopCrossed } from '../jev/exit'
 import { makeJevObservation } from '../jev/observation'
 import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 
@@ -59,14 +60,14 @@ export const applyControlManagementDecision = (input: {
       return yield* invalid('Management decision differs from the current control position, request or commit deadline')
     if (decision.action === JevManagementAction.Hold)
       return { action: JevManagementAction.Hold, portfolio, decision } as const
-    const target = yield* decideJevExit({
+    const target = {
+      schemaVersion: 'bayn.research-model-exit.v1',
+      executable: false,
       cycleId: decision.cycleId,
-      sessionDate: observation.observedAt.slice(0, 10),
-      protocol: observation.protocol,
-      portfolio: observation.portfolio,
-      observedAt: decidedAt,
-      trigger: { reason: JevExitReason.Model, decision },
-    })
+      entryDecisionHash: observation.portfolio.entryDecisionHash,
+      symbol: decision.symbol,
+      commitDeadlineAt: batchPlan.expiresAt,
+    }
     return {
       action: JevManagementAction.Exit,
       portfolio: { ...portfolio, inventory: { ...portfolio.inventory, status: 'EXITING', reason: ControlExit.Model } },
@@ -213,6 +214,7 @@ export const makeControlManagementBatch = (input: {
     const portfolio = yield* decodeJevPortfolio({
       purpose: JevPurpose.Manage,
       entryDecisionHash,
+      exitPolicy: jevPositionExitPolicy(protocol),
       entryIntentIds: [intentId],
       entryInventoryDebit: {
         quantityAtoms: receivedFee.quantityAtoms.toString(),

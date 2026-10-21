@@ -1,21 +1,16 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
+import { MICROS, defaultExecutionModel, type ExecutionModelFailure } from './strategy/execution-model/model'
 import {
-  MICROS,
   accrueCashYield,
-  calculateSessionFees,
-  defaultExecutionModel,
-  desiredQuantityAtoms,
   elapsedCalendarDays,
-  makeFillTerms,
-  makeOrderOutcome,
-  notionalMicros,
-  referencePriceMicros,
   saleCostBasisMicros,
   scaleQuantityAtoms,
-  type ExecutionModelFailure,
-} from './execution-model'
+} from './strategy/execution-model/cash'
+import { calculateSessionFees } from './strategy/execution-model/fees'
+import { desiredQuantityAtoms, notionalMicros, referencePriceMicros } from './strategy/execution-model/fixed-point'
+import { makeFillTerms, makeOrderOutcome } from './strategy/execution-model/fills'
 import {
   CycleExecutionModelSchema,
   ExecutionModelSchema,

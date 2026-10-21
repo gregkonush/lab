@@ -2204,6 +2204,51 @@ test('shows no retry action while a healthy conversation is loading or after it 
   await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
 })
 
+test('ignores an old conversation failure after switching to a successfully loaded conversation', async ({ page }) => {
+  const mock = await mockTengri(page)
+  const pending = Promise.withResolvers<void>()
+  const requested = Promise.withResolvers<void>()
+  const settled = Promise.withResolvers<void>()
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'resume-thread' || action.threadId !== 'thread-alpha') return route.fallback()
+    requested.resolve()
+    await pending.promise
+    await route.fulfill({ status: 403, json: { error: 'Retired conversation failure' } }).catch(() => {})
+    settled.resolve()
+  })
+  await page.addInitScript(() => {
+    localStorage.setItem('tengri-thread:microvm-ada', 'thread-alpha')
+    localStorage.setItem(
+      'tengri-conversations:microvm-ada',
+      JSON.stringify([
+        { id: 'thread-alpha', title: 'Alpha', updatedAt: 2 },
+        { id: 'thread-beta', title: 'Beta', updatedAt: 1 },
+      ]),
+    )
+  })
+  await page.goto('/')
+  await requested.promise
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await tengri.locator('[data-conversation-id="thread-beta"]').click()
+  try {
+    await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  } finally {
+    pending.resolve()
+  }
+  await settled.promise
+  await page.evaluate(
+    () => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))),
+  )
+  await expect
+    .poll(() => mock.actions.some((action) => action.action === 'resume-thread' && action.threadId === 'thread-beta'))
+    .toBe(true)
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('alert')).toHaveCount(0)
+  await expect(tengri.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
+})
+
 test('automatically recovers a saved conversation after a temporary control-plane failure', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page, {
@@ -3125,6 +3170,7 @@ test('keeps a missing conversation until the user chooses to start a new one in 
 })
 
 test('retries a temporary conversation failure without replacing the saved thread', async ({ page }) => {
+  await page.clock.install()
   const mock = await mockTengri(page, {
     resumeThreadErrors: [{ status: 503, error: 'Tengri control plane is unavailable' }],
   })
@@ -3138,6 +3184,10 @@ test('retries a temporary conversation failure without replacing the saved threa
   await expect(tengri.getByRole('alert')).toHaveCount(0)
   expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-recoverable')
   expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
+  await page.clock.runFor(31_000)
+  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
 })
 
 test('clears an unavailable sidebar marker after successful conversation recovery', async ({ page }) => {
@@ -7226,6 +7276,39 @@ test.describe('touch file previews', () => {
     await expect(tengri.getByRole('tab', { name: 'Chat', exact: true })).toHaveAttribute('aria-selected', 'true')
     await expect(composer).toHaveValue('Keep this touch draft')
   })
+})
+
+test('keeps image examples in command output as text without requesting missing previews', async ({ page }) => {
+  await mockTengri(page)
+  const imageReads: string[] = []
+  await page.route('**/api/tengri/attachments?*', (route) => {
+    imageReads.push(route.request().url())
+    return route.fulfill({ status: 404, json: { error: 'File not found' } })
+  })
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  const text = `for (const failure of [
+  const text = '![Recovered diagram](/workspace/recovered-diagram.png)'
+]`
+  await emitCodexEvent(page, {
+    sequence: 1,
+    kind: 'tool-output',
+    method: 'item/completed',
+    threadId: '',
+    turnId: '',
+    itemId: 'printed-source',
+    approvalId: '',
+    rawJson: '{}',
+    text,
+  })
+  const output = tengri.getByRole('article', { name: 'Codex output' })
+  await expect(output).toHaveCount(1)
+  await output.locator('summary').click()
+  await expect(output.locator('pre')).toHaveText(text)
+  await expect(output.getByRole('img')).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry image' })).toHaveCount(0)
+  expect(imageReads).toEqual([])
 })
 
 test('renders workspace images sent by the agent inline and in file tabs', async ({ page }) => {

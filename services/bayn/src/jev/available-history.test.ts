@@ -59,7 +59,7 @@ test('candidate and benchmark use the same actual reference minute despite diffe
   expect(state.candidate.priceWindow.referenceAt).toBe('2026-09-04T14:07:00.000Z')
   expect(state.benchmark.priceWindow.referenceAt).toBe('2026-09-04T14:03:00.000Z')
   expect(state.relativeSignals.referenceAt).toBe('2026-09-04T14:07:00.000Z')
-  expect(state.relativeSignals.horizonMinutes).toBeCloseTo(23 + 2 / 60)
+  expect(state.relativeSignals.lookbackMinutes).toBeCloseTo(23 + 2 / 60)
 })
 
 test('late real historical backfill is usable without altering its arrival timestamp', () => {

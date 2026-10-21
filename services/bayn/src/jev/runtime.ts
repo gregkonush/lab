@@ -1,3 +1,4 @@
+import { jevProfitTargetCrossed } from './profit-target'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
 import { jevMaximumEntryAskMicros } from './entry-economics'
 import { jevMarketForSymbol } from './markets'
@@ -6,16 +7,20 @@ import { isContinuousMarket, type MarketHours } from '../market-hours'
 import { makeJevEntryQuery } from './observation-query'
 import { Data, Duration, Effect, Option, Result } from 'effect'
 
-import type { AutonomousCycle } from '../cycle'
+import type { AutonomousCycle } from '../cycle/model'
 import {
   DecisionReadinessReason,
   snapshotReadiness,
   type CycleWaitingDetails,
   type DecisionReadiness,
 } from '../cycle/runner/readiness'
-import { IntradaySnapshotPurpose, type IntradaySnapshotQuery, type IntradayMarketDataService } from '../market-data'
+import {
+  IntradaySnapshotPurpose,
+  type IntradaySnapshotQuery,
+  type IntradayMarketDataService,
+} from '../market-data/intraday/model'
 import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
-import type { ReconciledBrokerState } from '../reconciliation'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
@@ -38,13 +43,7 @@ import {
 } from './batch'
 import { evaluateJevBatch, recoverPendingJevBatches } from './batch-evaluation'
 import { JevContractError } from './contract'
-import {
-  decideJevManagement,
-  JevManagementAction,
-  jevEntryQuoteMaximumAgeMs,
-  jevPlanningTargetWeights,
-  type JevEntryTarget,
-} from './decision'
+import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights, type JevEntryTarget } from './decision'
 import {
   decideJevExit,
   jevBrokerEvidenceFreshUntilMs,
@@ -389,18 +388,18 @@ export const evaluateJevPositionManagement = (input: {
       const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
       if (firstFill === undefined || position === undefined)
         return yield* new JevContractError({ message: 'Managed position is missing its validated fill or cost basis' })
-      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, input.protocol.maximumHoldingMinutes)
+      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
       if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt)) {
         if (Date.parse(observedAt) >= jevBrokerEvidenceFreshUntilMs(portfolio.brokerState)) return undefined
         return yield* Effect.fromResult(decideJevExit({ ...evidence, trigger: { reason: JevExitReason.MaximumHold } }))
       }
-      const managementBudgetMs = Math.max(
+      const pricingBudgetMs = Math.max(
         0,
         Math.min(
           Date.parse(maximumHoldDueAt) - Date.parse(observedAt),
-          input.protocol.inferenceValidityMs,
+          input.protocol.maximumQuoteAgeMs,
           jevBrokerEvidenceFreshUntilMs(portfolio.brokerState) - Date.parse(observedAt) - 1,
         ),
       )
@@ -423,69 +422,51 @@ export const evaluateJevPositionManagement = (input: {
             readiness: DecisionReadinessReason.SnapshotStale,
           })
         const bid = yield* Effect.fromResult(priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'))
-        if (
-          quote.bidSize > 0 &&
-          jevProtectiveStopCrossed(
-            BigInt(position.costBasisMicros),
-            BigInt(position.quantityAtoms),
-            bid,
-            input.protocol.protectiveStopBps,
-          )
-        ) {
-          const target = yield* Effect.fromResult(
-            decideJevExit({
-              ...evidence,
-              trigger: {
-                reason: JevExitReason.ProtectiveStop,
-                manifest: pricing.manifest,
-                rows: yield* Effect.fromResult(persistIntradayRecordRows(pricing)),
-              },
-            }),
-          )
-          yield* Effect.logWarning('Jev protective exit price reference').pipe(
-            Effect.annotateLogs({
-              ...jevProtectiveQuoteDiagnostics(quote, jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps),
-              cycleId: input.cycle.identity.cycleId,
-              observedAt,
-            }),
-          )
-          return target
-        }
-        const query = yield* Effect.fromResult(
-          jevObservationQuery(input.cycle, input.protocol, input.calendar, observedAt, JevPurpose.Manage, [
-            position.symbol,
-          ]),
+        if (quote.bidSize <= 0)
+          return yield* new JevAwaitingEvidence({
+            message: 'Held position has no executable bid quantity',
+            readiness: DecisionReadinessReason.SnapshotStale,
+          })
+        const stopped = jevProtectiveStopCrossed(
+          BigInt(position.costBasisMicros),
+          BigInt(position.quantityAtoms),
+          bid,
+          portfolio.exitPolicy.protectiveStopBps,
         )
-        const { evidence: inference } = yield* evaluateJevObservationFromSnapshot(
-          {
+        const reason = stopped
+          ? JevExitReason.ProtectiveStop
+          : (yield* Effect.fromResult(jevProfitTargetCrossed(input.protocol, portfolio, bid)))
+            ? JevExitReason.ProfitTarget
+            : undefined
+        if (reason === undefined) return undefined
+        const target = yield* Effect.fromResult(
+          decideJevExit({
+            ...evidence,
+            trigger: {
+              reason,
+              manifest: pricing.manifest,
+              rows: yield* Effect.fromResult(persistIntradayRecordRows(pricing)),
+            },
+          }),
+        )
+        yield* Effect.logInfo('Entry-bound position exit').pipe(
+          Effect.annotateLogs({
+            ...jevProtectiveQuoteDiagnostics(quote, jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps),
             cycleId: input.cycle.identity.cycleId,
-            authorityGenerationHash: input.authorityGenerationHash,
-            protocol: input.protocol,
-            portfolio,
-          },
-          query.rangeEndAt,
-          Effect.suspend(() => loadIntradaySnapshot(input.marketData, query)),
+            reason,
+            observedAt,
+          }),
         )
-        if (inference.decidedAt >= input.cycle.window.executionCloseAt) return undefined
-        const decision = yield* Effect.fromResult(decideJevManagement(inference))
-        return decision.action === JevManagementAction.Exit
-          ? yield* Effect.fromResult(
-              decideJevExit({
-                ...evidence,
-                observedAt: inference.decidedAt,
-                trigger: { reason: JevExitReason.Model, decision },
-              }),
-            )
-          : undefined
+        return target
       }).pipe(
-        Effect.timeoutOption(Duration.millis(managementBudgetMs)),
+        Effect.timeoutOption(Duration.millis(pricingBudgetMs)),
         Effect.flatMap((result) =>
           Option.isSome(result)
             ? Effect.succeed(result.value)
             : Effect.fail(
                 new JevAwaitingEvidence({
-                  message: 'Position management exhausted its validity window; retry with current position evidence',
-                  readiness: DecisionReadinessReason.InferenceUnavailable,
+                  message: 'Position pricing exhausted its validity window; retry with current position evidence',
+                  readiness: DecisionReadinessReason.SnapshotUnavailable,
                 }),
               ),
         ),
@@ -504,14 +485,6 @@ export const evaluateJevPositionManagement = (input: {
               reason: cause.readiness,
               message: cause.message,
               ...(cause.availableAt === undefined ? {} : { availableAt: cause.availableAt }),
-            }),
-          ),
-        JevAwaitingFreshWindow: (cause) =>
-          Effect.succeed(
-            awaitPositionEvidence({
-              reason: DecisionReadinessReason.SignalWindowObserved,
-              message: cause.message,
-              availableAt: cause.availableAt,
             }),
           ),
         OperationalError: (cause) =>

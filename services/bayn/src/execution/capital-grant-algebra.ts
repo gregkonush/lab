@@ -1,6 +1,6 @@
 import { DateTime, pipe, Result } from 'effect'
 
-import type { RuntimeBuildMetadata } from '../config'
+import type { RuntimeBuildMetadata } from '../config/model'
 import { Pipeable } from '../pipeable'
 import {
   Authority,

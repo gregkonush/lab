@@ -22,7 +22,7 @@ const ExecutionCycleClosureMaterialSchema = Schema.Struct({
       closure.document.submissionCutoffAt === closure.expiresAt &&
       closure.document.expiresAt === closure.expiresAt &&
       closure.document.createdAt === closure.createdAt &&
-      (closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v1' ||
+      (closure.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v2' ||
         closure.document.strategyDecision.entryDecisionHash === closure.entryDecisionHash),
   ),
 )
@@ -84,13 +84,4 @@ const decodeExecutionCycleClosureResultDataFirst = Schema.decodeUnknownResult(
 
 export const decodeExecutionCycleClosureResult = Pipeable.dual(1, (input: unknown) =>
   decodeExecutionCycleClosureResultDataFirst(input),
-)
-
-const decodeExecutionCycleClosureMaterialResultDataFirst = Schema.decodeUnknownResult(
-  ExecutionCycleClosureMaterialSchema,
-  strictParseOptions,
-)
-
-export const decodeExecutionCycleClosureMaterialResult = Pipeable.dual(1, (input: unknown) =>
-  decodeExecutionCycleClosureMaterialResultDataFirst(input),
 )

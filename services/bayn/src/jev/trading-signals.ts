@@ -30,7 +30,6 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
-import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -283,53 +282,10 @@ export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
   })
 
 export const jevTradingQuestions = {
-  regime: {
-    type: 'choice',
-    instructions: {
-      question:
-        'Which current price-action regime best fits the candidate, considering its recent path, computed signals and benchmark context?',
-      evidence: ['candidate', 'benchmark', 'relativeSignals'],
-      uncertainty: 'Use unclear when the available evidence does not distinguish these regimes.',
-    },
-    criteria: {
-      upward_trend: 'Broadly sustained upward movement, rather than a single isolated jump.',
-      downward_trend: 'Broadly sustained downward movement, rather than a single isolated drop.',
-      range: 'Mostly oscillating or balanced movement without sustained direction.',
-      unstable: 'Abrupt or conflicting movements dominate.',
-      unclear: 'Insufficient or conflicting evidence prevents classification.',
-    },
-  },
-  continuation: {
-    type: 'noul',
-    instructions:
-      'Does the combined candidate price path, volume, technical signals and benchmark context support sustained upward continuation over the stated horizon?',
-    criteria: {
-      true: 'The evidence supports an upward continuation setup.',
-      false:
-        'The evidence does not support upward continuation, including downtrend, exhaustion, contradictory signals or insufficient evidence.',
-    },
-  },
-  exhaustion: {
-    type: 'noul',
-    instructions:
-      'Does the candidate show a stretched or weakening upward move with meaningful reversal risk over the stated horizon? Evaluate the joint pattern rather than applying one indicator threshold.',
-  },
-  setup_quality: {
-    type: 'score',
-    instructions:
-      'How coherent is the candidate long-entry setup across price action, volume, technical signals and benchmark context? Missing indicators provide no supporting evidence. Do not calculate sizing or treat this score as a return forecast.',
-    criteria: [
-      'No supported long setup',
-      'Weak or contradictory setup',
-      'Mixed but plausible setup',
-      'Several signals support a coherent setup',
-      'Strongly aligned evidence across the available signal groups',
-    ],
-  },
   action: {
     type: 'choice',
     instructions:
-      'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
+      'Given `candidate`, `benchmark`, `relativeSignals` and `entryEconomics`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Enter only when the evidence supports reaching entryEconomics.profitTargetExitBidUsd before the holding deadline. That target includes estimated entry and exit fees, bounded adverse execution and the required net profit. Use wait or avoid when the target is unsupported or entryEconomics is null. Code owns the entry-bound stop, profit target, permission, sizing and risk.',
     criteria: {
       enter: 'Evidence supports entering a long position now.',
       wait: 'A possible setup needs further confirmation.',
@@ -339,12 +295,10 @@ export const jevTradingQuestions = {
 } satisfies JevRequest['questions']
 
 export const jevManagementQuestions = {
-  continuation: jevTradingQuestions.continuation,
-  exhaustion: jevTradingQuestions.exhaustion,
   action: {
     type: 'choice',
     instructions:
-      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Use netLiquidationPnlUsd, actual entryFeesUsd and estimatedExitFeesUsd when assessing the economics. Entry fees are sunk costs, so a loss or an unmet break-even price is not a reason to postpone an otherwise justified exit. Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+      'Given `candidate`, `benchmark`, `relativeSignals` and the held long `position`, does the current market evidence support continuation over `position.remainingHoldingMinutes`, or does deterioration support exiting now? Judge the future setup from the supplied signals. Code separately enforces sizing, fees, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
     criteria: {
       hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
       exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
@@ -380,43 +334,14 @@ const requestFromSnapshot = (
       const firstFill = native.portfolio.entryFills[0]
       if (held === undefined || firstFill === undefined || BigInt(held.costBasisMicros) <= 0n)
         return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
-      const cost = BigInt(held.costBasisMicros)
-      const quantity = BigInt(held.quantityAtoms)
-      const proceeds = (candidate.prices.bid * quantity) / 1_000_000_000n
-      const pnl = proceeds - cost
-      const entryFees =
-        native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n) +
-        BigInt(native.portfolio.entryInventoryDebit.costBasisMicros)
-      const liquidation = { protocol: native.protocol, symbol, quantityAtoms: quantity }
-      const exit = yield* jevLiquidationValue({ ...liquidation, bidMicros: candidate.prices.bid })
-      const exitFees = exit.feesMicros
-      const netPnl = exit.netMicros - cost - entryFees
-      const acquisitionCost = cost + entryFees
-      const breakEvenBid = yield* jevBreakEvenExitBid({
-        ...liquidation,
-        acquisitionCostMicros: acquisitionCost,
-        upperBidMicros:
-          (((acquisitionCost + exit.proceedsMicros - exit.conservativeNetMicros) * 1_000_000_000n + quantity - 1n) /
-            quantity) *
-          2n,
-      })
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {
         symbol,
         quantityUnits: Number(held.quantityAtoms) / 1_000_000_000,
-        costBasisUsd: Number(cost) / 1_000_000,
-        averageEntryPriceUsd: (Number(cost) * 1_000) / Number(held.quantityAtoms),
         entryFilledAt: firstFill.occurredAt,
         heldForMinutes,
         maximumHoldingMinutes: native.protocol.maximumHoldingMinutes,
         remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
-        unrealizedPnlAtBidUsd: Number(pnl) / 1_000_000,
-        unrealizedPnlAtBidBps: Number((pnl * 10_000n) / cost),
-        entryFeesUsd: Number(entryFees) / 1_000_000,
-        estimatedExitFeesUsd: Number(exitFees) / 1_000_000,
-        netLiquidationPnlUsd: Number(netPnl) / 1_000_000,
-        netLiquidationPnlBps: Number((netPnl * 10_000n) / acquisitionCost),
-        breakEvenExitBidUsd: Number(breakEvenBid) / 1_000_000,
       }
     }
     return yield* prepareJevRequest({
@@ -479,7 +404,7 @@ const requestFromSnapshot = (
         relativeSignals: {
           ...metrics,
           referenceAt: common.referenceAt,
-          horizonMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
           candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
           benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
         },
@@ -589,7 +514,8 @@ const batchFromObservation = (
           symbol,
           status: JevCandidatePlanStatus.Excluded,
           reason: JevEntryExclusion.Momentum,
-          message: 'Verified candidate lacks strictly positive exact own and benchmark-relative 30-minute return',
+          message:
+            'Verified candidate lacks strictly positive exact own and benchmark-relative return over the observed common-minute window',
         })
         continue
       }

@@ -422,84 +422,11 @@ export const EquitySeriesArtifactSchema = Schema.Struct({
     }),
   ).check(Schema.isMinLength(1)),
 })
-
-const decodeEvaluationSummaryDataFirst = Schema.decodeUnknownEffect(EvaluationSummarySchema, StrictParseOptions)
-
-export const decodeEvaluationSummary = Pipeable.dual(1, (input: unknown) => decodeEvaluationSummaryDataFirst(input))
-const decodeReconciliationResultDataFirst = Schema.decodeUnknownEffect(ReconciliationResultSchema, StrictParseOptions)
-
-export const decodeReconciliationResult = Pipeable.dual(1, (input: unknown) =>
-  decodeReconciliationResultDataFirst(input),
-)
-const decodeMarkedEquityReconciliationDataFirst = Schema.decodeUnknownEffect(
-  MarkedEquityReconciliationSchema,
-  StrictParseOptions,
-)
-
-export const decodeMarkedEquityReconciliation = Pipeable.dual(1, (input: unknown) =>
-  decodeMarkedEquityReconciliationDataFirst(input),
-)
 const decodeInputManifestArtifactDataFirst = Schema.decodeUnknownEffect(InputManifestArtifactSchema, StrictParseOptions)
 
 export const decodeInputManifestArtifact = Pipeable.dual(1, (input: unknown) =>
   decodeInputManifestArtifactDataFirst(input),
 )
-const decodeEquitySeriesArtifactDataFirst = Schema.decodeUnknownEffect(EquitySeriesArtifactSchema, StrictParseOptions)
-
-export const decodeEquitySeriesArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeEquitySeriesArtifactDataFirst(input),
-)
-const decodeEvaluationEventsDataFirst = Schema.decodeUnknownEffect(EvaluationEventsSchema, StrictParseOptions)
-
-export const decodeEvaluationEvents = Pipeable.dual(1, (input: unknown) => decodeEvaluationEventsDataFirst(input))
-const decodeSimulatedOrdersArtifactDataFirst = Schema.decodeUnknownEffect(
-  SimulatedOrdersArtifactSchema,
-  StrictParseOptions,
-)
-
-export const decodeSimulatedOrdersArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeSimulatedOrdersArtifactDataFirst(input),
-)
-const decodeCashChangesArtifactDataFirst = Schema.decodeUnknownEffect(CashChangesArtifactSchema, StrictParseOptions)
-
-export const decodeCashChangesArtifact = Pipeable.dual(1, (input: unknown) => decodeCashChangesArtifactDataFirst(input))
-const decodeDailyPositionMarksArtifactDataFirst = Schema.decodeUnknownEffect(
-  DailyPositionMarksArtifactSchema,
-  StrictParseOptions,
-)
-
-export const decodeDailyPositionMarksArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeDailyPositionMarksArtifactDataFirst(input),
-)
-const decodeRiskBalancedTrendSignalDecisionsArtifactDataFirst = Schema.decodeUnknownEffect(
-  RiskBalancedTrendSignalDecisionsArtifactSchema,
-  StrictParseOptions,
-)
-
-export const decodeRiskBalancedTrendSignalDecisionsArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeRiskBalancedTrendSignalDecisionsArtifactDataFirst(input),
-)
-const decodeDailyPerformanceSeriesArtifactDataFirst = Schema.decodeUnknownEffect(
-  DailyPerformanceSeriesArtifactSchema,
-  StrictParseOptions,
-)
-
-export const decodeDailyPerformanceSeriesArtifact = Pipeable.dual(1, (input: unknown) =>
-  decodeDailyPerformanceSeriesArtifactDataFirst(input),
-)
-const decodeQualificationArtifactManifestDataFirst = Schema.decodeUnknownEffect(
-  QualificationArtifactManifestSchema,
-  StrictParseOptions,
-)
-
-export const decodeQualificationArtifactManifest = Pipeable.dual(1, (input: unknown) =>
-  decodeQualificationArtifactManifestDataFirst(input),
-)
-
-export const makeEquitySeriesArtifact = (items: (typeof EquitySeriesArtifactSchema.Type)['items']) => ({
-  schemaVersion: 'bayn.equity-series.v1' as const,
-  items,
-})
 
 export type InputManifest = typeof InputManifestArtifactSchema.Type
 export type SymbolCoverage = InputManifest['symbols'][number]
