@@ -1,11 +1,11 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: bayn-execution-activate-8bed05c8f6ca
+  name: bayn-execution-activate-fd70ed511751
   labels:
     app.kubernetes.io/name: bayn-execution-activate
     app.kubernetes.io/part-of: bayn
-    app.kubernetes.io/version: sha-8bed05c8f6ca
+    app.kubernetes.io/version: sha-fd70ed511751
   annotations:
     argocd.argoproj.io/hook: Sync
     argocd.argoproj.io/hook-delete-policy: BeforeHookCreation,HookSucceeded
@@ -19,7 +19,7 @@ spec:
       labels:
         app.kubernetes.io/name: bayn-execution-activate
         app.kubernetes.io/part-of: bayn
-        app.kubernetes.io/version: sha-8bed05c8f6ca
+        app.kubernetes.io/version: sha-fd70ed511751
     spec:
       nodeSelector:
         network.proompteng.ai/100g: "true"
@@ -35,16 +35,16 @@ spec:
           type: RuntimeDefault
       containers:
         - name: activate
-          image: registry.ide-newton.ts.net/lab/bayn@sha256:8711702b585c86887ea9f7f42adecfb23d354b0c216c43939d0739c6c24a83fc
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:0fd324848517c874492ddd21e8f8065129c8b063ccf223b9c08ea48e1507067d
           imagePullPolicy: IfNotPresent
           command:
             - node
             - dist/restate-execution-activate.js
           env:
             - name: BAYN_EXECUTION_ACTIVATION_GENERATION
-              value: 8711702b585c86887ea9f7f42adecfb23d354b0c216c43939d0739c6c24a83fc
+              value: 0fd324848517c874492ddd21e8f8065129c8b063ccf223b9c08ea48e1507067d
             - name: BAYN_CODE_REVISION
-              value: 8bed05c8f6ca87e428522e76716e75e85cb40f5c
+              value: fd70ed511751293333ad5bd2506b3a4b7903435a
             - name: BAYN_GLITCHTIP_DSN
               valueFrom:
                 configMapKeyRef:
@@ -53,7 +53,7 @@ spec:
             - name: BAYN_IMAGE_REPOSITORY
               value: registry.ide-newton.ts.net/lab/bayn
             - name: BAYN_IMAGE_DIGEST
-              value: sha256:8711702b585c86887ea9f7f42adecfb23d354b0c216c43939d0739c6c24a83fc
+              value: sha256:0fd324848517c874492ddd21e8f8065129c8b063ccf223b9c08ea48e1507067d
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
               value: "55e0d13466d967a71e7e669021ae3dd21eb2f481a32c3de0d33bc14895ff6ccf"
             - name: BAYN_STRATEGY_PARAMETER_HASH
@@ -68,7 +68,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:8711702b585c86887ea9f7f42adecfb23d354b0c216c43939d0739c6c24a83fc\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"8bed05c8f6ca87e428522e76716e75e85cb40f5c\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:a5496854d258e7756caa843229ee00f2e8bb4a8b4e28144354682c375668d6a1\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"4a9495147a09103ab57cc95b1e6f074fa67f5b1c\"\n  },\n  \"requestHash\": \"4982f2989890877ee5317552c959659915b51c60efebd9b2cfa5c74607813552\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
+              value: "{\n  \"activation\": {\n    \"imageDigest\": \"sha256:0fd324848517c874492ddd21e8f8065129c8b063ccf223b9c08ea48e1507067d\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"fd70ed511751293333ad5bd2506b3a4b7903435a\"\n  },\n  \"authoredActivation\": {\n    \"imageDigest\": \"sha256:a5496854d258e7756caa843229ee00f2e8bb4a8b4e28144354682c375668d6a1\",\n    \"imageRepository\": \"registry.ide-newton.ts.net/lab/bayn\",\n    \"sourceRevision\": \"4a9495147a09103ab57cc95b1e6f074fa67f5b1c\"\n  },\n  \"requestHash\": \"4982f2989890877ee5317552c959659915b51c60efebd9b2cfa5c74607813552\",\n  \"schemaVersion\": \"bayn.research-capital-build-lineage.v1\"\n}\n"
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH

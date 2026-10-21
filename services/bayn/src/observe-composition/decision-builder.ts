@@ -99,7 +99,6 @@ import {
   reconciledPositionReferencePricesSchemaVersion,
   type ExecutionReferencePrices,
   type IntradaySnapshotReferencePrices,
-  type SignalSessionReferencePrices,
   type TargetPlannerInput,
   type TargetPlannerFailure,
   type TargetPlanResult,
@@ -499,23 +498,6 @@ const hashObserveMaterial = (
 ): Result.Result<string, ObserveDecisionCompositionFailure> =>
   Result.mapError(canonicalHashV1Result(value), (cause) => compositionFailure(operation, message, cause))
 
-const referencePrices = (
-  signalDate: SignalSessionReferencePrices['signalDate'],
-  observedAt: string,
-  priceMicros: Readonly<Record<string, string>>,
-): Result.Result<SignalSessionReferencePrices, ObserveDecisionCompositionFailure> => {
-  const material = {
-    schemaVersion: 'bayn.signal-session-reference-prices.v1' as const,
-    signalDate,
-    observedAt,
-    priceMicros,
-  }
-  return Result.map(
-    hashObserveMaterial('reference-prices', 'Signal-session reference prices are not canonicalizable', material),
-    (contentHash) => ({ ...material, contentHash }),
-  )
-}
-
 interface IntradayQuotePriceMaps {
   readonly priceMicros: Readonly<Record<string, string>>
   readonly bidPriceMicros: Readonly<Record<string, string>>
@@ -523,7 +505,7 @@ interface IntradayQuotePriceMaps {
 }
 
 const intradayReferencePrices = (
-  signalDate: SignalSessionReferencePrices['signalDate'],
+  signalDate: TargetPlannerInput['signalDate'],
   binding: NonNullable<CompiledObserveStrategyDecision['executionMarketData']>,
   prices: IntradayQuotePriceMaps,
 ): Result.Result<IntradaySnapshotReferencePrices, ObserveDecisionCompositionFailure> => {
@@ -605,7 +587,7 @@ const reconciledPositionLiquidationBinding = (
 }
 
 const reconciledPositionReferencePrices = (
-  signalDate: SignalSessionReferencePrices['signalDate'],
+  signalDate: TargetPlannerInput['signalDate'],
   binding: ExecutionMarketDataBinding,
 ): Result.Result<ExecutionReferencePrices, ObserveDecisionCompositionFailure> => {
   if (binding.schemaVersion !== reconciledPositionLiquidationBindingSchemaVersion) {
@@ -856,8 +838,8 @@ type CompiledObserveStrategyDecision = {
   readonly decision: RuntimeStrategyDecision
   readonly decisionMarketDataRows?: PersistedIntradaySnapshotRows
   readonly executionMarketDataRows?: PersistedIntradaySnapshotRows
-  /** Compatibility identity for the existing planner; intraday decisions remain bound separately to execution date. */
-  readonly signalDate: SignalSessionReferencePrices['signalDate']
+  /** Signal date remains bound separately to the execution date. */
+  readonly signalDate: TargetPlannerInput['signalDate']
   readonly priceMicros: Readonly<Record<string, string>>
   readonly bidPriceMicros?: Readonly<Record<string, string>>
   readonly askPriceMicros?: Readonly<Record<string, string>>
@@ -1080,88 +1062,84 @@ export const prepareObservePlanner = <R>(
   compiled: CompiledObserveStrategyDecision,
   overrides: ObservePlannerOverrides = {},
 ): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> =>
-  Result.flatMap(referencePrices(compiled.signalDate, facts.evaluatedAt, compiled.priceMicros), (prices) =>
-    Result.flatMap(
-      hashObserveMaterial('risk-policy-hash', 'OBSERVE risk policy is not canonicalizable', input.policy),
-      (policyHash) =>
-        Result.flatMap(
-          hashObserveMaterial(
-            'compiled-decision-hash',
-            'current strategy decision is not canonicalizable',
-            compiled.decision,
-          ),
-          (decisionHash): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> => {
-            if (!isQuoteBoundExecutionModel(input.executionModel)) {
-              return Result.fail(compositionFailure('cycle-binding', 'intraday runtime requires quote-bound execution'))
-            }
-            if (
-              compiled.executionMarketData === undefined ||
-              compiled.bidPriceMicros === undefined ||
-              compiled.askPriceMicros === undefined ||
-              compiled.maximumBuyQuantityAtoms === undefined ||
-              compiled.maximumSellQuantityAtoms === undefined ||
-              overrides.allocationCapitalMicros === undefined
-            ) {
-              return Result.fail(
-                compositionFailure(
-                  'cycle-binding',
-                  'quote-bound intraday planning requires exact market-data and allocation bindings',
-                ),
-              )
-            }
-            const commonPlannerInput = {
-              strategyName: input.cycle.identity.strategyName,
-              cycleId: input.cycle.identity.cycleId,
-              decisionHash,
-              policyHash,
-              accountId: input.cycle.identity.accountId,
-              signalDate: compiled.signalDate,
-              targetWeights:
-                overrides.targetWeights ?? compiled.planningTargetWeights ?? compiled.decision.targetWeights,
-              referencePrices: prices,
-              brokerState: facts.reconciliation.brokerState,
-              precision: input.executionModel.precision,
-              maximumInputAgeMs: Math.min(input.policy.maxBrokerStateAgeMs, input.policy.maxMarketDataAgeMs),
-              submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
-              observedAt: facts.evaluatedAt,
-            }
-            const boundPrices = intradayReferencePrices(compiled.signalDate, compiled.executionMarketData, {
-              priceMicros: compiled.priceMicros,
-              bidPriceMicros: compiled.bidPriceMicros,
-              askPriceMicros: compiled.askPriceMicros,
-            })
-            if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
-            const plannerInput: TargetPlannerInput = {
-              schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
-              ...commonPlannerInput,
-              referencePrices: boundPrices.success,
-              precision: {
-                quantityIncrementAtoms: input.executionModel.precision.quantityIncrementAtoms,
-                priceIncrementMicros: input.executionModel.precision.priceIncrementMicros,
-                minimumBuyNotionalMicros: input.executionModel.precision.minimumBuyNotionalMicros,
-              },
-              allocationCapitalMicros: overrides.allocationCapitalMicros,
-              executionTerms: {
-                orderType: OrderType.Limit,
-                timeInForce: cashSpotLimitTimeInForce(
-                  input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
-                    ? MarketKind.Crypto
-                    : MarketKind.Equity,
-                ),
-                priceReference: 'verified-adverse-quote-boundary' as const,
-                snapshotId: compiled.executionMarketData.snapshotId,
-                snapshotContentHash: compiled.executionMarketData.contentHash,
-                maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
-                maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
-              },
-            }
-            return Result.succeed({
-              prices: boundPrices.success,
-              plannerInput,
-            })
-          },
+  Result.flatMap(
+    hashObserveMaterial('risk-policy-hash', 'OBSERVE risk policy is not canonicalizable', input.policy),
+    (policyHash) =>
+      Result.flatMap(
+        hashObserveMaterial(
+          'compiled-decision-hash',
+          'current strategy decision is not canonicalizable',
+          compiled.decision,
         ),
-    ),
+        (decisionHash): Result.Result<ObservePlannerPreparation, ObserveDecisionCompositionFailure> => {
+          if (!isQuoteBoundExecutionModel(input.executionModel)) {
+            return Result.fail(compositionFailure('cycle-binding', 'intraday runtime requires quote-bound execution'))
+          }
+          if (
+            compiled.executionMarketData === undefined ||
+            compiled.bidPriceMicros === undefined ||
+            compiled.askPriceMicros === undefined ||
+            compiled.maximumBuyQuantityAtoms === undefined ||
+            compiled.maximumSellQuantityAtoms === undefined ||
+            overrides.allocationCapitalMicros === undefined
+          ) {
+            return Result.fail(
+              compositionFailure(
+                'cycle-binding',
+                'quote-bound intraday planning requires exact market-data and allocation bindings',
+              ),
+            )
+          }
+          const commonPlannerInput = {
+            strategyName: input.cycle.identity.strategyName,
+            cycleId: input.cycle.identity.cycleId,
+            decisionHash,
+            policyHash,
+            accountId: input.cycle.identity.accountId,
+            signalDate: compiled.signalDate,
+            targetWeights: overrides.targetWeights ?? compiled.planningTargetWeights ?? compiled.decision.targetWeights,
+            brokerState: facts.reconciliation.brokerState,
+            precision: input.executionModel.precision,
+            maximumInputAgeMs: Math.min(input.policy.maxBrokerStateAgeMs, input.policy.maxMarketDataAgeMs),
+            submissionCutoffAt: overrides.submissionCutoffAt ?? input.cycle.window.submissionCutoffAt,
+            observedAt: facts.evaluatedAt,
+          }
+          const boundPrices = intradayReferencePrices(compiled.signalDate, compiled.executionMarketData, {
+            priceMicros: compiled.priceMicros,
+            bidPriceMicros: compiled.bidPriceMicros,
+            askPriceMicros: compiled.askPriceMicros,
+          })
+          if (Result.isFailure(boundPrices)) return Result.fail(boundPrices.failure)
+          const plannerInput: TargetPlannerInput = {
+            schemaVersion: quoteBoundTargetPlannerInputSchemaVersion,
+            ...commonPlannerInput,
+            referencePrices: boundPrices.success,
+            precision: {
+              quantityIncrementAtoms: input.executionModel.precision.quantityIncrementAtoms,
+              priceIncrementMicros: input.executionModel.precision.priceIncrementMicros,
+              minimumBuyNotionalMicros: input.executionModel.precision.minimumBuyNotionalMicros,
+            },
+            allocationCapitalMicros: overrides.allocationCapitalMicros,
+            executionTerms: {
+              orderType: OrderType.Limit,
+              timeInForce: cashSpotLimitTimeInForce(
+                input.cycle.window.executionCalendarSchemaVersion === 'bayn.continuous-market-hours.v1'
+                  ? MarketKind.Crypto
+                  : MarketKind.Equity,
+              ),
+              priceReference: 'verified-adverse-quote-boundary' as const,
+              snapshotId: compiled.executionMarketData.snapshotId,
+              snapshotContentHash: compiled.executionMarketData.contentHash,
+              maximumBuyQuantityAtoms: compiled.maximumBuyQuantityAtoms,
+              maximumSellQuantityAtoms: compiled.maximumSellQuantityAtoms,
+            },
+          }
+          return Result.succeed({
+            prices: boundPrices.success,
+            plannerInput,
+          })
+        },
+      ),
   )
 
 const executionRiskContext = (
