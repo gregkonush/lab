@@ -373,6 +373,53 @@ class Substrate:
         )
 
 
+def native_evidence(receipt):
+    observations = []
+    excerpt_limit = max(200, 4000 // max(1, len(receipt["requests"])))
+    for row in receipt["requests"]:
+        state = copy.deepcopy(row["request"]["state"])
+        omitted = {}
+        for name in ("candidate", "benchmark"):
+            if isinstance(state.get(name), dict):
+                bars = state[name].pop("bars1m", [])
+                omitted[name] = {"bars1mCount": len(bars)}
+        inference = row.get("inference")
+        response = inference["response"] if inference is not None else None
+        observations.append(
+            {
+                "symbol": row["symbol"],
+                "requestHash": row.get("requestHash"),
+                "stateExcerpt": json.dumps(
+                    {
+                        "relativeSignals": state.get("relativeSignals"),
+                        "entryEconomics": state.get("entryEconomics"),
+                        "candidate": state.get("candidate"),
+                        "benchmark": state.get("benchmark"),
+                    },
+                    separators=(",", ":"),
+                )[:excerpt_limit],
+                "omittedHistory": omitted,
+                "answers": None
+                if response is None
+                else {
+                    name: {
+                        "choice": answer.get("choice"),
+                        "confidence": answer.get("confidence"),
+                        "selectedProbability": answer.get("probabilities", {}).get(
+                            answer.get("choice")
+                        ),
+                    }
+                    for name, answer in response["answers"].items()
+                },
+            }
+        )
+    return {
+        "notice": "Editor summary only. State excerpts may be truncated; do not infer missing evidence. Jev received the complete original state and all answer choices; full requests and responses remain in the receipt.",
+        "observations": observations,
+        "decision": receipt["decision"],
+    }
+
+
 class Adapter:
     def __init__(self, study, root, calls):
         self.study, self.root, self.calls = study, root, calls
@@ -431,10 +478,7 @@ class Adapter:
         (directory / "answer.txt").write_text(json.dumps(receipt["decision"]))
         (directory / "trajectory.md").write_text(
             "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[OBSERVATION]\n"
-            + json.dumps(
-                {"requests": receipt["requests"], "decision": receipt["decision"]},
-                sort_keys=True,
-            )
+            + json.dumps(native_evidence(receipt), sort_keys=True)
         )
         if run_id.endswith("/c1"):
             (self.root / "candidate-instructions.json").write_text(prompt)

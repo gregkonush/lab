@@ -12,7 +12,9 @@ an original native Bayn observation. The baseline instructions must match the co
 
 Harness2 edits only `instructions.json`, containing `entry`, `stopLoss` and `takeProfit` strings of at most 2,000
 characters each. These are the actual question instructions used by `trading-signals.ts` and `trade-price-choices.ts`.
-The editor cannot change question types, candidate prices, market state, position sizing, account limits, freshness,
+The editor sees a bounded evidence summary with the original request hashes, bounded computed-signal excerpts and selected answers. Excerpts can be truncated and never establish missing facts.
+Raw bar histories and full probability distributions remain in native receipts and are omitted from the editor view;
+Jev receives the complete original state. The editor cannot change question types, candidate prices, market state, position sizing, account limits, freshness,
 broker protection or execution authority. Bayn's shared `selectJevEntryCandidates` function converts the typed answers
 into the same funded selections and protection-plan rejections used by the live strategy.
 

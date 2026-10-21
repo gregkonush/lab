@@ -4,7 +4,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from runner import Calls, compare_decisions, encode, identity, run_study, validate_study
+from runner import (
+    Calls,
+    compare_decisions,
+    encode,
+    identity,
+    native_evidence,
+    run_study,
+    validate_study,
+)
 
 
 class MemoryStorage:
@@ -108,6 +116,49 @@ class NativeCLI:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_editor_summary_preserves_native_requests(self):
+        receipt = {
+            "decision": {"selected": []},
+            "requests": [
+                {
+                    "symbol": "BTC/USD",
+                    "requestHash": "a" * 64,
+                    "request": {
+                        "state": {
+                            "candidate": {
+                                "bars1m": [{"close": 100}] * 500,
+                                "returnsBps": 25,
+                            },
+                            "benchmark": {"bars1m": [{"close": 200}] * 500},
+                        }
+                    },
+                    "inference": {
+                        "response": {
+                            "answers": {
+                                "action": {
+                                    "choice": "wait",
+                                    "confidence": 0.5,
+                                    "probabilities": {
+                                        "wait": 0.6,
+                                        "enter": 0.3,
+                                        "avoid": 0.1,
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+        original = copy.deepcopy(receipt)
+        summary = native_evidence(receipt)
+        self.assertEqual(receipt, original)
+        self.assertLess(len(encode(summary)), 2000)
+        row = summary["observations"][0]
+        self.assertIn('"returnsBps":25', row["stateExcerpt"])
+        self.assertEqual(row["omittedHistory"]["candidate"]["bars1mCount"], 500)
+        self.assertEqual(row["answers"]["action"]["selectedProbability"], 0.6)
+
     def test_real_upstream_refines_jev_and_only_then_evaluates_untouched_observations(
         self,
     ):
