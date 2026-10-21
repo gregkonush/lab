@@ -49,6 +49,10 @@ exit selected by code, and no momentum prefilter. Costs, exposure sizing, accoun
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
 constraints and the hard migration. These model decisions have no demonstrated profitable edge.
 
+Observed bar prices retain provider precision in source evidence and model context. Complete-plan construction rounds
+these historical prices down to micros before applying instrument ticks. Broker quotes and executable prices keep
+their separate precision checks; a provider bar with more than nine decimal places cannot invalidate the whole batch.
+
 For flat PAPER accounts, the same reconciled daily-loss and all-time drawdown limits also run before market-data
 reads and Jev batch admission. `ACCOUNT_PROTECTION` readiness names the existing limit that prevents an entry;
 the execution-session status and metric report `BLOCKED`, not an input outage. It does not create a model
