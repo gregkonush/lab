@@ -71,6 +71,7 @@ class NativeCLI:
             if self.fail_probe:
                 raise RuntimeError("ambiguous provider transmission")
             content = {
+                "excludedCandidates": [],
                 "decision": {
                     "purpose": "ENTRY",
                     "selected": [],
@@ -116,6 +117,7 @@ class NativeCLI:
 class RunnerTests(unittest.TestCase):
     def test_editor_summary_preserves_native_requests(self):
         receipt = {
+            "excludedCandidates": [],
             "decision": {"selected": []},
             "requests": [
                 {
@@ -192,6 +194,7 @@ class RunnerTests(unittest.TestCase):
             },
         }
         receipt = {
+            "excludedCandidates": [],
             "decision": {"selected": []},
             "requests": [
                 {
@@ -212,6 +215,26 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(row["signals"]["candidate"]["priceWindow"]["rangeLow"], 98)
             self.assertEqual(row["signals"]["benchmark"]["latestCompletedClose"], 110)
         self.assertLess(len(encode(summary)) * 4, 90000)
+
+    def test_all_excluded_probe_keeps_source_failures_in_editor_context(self):
+        excluded = [
+            {
+                "status": "EXCLUDED",
+                "symbol": "BTC/USD",
+                "reason": "not-ready",
+                "message": "intraday snapshot lacks a trade for candidate symbol",
+            }
+        ]
+        receipt = {
+            "excludedCandidates": excluded,
+            "requests": [],
+            "decision": {"selected": [], "entryPlanRejections": {}},
+        }
+        original = copy.deepcopy(receipt)
+        summary = native_evidence(receipt)
+        self.assertEqual(summary["excludedCandidates"], excluded)
+        self.assertEqual(summary["observations"], [])
+        self.assertEqual(receipt, original)
 
     def test_real_upstream_refines_jev_and_only_then_evaluates_untouched_observations(
         self,

@@ -31,6 +31,36 @@ const run = () => ({
   instructions: jevInstructions,
 })
 const at = new Date(Date.parse(fixture.observation.payload.observedAt) + 100).toISOString()
+const receiptMaterial = (prepared: Result.Result.Success<ReturnType<typeof prepareJevHarnessProbe>>) => {
+  const completedAt = new Date(Date.parse(prepared.run.registeredAt) + 100).toISOString()
+  const inferences = prepared.requests.map(({ symbol, request }) => ({
+    symbol,
+    inference: nativeJevInference(request, completedAt),
+  }))
+  return {
+    schemaVersion: 'bayn.jev-harness2-receipt.v2',
+    runId: prepared.runId,
+    sourceRevision: prepared.run.sourceRevision,
+    observationHash: prepared.observation.contentHash,
+    instructionsHash: Result.getOrThrow(canonicalHashV1Result(prepared.run.instructions)),
+    startedAtMs: Date.parse(prepared.run.registeredAt),
+    completedAtMs: Date.parse(completedAt),
+    outcome: 'COMPLETE',
+    excludedCandidates: prepared.excludedCandidates,
+    requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
+      symbol,
+      originalRequestHash,
+      request,
+      requestHash,
+      inference: inferences[index]?.inference,
+      failure: null,
+    })),
+    decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
+    costPicoUsd: null,
+    qualification: 'UNQUALIFIED',
+    timingQualification: 'OFFLINE_REEVALUATION',
+  }
+}
 
 describe('Harness2 uses native Jev requests and decision policy', () => {
   test('reproduces native exclusions when a candidate lacks window trades', () => {
@@ -62,6 +92,22 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
           : [],
       ),
     )
+    expect(prepared).toHaveProperty(
+      'excludedCandidates',
+      native.candidates.filter((entry) => entry.status === JevCandidatePlanStatus.Excluded),
+    )
+    const input = { ...run(), observation: observation.payload }
+    const material = receiptMaterial(prepared)
+    const seal = (value: typeof material) => ({
+      ...value,
+      receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),
+    })
+    expect(Result.isSuccess(verifyJevHarnessReceipt(input, seal(material)))).toBe(true)
+    for (const excludedCandidates of [
+      [],
+      material.excludedCandidates.map((row) => ({ ...row, message: 'Invented source failure' })),
+    ])
+      expect(Result.isFailure(verifyJevHarnessReceipt(input, seal({ ...material, excludedCandidates })))).toBe(true)
   })
   test('baseline reproduces live request bytes and funded entry selections', () => {
     const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
@@ -141,32 +187,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
     'retained receipts reproduce their requests, inference evidence and native decision: %s',
     (scenario) => {
       const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
-      const inferences = prepared.requests.map(({ symbol, request }) => ({
-        symbol,
-        inference: nativeJevInference(request, at),
-      }))
-      const material = {
-        schemaVersion: 'bayn.jev-harness2-receipt.v1',
-        runId: prepared.runId,
-        sourceRevision: run().sourceRevision,
-        observationHash: prepared.observation.contentHash,
-        instructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
-        startedAtMs: Date.parse(run().registeredAt),
-        completedAtMs: Date.parse(at),
-        outcome: 'COMPLETE',
-        requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
-          symbol,
-          originalRequestHash,
-          request,
-          requestHash,
-          inference: inferences[index]?.inference,
-          failure: null,
-        })),
-        decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
-        costPicoUsd: null,
-        qualification: 'UNQUALIFIED',
-        timingQualification: 'OFFLINE_REEVALUATION',
-      }
+      const material = receiptMaterial(prepared)
       const seal = (value: Omit<typeof material, 'decision'> & { readonly decision: unknown }) => ({
         ...value,
         receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),

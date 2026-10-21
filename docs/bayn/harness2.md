@@ -80,7 +80,10 @@ bayn-harness2-probe --verify /tmp/probe.json --receipt /tmp/new-receipt.json
 `--validate` requires the exact compiled baseline. `--run` accepts a bounded candidate instruction document. It
 reproduces the original observation and fixes every other request field. Its receipt retains the original and
 candidate request hashes, typed responses, provider usage, inference timing and native funded decision. Verification
-recomputes the request, response and decision bindings. The installed image rejects a different source revision.
+recomputes the request, response and decision bindings. Receipt `bayn.jev-harness2-receipt.v2` also retains native
+candidate exclusions with their symbols, reasons and messages. These are reproduced during verification and shown
+to the editor without provider dispatch. An all-excluded observation therefore remains distinguishable from Jev
+choosing to abstain. The installed image rejects a different source revision.
 
 ## Reservations, recovery and artifacts
 
@@ -175,6 +178,8 @@ Failed or interrupted dispatches consume their budget; exhausted slots cannot tr
 The command retains its actual executable hash and writes full evidence privately; stdout contains a small summary.
 Economic comparison requires this digest for every arm. Raw engine reports without an identified executable cannot
 enter the comparison. The unchanged-prompt repeat must use the exact baseline executable digest.
+The candidate must change both the instruction hash and executable digest. An unchanged proposal remains a no-change
+proposal outcome and cannot be scored as a distinct candidate arm.
 Broker operations use the simulated broker. This command acquires no Alpaca trading credential and expands no capital authority.
 
 ## Native economic report comparison

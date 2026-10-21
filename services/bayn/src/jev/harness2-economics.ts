@@ -329,6 +329,11 @@ export const compareJevHarnessEconomics = (
     const { baseline, baselineRepeat, candidate } = arms
     if (baselineRepeat.executableSha256 !== baseline.executableSha256)
       return yield* invalid('Unchanged-prompt repeat must use the exact baseline executable')
+    if (
+      candidate.instructionsHash === baseline.instructionsHash ||
+      candidate.executableSha256 === baseline.executableSha256
+    )
+      return yield* invalid('Candidate requires changed instructions and a distinct compiled executable')
     const expectedDates = registration.sessionDates
     if (expectedDates.join() !== [...expectedDates].sort().join())
       return yield* invalid('Economic sessions must be registered in chronological order')

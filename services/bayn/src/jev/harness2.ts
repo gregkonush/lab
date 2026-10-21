@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
+import { JevBatchPlanVersion, JevCandidateExclusionSchema, JevCandidatePlanStatus } from './batch'
 import {
   JevContractError,
   JevFailure,
@@ -28,7 +28,7 @@ const HarnessInferenceSchema = Schema.Struct({
   response: JevResponseSchema,
 })
 const JevHarnessReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-harness2-receipt.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-harness2-receipt.v2'),
   runId: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
   observationHash: Sha256Schema,
@@ -36,6 +36,7 @@ const JevHarnessReceiptSchema = Schema.Struct({
   startedAtMs: Schema.Int,
   completedAtMs: Schema.Int,
   outcome: Schema.Literals(['COMPLETE', 'INCONCLUSIVE']),
+  excludedCandidates: Schema.Array(JevCandidateExclusionSchema),
   requests: Schema.Array(
     Schema.Struct({
       symbol: Schema.String,
@@ -99,7 +100,13 @@ export const prepareJevHarnessProbe = (input: unknown) =>
       const prepared = yield* applyJevInstructions(original.request, run.instructions)
       requests.push({ symbol, originalRequestHash: original.requestHash, ...prepared })
     }
-    return { run, observation, requests, runId: yield* canonicalHashV1Result(run) }
+    return {
+      run,
+      observation,
+      requests,
+      excludedCandidates: plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Excluded),
+      runId: yield* canonicalHashV1Result(run),
+    }
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev Harness2 probe does not reproduce', cause })))
 
 export const jevHarnessDecision = (
@@ -135,6 +142,8 @@ export const verifyJevHarnessReceipt = (input: unknown, value: unknown) =>
       receipt.startedAtMs < Date.parse(prepared.run.registeredAt) ||
       receipt.completedAtMs < receipt.startedAtMs ||
       receipt.completedAtMs >= Date.parse(prepared.run.deadlineAt) ||
+      (yield* canonicalHashV1Result(receipt.excludedCandidates)) !==
+        (yield* canonicalHashV1Result(prepared.excludedCandidates)) ||
       receipt.requests.length !== prepared.requests.length
     )
       return yield* Result.fail(

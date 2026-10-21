@@ -159,7 +159,7 @@ export const harness2Command = (args: readonly string[]) =>
     const decision =
       inferences.length === results.length ? yield* Effect.fromResult(jevHarnessDecision(prepared, inferences)) : null
     const material = {
-      schemaVersion: 'bayn.jev-harness2-receipt.v1',
+      schemaVersion: 'bayn.jev-harness2-receipt.v2',
       runId: prepared.runId,
       sourceRevision: prepared.run.sourceRevision,
       observationHash: prepared.observation.contentHash,
@@ -167,6 +167,7 @@ export const harness2Command = (args: readonly string[]) =>
       startedAtMs,
       completedAtMs: yield* Clock.currentTimeMillis,
       outcome: decision === null ? 'INCONCLUSIVE' : 'COMPLETE',
+      excludedCandidates: prepared.excludedCandidates,
       requests: results.map(({ symbol, originalRequestHash, request, requestHash, result }) => ({
         symbol,
         originalRequestHash,

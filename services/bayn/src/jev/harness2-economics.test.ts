@@ -114,6 +114,30 @@ test('an unchanged-prompt repeat using another executable cannot measure provide
   ).toBe(true)
 })
 
+test('a candidate requires both changed instructions and a distinct compiled executable', () => {
+  const arms = {
+    baseline: outcome('a', flat('1000')),
+    baselineRepeat: outcome('b', flat('1000')),
+    candidate: outcome('c', flat('1500'), true),
+  }
+  expect(
+    Result.isFailure(
+      compareJevHarnessEconomics(
+        { ...registration(), candidate: jevInstructions },
+        { ...arms, candidate: { ...arms.candidate, instructionsHash: arms.baseline.instructionsHash } },
+      ),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      compareJevHarnessEconomics(registration(), {
+        ...arms,
+        candidate: { ...arms.candidate, executableSha256: arms.baseline.executableSha256 },
+      }),
+    ),
+  ).toBe(true)
+})
+
 test('late declared registration and drawdown prevent a complete descriptive result', () => {
   const arms = {
     baseline: outcome('a', flat('1000')),

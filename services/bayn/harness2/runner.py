@@ -128,7 +128,9 @@ def validate_study(value):
 
 def validate_instructions(value):
     if not isinstance(value, dict) or set(value) != {"entry"}:
-        raise ValueError("Only the native Jev complete-plan question instruction is editable")
+        raise ValueError(
+            "Only the native Jev complete-plan question instruction is editable"
+        )
     if any(
         not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000
         for text in value.values()
@@ -442,6 +444,7 @@ def native_evidence(receipt):
         )
     return {
         "notice": "Editor summary only. Only the named signals are represented; do not infer missing evidence. Jev received the complete original state and all answer choices; full requests and responses remain in the receipt.",
+        "excludedCandidates": receipt["excludedCandidates"],
         "observations": observations,
         "decision": receipt["decision"],
     }

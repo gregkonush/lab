@@ -1,6 +1,7 @@
 # Harness2 and Jev design audit
 
-Research date: 2026-10-20 America/Los_Angeles. Implementation inspected at
+Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-21.
+Initial implementation inspected at
 `fc73e8967522bf788b3539d4686d6237f5655a4b`; the earlier native integration is deployed from
 `8bed05c8f6ca87e428522e76716e75e85cb40f5c`. This is a design assessment, not a real-market improvement result.
 
@@ -177,3 +178,62 @@ No real model-backed Jev improvement study has completed for this integration. T
 may be used for transport and decision-sensitivity checks, with its limitations explicit. It is rejected as an
 improvement acceptance cohort. No generated instruction candidate has been adopted into live trading. The original
 rollout goal remains unfinished until the corrected experiment and deployment evidence exist.
+
+## Follow-up assessment on 2026-10-21
+
+The follow-up source inspected at `4c2c322f26b7df870d62185654f63c0f20dd0fc4` has a native variant compiler,
+portfolio replay output, normalized input identity, mandatory executable digests, an unchanged-prompt repeat and
+explicit unknown data expenses. Those changes address the corresponding producer, identity and accounting gaps
+above. They do not establish a completed experiment. `run_study` still ends at decision comparison, while the
+economic command consumes reports produced separately. A completed proposal run cannot be called a completed
+portfolio experiment.
+
+Two additional defects were reproduced and corrected during this assessment. Native probe receipts now use
+`bayn.jev-harness2-receipt.v2` and retain the original batch's excluded symbols, reasons and messages. Verification
+reconstructs that exclusion list, and the editor sees it even when no candidate received inference. The economic
+comparison now rejects a candidate whose instructions or executable match the baseline. An unchanged proposal is
+a valid no-change research outcome; it cannot become a distinct candidate gain through provider variability.
+These corrections do not establish financial improvement.
+
+The [community Jev integration](https://github.com/SASUKE40/harness2/tree/993c5337b889a6f8f3585fdb57043ca7bc9dade9)
+provides relevant evidence of technical feasibility. Its
+[selector](https://github.com/SASUKE40/harness2/blob/993c5337b889a6f8f3585fdb57043ca7bc9dade9/harness2/core/jev.py)
+asks typed questions about completed artifacts. Its
+[vision executor](https://github.com/SASUKE40/harness2/blob/993c5337b889a6f8f3585fdb57043ca7bc9dade9/harness2/vision.py)
+changes the rules, class descriptions and question decomposition supplied to Jev. Jev still returns typed answers.
+The [demo's proposer](https://github.com/SASUKE40/harness2/blob/993c5337b889a6f8f3585fdb57043ca7bc9dade9/harness2/image_demo.py)
+is scripted around a predefined catalog of fixes. The default selector substitutes offline answers; live Jev and
+the image executor require explicit settings. This code was inspected, not executed in this audit. It supports
+compatibility, not an independently replicated gain, an identification with another author's social-media demo,
+or transfer from image labels to Bayn's financial objective.
+
+There are three distinct questions for Bayn. Instruction fidelity asks whether Jev interprets the intended setup
+from supplied state and choices. Selection value asks whether those judgments predict an observable future outcome
+better than a fixed control. Portfolio value asks whether the resulting cash, positions and executions improve net
+performance. Harness2 can propose an intervention in the first question. The second and third need independent
+outcome evidence. Choice confidence alone cannot answer them; its definition is a property of the returned option
+distribution, as documented by [TypeSafe](https://docs.typesafe.ai/confidence).
+
+Editing one `entry` string is a valid restricted experiment. It cannot repair missing information, inadequate
+candidate-plan coverage, contradictory criteria or a miscalibrated downstream policy. Bayn computes prices,
+break-even costs and funding in code, which follows
+[TypeSafe's numeric guidance](https://docs.typesafe.ai/model-jaggedness/jev-1.13). Whether the remaining setup
+judgment has predictive value must be measured. The general instruction editor fits the text-generation role;
+its model card does not qualify it as a Bayn editor or as an economic judge.
+
+One concrete policy assumption needs its own test. `selectJevEntryCandidates` ranks symbols by the returned
+probability of the selected complete plan. `jevTradePlanQuestion` can supply different plan menus for different
+symbols. A [Choice distribution](https://docs.typesafe.ai/primitives/choice) is over the supplied options; that
+ranking has not thereby become a common expected-net-profit scale across symbols. Prompt edits can change its
+concentration without adding predictive information. Preserve the ranking for the prompt comparison so the
+intervention remains identifiable. Use the separate deterministic and Jev-removed controls to test whether the
+underlying decision policy contributes value. This observation alone does not justify changing production ranking.
+
+For the financial objective, an explicit-metric search is the more direct design once a valid development evaluator
+exists. Both [GEPA's evaluator interface](https://github.com/gepa-ai/gepa#optimize_anything-beyond-prompts) and
+[TypeSafe's feature-discovery loop](https://docs.typesafe.ai/cookbooks/autoresearch_feature_discovery) illustrate that
+arrangement. This is a design judgment, not a measured comparison between optimizers. Keep Harness2 as one bounded
+proposal method and compare it with the unchanged prompt and a fixed deliberate edit under equal budgets. Keep
+all trials, failures and zero-trade sessions. Freeze the chosen candidate before later evaluation, preserve the
+existing prospective acceptance protocol and withhold a net verdict when required costs or market coverage are
+missing. Changing the search library cannot supply that evidence.
