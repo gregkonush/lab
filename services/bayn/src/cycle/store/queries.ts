@@ -447,7 +447,7 @@ export const makeCycleQueries = (
         : sql`true`
     const jev =
       document.mode === legacyExecutionAuthorityToken &&
-      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v4'
+      document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v5'
         ? document.strategyDecision.evidence
         : undefined
     const jevEvidence =

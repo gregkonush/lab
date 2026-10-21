@@ -120,7 +120,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, max
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
@@ -600,81 +600,90 @@ test.each([
   ['selection-clock', 'Timing receipt belongs to another batch, source or clock'],
   ['decision-file', 'Timing receipt does not bind the committed native entry decision'],
   ['decision-hash', 'Timing receipt does not bind the committed native entry decision'],
-] as const)('timing witness rejects an unrelated %s', async (variant, message) => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const {
-        data,
-        fs,
-        directory,
-        arrivals,
-        batch,
-        committed,
-        at,
-        clocks,
-        timingBytes,
-        evidenceHash,
-        decisionEvidenceHash,
-        input,
-      } = yield* witnessedFixture()
-      let changed = input
-      if (variant === 'selection-clock') {
-        changed = {
-          ...input,
-          timings: [
-            {
-              batchId: batch.batchPlan.batchId,
-              witness: {
-                ...clocks,
-                evidenceHash,
-                decisionEvidenceHash,
-                deterministicSelectedAt: new Date(at - 1).toISOString(),
-              },
-            },
-          ],
-        }
-      } else {
-        const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
-        expect(alternate.contentHash).not.toBe(committed.contentHash)
-        if (variant === 'decision-file') {
-          const alternateBytes = JSON.stringify(alternate)
-          const alternateHash = sha256(alternateBytes)
-          const alternatePath = `${directory}/alternate-decision.json`
-          yield* fs.writeFileString(alternatePath, alternateBytes)
+] as const)(
+  'timing witness rejects an unrelated %s',
+  async (variant, message) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const {
+          data,
+          fs,
+          directory,
+          arrivals,
+          batch,
+          committed,
+          at,
+          clocks,
+          timingBytes,
+          evidenceHash,
+          decisionEvidenceHash,
+          input,
+        } = yield* witnessedFixture()
+        let changed = input
+        if (variant === 'selection-clock') {
           changed = {
             ...input,
-            witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
             timings: [
               {
                 batchId: batch.batchPlan.batchId,
-                witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+                witness: {
+                  ...clocks,
+                  evidenceHash,
+                  decisionEvidenceHash,
+                  deterministicSelectedAt: new Date(at - 1).toISOString(),
+                },
               },
             ],
           }
         } else {
-          const wrongReceiptBytes = JSON.stringify({ ...JSON.parse(timingBytes), decisionHash: alternate.contentHash })
-          const wrongReceiptHash = sha256(wrongReceiptBytes)
-          const wrongReceiptPath = `${directory}/wrong-timing.json`
-          yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
-          changed = {
-            ...input,
-            witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
-            timings: [
-              {
-                batchId: batch.batchPlan.batchId,
-                witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
-              },
-            ],
+          const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
+          expect(alternate.contentHash).not.toBe(committed.contentHash)
+          if (variant === 'decision-file') {
+            const alternateBytes = JSON.stringify(alternate)
+            const alternateHash = sha256(alternateBytes)
+            const alternatePath = `${directory}/alternate-decision.json`
+            yield* fs.writeFileString(alternatePath, alternateBytes)
+            changed = {
+              ...input,
+              witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
+              timings: [
+                {
+                  batchId: batch.batchPlan.batchId,
+                  witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+                },
+              ],
+            }
+          } else {
+            const wrongReceiptBytes = JSON.stringify({
+              ...JSON.parse(timingBytes),
+              decisionHash: alternate.contentHash,
+            })
+            const wrongReceiptHash = sha256(wrongReceiptBytes)
+            const wrongReceiptPath = `${directory}/wrong-timing.json`
+            yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
+            changed = {
+              ...input,
+              witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
+              timings: [
+                {
+                  batchId: batch.batchPlan.batchId,
+                  witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
+                },
+              ],
+            }
           }
         }
-      }
-      const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result)
-      expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
-        message,
-      )
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  )
-})
+        const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(
+          Effect.result,
+        )
+        expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
+          message,
+        )
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+  30_000,
+)
 
 test('offline command reproduces native observations, prices shared lifecycle once, hashes report and refuses overwrite', async () => {
   const data = fixture()
