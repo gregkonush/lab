@@ -33,7 +33,7 @@ const input = {
   expiresAt: new Date(
     Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
   ).toISOString(),
-  planVersion: JevBatchPlanVersion.V5,
+  planVersion: JevBatchPlanVersion.V6,
 }
 
 const nativeObservationWithWideQuotes = (
@@ -108,7 +108,7 @@ describe('Jev trading batch source reproduction', () => {
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
       }
-      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V5 }))).toBe(
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V6 }))).toBe(
         true,
       )
     }
@@ -123,11 +123,11 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
-    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V5)
+    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V6)
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing spread exclusion')
     expect(excluded.reason).toBe(JevEntryExclusion.Spread)
@@ -168,7 +168,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -189,7 +189,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
@@ -215,7 +215,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(native.observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const { batchId: _, ...material } = current

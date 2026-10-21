@@ -28,10 +28,8 @@ import {
   decodeValuation,
   makeCapitalGrantGenerationResult,
   AccountSnapshotSchema,
-  BrokerErrorSchema,
   CapitalGrantProofBindingSchema,
   CapitalGrantGenerationSchema,
-  RateLimitSchema,
   RiskDecisionSchema,
   RiskInputSchema,
 } from './contracts'
@@ -157,6 +155,12 @@ const intent = {
 } as const
 
 describe('execution contracts', () => {
+  test.each([
+    { _tag: 'Error', ...source, error: brokerError },
+    { _tag: 'RateLimit', ...source, rateLimit },
+  ])('rejects retired broker event $_tag', async (event) => {
+    await expectFailure(decodeBrokerEvent(event))
+  })
   test('requires explicit position cost basis and rejects the retired position contract', async () => {
     expect(
       Exit.isFailure(
@@ -175,8 +179,6 @@ describe('execution contracts', () => {
       { decode: decodePosition, value: position },
       { decode: decodeOrder, value: order },
       { decode: decodeFill, value: fill },
-      { decode: Schema.decodeUnknownEffect(BrokerErrorSchema, strictParseOptions), value: brokerError },
-      { decode: Schema.decodeUnknownEffect(RateLimitSchema, strictParseOptions), value: rateLimit },
     ]
 
     for (const contract of contracts) {
@@ -189,18 +191,15 @@ describe('execution contracts', () => {
       { _tag: 'Position' as const, ...source, position },
       { _tag: 'Order' as const, ...source, order },
       { _tag: 'Fill' as const, ...source, sourceTimestamp: '2026-07-22T06:00:00.000000000Z', fill },
-      { _tag: 'Error' as const, ...source, error: brokerError },
-      { _tag: 'RateLimit' as const, ...source, rateLimit },
     ]
     for (const event of events) expect(await Effect.runPromise(decodeBrokerEvent(event))).toEqual(event)
 
     await expectFailure(decodeBrokerEvent({ ...events[0], observedAt: '2026-07-22T05:59:00.000Z' }))
     await expectFailure(decodeBrokerEvent({ ...events[1], position: { ...position, accountId: 'other-account' } }))
-    await expectFailure(decodeBrokerEvent({ ...events[4], error: { ...brokerError, observedAt: instant } }))
     await expectFailure(decodeBrokerEvent({ ...events[2], futureField: true }))
   })
 
-  test('enforces order and rate-limit invariants', async () => {
+  test('enforces order invariants', async () => {
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '1000001000' }))
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '0' }))
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: order.quantityAtoms }))
@@ -242,9 +241,6 @@ describe('execution contracts', () => {
         decodeOrder({ ...notionalOrder, status: OrderStatus.Filled, filledQuantityAtoms: '1999999000' }),
       ),
     ).toMatchObject({ status: OrderStatus.Filled })
-    await expectFailure(
-      Schema.decodeUnknownEffect(RateLimitSchema, strictParseOptions)({ ...rateLimit, remaining: '201' }),
-    )
   })
 
   test('accepts exact integer boundaries and rejects noncanonical or overflowing values', async () => {

@@ -69,7 +69,7 @@ integration('research attempt durability with real PostgreSQL', () => {
   })
   test('claims and replays a harness proposal through the same immutable store', async () => {
     let calls = 0
-    const text = '<harness>{"entry":"Assess entry","stopLoss":"Select stop","takeProfit":"Select target"}</harness>'
+    const text = '<harness>{"entry":"Assess complete entry plans"}</harness>'
     const model = Bun.serve({
       port: 0,
       fetch: () => {

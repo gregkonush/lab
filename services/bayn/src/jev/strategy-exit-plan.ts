@@ -5,8 +5,8 @@ import { PositiveIntegerSchema, SymbolSchema, UtcInstantSchema } from '../schema
 const Price = Schema.String.check(Schema.isPattern(/^[1-9][0-9]*$/))
 
 export const JevStrategyExitPlanSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-strategy-exit-plan.v2'),
-  rule: Schema.Literal('model-selected-observed-prices'),
+  schemaVersion: Schema.Literal('bayn.jev-strategy-exit-plan.v3'),
+  rule: Schema.Literal('model-selected-complete-plan'),
   symbol: SymbolSchema,
   sourceStartAt: UtcInstantSchema,
   sourceEndAt: UtcInstantSchema,
@@ -28,7 +28,7 @@ export const JevStrategyExitPlanSchema = Schema.Struct({
 export type JevStrategyExitPlan = typeof JevStrategyExitPlanSchema.Type
 
 export const JevFundedExitPlanSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-funded-exit-plan.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-funded-exit-plan.v3'),
   levels: JevStrategyExitPlanSchema,
   maximumQuantityAtoms: Price,
   acquisitionCostMicros: Price,

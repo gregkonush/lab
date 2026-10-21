@@ -114,14 +114,14 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(result.modelStatus).toBe('AVAILABLE')
   expect(result.selected[SignalScreenRule.Jev]).toBe('AAPL')
   expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.enterProbability).toBe(0.8)
+  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.enterProbability).toBeCloseTo(0.9764705882352941)
   const wait = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
   expect(wait.selected[SignalScreenRule.Jev]).toBeNull()
   expect(wait.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
   const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
-  expect(Object.keys(factors.answers).sort()).toEqual(['action', 'stop_loss', 'take_profit'])
+  expect(Object.keys(factors.answers)).toEqual(['action'])
   expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
 })
 
