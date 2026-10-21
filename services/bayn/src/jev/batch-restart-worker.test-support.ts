@@ -37,7 +37,8 @@ const main = Effect.gen(function* () {
       return yield* new JevEvidenceError({ message: 'Jev batch worker has no planned request' })
     const request = candidate.request
     const store = yield* JevEvaluationStore
-    yield* store.begin(request)
+    if ((yield* store.read(request.requestId)) === null)
+      return yield* new JevEvidenceError({ message: 'Worker requires its committed batch claim' })
     if (mode === 'record')
       yield* store.record(
         request,

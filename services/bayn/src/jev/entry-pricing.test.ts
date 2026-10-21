@@ -171,12 +171,12 @@ describe('Jev entry execution quote eligibility', () => {
               calls.batches += 1
               yield* TestClock.adjust(100)
               const now = yield* Clock.currentTimeMillis
-              return { plan, result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
+              return { plan, dispatches: [], result: nativeJevBatchResult(plan, new Date(now).toISOString()) }
             }),
         }),
         Effect.provideService(JevEvaluationStore, {
           read: () => unused,
-          begin: () => unused,
+
           record: () => unused,
           abandon: () => unused,
         }),

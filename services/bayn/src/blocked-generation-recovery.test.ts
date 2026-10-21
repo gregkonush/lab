@@ -127,7 +127,7 @@ describe('terminal generation recovery', () => {
           yield* TestClock.adjust(30_000)
         }
         reconciliationStatus = ReconciliationStatus.Exact
-        expect(yield* owned.driver.advance).toEqual(advanced)
+        expect((yield* owned.driver.advance).observation).toMatchObject({ result: 'SUCCESS', outcome: 'RECOVERED' })
         expect(yield* owned.needsRebind).toBe(true)
       }).pipe(Effect.provide(TestClock.layer())),
     )

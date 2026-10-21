@@ -7,11 +7,11 @@ import { Clock, Context, Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, R
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
-import { streamingFixture } from '../testing/streaming-market-fixture'
+import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { recoverStreamingSnapshotReference, streamingSnapshotReference } from '../market-data/streaming/reference'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
 import { KafkaMarketProjection } from '../market-data/streaming/kafka'
-import { IntradayMarketData } from '../market-data/intraday/model'
+import { IntradayCandidateEvidencePolicy, IntradayMarketData } from '../market-data/intraday/model'
 import { simulationFixture } from '../testing/simulated-streaming-fixture'
 import { prepareFreshReplayDatabase } from '../intraday-replay/backtest'
 import { makeSimulatedMarketData } from '../market-data/streaming/simulation-service'
@@ -352,6 +352,54 @@ describePostgres('PostgreSQL streaming decision source evidence', () => {
     for (const rejected of [result.incomplete, result.update, result.remove, result.truncate])
       expect(rejected._tag).toBe('Failure')
     expect(result.exact.manifest.snapshotId).toBe(fixture.snapshot.manifest.snapshotId)
+  })
+
+  test('persists and recovers a consumed snapshot with an unavailable candidate quote', async () => {
+    const query = { ...fixture.query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade }
+    const withdrawn = streamingFixtureFromRaw(
+      {
+        ...fixture.archive,
+        quotes: fixture.archive.quotes.map((quote) =>
+          quote.symbol === 'AAPL' ? { ...quote, askPrice: 0, askSize: 0 } : quote,
+        ),
+      },
+      query,
+    )
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const live = StreamingIntradayMarketDataLive.pipe(
+          Layer.provide(Layer.succeed(PgClient.PgClient, sql)),
+          Layer.provide(
+            Layer.succeed(KafkaMarketProjection, {
+              read: Effect.succeed(withdrawn.cut),
+              readForLiquidation: Effect.succeed(withdrawn.cut),
+              status: Effect.succeed({
+                epoch: 'fixture-epoch',
+                ready: true,
+                sequence: withdrawn.cut.projection.sequence,
+              }),
+            }),
+          ),
+        )
+        const reference = yield* Effect.gen(function* () {
+          const service = yield* IntradayMarketData
+          const snapshot = yield* service.loadSnapshot(query)
+          expect(snapshot.latestQuotes['AAPL']?.askPrice).toBe(0)
+          expect(snapshot.manifest.candidateExclusions?.find(({ symbol }) => symbol === 'AAPL')?.reason).toBe(
+            'not-ready',
+          )
+          return yield* service.verifyReference(snapshot)
+        }).pipe(Effect.provide(live))
+        if (reference.schemaVersion !== 'bayn.streaming-snapshot-reference.v1')
+          throw new Error('Live quote evidence must retain a streaming reference')
+        yield* sql`INSERT INTO streaming_snapshot_references (snapshot_id,schema_version,content_hash,observed_at,manifest)
+        VALUES (${reference.manifest.snapshotId},${reference.schemaVersion},${reference.manifest.contentHash},${reference.manifest.observedAt}::timestamptz,${sql.json(reference.manifest)})`
+        expect((yield* recoverStreamingSnapshotReference(reference.manifest)).manifest).toEqual(
+          withdrawn.snapshot.manifest,
+        )
+      }),
+    )
   })
 
   test('verifies a consumed Kafka cut and rejects forged rows through the canonical adapter', async () => {

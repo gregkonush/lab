@@ -232,6 +232,7 @@ const fixture = async (source = native) => {
           Clock.currentTimeMillis.pipe(
             Effect.map((now) => ({
               plan,
+              dispatches: [],
               result: nativeJevBatchResult(plan, new Date(now).toISOString(), (symbol) =>
                 symbol === 'AAPL' ? 'enter' : 'wait',
               ),
@@ -241,7 +242,7 @@ const fixture = async (source = native) => {
       }),
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
-        begin: () => unused,
+
         record: () => unused,
         abandon: () => unused,
       }),

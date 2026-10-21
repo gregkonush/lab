@@ -21,8 +21,12 @@ reproduction, cost evidence and research limitations; this recovery does not est
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
-no intents or active cycles. Recovery still requires fresh exact flat reconciliation and rotates through clear OBSERVE
-before the approved PAPER activation can resume. A prior no-trade decision cannot cover an incomplete or planned execution.
+no intents or active cycles. Native recovery settles and reconciles a restricted generation before running another cycle.
+An already settled, flat account rotates through clear OBSERVE and resumes the approved PAPER mandate without an extra
+close-only cycle pass. Unsettled broker work continues through close-only recovery. The same settlement check runs
+after an actual close-only cycle pass, so newly resolved broker work can finish its generation handoff immediately.
+Operator holds remain restricted.
+A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
@@ -50,10 +54,19 @@ Missing or expired preflight evidence follows the existing admission and decisio
 database or broker reads, retains normal reconciliation and observation cadence, and never suppresses a bound
 cycle's position management or recovery. No protection result is cached between passes or used to grant authority.
 
-Native Jev admission commits the verified source observation and sealed batch plan in one PostgreSQL transaction
-before any provider call. A rejected or interrupted admission cannot strand a new observation without its plan.
-Candidate claims still commit before inference, and response receipts remain independently durable. The existing
-ten-second inference validity, quote freshness checks, complete-batch requirement and risk limits are unchanged.
+A quote side withdrawn by the provider retains its observed zero price and zero size in the source evidence. It
+supersedes the prior quote and excludes that candidate until a fresh two-sided quote arrives. It cannot authorize entry,
+pricing or liquidation, and a withdrawn required benchmark still blocks the snapshot. Negative, crossed and
+contradictory quote sides remain malformed input. Other eligible candidates can continue without a partition-wide
+schema rejection caused by the withdrawal. Original capture receipts retain their exact recorded disposition; old
+rejection receipts cannot be relabeled as accepted evidence.
+
+Native Jev admission commits the verified source observation, sealed batch plan and every requested candidate claim
+in one PostgreSQL transaction before any provider call. Only the successful creator receives dispatch rights. Retries,
+including a lost admission acknowledgement, recover existing evidence without another inference. A failed claim insertion
+rolls back the new observation and plan. Each response receipt remains independently durable. If admission commits after
+expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
+quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
 Migration 131 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
@@ -1338,6 +1351,9 @@ change the immutable per-generation receipt schema.
 Position episode evidence uses `bayn.position-episode-evidence.v4`. It replays gross fills together with posted,
 observed coin-fee accruals from the cumulative account history, retaining their source trades and broker snapshot
 provenance in the evidence hash. Matched fee activities settle those debits without subtracting inventory again.
+Episode receipt validation matches the UTC day of validated `read_evidence.sourceCreatedAt` to the accrual's verified
+`settlement_date`. Every source trade must agree with that UTC cohort. Retained receipts without a source timestamp
+use their recorded fee date. Inventory event order continues to use the accrual's `observedAt`.
 Episode validation compares an independent cumulative PostgreSQL quantity-and-cost projection with ledger inventory;
 the existing generation-scoped financial position count retains its current meaning. Either disagreement blocks measurement.
 Missing coin-fee history, unmatched activities with only a trading date, ambiguous ordering, or inconsistent quantities
@@ -1891,7 +1907,7 @@ actual successful check without backdating it to the provider observation. Histo
 by that cut withhold cash-yield evidence and financial qualification. Existing ledger records and provider clocks
 remain immutable; an earlier posting time is never inferred from a later successful verification.
 Current account reconciliation bounds cumulative ledger receipts and net inventory independently of the selected
-generation's performance cut. Position episode evidence v3 binds that current account cut and includes coin-fee
+generation's performance cut. Position episode evidence v4 binds that current account cut and includes coin-fee
 inventory debits. A fully accrued crypto cash receipt adds no incremental generation expense; its original and
 correction plans remain in the complete account ledger, while the source-bound accrual supplies the generation cost.
 Unallocated incremental fees and missing historical posting acknowledgements still prevent financial qualification.
