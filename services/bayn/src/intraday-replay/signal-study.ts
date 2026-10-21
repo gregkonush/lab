@@ -1,3 +1,4 @@
+import { jevEntryProbability } from '../jev/trade-plan-choices'
 import { momentumControlCandidates } from './momentum-control'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -152,13 +153,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        enterProbability:
-          answer?.type === 'choice'
-            ? Object.entries(answer.probabilities).reduce(
-                (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
-                0,
-              )
-            : null,
+        enterProbability: answer?.type === 'choice' ? jevEntryProbability(answer.probabilities) : null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -227,16 +222,7 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'action')
-            factors.push([
-              'enterProbability',
-              bin(
-                Object.entries(answer.probabilities).reduce(
-                  (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
-                  0,
-                ),
-              ),
-            ])
+          if (name === 'action') factors.push(['enterProbability', bin(jevEntryProbability(answer.probabilities))])
         }
       }
     for (const [dimension, value] of [

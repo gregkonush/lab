@@ -17,6 +17,15 @@ const representativePrices = (values: readonly bigint[]) => {
   )
 }
 
+export const jevEntryProbability = (probabilities: Readonly<Record<string, number>>) =>
+  Math.min(
+    1,
+    Object.entries(probabilities).reduce(
+      (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
+      0,
+    ),
+  )
+
 export const jevTradePlanQuestion = (input: {
   readonly snapshot: StrategyMarketSnapshot
   readonly symbol: string

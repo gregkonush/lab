@@ -3,6 +3,15 @@ import { Result } from 'effect'
 
 import { nativeJevFixture } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
+import { jevEntryProbability } from './trade-plan-choices'
+
+test('rounded plan probabilities retain bounded aggregate research values without modifying raw answers', () => {
+  const rounded = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`plan_${index}`, 0.063]))
+  expect(jevEntryProbability({ ...rounded, wait: 0, avoid: 0 })).toBe(1)
+  expect(rounded['plan_0']).toBe(0.063)
+  expect(jevEntryProbability({ plan_0: 0.4, plan_1: 0.2, wait: 0.3, avoid: 0.1 })).toBeCloseTo(0.6)
+  expect(jevEntryProbability({ wait: 0.7, avoid: 0.3 })).toBe(0)
+})
 
 test('a fresh high still offers complete cost-valid hypothetical plans and explicit abstention', () => {
   const fixture = nativeJevFixture(undefined, undefined, undefined, undefined, undefined, undefined, undefined, false)
