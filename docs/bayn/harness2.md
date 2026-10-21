@@ -222,7 +222,7 @@ python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
 bun test services/bayn/src/jev/harness2.test.ts
 ```
 
-Roll out through reviewed main, immutable publication, `lab-delivery/bayn`, `kargo/bayn` and Argo. Migration 133 admits
+Roll out through reviewed main, immutable publication, `lab-delivery/bayn`, `kargo/bayn` and Argo. Migration 134 admits
 the general editor registration while preserving historical evidence. Verify the exact image, native installed command,
 real Jev probe receipts, held-out comparison, private object readback and completed-study replay. Confirm accounting,
 reconciliation and trading safeguards independently. Infrastructure readiness alone is insufficient.
