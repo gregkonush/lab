@@ -211,8 +211,11 @@ consumer; they cannot be truncated to fit. Outputs use exclusive creation and pr
 
 The resulting `observedNetEffect` describes higher, lower or unchanged native replay net totals. It retains every
 paired session and the unchanged-prompt repeat delta. Missing outcomes or allocations make the comparison
-inconclusive. Operating allocations are additional to native execution, inference and data costs. The reported
-drawdown bound adds their entire nonnegative total to native drawdown, which is conservative when their precise
+inconclusive. Operating allocations are additional to native execution, inference and data costs. The
+comparison hash also binds each arm's operating-allocation evidence hashes, even when their prices are equal.
+Received and failed dispatches must reproduce the declared call count; explicit undispatched calls consume no
+provider slot. Interruptions and defects can leave dispatch ambiguous and already withhold complete cost outcomes.
+The drawdown bound adds their entire nonnegative total to native drawdown, which is conservative when their precise
 intraday booking path is unavailable. Hashes detect altered bytes; they do not authenticate a producer or prove
 the source/accounting graph. Declared registration time also requires independent immutable evidence.
 

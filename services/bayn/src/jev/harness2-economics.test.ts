@@ -6,11 +6,11 @@ import type { ReplayBrokerFill } from '../intraday-replay/broker'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { harness2Command } from '../harness2-command'
-import { jevModel } from './contract'
+import { JevFailure, jevModel } from './contract'
 import { calculateReplayJevCosts } from '../intraday-replay/jev-costs'
 import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
 import { retainedReplayFixture } from '../testing/retained-replay-fixture'
-import { BacktestComparisonInputSchema } from '../intraday-replay/backtest'
+import { BacktestComparisonInputSchema, BacktestIssue } from '../intraday-replay/backtest'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { nativeJevFixture, nativeJevInference } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
@@ -100,6 +100,31 @@ test('unchanged-prompt variability can explain an apparent candidate gain', () =
   expect(report.pairedNetDeltaMicros).toBe('4000')
   expect(report.unchangedPromptNetDeltaMicros).toBe('8000')
   expect(report.economicImprovement).toBe('UNPROVEN')
+})
+
+test('operating-cost receipt changes alter the terminal comparison identity even at the same price', () => {
+  const arms = {
+    baseline: outcome('a', flat('1000')),
+    baselineRepeat: outcome('b', flat('1000')),
+    candidate: outcome('c', flat('1500'), true),
+  }
+  const original = Result.getOrThrow(compareJevHarnessEconomics(registration(), arms))
+  for (const arm of ['baseline', 'baselineRepeat', 'candidate'] as const) {
+    const changed = Result.getOrThrow(
+      compareJevHarnessEconomics(registration(), {
+        ...arms,
+        [arm]: {
+          ...arms[arm],
+          rows: arms[arm].rows.map((row) => ({
+            ...row,
+            infrastructure: { costMicros: '0', evidenceHash: 'e'.repeat(64) },
+          })),
+        },
+      }),
+    )
+    expect(changed.pairedNetDeltaMicros).toBe(original.pairedNetDeltaMicros)
+    expect(changed.comparisonHash).not.toBe(original.comparisonHash)
+  }
 })
 
 test('an unchanged-prompt repeat using another executable cannot measure provider repeatability', () => {
@@ -364,6 +389,98 @@ test('native fills and metered calls reproduce net returns with fees booked once
   expect(result.providerRequests).toBe(1)
   const next = reseal({ ...report, runId: 'b'.repeat(64), source: { ...report.source, runId: 'b'.repeat(64) } })
   expect(Result.getOrThrow(project(next)).contextHash).toBe(result.contextHash)
+})
+
+test('retained received calls cannot exceed the provider budget by understating dispatch count', () => {
+  const original = nativeReportFixture()
+  const calls = [...original.inference.calls, ...original.inference.calls]
+  const costs = calculateReplayJevCosts(calls, original.inference.definition.costs)
+  const difference = BigInt(costs.knownCostMicros) - BigInt(original.inference.costs.knownCostMicros)
+  const definition = { ...original.inference.definition, maximumCalls: 1 }
+  const comparisonInput = { ...original.comparisonInput, inference: definition }
+  const report = reseal({
+    ...original,
+    comparisonInput,
+    comparisonInputHash: hash(comparisonInput),
+    inference: { definition, calls, costs, providerDispatchCount: 1 },
+    reconciledNetPnlAfterCostsMicros: String(BigInt(original.reconciledNetPnlAfterCostsMicros) - difference),
+    sessions: original.sessions.map((row) => ({
+      ...row,
+      modelCosts: costs,
+      closingNetEquityMicros: String(BigInt(row.closingNetEquityMicros) - difference),
+      netEquityChangeMicros: String(BigInt(row.netEquityChangeMicros) - difference),
+    })),
+  })
+  expect(Result.isFailure(project(report))).toBe(true)
+  expect(
+    Result.isFailure(
+      project(
+        reseal({
+          ...original,
+          inference: { ...original.inference, providerDispatchCount: 0 },
+        }),
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('undispatched and ambiguous calls retain their budget bounds and incomplete costs', () => {
+  const original = nativeReportFixture()
+  const call = original.inference.calls[0]
+  if (call === undefined) throw Error('Fixture needs a retained provider call')
+  const outcomes: ReplayJevCall['outcome'][] = [
+    {
+      status: 'FAILED',
+      failure: JevFailure.NotDispatched,
+      httpStatus: null,
+      responseHash: null,
+      rejectedResponse: null,
+    },
+    { status: 'INTERRUPTED' },
+    { status: 'DEFECT' },
+  ]
+  for (const outcome of outcomes) {
+    const calls = [{ ...call, outcome }]
+    const costs = calculateReplayJevCosts(calls, original.inference.definition.costs)
+    const material = {
+      ...original,
+      completion: 'INCOMPLETE',
+      issues: [BacktestIssue.UnresolvedModelCost],
+      maximumObservedDrawdownMicros: null,
+      reconciledNetPnlAfterCostsMicros: null,
+      inference: { ...original.inference, calls, costs, providerDispatchCount: 0 },
+      sessions: original.sessions.map((row) => ({
+        ...row,
+        completion: 'INCOMPLETE',
+        issues: [BacktestIssue.UnresolvedModelCost],
+        modelCosts: costs,
+        closingNetEquityMicros: String(BigInt(row.closingNetEquityMicros) + BigInt(row.modelCosts.knownCostMicros)),
+        netEquityChangeMicros: null,
+      })),
+    }
+    expect(Result.getOrThrow(project(reseal(material))).rows.every((row) => !row.complete)).toBe(true)
+    const maximumDispatches = outcome.status === 'FAILED' ? 0 : 1
+    expect(
+      Result.isSuccess(
+        project(
+          reseal({
+            ...material,
+            inference: { ...material.inference, providerDispatchCount: maximumDispatches },
+          }),
+        ),
+      ),
+    ).toBe(true)
+    expect(
+      Result.isFailure(
+        project(
+          reseal({
+            ...material,
+            inference: { ...material.inference, providerDispatchCount: maximumDispatches + 1 },
+          }),
+        ),
+      ),
+    ).toBe(true)
+  }
 })
 
 test('changed native report bytes, cash, costs and response identities fail instead of scoring', () => {

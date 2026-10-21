@@ -20,7 +20,7 @@ import {
   UtcInstantSchema,
   strictParseOptions,
 } from '../schemas'
-import { JevContractError, decodeJevResponse, prepareJevRequest } from './contract'
+import { JevContractError, JevFailure, decodeJevResponse, prepareJevRequest } from './contract'
 import { applyJevInstructions } from './harness2'
 import { jevInstructions } from './instructions'
 import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
@@ -145,11 +145,19 @@ export const jevHarnessBacktestOutcome = (input: {
       return yield* invalid('Native report strategy differs from the compiled execution and cost model')
     if (report.source.runId !== report.runId) return yield* invalid('Native source belongs to another replay run')
     const costs = calculateReplayJevCosts(report.inference.calls, report.inference.definition.costs)
+    const undispatched = report.inference.calls.filter(
+      (call) => call.outcome.status === 'FAILED' && call.outcome.failure === JevFailure.NotDispatched,
+    ).length
+    const ambiguousDispatches = report.inference.calls.filter(
+      (call) => call.outcome.status === 'INTERRUPTED' || call.outcome.status === 'DEFECT',
+    ).length
+    const maximumDispatches = report.inference.calls.length - undispatched
     if (
       report.inference.providerDispatchCount > report.inference.definition.maximumCalls ||
-      report.inference.providerDispatchCount > report.inference.calls.length
+      report.inference.providerDispatchCount > maximumDispatches ||
+      report.inference.providerDispatchCount < maximumDispatches - ambiguousDispatches
     )
-      return yield* invalid('Native provider dispatch inventory exceeds its frozen budget or retained calls')
+      return yield* invalid('Native provider dispatch inventory differs from retained outcomes or its frozen budget')
     if ((yield* hash(costs)) !== (yield* hash(report.inference.costs)))
       return yield* invalid('Native replay inference expense does not reproduce')
     for (const call of report.inference.calls) {
@@ -382,6 +390,8 @@ export const compareJevHarnessEconomics = (
     if (drawdown === null) reasons.push('UNKNOWN_NATIVE_DRAWDOWN')
     else if (BigInt(drawdown) > BigInt(registration.maximumDrawdownMicros)) reasons.push('DRAWDOWN_LIMIT_EXCEEDED')
     const sum = (values: readonly bigint[]) => String(values.reduce((a, b) => a + b, 0n))
+    const allocationHash = (arm: JevHarnessBacktestOutcome) =>
+      hash(arm.rows.map(({ sessionDate, infrastructure, research }) => ({ sessionDate, infrastructure, research })))
     const delta = complete ? sum(deltas) : null
     const observedNetEffect =
       reasons.length > 0 || delta === null
@@ -398,6 +408,11 @@ export const compareJevHarnessEconomics = (
         baseline: baseline.reportHash,
         baselineRepeat: baselineRepeat.reportHash,
         candidate: candidate.reportHash,
+      },
+      operatingAllocationHashes: {
+        baseline: yield* allocationHash(baseline),
+        baselineRepeat: yield* allocationHash(baselineRepeat),
+        candidate: yield* allocationHash(candidate),
       },
       executableHashes: {
         baseline: baseline.executableSha256,
