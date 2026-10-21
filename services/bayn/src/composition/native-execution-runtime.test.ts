@@ -267,7 +267,7 @@ describe('native execution runtime', () => {
       Context.add(JevBatchStore, {
         read: () => Effect.succeed(batch),
         pending: () => Effect.succeed([]),
-        begin: () => Effect.succeed(batch),
+        begin: () => Effect.succeed({ ...batch, dispatches: [] }),
         finish: () => Effect.succeed(batch),
       }),
     ) as Context.Context<RecoveryFirstRuntime>
