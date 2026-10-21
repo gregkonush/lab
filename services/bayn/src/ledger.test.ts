@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { provideTestLayer } from './effect-test-support'
 import { OrderSide, type Fill } from './execution/contracts'
 import {
@@ -190,8 +190,9 @@ const makeLedgerClient = () => {
 const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
     return yield* use(yield* Journal)
-  }).pipe(
+  }).pipe((self) =>
     provideTestLayer(
+      self,
       JournalLive(journalConfig, {
         createClient: () => client,
         resolveReplicaAddresses: () => Effect.succeed(['3000']),
@@ -1033,8 +1034,9 @@ describe('TigerBeetle simulation journal', () => {
     const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
         return yield* body(yield* Journal)
-      }).pipe(
+      }).pipe((self) =>
         provideTestLayer(
+          self,
           JournalLive(config, {
             createClient: () => client,
             resolveReplicaAddresses: () => Effect.succeed(['3000']),

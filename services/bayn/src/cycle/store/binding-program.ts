@@ -2,26 +2,12 @@ import type { SimulatedSnapshotReference } from '../../market-data/streaming/sim
 import type { StreamingVerifiedSnapshotReference } from '../../market-data/streaming/reference'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Match } from 'effect'
-
-import {
-  ensureSnapshotReference,
-  renderSnapshotReferenceIssue,
-  snapshotReferenceIssueTags,
-} from '../../db/snapshot-reference'
-import { decodeInputManifestArtifact } from '../../evidence-contracts'
 import { legacyExecutionAuthorityToken } from '../../execution/legacy-wire'
-import { Pipeable } from '../../pipeable'
+
 import type { CycleDecisionDocument } from '../../shadow-decision-contract'
-import type { InputManifest } from '../../types'
 import { CycleState } from '../model'
+import { decideDecisionBinding, type DecisionBindingDecision } from './decisions'
 import {
-  decideDecisionBinding,
-  decideSnapshotBinding,
-  type DecisionBindingDecision,
-  type SnapshotDecision,
-} from './decisions'
-import {
-  cycleStoreError,
   failCycleStore,
   liftCycleDecision,
   runCycleStore,
@@ -32,62 +18,24 @@ import {
 } from './model'
 import type { CycleMutationPrimitives } from './mutations'
 import type { CycleQueries } from './queries'
-import { decodeDecisionInput, decodeSnapshotInput } from './rows'
+import { decodeDecisionInput } from './rows'
 
 export interface CycleBindingPrograms {
-  readonly bindSnapshot: CycleStoreShape['bindSnapshot']
   readonly bindDecision: CycleStoreShape['bindDecision']
 }
 
-const makeCycleBindingProgramsDataFirst = (
+export const makeCycleBindingPrograms = (
   sql: PgClient.PgClient,
   queries: CycleQueries,
   mutations: CycleMutationPrimitives,
 ): CycleBindingPrograms => {
-  const persistSnapshotReference = (inputManifest: InputManifest): Effect.Effect<void, CycleStoreInternalError> =>
-    ensureSnapshotReference(sql, inputManifest).pipe(
-      Effect.catchTag(snapshotReferenceIssueTags, (cause) =>
-        Effect.fail(
-          cycleStoreError({
-            operation: 'bind-snapshot',
-            failure: 'conflict',
-            message: `stored snapshot reference diverged from the finalized Signal publication: ${renderSnapshotReferenceIssue(cause)}`,
-            cause,
-          }),
-        ),
-      ),
-    )
-
-  const persistSnapshot = (
-    manifest: InputManifest,
-    observedAt: string,
-    decision: Extract<SnapshotDecision, { readonly _tag: 'Persist' }>,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    persistSnapshotReference(manifest).pipe(
-      Effect.andThen(sql<Record<string, unknown>>`
-        UPDATE autonomous_cycles
-        SET
-          snapshot_id = ${decision.snapshotId},
-          state_version = ${decision.cycle.stateVersion + 1},
-          updated_at = ${observedAt}
-        WHERE cycle_id = ${decision.cycle.identity.cycleId}
-          AND state = ${CycleState.Pending}
-          AND state_version = ${decision.cycle.stateVersion}
-          AND snapshot_id IS NULL
-        RETURNING cycle_id
-      `),
-      Effect.flatMap((rows) => mutations.requireApplied('bind-snapshot', rows)),
-      Effect.flatMap(() => mutations.readLocked('bind-snapshot', decision.cycle.identity.cycleId)),
-      Effect.map((cycle) => ({ cycle, changed: true })),
-    )
-
   const persistIntradaySnapshotReference = (
     reference: StreamingVerifiedSnapshotReference | SimulatedSnapshotReference,
   ): Effect.Effect<void, CycleStoreInternalError> =>
     Effect.gen(function* () {
       const manifest = reference.manifest
       const table =
-        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v1'
+        reference.schemaVersion === 'bayn.simulated-snapshot-reference.v2'
           ? 'simulated_snapshot_references'
           : 'streaming_snapshot_references'
       yield* sql`
@@ -158,41 +106,6 @@ const makeCycleBindingProgramsDataFirst = (
                 ),
               ),
             ),
-      ),
-    )
-
-  const interpretSnapshotDecision = (
-    manifest: InputManifest,
-    observedAt: string,
-    decision: SnapshotDecision,
-  ): Effect.Effect<CycleMutationReceipt, CycleStoreInternalError> =>
-    Match.value(decision).pipe(
-      Match.tagsExhaustive({
-        Replay: ({ cycle }) => persistSnapshotReference(manifest).pipe(Effect.as({ cycle, changed: false })),
-        Persist: (persist) => persistSnapshot(manifest, observedAt, persist),
-        Block: ({ cycle, reason }) => mutations.blockCycle('bind-snapshot', cycle, reason, observedAt),
-      }),
-    )
-
-  const bindSnapshot: CycleStoreShape['bindSnapshot'] = (cycleId, inputManifest, observedAt) =>
-    runCycleStore(
-      'bind-snapshot',
-      decodeSnapshotInput({ cycleId, observedAt }).pipe(
-        Effect.bindTo('input'),
-        Effect.bind('manifest', () => decodeInputManifestArtifact(inputManifest)),
-        Effect.flatMap(({ input, manifest }) =>
-          sql.withTransaction(
-            mutations.readLocked('bind-snapshot', input.cycleId).pipe(
-              Effect.flatMap((cycle) =>
-                liftCycleDecision(
-                  'bind-snapshot',
-                  decideSnapshotBinding(cycle, manifest.finalizedSnapshot, input.observedAt),
-                ),
-              ),
-              Effect.flatMap((decision) => interpretSnapshotDecision(manifest, input.observedAt, decision)),
-            ),
-          ),
-        ),
       ),
     )
 
@@ -294,7 +207,5 @@ const makeCycleBindingProgramsDataFirst = (
       ),
     )
 
-  return { bindSnapshot, bindDecision }
+  return { bindDecision }
 }
-
-export const makeCycleBindingPrograms = Pipeable.dual(3, makeCycleBindingProgramsDataFirst)

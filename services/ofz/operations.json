@@ -1,6 +1,13 @@
 [
   {
     "surface": "controller",
+    "operation": "GetRequestAudience",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Pinned BFF mTLS only; returns a process incarnation, with no user or workspace authority"
+  },
+  {
+    "surface": "controller",
     "operation": "CreateAgent",
     "action": "ACTION_WORKSPACE_CREATE"
   },
@@ -443,6 +450,11 @@
   },
   {
     "surface": "bff",
+    "operation": "answer-questions",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "resolve-approval",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -508,13 +520,13 @@
   },
   {
     "surface": "gateway",
-    "operation": "GET /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "GET /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
-    "operation": "HEAD /_tengri/editor/open",
-    "action": "ACTION_EDITOR_OPEN"
+    "operation": "HEAD /_tengri/preview/open",
+    "action": "ACTION_PREVIEW_ACCESS"
   },
   {
     "surface": "gateway",
@@ -689,6 +701,11 @@
     "surface": "bff_http",
     "operation": "GET /api/tengri/events",
     "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/attachments",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "bff_http",

@@ -1,32 +1,42 @@
 import assert from 'node:assert/strict'
 
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 
-import { prepareAccounting } from '../accounting/domain'
+import { coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
+import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
+import { hashLedgerPlanResult } from '../ledger-plan'
 import {
   decodeForwardPerformanceReceiptEnvelopeResult,
   makeForwardPerformanceReceiptEnvelope,
 } from '../db/forward-performance-receipt'
-import { makeForwardPerformanceReport } from './report'
+import { ForwardPerformanceScopeKind, makeForwardPerformanceReport } from './report'
 import type { ForwardPerformanceEvidenceInput } from './model'
 import type { ForwardInferenceExpenseSession } from './inference-expenses'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
-import { measurePositionEpisodes, PositionEpisodeReason } from './position-episodes'
+import { measurePositionEpisodes, PositionEpisodeEvidenceSchema, PositionEpisodeReason } from './position-episodes'
+import { EpisodeCostReason } from './position-outcomes'
 
 const success = <A, E>(result: Result.Result<A, E>): A => {
   assert(Result.isSuccess(result))
   return result.success
 }
 
-const transaction = (index: number, side: OrderSide, quantity: number, symbol = 'NVDA'): AccountingTransaction => {
+const transaction = (
+  index: number,
+  side: OrderSide,
+  quantity: number,
+  symbol = 'NVDA',
+  priceAtoms = '100000000000',
+  occurredAt = `2026-09-18T15:30:${String(index).padStart(2, '0')}.000Z`,
+): AccountingTransaction => {
   const quantityAtoms = BigInt(quantity) * 1_000_000n
   return success(
     prepareAccounting(
-      canonicalHashV1({ index, side, quantity, symbol }),
+      Result.getOrThrow(canonicalHashV1Result({ index, side, quantity, symbol })),
       {
         schemaVersion: 'bayn.fill.v2',
         accountId: 'episode-account',
@@ -36,15 +46,15 @@ const transaction = (index: number, side: OrderSide, quantity: number, symbol = 
         symbol,
         side,
         quantityAtoms: quantityAtoms.toString(),
-        priceAtoms: '100000000000',
+        priceAtoms,
         feeMicros: '100',
-        occurredAt: `2026-09-18T15:30:${String(index).padStart(2, '0')}.000Z`,
+        occurredAt,
       },
       side === OrderSide.Buy
         ? { quantityAtoms: '0', costMicros: '0' }
         : {
             quantityAtoms: quantityAtoms.toString(),
-            costMicros: (quantityAtoms * 100n).toString(),
+            costMicros: (quantityAtoms / 10n).toString(),
           },
       7_001,
     ),
@@ -97,7 +107,278 @@ const evidence = (
 
 const roundTrip = () => [transaction(1, OrderSide.Buy, 2), transaction(2, OrderSide.Sell, 2)]
 
+const cashAccrual = (
+  fills: readonly AccountingTransaction[],
+  observedAt = '2026-09-18T16:00:00.000Z',
+  debitMicros = '10000',
+) => {
+  const prepared = success(
+    prepareFeeAccrual(
+      {
+        schemaVersion: 'bayn.broker-fee-accrual.v2',
+        kind: 'CASH',
+        accountId: 'episode-account',
+        symbol: 'USD',
+        date: '2026-09-18',
+        cycleId: 'f'.repeat(64),
+        observedAt,
+        openingAccountEventId: 'a'.repeat(64),
+        openingCashReportingQuantumMicros: '10000',
+        accountEventId: 'b'.repeat(64),
+        projectedCashMicros: '100000000',
+        observedCashMicros: (100_000_000n - BigInt(debitMicros)).toString(),
+        cashReportingQuantumMicros: '10000',
+        sourceTrades: fills
+          .filter((fill) => fill.side === OrderSide.Sell)
+          .map(({ transactionId, quantityAtoms, priceAtoms }) => ({ transactionId, quantityAtoms, priceAtoms }))
+          .sort((a, b) => a.transactionId.localeCompare(b.transactionId)),
+      },
+      7_001,
+    ),
+  )
+  return {
+    accrual_id: prepared.accrualId,
+    data: prepared.data,
+    settlement_date: prepared.data.date,
+    content_hash: prepared.contentHash,
+    coin_quantity_atoms: prepared.coinQuantityAtoms,
+    cash_debit_micros: prepared.cashDebitMicros,
+    expense_micros: prepared.expenseMicros,
+    matched_coin_quantity_atoms: '0',
+    matched_cash_micros: '0',
+    ledger_plan_hash: success(hashLedgerPlanResult(prepared.plan)),
+    tigerbeetle_cluster_id: '2001',
+    tigerbeetle_ledger: 7_001,
+    posted: true,
+  }
+}
+
+const delayedCoinActivity = (sourceDate: '2026-09-18' | '2026-09-19'): ReturnType<typeof coinActivity> => {
+  const original = coinActivity()
+  const data: typeof original.data = {
+    ...original.data,
+    activityId: `synthetic-delayed-coin-fee-${sourceDate}`,
+    date: '2026-09-19',
+  }
+  return {
+    ...original,
+    data,
+    content_hash: success(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data })),
+    ledger_plan_hash: success(
+      hashLedgerPlanResult(coinFeeLedgerPlan(data.accountId, data.activityId, 'ETH/USD', '0', 7_001)),
+    ),
+    read_evidence: {
+      ...original.read_evidence,
+      sourceCreatedAt: `${sourceDate}T15:30:${sourceDate === '2026-09-18' ? '01' : '04'}.500000000Z`,
+      observedAt: '2026-09-20T08:00:00.000Z',
+    },
+  }
+}
+
+const laterAccountCut = (input: ForwardPerformanceEvidenceInput): ForwardPerformanceEvidenceInput => {
+  assert(input.reconciliation !== undefined)
+  const reconciledAt = '2026-09-20T09:00:00.000Z'
+  return {
+    ...input,
+    reconciliation: { ...input.reconciliation, reconciledAt },
+    accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt },
+  }
+}
+
 describe('position episodes', () => {
+  test('reports actual partial fills and multi-hour holding duration without allocating equity fees', () => {
+    const history = [
+      transaction(1, OrderSide.Buy, 2, 'NVDA', '100000000000', '2026-09-18T16:39:20.825Z'),
+      transaction(2, OrderSide.Buy, 3, 'NVDA', '100000000000', '2026-09-18T16:39:22.000Z'),
+      transaction(3, OrderSide.Sell, 1, 'NVDA', '99000000000', '2026-09-18T16:45:00.000Z'),
+      transaction(4, OrderSide.Sell, 4, 'NVDA', '98000000000', '2026-09-18T22:22:53.283Z'),
+    ]
+    const result = success(
+      measurePositionEpisodes(
+        evidence(history, history, {
+          accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt: '2026-09-18T23:00:00.000Z' },
+        }),
+      ),
+    )
+    assert(result.status === 'MEASURED')
+    expect(Schema.is(PositionEpisodeEvidenceSchema)(result)).toBe(true)
+    expect(result.completedCount).toBe(1)
+    expect(result.completed).toHaveLength(1)
+    expect(result.completed[0]).toMatchObject({
+      symbol: 'NVDA',
+      openedAt: '2026-09-18T16:39:20.825Z',
+      closedAt: '2026-09-18T22:22:53.283Z',
+      holdingDurationMs: 20_612_458,
+      buyFillCount: 2,
+      sellFillCount: 2,
+      buyNotionalMicros: '500000',
+      turnoverMicros: '991000',
+      grossRealizedPnlMicros: '-9000',
+      costs: { status: 'UNDETERMINED', reason: EpisodeCostReason.NonCryptoAllocationUnavailable },
+    })
+    expect(result.bySymbol[0]).toMatchObject({
+      completedCount: 1,
+      grossLosingCount: 1,
+      maximumHoldingDurationMs: 20_612_458,
+      medianHoldingDurationMs: 20_612_458,
+      netPnlAfterAttributedCostsMicros: null,
+    })
+  })
+
+  test('keeps per-symbol gross loss concentration and re-entries separate from sell counts', () => {
+    const history = [
+      transaction(1, OrderSide.Buy, 2),
+      transaction(2, OrderSide.Sell, 2, 'NVDA', '99000000000'),
+      transaction(3, OrderSide.Buy, 1),
+      transaction(5, OrderSide.Sell, 1, 'NVDA', '101000000000'),
+      transaction(6, OrderSide.Buy, 2, 'AAPL'),
+      transaction(7, OrderSide.Sell, 2, 'AAPL', '101000000000'),
+    ]
+    const result = success(measurePositionEpisodes(evidence(history)))
+    assert(result.status === 'MEASURED')
+    expect(result.bySymbol.map((row) => row.symbol)).toEqual(['AAPL', 'NVDA'])
+    expect(result.bySymbol[1]).toMatchObject({
+      completedCount: 2,
+      grossWinningCount: 1,
+      grossLosingCount: 1,
+      grossFlatCount: 0,
+      grossRealizedPnlMicros: '-1000',
+      worstGrossRealizedPnlMicros: '-2000',
+      medianHoldingDurationMs: 1500,
+      maximumHoldingDurationMs: 2000,
+      attributedCostEpisodeCount: 0,
+      netPnlAfterAttributedCostsMicros: null,
+    })
+    expect(success(measurePositionEpisodes(evidence(history.toReversed())))).toEqual(result)
+    const scoped = success(measurePositionEpisodes(evidence(history, history.slice(1, 4))))
+    assert(scoped.status === 'MEASURED')
+    expect(scoped.completedCount).toBe(1)
+    expect(scoped.crossScopeCount).toBe(1)
+    expect(scoped.completed.map((row) => row.grossRealizedPnlMicros)).toEqual(['1000'])
+  })
+
+  test('attributes each complete crypto accrual once and leaves final and operating costs explicit', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const cash = cashAccrual(fills)
+    const input = evidence(fills, fills, { accountFeeAccruals: [cash, accrual], accountBrokerFees: [] })
+    const result = success(measurePositionEpisodes(input))
+    assert(result.status === 'MEASURED')
+    expect(Schema.is(PositionEpisodeEvidenceSchema)(result)).toBe(true)
+    expect(result.completed[0]).toMatchObject({
+      grossRealizedPnlMicros: '0',
+      holdingDurationMs: 2000,
+      costs: {
+        status: 'ATTRIBUTED_ACCRUALS',
+        scope: 'FILL_FEES_AND_SOURCE_LINKED_ACCRUALS',
+        attributedCostMicros: '18262',
+        netPnlAfterAttributedCostsMicros: '-18262',
+        finalExecutionCostCoverage: 'UNDETERMINED',
+        brokerActivityAdjustmentsIncluded: false,
+        allInProfitMicros: null,
+      },
+    })
+    expect(result.bySymbol[0]).toMatchObject({
+      attributedCostEpisodeCount: 1,
+      netPnlAfterAttributedCostsMicros: '-18262',
+      allInProfitMicros: null,
+    })
+    const matched = success(
+      measurePositionEpisodes({
+        ...input,
+        accountFeeAccruals: [
+          { ...accrual, matched_coin_quantity_atoms: '82625' },
+          { ...cash, matched_cash_micros: '10000' },
+        ],
+        accountBrokerFees: [coinActivity()],
+      }),
+    )
+    assert(matched.status === 'MEASURED')
+    expect(matched.completed[0]?.costs).toMatchObject({
+      attributedCostMicros: '18262',
+      netPnlAfterAttributedCostsMicros: '-18262',
+      finalExecutionCostCoverage: 'UNDETERMINED',
+      brokerActivityAdjustmentsIncluded: false,
+    })
+  })
+
+  test('does not turn absent or invalid cash cost linkage into zero per-episode costs', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const cash = cashAccrual(fills)
+    const missing = success(
+      measurePositionEpisodes(evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })),
+    )
+    assert(missing.status === 'MEASURED')
+    expect(missing.completed[0]?.costs).toMatchObject({
+      status: 'UNDETERMINED',
+      reason: EpisodeCostReason.MissingSourceAccrual,
+      attributedCostMicros: null,
+      netPnlAfterAttributedCostsMicros: null,
+    })
+    for (const invalid of [
+      { ...cash, posted: false },
+      { ...cash, data: { ...cash.data, accountId: 'foreign-account' } },
+      { ...cash, data: { ...cash.data, observedAt: '2026-09-19T00:00:00.000Z' } },
+      {
+        ...cash,
+        data: { ...cash.data, sourceTrades: cash.data.sourceTrades.map((trade) => ({ ...trade, priceAtoms: '1' })) },
+      },
+    ]) {
+      const result = success(
+        measurePositionEpisodes(
+          evidence(fills, fills, { accountFeeAccruals: [accrual, invalid], accountBrokerFees: [] }),
+        ),
+      )
+      assert(result.status === 'MEASURED')
+      expect(result.completed[0]?.costs).toMatchObject({
+        status: 'UNDETERMINED',
+        reason: EpisodeCostReason.InvalidFeeHistory,
+      })
+      expect(result.bySymbol[0]?.netPnlAfterAttributedCostsMicros).toBeNull()
+    }
+  })
+
+  test('refuses to allocate pooled cash accruals across complete episodes', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3)
+    const history = [...first.fills, ...second.fills]
+    for (const selected of [history, first.fills]) {
+      const result = success(
+        measurePositionEpisodes(
+          evidence(history, selected, {
+            accountFeeAccruals: [first.accrual, second.accrual, cashAccrual(history)],
+            accountBrokerFees: [],
+          }),
+        ),
+      )
+      assert(result.status === 'MEASURED')
+      expect(result.completedCount).toBe(selected === history ? 2 : 1)
+      expect(
+        result.completed.every(
+          (row) => row.costs.status === 'UNDETERMINED' && row.costs.reason === EpisodeCostReason.SharedSourceAccrual,
+        ),
+      ).toBe(true)
+      expect(result.bySymbol[0]?.netPnlAfterAttributedCostsMicros).toBeNull()
+    }
+  })
+
+  test('rejects two distinct valid cash accruals claiming the same source sell', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const cash = cashAccrual(fills)
+    const conflicting = cashAccrual(fills, '2026-09-18T16:00:01.000Z', '20000')
+    expect(conflicting.accrual_id).not.toBe(cash.accrual_id)
+    const result = success(
+      measurePositionEpisodes(
+        evidence(fills, fills, { accountFeeAccruals: [accrual, cash, conflicting], accountBrokerFees: [] }),
+      ),
+    )
+    assert(result.status === 'MEASURED')
+    expect(result.completed[0]?.costs).toMatchObject({
+      status: 'UNDETERMINED',
+      reason: EpisodeCostReason.InvalidFeeHistory,
+      netPnlAfterAttributedCostsMicros: null,
+    })
+  })
+
   test('closes gross fractional buys and net sells using the observed coin debit', () => {
     const { fills, accrual } = coinRoundTrip()
     const input = evidence(fills, fills, { accountFeeAccruals: [accrual], accountBrokerFees: [] })
@@ -192,6 +473,167 @@ describe('position episodes', () => {
       expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
       expect(report.receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
       expect(report.receipt.profitability).toBe('UNDETERMINED')
+    },
+  )
+
+  test('measures two source UTC cohorts whose settled coin receipts share a later posting date', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3, 'episode-account', 'f'.repeat(64), { sourceDate: '2026-09-19' })
+    const fills = [...first.fills, ...second.fills]
+    const accruals = [first.accrual, second.accrual].map((accrual) => ({
+      ...accrual,
+      matched_coin_quantity_atoms: '82625',
+    }))
+    const fees = [delayedCoinActivity('2026-09-18'), delayedCoinActivity('2026-09-19')]
+    const input = laterAccountCut(evidence(fills, fills, { accountFeeAccruals: accruals, accountBrokerFees: fees }))
+    const measured = success(measurePositionEpisodes(input))
+    expect(measured).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 2,
+      openCount: 0,
+      crossScopeCount: 0,
+    })
+    assert(measured.status === 'MEASURED')
+    expect(
+      measured.completed.map(({ openedAt, closedAt, holdingDurationMs }) => ({
+        openedAt,
+        closedAt,
+        holdingDurationMs,
+      })),
+    ).toEqual([
+      { openedAt: '2026-09-18T15:30:01.000Z', closedAt: '2026-09-18T15:30:03.000Z', holdingDurationMs: 2000 },
+      { openedAt: '2026-09-19T15:30:04.000Z', closedAt: '2026-09-19T15:30:06.000Z', holdingDurationMs: 2000 },
+    ])
+    expect(
+      success(
+        measurePositionEpisodes({
+          ...input,
+          accountTransactions: fills.toReversed(),
+          transactions: input.transactions.toReversed(),
+          accountFeeAccruals: accruals.toReversed(),
+          accountBrokerFees: fees.toReversed(),
+        }),
+      ),
+    ).toEqual(measured)
+
+    const report = success(makeForwardPerformanceReport({ ...input, transactions: [] }, []))
+    expect(report.positionEpisodes).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 0,
+      openCount: 0,
+      crossScopeCount: 0,
+      completed: [],
+      bySymbol: [],
+    })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  })
+
+  test('uses the source-trade cohort when a coin accrual is observed on the following UTC date', () => {
+    const { fills, accrual } = coinRoundTrip(0, 'episode-account', 'f'.repeat(64), {
+      sourceDate: '2026-09-18',
+      observedDate: '2026-09-19',
+    })
+    expect(accrual.data.date).toBe('2026-09-19')
+    expect(accrual.settlement_date).toBe('2026-09-18')
+    const fee = coinActivity()
+    const measured = success(
+      measurePositionEpisodes(
+        laterAccountCut(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [
+              { ...fee, read_evidence: { ...fee.read_evidence, observedAt: '2026-09-20T08:00:00.000Z' } },
+            ],
+          }),
+        ),
+      ),
+    )
+    expect(measured).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
+    assert(measured.status === 'MEASURED')
+    expect(measured.completed[0]).toMatchObject({
+      openedAt: '2026-09-18T15:30:01.000Z',
+      closedAt: '2026-09-19T15:30:03.000Z',
+      holdingDurationMs: 86_402_000,
+    })
+  })
+
+  test('retains posting-date settlement for legacy coin receipts without a source timestamp', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(fee.read_evidence.sourceCreatedAt).toBeUndefined()
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [fee],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
+  })
+
+  test.each([
+    '2026-02-30T15:30:01.500000000Z',
+    '2026-09-18T25:30:01.500000000Z',
+    '2026-09-18T15:30:01.500Z',
+    '2026-09-18T16:00:00.000000001Z',
+  ] as const)('rejects invalid or future coin receipt provenance %s', (sourceCreatedAt) => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [{ ...fee, read_evidence: { ...fee.read_evidence, sourceCreatedAt } }],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test('does not use matching posting dates to conceal a different source UTC cohort', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(
+      success(
+        measurePositionEpisodes(
+          laterAccountCut(
+            evidence(fills, fills, {
+              accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+              accountBrokerFees: [
+                {
+                  ...fee,
+                  read_evidence: {
+                    ...fee.read_evidence,
+                    observedAt: '2026-09-20T08:00:00.000Z',
+                    sourceCreatedAt: '2026-09-19T15:30:01.500000000Z',
+                  },
+                },
+              ],
+            }),
+          ),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test.each(['2026-02-30', '2026-09-19'] as const)(
+    'rejects invalid or substituted source-trade settlement date %s',
+    (settlement_date) => {
+      const { fills, accrual } = coinRoundTrip()
+      expect(
+        success(
+          measurePositionEpisodes(
+            evidence(fills, fills, {
+              accountFeeAccruals: [{ ...accrual, settlement_date, matched_coin_quantity_atoms: '82625' }],
+              accountBrokerFees: [coinActivity()],
+            }),
+          ),
+        ),
+      ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
     },
   )
 
@@ -557,28 +999,64 @@ describe('position episodes', () => {
     }
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), [expense]))
     const { reportHash, ...material } = report
-    expect(canonicalHashV1(material)).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...material,
-        inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...material,
+          inferenceExpenses: [{ ...expense, sourceAsOf: '2026-09-18T21:02:00.000Z' }],
+        }),
+      ),
     ).not.toBe(reportHash)
   })
 
-  test('keeps the strict v3 stored receipt unchanged and binds episodes in a separate versioned report', () => {
+  test('binds an empty financial report to the requested generation without supplying financial identity', () => {
+    const input = evidence([])
+    const firstGeneration = '1'.repeat(64)
+    const secondGeneration = '2'.repeat(64)
+    const first = success(makeForwardPerformanceReport(input, [], firstGeneration))
+    const second = success(makeForwardPerformanceReport(input, [], secondGeneration))
+
+    expect(first.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: firstGeneration,
+    })
+    expect(second.scope).toEqual({
+      kind: ForwardPerformanceScopeKind.AuthorityGeneration,
+      authorityGenerationHash: secondGeneration,
+    })
+    expect(first.receipt).toEqual(second.receipt)
+    expect(first.receipt.bindings.source).toBeNull()
+    expect(first.receipt.bindings.strategy).toBeNull()
+    expect(Object.values(first.receipt.totals).every((total) => total === null)).toBe(true)
+    expect(first.receipt.profitability).toBe('UNDETERMINED')
+    expect(first.reportHash).not.toBe(second.reportHash)
+    const { reportHash, ...material } = first
+    expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...material, scope: second.scope }))).not.toBe(reportHash)
+  })
+
+  test('declares an account scope when no generation was requested', () => {
+    const report = success(makeForwardPerformanceReport(evidence([]), []))
+    expect(report.scope).toEqual({ kind: ForwardPerformanceScopeKind.Account })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test('keeps the strict v4 stored receipt unchanged and binds episodes in a separate versioned report', () => {
     const report = success(makeForwardPerformanceReport(evidence(roundTrip()), []))
     const { receipt, reportHash, ...reportFields } = report
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v3')
+    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
     expect(receipt).not.toHaveProperty('positionEpisodes')
-    expect(canonicalHashV1({ ...reportFields, receipt })).toBe(reportHash)
+    expect(Result.getOrThrow(canonicalHashV1Result({ ...reportFields, receipt }))).toBe(reportHash)
     expect(
-      canonicalHashV1({
-        ...reportFields,
-        receipt,
-        positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          ...reportFields,
+          receipt,
+          positionEpisodes: { ...report.positionEpisodes, completedCount: 99 },
+        }),
+      ),
     ).not.toBe(reportHash)
     const envelope = success(
       makeForwardPerformanceReceiptEnvelope({
@@ -593,14 +1071,17 @@ describe('position episodes', () => {
     expect(success(decodeForwardPerformanceReceiptEnvelopeResult(envelope))).toEqual(envelope)
     const { receiptHash: _, ...receiptMaterial } = receipt
     const changedMaterial = { ...receiptMaterial, positionEpisodes: report.positionEpisodes }
-    const changedReceipt = { ...changedMaterial, receiptHash: canonicalHashV1(changedMaterial) }
+    const changedReceipt = {
+      ...changedMaterial,
+      receiptHash: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
+    }
     const { contentHash: _contentHash, ...envelopeMaterial } = envelope
     const changedEnvelope = { ...envelopeMaterial, receiptHash: changedReceipt.receiptHash, receipt: changedReceipt }
     expect(
       Result.isFailure(
         decodeForwardPerformanceReceiptEnvelopeResult({
           ...changedEnvelope,
-          contentHash: canonicalHashV1(changedEnvelope),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(changedEnvelope)),
         }),
       ),
     ).toBe(true)

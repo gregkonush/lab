@@ -1,4 +1,5 @@
 import { Result, Schema } from 'effect'
+import { equityClockSession, equityFeatureSegmentStartMs } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
@@ -9,10 +10,10 @@ export enum MarketFeatureContract {
   V1 = 'dorvud.market-feature.v1',
 }
 export enum MarketFeatureDefinition {
-  ObservedPriceWindow = 'dorvud.observed-price-window.v1',
+  ObservedPriceWindow = 'dorvud.observed-price-window.v2',
 }
 export enum MarketFeatureSessionPolicy {
-  RegularNewYork = 'alpaca.regular.new-york-date.v1',
+  IexClockSegments = 'alpaca.iex-clock-segments.new-york.v2',
 }
 
 import { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewAllowanceMs } from './feature-core'
@@ -20,7 +21,7 @@ export { MarketFeatureFailure, MarketFeatureInputSchema, marketFeatureClockSkewA
 
 export const rollingFeatureDefinitionMaterial = [
   MarketFeatureDefinition.ObservedPriceWindow,
-  MarketFeatureSessionPolicy.RegularNewYork,
+  MarketFeatureSessionPolicy.IexClockSegments,
   'PT30M-maximum-context;observed-completed-minutes;gaps-unfilled',
   'binary64-times-1000000-round-half-positive-infinity',
   'bar-winner:ingestion-nanos,partition,offset',
@@ -76,7 +77,6 @@ export const RollingMarketFeatureSchema = Schema.Struct({
   producerRevision: Schema.String.check(Schema.isMinLength(1)),
 })
 export type RollingMarketFeature = typeof RollingMarketFeatureSchema.Type
-export type MarketFeatureInput = typeof MarketFeatureInputSchema.Type
 export type RollingMarketValues = typeof RollingMarketValuesSchema.Type
 
 const failure = (reason: MarketFeatureFailure['reason'], message: string, cause?: unknown) =>
@@ -128,6 +128,9 @@ export const decodeRollingMarketFeature = (value: unknown): Result.Result<Rollin
       material.windowEndMs % 60_000 !== 0 ||
       material.windowEndMs <= material.windowStartMs ||
       material.windowEndMs - material.windowStartMs > 30 * 60_000 ||
+      equityClockSession(new Date(material.windowStartMs).toISOString()) === null ||
+      equityClockSession(new Date(material.windowEndMs - 1).toISOString()) === null ||
+      equityFeatureSegmentStartMs(material.windowStartMs) !== equityFeatureSegmentStartMs(material.windowEndMs - 1) ||
       feature.computedAtMs + marketFeatureClockSkewAllowanceMs < material.windowEndMs ||
       newYorkDate.format(material.windowStartMs) !== material.sessionDate ||
       newYorkDate.format(material.windowEndMs - 1) !== material.sessionDate
@@ -230,7 +233,7 @@ export const featureMatchesBars = (
         bar.universeId !== material.universeId ||
         bar.universeSymbolHash !== material.universeSymbolHash ||
         bar.symbol !== material.symbol ||
-        bar.marketSession !== 'regular' ||
+        bar.marketSession !== equityClockSession(bar.eventAt) ||
         !bar.final ||
         input.eventTimeNanos !== String(intradayInstantNanos(bar.eventAt)) ||
         input.ingestionTimeNanos !== String(intradayInstantNanos(bar.ingestedAt)) ||

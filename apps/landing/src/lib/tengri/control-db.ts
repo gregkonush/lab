@@ -63,7 +63,15 @@ export function controlDatabase(): Promise<Pool> {
     )
   const current = pool
   const migrationDirectory = path.resolve(process.cwd(), '../../services/tengri/migrations')
-  const expected = ['0001_control.sql', '0002_replay_buckets.sql'].map((file) =>
+  const expected = [
+    '0001_control.sql',
+    '0002_replay_buckets.sql',
+    '0003_replay_slots.sql',
+    '0004_leadership_window.sql',
+    '0005_capability_slots.sql',
+    '0006_preview_lease_identity.sql',
+    '0007_ephemeral_oauth.sql',
+  ].map((file) =>
     createHash('sha256')
       .update(readFileSync(path.join(migrationDirectory, file)))
       .digest(),

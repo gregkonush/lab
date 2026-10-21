@@ -393,6 +393,15 @@ impl GuestClient {
             event_sequence: response.event_sequence,
         })
     }
+    pub async fn answer_codex_input(
+        &self,
+        approval_id: &str,
+        response_json: Vec<u8>,
+    ) -> Result<(), GuestError> {
+        self.rpc
+            .answer_codex_input(approval_id, response_json)
+            .await
+    }
     pub async fn resolve_codex_approval(
         &self,
         approval_id: &str,
@@ -461,7 +470,7 @@ mod tests {
                                 );
                                 Ok(rpc::proto::GuestInfo {
                                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
-                                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                                 })
                             })),
                             ..Default::default()

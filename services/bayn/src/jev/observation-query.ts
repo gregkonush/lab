@@ -1,7 +1,8 @@
+import { equityFeatureSegmentStartMs } from '../equity-hours'
 import { jevMarketForSymbol, jevBenchmarkSymbol } from './markets'
 import { exchangeSessions, isContinuousMarket, type MarketHours } from '../market-hours'
 
-import type { IntradaySnapshotQuery } from '../market-data'
+import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 
@@ -14,7 +15,9 @@ export const jevHistoryStartMs = (
   const lowerBound = endMs - maximumMinutes * 60_000
   if (isContinuousMarket(calendar)) return lowerBound
   const session = exchangeSessions(calendar).find((entry) => entry.date === sessionDate)
-  return session === undefined ? lowerBound : Math.max(lowerBound, Date.parse(session.openAt))
+  return session === undefined
+    ? lowerBound
+    : Math.max(lowerBound, Date.parse(session.openAt), equityFeatureSegmentStartMs(endMs - 1))
 }
 
 export const makeJevEntryQuery = (input: {
@@ -40,6 +43,12 @@ export const makeJevEntryQuery = (input: {
     universe: market.universe,
     symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
     candidateSymbols: candidates,
+    ...('benchmarkEvidencePolicy' in market
+      ? {
+          benchmarkEvidencePolicy: market.benchmarkEvidencePolicy,
+          benchmarkSymbols: [...new Set(candidates.map(jevBenchmarkSymbol))].sort(),
+        }
+      : {}),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),

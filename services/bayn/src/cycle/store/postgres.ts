@@ -44,7 +44,6 @@ const fenceMutation = <A>(
 export const withWriterFenceCycleStore = (store: CycleStoreShape, fence: WriterFenceService): CycleStoreShape => ({
   ...store,
   acquire: (...args) => fenceMutation('acquire', store.acquire(...args), fence),
-  bindSnapshot: (...args) => fenceMutation('bind-snapshot', store.bindSnapshot(...args), fence),
   activate: (...args) => fenceMutation('activate', store.activate(...args), fence),
   bindDecision: (...args) => fenceMutation('bind-decision', store.bindDecision(...args), fence),
   finish: (...args) => fenceMutation('finish', store.finish(...args), fence),

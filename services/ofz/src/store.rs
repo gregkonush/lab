@@ -21,12 +21,15 @@ use crate::{
 
 pub(crate) const CONNECTION_OPTIONS: &str = "-c statement_timeout=2000 -c lock_timeout=1000 -c idle_in_transaction_session_timeout=5000 -c search_path=ofz,pg_catalog";
 
+mod audit;
+
 #[derive(Clone)]
 pub struct Database {
     pub pool: Pool,
     config: Config,
     tls: MakeRustlsConnect,
     command_slots: Arc<Semaphore>,
+    audit_writer: Arc<audit::AuditWriter>,
     #[cfg(test)]
     migration_barrier: Option<(Arc<tokio::sync::Notify>, Arc<tokio::sync::Notify>)>,
 }
@@ -101,6 +104,7 @@ impl Database {
             .runtime(deadpool_postgres::Runtime::Tokio1)
             .build()?;
         Ok(Self {
+            audit_writer: Arc::new(audit::AuditWriter::new(pool.clone())),
             pool,
             config,
             tls,
@@ -191,6 +195,26 @@ impl Database {
             (
                 2,
                 include_str!("../../tengri/migrations/0002_replay_buckets.sql"),
+            ),
+            (
+                3,
+                include_str!("../../tengri/migrations/0003_replay_slots.sql"),
+            ),
+            (
+                4,
+                include_str!("../../tengri/migrations/0004_leadership_window.sql"),
+            ),
+            (
+                5,
+                include_str!("../../tengri/migrations/0005_capability_slots.sql"),
+            ),
+            (
+                6,
+                include_str!("../../tengri/migrations/0006_preview_lease_identity.sql"),
+            ),
+            (
+                7,
+                include_str!("../../tengri/migrations/0007_ephemeral_oauth.sql"),
             ),
         ];
         let mut client = self
@@ -327,21 +351,49 @@ impl Database {
 
     #[tracing::instrument(name = "db.audit", skip_all, fields(db.system.name = "postgresql"))]
     pub async fn audit(&self, receipt: &AuditReceipt, target: &str) -> Result<String, Status> {
-        let mut client = self
+        self.audit_writer.record(receipt, target).await
+    }
+
+    #[tracing::instrument(name = "db.audit.binding", skip_all, fields(db.system.name = "postgresql"))]
+    pub async fn observation_audit(
+        &self,
+        expected: &AuditReceipt,
+        target: &str,
+        receipt_id: &str,
+    ) -> Result<AuditReceipt, Status> {
+        if receipt_id.is_empty() {
+            self.audit(expected, target).await?;
+            return Ok(expected.clone());
+        }
+        if !policy::canonical_uuid(receipt_id) {
+            return Err(Status::invalid_argument("invalid audit receipt ID"));
+        }
+        let id = Uuid::parse_str(receipt_id)
+            .map_err(|_| Status::invalid_argument("invalid audit receipt ID"))?;
+        let client = self
             .pool
             .get()
             .await
             .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-        let tx = client.transaction().await.map_err(sql_error)?;
-        tx.batch_execute("SET LOCAL statement_timeout = 5000")
-            .await
-            .map_err(sql_error)?;
-        record_audit(&*tx, receipt, target).await?;
-        if !record_activity(&*tx, receipt).await? {
-            return Err(Status::unauthenticated("session expired or revoked"));
+        let actor = encode(&expected.actor)?;
+        let resource = encode(&expected.resource)?;
+        let target_hash = Sha256::digest(target.as_bytes()).to_vec();
+        let bound = client.query_opt("SELECT receipt FROM ofz.audit WHERE id=$1 AND receipt->'actor'=$2 AND receipt->'resource'=$3 AND (receipt->>'action')::integer=$4 AND receipt->>'workload_id'=$5 AND receipt->>'allowed'='true' AND target_hash=$6 AND created_at_ms>ofz.now_ms()-28800000", &[&id,&actor,&resource,&expected.action,&expected.workload_id,&target_hash]).await.map_err(sql_error)?;
+        let bound =
+            bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
+        let receipt: AuditReceipt = decode(bound.get(0))?;
+        if receipt.id != receipt_id
+            || receipt.revision.is_empty()
+            || receipt.session_id != expected.session_id
+            || receipt.grant_id != expected.grant_id
+            || receipt.workspace_uid != expected.workspace_uid
+            || receipt.runtime_epoch != expected.runtime_epoch
+            || receipt.origin != expected.origin
+            || receipt.recovery_generation != expected.recovery_generation
+        {
+            return Err(Status::permission_denied("stream receipt binding mismatch"));
         }
-        tx.commit().await.map_err(sql_error)?;
-        Ok(receipt.id.clone())
+        Ok(receipt)
     }
 }
 

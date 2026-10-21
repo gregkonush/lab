@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
-import { ExecutionModelV5Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
-import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
+import { ExecutionModelV6Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
+import { sha256 } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
   maximumIntradayQuoteAgeMs,
@@ -72,7 +72,7 @@ const IntradayMomentumProtocolBase = Schema.Struct({
   minimumRangeLocationPpm: PartsPerMillionSchema,
   maximumSpreadBps: BasisPointsSchema,
   allocation: Schema.Literal('equal-weight'),
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 const protocolIssues = (protocol: typeof IntradayMomentumProtocolBase.Type): readonly Schema.FilterIssue[] => {
@@ -204,25 +204,6 @@ export const intradayMomentumSessionHasDecisionInterval = (
   )
 }
 
-export const intradayMomentumFirstDecisionPollMs = (
-  protocol: IntradayMomentumProtocol,
-  window: { readonly executionOpenAt: string; readonly submissionOpenAt: string },
-  schedule: { readonly firstPollDelayMs: number; readonly pollIntervalMs: number },
-): number => {
-  const firstPollMs = Date.parse(window.submissionOpenAt) + schedule.firstPollDelayMs
-  const firstRangeEndMs =
-    Math.ceil(
-      Math.max(
-        Date.parse(window.submissionOpenAt),
-        Date.parse(window.executionOpenAt) + protocol.lookbackMinutes * 60_000,
-      ) / 60_000,
-    ) * 60_000
-  const readyMs = firstRangeEndMs + protocol.decisionDelaySeconds * 1_000
-  return (
-    firstPollMs + Math.max(0, Math.ceil((readyMs - firstPollMs) / schedule.pollIntervalMs)) * schedule.pollIntervalMs
-  )
-}
-
 export const intradayMomentumSnapshotSymbols = (protocol: IntradayMomentumProtocol): readonly string[] =>
   Object.freeze([...protocol.candidateSymbols, protocol.benchmarkSymbol].sort())
 
@@ -273,12 +254,3 @@ export const decodeIntradayMomentumProtocol = (
     decode(input),
     (cause) => new IntradayMomentumProtocolDecodeError({ message: 'invalid intraday-momentum parameters', cause }),
   )
-
-export const decodeDefaultIntradayMomentumProtocol = (): Result.Result<
-  IntradayMomentumProtocol,
-  IntradayMomentumProtocolDecodeError
-> => decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument)
-
-export const hashIntradayMomentumProtocol = (
-  protocol: IntradayMomentumProtocol,
-): Result.Result<string, CanonicalHashFailure> => canonicalHashV1Result(protocol)

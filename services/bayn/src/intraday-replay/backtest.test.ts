@@ -1,5 +1,5 @@
 import { replayTestInstruments } from '../testing/replay-instruments'
-import { equityMarketProfile } from '../jev/markets'
+import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -13,7 +13,7 @@ import {
 } from './backtest'
 import { jevModel } from '../jev/contract'
 import { prepareObserveStartup } from '../observe-composition/startup'
-import { validateBacktestSourceReceipt } from './source'
+import { backtestSourcePartitions, validateBacktestSourceReceipt } from './source'
 import { sha256 } from '../hash'
 import { validateResearchCapitalGrantProof } from '../execution/capital-grant-algebra'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -21,16 +21,16 @@ const fixture = () => {
   const source = retainedReplayFixture()
   const { verification: _verification, ...build } = config.build
   return {
-    schemaVersion: 'bayn.backtest.v3',
+    schemaVersion: 'bayn.backtest.v4',
     inference: {
       mode: 'measured-provider',
       model: jevModel,
-      inputDefinition: 'bayn.jev-trading-signal-state.v5',
+      inputDefinition: 'bayn.jev-trading-signal-state.v15',
       costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
     },
     allocatedDataCostPerSessionMicros: '0',
     replicate: 'validation-test',
-    sessionDates: ['2026-09-04'],
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-04T20:00:00.000Z' },
     source: {
       ...source.manifest,
       coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
@@ -40,7 +40,10 @@ const fixture = () => {
     },
     openingCashMicros: '100000000000',
     fractionalTrading: false,
-    calendar: [...source.input.input.calendar, { date: '2026-09-08', open: '09:30', close: '16:00' }],
+    calendar: [
+      ...source.input.input.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+    ],
     assets: equityMarketProfile.universe.map((symbol, index) => ({
       id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
       symbol,
@@ -82,7 +85,7 @@ test('native backtest binds Jev identity, provider cost assumptions and the unch
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v6')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v16')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -167,7 +170,7 @@ test('calendar must include a successor session before a backtest can start', ()
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result))
     expect(result.failure).toMatchObject({
-      message: 'Backtest calendar must include the next broker session after the final replay session',
+      message: 'Backtest calendar must include the next broker session after the replay interval',
     })
 })
 test('session preparation rejects changed strategy, partial hours, unknown calendar and future as-of metadata', () => {
@@ -226,17 +229,78 @@ test('the broker calendar successor does not extend the execution interval', () 
   expect(prepared.input.calendar).toHaveLength(2)
 })
 
-test('prior calendar sessions fail preparation before a fresh database can be occupied', () => {
+test('retained predecessor calendar sessions do not change a frozen execution interval', () => {
   const input = fixture()
-  const result = prepareBacktest({
-    ...input,
-    calendar: [{ date: '2026-09-03', open: '09:30', close: '16:00' }, ...input.calendar],
-  })
-  expect(Result.isFailure(result)).toBe(true)
-  if (Result.isFailure(result))
-    expect(result.failure).toMatchObject({
-      message: 'A fresh backtest cannot include prior calendar sessions',
-    })
+  const prepared = Result.getOrThrow(
+    prepareBacktest({
+      ...input,
+      calendar: [
+        { session_open: '0930', session_close: '1600', date: '2026-09-03', open: '09:30', close: '16:00' },
+        ...input.calendar,
+      ],
+    }),
+  )
+  expect(prepared.openMs).toBe(Date.parse(input.interval.startAt))
+  expect(prepared.closeMs).toBe(Date.parse(input.interval.endAt))
+})
+
+test('a declared mixed-market weekend interval preserves one account, broker assets and the unchanged strategy', () => {
+  const base = fixture()
+  const crypto = {
+    universeId: cryptoMarketProfile.universeId,
+    universeSymbolHash: cryptoMarketProfile.universeSymbolHash,
+    symbols: cryptoMarketProfile.universe,
+    topics: { ...cryptoMarketProfile.sourceTopics, features: cryptoMarketProfile.streamingInput.featureTopic },
+  }
+  const interval = { startAt: '2026-09-05T23:45:00.000Z', endAt: '2026-09-06T00:15:00.000Z' }
+  const material = {
+    ...base.source,
+    marketSources: [...base.source.marketSources, crypto] as const,
+    coverageStartMs: Date.parse(interval.startAt),
+    coverageEndMs: Date.parse(interval.endAt),
+    firstAvailableAtMs: Date.parse(interval.startAt),
+    lastAvailableAtMs: Date.parse(interval.endAt),
+  }
+  const positions = new Map(
+    base.source.positions.map((position) => [`${position.topic}:${position.partition}`, position]),
+  )
+  const source = {
+    ...material,
+    positions: backtestSourcePartitions(material).map(
+      ({ topic, partition }) =>
+        positions.get(`${topic}:${partition}`) ?? { topic, partition, startOffset: '0', endOffsetExclusive: '0' },
+    ),
+  }
+  const input = {
+    ...base,
+    interval,
+    source,
+    assets: [
+      ...base.assets,
+      ...cryptoMarketProfile.universe.map((symbol, index) => ({
+        id: `87654321-1234-4234-8234-${String(index).padStart(12, '0')}`,
+        symbol,
+        class: 'crypto',
+        exchange: 'CRYPTO',
+        status: 'active',
+        tradable: true,
+        fractionable: true,
+        min_order_size: '0.00001',
+        min_trade_increment: '0.000000001',
+        price_increment: '0.01',
+      })),
+    ],
+  }
+  const prepared = Result.getOrThrow(prepareWithCapture(input, retainedReplayCaptureFixture(source)))
+  expect(prepared.openMs).toBe(Date.parse(interval.startAt))
+  expect(prepared.closeMs).toBe(Date.parse(interval.endAt))
+  expect(prepared.reportingWindows.map((session) => session.date)).toEqual(['2026-09-05', '2026-09-06'])
+  expect(prepared.reportingWindows[0]?.closeAt).toBe('2026-09-06T00:00:00.000Z')
+  expect(prepared.reportingWindows[1]?.openAt).toBe(prepared.reportingWindows[0]?.closeAt)
+  expect(prepared.assets.map((asset) => asset.symbol)).toEqual(input.assets.map((asset) => asset.symbol).sort())
+  expect(prepared.strategy.provenance.strategy).toEqual(
+    Result.getOrThrow(prepareBacktest(base)).strategy.provenance.strategy,
+  )
 })
 
 test('normalized asset attributes determine identity independent of response representation', () => {
@@ -260,12 +324,15 @@ test('normalized asset attributes determine identity independent of response rep
 
 const prepareBacktest = (input: unknown) => prepareWithCapture(input, retainedReplayCaptureFixture(fixture().source))
 
-test('one backtest binds consecutive sessions and normalizes their order', () => {
+test('one backtest advances continuously across weekends and normalizes its broker calendar', () => {
   const base = fixture()
   const input = {
     ...base,
-    sessionDates: ['2026-09-04', '2026-09-08'],
-    calendar: [...base.calendar, { date: '2026-09-09', open: '09:30', close: '16:00' }],
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-08T20:00:00.000Z' },
+    calendar: [
+      ...base.calendar,
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+    ],
     source: {
       ...base.source,
       coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
@@ -274,31 +341,39 @@ test('one backtest binds consecutive sessions and normalizes their order', () =>
   }
   const capture = retainedReplayCaptureFixture(input.source)
   const prepared = Result.getOrThrow(prepareWithCapture(input, capture))
-  expect(prepared.sessions.map((session) => session.date)).toEqual(input.sessionDates)
+  expect(prepared.reportingWindows.map((session) => session.date)).toEqual([
+    '2026-09-04',
+    '2026-09-05',
+    '2026-09-06',
+    '2026-09-07',
+    '2026-09-08',
+  ])
+  for (let index = 1; index < prepared.reportingWindows.length; index++)
+    expect(prepared.reportingWindows[index]?.openAt).toBe(prepared.reportingWindows[index - 1]?.closeAt)
   expect(prepared.closeMs).toBe(input.source.coverageEndMs)
   expect(
-    Result.getOrThrow(prepareWithCapture({ ...input, sessionDates: [...input.sessionDates].reverse() }, capture)).runId,
+    Result.getOrThrow(prepareWithCapture({ ...input, calendar: [...input.calendar].reverse() }, capture)).runId,
   ).toBe(prepared.runId)
   for (const sessionDates of [[], ['2026-09-04', '2026-09-04'], ['2026-09-04', '2026-09-07']])
     expect(Result.isFailure(prepareWithCapture({ ...input, sessionDates }, capture))).toBe(true)
 })
 
-test('continuous backtesting rejects an omitted intervening trading session', () => {
+test('continuous backtesting rejects an interval whose source stops before the requested end', () => {
   const base = fixture()
   const input = {
     ...base,
-    sessionDates: ['2026-09-04', '2026-09-09'],
+    interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-09T20:00:00.000Z' },
     calendar: [
       ...base.calendar,
-      { date: '2026-09-09', open: '09:30', close: '16:00' },
-      { date: '2026-09-10', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-09-10', open: '09:30', close: '16:00' },
     ],
   }
   const result = prepareWithCapture(input, retainedReplayCaptureFixture(input.source))
   expect(Result.isFailure(result)).toBe(true)
   if (Result.isFailure(result))
     expect(result.failure).toMatchObject({
-      message: 'A continuous backtest cannot skip calendar sessions between its boundaries',
+      message: 'Frozen source receipt does not cover market open through close',
     })
 })
 
@@ -327,10 +402,12 @@ test('run identity binds the independent capture receipt as well as the session 
 
 test('a completed schedule only qualifies economics with exact accounting and no unresolved exposure', () => {
   const exact = {
+    finalWindow: true,
     failedPassCount: 0,
     unavailableDecisionPassCount: 0,
     valuationFailureCount: 0,
     remainingPositionCount: 0,
+    remainingOpenOrderCount: 0,
     reconciliation: {
       status: ReconciliationStatus.Exact,
       unknownOrderCount: 0,
@@ -347,6 +424,14 @@ test('a completed schedule only qualifies economics with exact accounting and no
     },
   }
   expect(assessBacktestSession(exact)).toEqual({ completion: 'COMPLETE', issues: [] })
+  expect(assessBacktestSession({ ...exact, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'INCOMPLETE',
+    issues: [BacktestIssue.UnclosedOrder],
+  })
+  expect(assessBacktestSession({ ...exact, finalWindow: false, remainingOpenOrderCount: 1 })).toEqual({
+    completion: 'COMPLETE',
+    issues: [],
+  })
   expect(assessBacktestSession({ ...exact, unavailableDecisionPassCount: 1 })).toEqual({
     completion: 'INCOMPLETE',
     issues: [BacktestIssue.MissingDecisionData],
@@ -362,6 +447,10 @@ test('a completed schedule only qualifies economics with exact accounting and no
   expect(assessBacktestSession({ ...exact, remainingPositionCount: 1 })).toEqual({
     completion: 'INCOMPLETE',
     issues: [BacktestIssue.UnclosedPosition],
+  })
+  expect(assessBacktestSession({ ...exact, finalWindow: false, remainingPositionCount: 1 })).toEqual({
+    completion: 'COMPLETE',
+    issues: [],
   })
   for (const metrics of [
     { ...exact.reconciliation.metrics, accountingExact: false },

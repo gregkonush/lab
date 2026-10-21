@@ -50,6 +50,23 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+`product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
+Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
+They do not create unused product image archives or PR registry caches.
+
+Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
+must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
+successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
+production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+
+The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
+Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
+`proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot
+promote directly from the Warehouse. A failed migration therefore prevents either consumer from rolling out.
+The BFF, controller and supervisor independently verify the installed migration checksums before serving.
+The retired per-consumer Warehouses are removed; existing Freight has no Warehouse owner reference and remains
+subject to the existing retention policy.
+
 Every application image follows this transaction:
 
 1. Merge the reviewed source pull request to `main`.

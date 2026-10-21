@@ -1,54 +1,52 @@
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { Effect, Option, pipe, Schema } from 'effect'
 
-import { BrokerRead } from '../../broker/alpaca'
+import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { IsoDateSchema } from '../../schemas'
-import { CycleState, intradayCycleEntryAttemptOrdinal, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
-import { selectCycleRecovery, type CycleRecoverySelection, type CycleRecoveryState } from '../recovery'
-import { CycleStore } from '../store'
+import { CycleState, type AutonomousCycle } from '../model'
+import { selectCycleRecovery } from './recovery-selection'
+import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
+import { CycleStore } from '../store/model'
 import { isTerminalCycleState } from '../transitions'
 import { canRearmUnusedCycle } from './calendar-decisions'
+import { calendarQueryFailureError } from './errors'
+import { finishRecoveryResult } from './pass-decisions'
 import {
-  calendarQueryFailureError,
-  finishRecoveryResult,
   makeIntradayCycleDraft,
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
-} from './decisions'
+} from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
 
-const currentIsoTime = currentUtcInstant
+const hashCalendar = (hours: MarketHours) =>
+  Effect.fromResult(canonicalHashV1Result(hours)).pipe(
+    Effect.mapError((cause) =>
+      runnerError({
+        operation: 'build-cycle',
+        failure: 'contract',
+        message: 'market calendar cannot be canonicalized',
+        cause,
+      }),
+    ),
+  )
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore> => {
-  const candidate =
-    (context.strategyName === 'intraday-momentum' || context.strategyName === 'jev') &&
-    context.executionPolicy.schemaVersion === 'bayn.autonomous-cycle-execution-policy.v3'
-      ? {
-          cycleBindingId: context.cycleBindingId,
-          strategyName: context.strategyName,
-          strategyProtocolHash: context.strategyProtocolHash,
-          accountId: context.accountId,
-          executionPolicy: context.executionPolicy,
-        }
-      : undefined
-  if (candidate === undefined) {
-    return Effect.fail(
-      runnerError({
-        operation: 'configure',
-        failure: 'invalid-config',
-        message: 'intraday discovery requires an exact strategy and session-relative execution-policy pairing',
-      }),
-    )
+  const candidate = {
+    cycleBindingId: context.cycleBindingId,
+    strategyName: context.strategyName,
+    strategyProtocolHash: context.strategyProtocolHash,
+    accountId: context.accountId,
+    executionPolicy: context.executionPolicy,
   }
   return Effect.gen(function* () {
-    const observedAt = yield* currentIsoTime
+    const observedAt = yield* currentUtcInstant
     const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
       Effect.mapError(calendarQueryFailureError),
     )
@@ -80,12 +78,9 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
     let hours: MarketHours = continuousMarketHours
-    let hoursReadHash = canonicalHashV1(continuousMarketHours)
+    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
     // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
-    if (
-      Option.isNone(existing) ||
-      (isIntradayAutonomousCycle(existing.value) && intradayCycleEntryAttemptOrdinal(existing.value.identity) % 2 === 0)
-    ) {
+    if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
       const broker = yield* BrokerRead
       const calendar = yield* broker.marketCalendar(query).pipe(
         Effect.mapError((cause) =>
@@ -187,7 +182,7 @@ export const discoverAutonomousCyclePass = <R>(
       outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
       executionSessionDate: executionSession.date,
       observedAt,
-      calendarResponseHash: canonicalHashV1(hours),
+      calendarResponseHash: yield* hashCalendar(hours),
       calendarReadContentHash: hoursReadHash,
       receipt,
     } as const
@@ -268,7 +263,7 @@ const recoverCycle = <R>(
         Effect.matchEffect({
           onFailure: (cause) =>
             cause.failure === 'not-ready'
-              ? currentIsoTime.pipe(
+              ? currentUtcInstant.pipe(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
@@ -300,7 +295,7 @@ const recoverCycle = <R>(
               ),
               Effect.flatMap((evidence) =>
                 pipe(
-                  currentIsoTime,
+                  currentUtcInstant,
                   Effect.flatMap((bindObservedAt) =>
                     pipe(
                       CycleStore,
@@ -312,7 +307,7 @@ const recoverCycle = <R>(
                           evidence,
                         )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
-                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v1') return binding
+                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v5') return binding
                         const timingAttributes = {
                           'bayn.entry_timing.decision_hash': document.contentHash,
                           'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
@@ -367,7 +362,7 @@ const recoverCycle = <R>(
         ),
         Effect.flatMap((document) =>
           pipe(
-            currentIsoTime,
+            currentUtcInstant,
             Effect.flatMap((decisionObservedAt) =>
               pipe(
                 chooseRecovery({
@@ -405,7 +400,7 @@ export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   cycle: AutonomousCycle | undefined,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  currentIsoTime.pipe(
+  currentUtcInstant.pipe(
     Effect.flatMap((observedAt) =>
       chooseRecovery({
         cycleBindingId: context.cycleBindingId,

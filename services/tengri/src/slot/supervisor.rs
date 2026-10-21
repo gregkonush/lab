@@ -216,6 +216,7 @@ pub async fn run() -> anyhow::Result<()> {
             "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
         )?))?,
     )?;
+    let readiness_admission = admission.clone();
     let health = Router::new()
         .route(
             "/metrics",
@@ -234,13 +235,18 @@ pub async fn run() -> anyhow::Result<()> {
             "/readyz",
             get(move || {
                 let database = readiness_database.clone();
+                let admission = readiness_admission.clone();
                 async move {
+                    if !admission.is_ready() {
+                        return StatusCode::SERVICE_UNAVAILABLE;
+                    }
                     readiness(&database, &runner::sockets_directory().join("control.sock")).await
                 }
             }),
         );
     let health_listener = TcpListener::bind("0.0.0.0:8080").await?;
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    admission.wait_ready().await;
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
         result = serve(listener, tls, database, admission) => result,
@@ -538,6 +544,12 @@ async fn forward(
     State(supervisor): State<Supervisor>,
     mut request: Request<Body>,
 ) -> Result<Response, (StatusCode, String)> {
+    let _request = supervisor.admission.reserve_request().map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "guest admission request capacity exhausted".into(),
+        )
+    })?;
     let admission =
         crate::metrics::global().latency_timer(crate::metrics::Latency::SupervisorAdmission);
     #[cfg(test)]
@@ -562,12 +574,26 @@ async fn forward(
         ));
     }
     supervisor.state.send_replace(status.state);
-    let (opening, forwarded) = supervisor.admission.opening(request).await.map_err(|_| {
-        (
-            StatusCode::FORBIDDEN,
-            "invalid signed guest RPC opening".into(),
-        )
-    })?;
+    let (opening, forwarded) = supervisor
+        .admission
+        .opening(request)
+        .await
+        .map_err(|error| {
+            if error
+                .downcast_ref::<tonic::Status>()
+                .is_some_and(|status| status.code() == tonic::Code::ResourceExhausted)
+            {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "guest admission buffer capacity exhausted".into(),
+                )
+            } else {
+                (
+                    StatusCode::FORBIDDEN,
+                    "invalid signed guest RPC opening".into(),
+                )
+            }
+        })?;
     supervisor
         .admission
         .consume(&opening, &claim, leadership, &supervisor.database)

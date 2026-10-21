@@ -2,15 +2,15 @@ import { expect, test } from 'bun:test'
 import { Effect, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
-import { canonicalHashV1 } from '../../hash'
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
+import { canonicalHashV1Result } from '../../hash'
 import { nativeJevFixture } from '../../jev/native.test-support'
 import { executionMarketDataBinding } from '../../observe-composition/intraday-market-data'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
+import { TargetPlanReason, TargetPlanStatus } from '../../target-planner/index'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
-import { selectCycleRecovery } from '../recovery'
-import { CycleStore, type CycleStoreShape } from '../store'
+import { selectCycleRecovery } from './recovery-selection'
+import { CycleStore, type CycleStoreShape } from '../store/model'
 import { decideBlock, decideDecisionBinding, makeInitialCycle } from '../store/decisions'
 import { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'
 
@@ -45,7 +45,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     }
     const document = Result.getOrThrow(
       makeObserveShadowDecisionDocument({
-        schemaVersion: 'bayn.observe-shadow-decision.v1',
+        schemaVersion: 'bayn.observe-shadow-decision.v2',
         mode: 'OBSERVE',
         dispatchable: false,
         bindings: {
@@ -63,7 +63,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           reconciliationId: '5'.repeat(64),
           reconciliationHash: '6'.repeat(64),
         },
-        targetPlan: { ...targetMaterial, outputHash: canonicalHashV1(targetMaterial) },
+        targetPlan: { ...targetMaterial, outputHash: Result.getOrThrow(canonicalHashV1Result(targetMaterial)) },
         deltaRisk: [],
         createdAt: beforeCutoff,
         submissionCutoffAt: cutoffAt,
@@ -112,7 +112,6 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     const store: CycleStoreShape = {
       read: forbidden,
       readOldestUnfinished: forbidden,
-      bindSnapshot: forbidden,
       activate: forbidden,
       finish: forbidden,
       block: forbidden,

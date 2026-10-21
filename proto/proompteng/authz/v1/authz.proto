@@ -143,6 +143,8 @@ message AuthorizeGuestMaintenanceRequest {
   string workspace_uid = 2;
   GuestMaintenancePurpose purpose = 3;
   string terminal_id = 4;
+  // Probe may reuse its durable observation receipt; terminal cleanup must audit each submission.
+  string stream_receipt_id = 5;
 }
 
 message AuthorizeGuestMaintenanceResponse {
@@ -487,6 +489,8 @@ message GetPolicyStateResponse {
 message GetWorkspaceStateRequest {
   RequestContext context = 1;
   string workspace_uid = 2;
+  // Receipt binding only. Current policy and runtime state are always read again.
+  string stream_receipt_id = 3;
 }
 
 message GetWorkspaceStateResponse {

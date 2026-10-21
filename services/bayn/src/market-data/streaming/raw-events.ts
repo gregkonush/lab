@@ -1,3 +1,4 @@
+import { equityClockSession } from '../../equity-hours'
 import { Result, Schema } from 'effect'
 
 import { MarketFeatureFailure } from '../features/contract'
@@ -6,6 +7,7 @@ import { decodeIntradayBarRows, decodeIntradayQuoteRows, decodeIntradayTradeRows
 import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/model'
 import { nativePayloadCanonicalJson } from '../native-json'
 import { instrumentMarket, MarketKind } from '../../instruments'
+import { Sha256Schema, StrictNonEmptyStringSchema, SymbolSchema } from '../../schemas'
 
 export enum RawMarketEventKind {
   Bar = 'bar',
@@ -26,22 +28,43 @@ export interface KafkaMarketRecord {
   readonly offset: string
   readonly value: string
 }
-export interface MarketSource {
-  readonly universeId: string
-  readonly universeSymbolHash: string
-  readonly symbols: readonly string[]
-  readonly topics: {
-    readonly bars: string
-    readonly quotes: string
-    readonly trades: string
-    readonly features: string
-    readonly technicalFeatures?: string
-  }
-}
+export const MarketSourceSchema = Schema.Struct({
+  universeId: StrictNonEmptyStringSchema,
+  universeSymbolHash: Sha256Schema,
+  symbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
+  topics: Schema.Struct({
+    bars: StrictNonEmptyStringSchema,
+    quotes: StrictNonEmptyStringSchema,
+    trades: StrictNonEmptyStringSchema,
+    features: StrictNonEmptyStringSchema,
+    technicalFeatures: Schema.optionalKey(StrictNonEmptyStringSchema),
+  }),
+})
+export type MarketSource = typeof MarketSourceSchema.Type
+export const MarketSourcesSchema = Schema.NonEmptyArray(MarketSourceSchema).check(
+  Schema.makeFilter((sources) => {
+    const identities = new Set<string>()
+    const symbols = new Set<string>()
+    const topics = new Set<string>()
+    for (const source of sources) {
+      if (identities.has(source.universeId)) return false
+      identities.add(source.universeId)
+      for (const symbol of source.symbols) {
+        if (symbols.has(symbol)) return false
+        symbols.add(symbol)
+      }
+      for (const topic of new Set(Object.values(source.topics))) {
+        if (topics.has(topic)) return false
+        topics.add(topic)
+      }
+    }
+    return true
+  }),
+)
 export const marketSourceKind = (source: MarketSource): MarketKind => instrumentMarket(source.symbols[0] ?? '')
 
 export type StreamingUniverse = MarketSource
-export type MarketSources = readonly [MarketSource, ...MarketSource[]]
+export type MarketSources = typeof MarketSourcesSchema.Type
 
 export const marketSourceForTopic = (universe: MarketSources, topic: string): MarketSource | undefined =>
   universe.find((source) => Object.values(source.topics).includes(topic))
@@ -199,7 +222,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('bar payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayBarRows([
           {
@@ -226,7 +249,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('quote payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayQuoteRows([
           { ...identity, bid_price: payload.bp, bid_size: payload.bs, ask_price: payload.ap, ask_size: payload.as },
@@ -244,7 +267,7 @@ export const decodeRawMarketRecord = (
         )
         if (payload.t !== envelope.eventTs && (yield* canonicalRawTimestamp(payload.t)) !== eventAt)
           return yield* Result.fail(fail('trade payload timestamp differs from envelope'))
-        if (envelope.marketSession !== 'regular' && envelope.marketSession !== 'continuous')
+        if (envelope.marketSession !== (crypto ? 'continuous' : equityClockSession(eventAt)))
           return { kind: RawMarketEventKind.Ignored }
         const decoded = yield* decodeIntradayTradeRows([{ ...identity, price: payload.p, size: payload.s }]).pipe(
           Result.mapError((cause) => fail('invalid raw trade row', cause)),

@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { summarizeStreamingSymbol } from '../../streaming-diagnostics-command'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
@@ -5,7 +6,7 @@ import technicalFixture from '../features/fixtures/technical-indicators-v1.json'
 import rollingFixture from '../features/fixtures/observed-price-window-v1.json'
 import { decodeTechnicalMarketFeature } from '../features/technical-contract'
 import { decodeRollingMarketFeature } from '../features/contract'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { IntradayBar, IntradaySnapshotQuery } from '../intraday/model'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import {
@@ -80,20 +81,20 @@ const rolling = Result.getOrThrow(
   decodeRollingMarketFeature({
     ...rollingFixture,
     material: rollingMaterial,
-    featureId: canonicalHashV1(rollingMaterial),
+    featureId: Result.getOrThrow(canonicalHashV1Result(rollingMaterial)),
     computedAtMs: end + 1000,
   }),
 )
-const calendar = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendar = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-09-11', end: '2026-09-11' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-09-11', openAt: '2026-09-11T13:30:00.000Z', closeAt: '2026-09-11T20:00:00.000Z' }],
-}
+})
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
-  calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+  calendar: { ...calendar, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
   rangeStartAt: new Date(start).toISOString(),
   rangeEndAt: new Date(end).toISOString(),
   observedAt: new Date(observed).toISOString(),
@@ -234,7 +235,7 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     select(
       incorporateMarketRecord(
         base,
-        record('0', { ...feature, material: wrong, featureId: canonicalHashV1(wrong) }),
+        record('0', { ...feature, material: wrong, featureId: Result.getOrThrow(canonicalHashV1Result(wrong)) }),
         universe,
         end + 2200,
       ),
@@ -248,7 +249,11 @@ test('exact technical suffix joins as-of and immutable conflicts remove optional
     select(
       incorporateMarketRecord(
         base,
-        record('0', { ...feature, material: corrected, featureId: canonicalHashV1(corrected) }),
+        record('0', {
+          ...feature,
+          material: corrected,
+          featureId: Result.getOrThrow(canonicalHashV1Result(corrected)),
+        }),
         universe,
         end + 2200,
       ),
@@ -276,7 +281,7 @@ test('a new technical revision supersedes the previous value before matching raw
     ...feature.material,
     inputs: feature.material.inputs.map((input, index) => (index === 60 ? { ...input, sourceOffset: '9999' } : input)),
   }
-  const corrected = { ...feature, material, featureId: canonicalHashV1(material) }
+  const corrected = { ...feature, material, featureId: Result.getOrThrow(canonicalHashV1Result(material)) }
   const waiting = incorporateMarketRecord(ready, record('1', corrected), universe, end + 2500)
   expect(select(waiting).technical?.features).toHaveLength(0)
   expect(select(waiting).technical?.unavailableSymbols).toEqual(['AAPL'])
@@ -299,7 +304,7 @@ test('a new technical revision supersedes the previous value before matching raw
       value: JSON.stringify({
         ...rolling,
         material: updatedRollingMaterial,
-        featureId: canonicalHashV1(updatedRollingMaterial),
+        featureId: Result.getOrThrow(canonicalHashV1Result(updatedRollingMaterial)),
       }),
     },
     universe,
@@ -313,7 +318,7 @@ test('a new technical revision supersedes the previous value before matching raw
 
 test('rolling regeneration time cannot admit technical records computed after their arrival', () => {
   const regeneratedAtMs = end + 86_400_000
-  const source = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), universe, regeneratedAtMs))
+  const source = Result.getOrThrow(createHistoricalMarketCursor('d'.repeat(64), [universe], regeneratedAtMs))
   const rollingCursor = Result.getOrThrow(
     advanceHistoricalMarketCursor(source, {
       availableAtMs: observed,
@@ -350,8 +355,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
   const source = {
     runId: 'c'.repeat(64),
     sourceManifestHash: 'e'.repeat(64),
-    featureTopic: universe.topics.features,
-    technicalFeatureTopic: topic,
+    marketSources: [universe] as const,
     regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs,
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
@@ -359,7 +363,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
       tieBreak: 'availability-topic-partition-offset' as const,
     },
   }
-  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, universe, undefined, source))
+  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, [universe], undefined, source))
   const cursor = Result.getOrThrow(
     advanceHistoricalMarketCursor(
       {
@@ -393,7 +397,7 @@ test('explicit technical regeneration preserves computation time and reproduces 
     ),
   ).toBe(true)
   const tooEarly = Result.getOrThrow(
-    createHistoricalMarketCursor(source.runId, universe, undefined, {
+    createHistoricalMarketCursor(source.runId, [universe], undefined, {
       ...source,
       regeneratedTechnicalFeaturesRecordedAtMs: recordedAtMs - 10_000,
     }),
@@ -437,15 +441,14 @@ test('live and simulated snapshots reproduce technical payload and provenance, r
   const source = {
     runId: 'a'.repeat(64),
     sourceManifestHash: 'b'.repeat(64),
-    featureTopic: universe.topics.features,
-    technicalFeatureTopic: topic,
+    marketSources: [universe] as const,
     deliveryModel: {
       schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
       description: 'literal test availability',
       tieBreak: 'availability-topic-partition-offset' as const,
     },
   }
-  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, universe, undefined, source))
+  const empty = Result.getOrThrow(createHistoricalMarketCursor(source.runId, [universe], undefined, source))
   const cursor = {
     ...empty,
     projection: { ...ready, epoch: empty.projection.epoch, availabilityMode: 'simulated' as const },
@@ -453,6 +456,12 @@ test('live and simulated snapshots reproduce technical payload and provenance, r
   const simulated = Result.getOrThrow(constructSimulatedSnapshot(cursor, source, query))
   expect(Result.getOrThrow(reproduceSimulatedSnapshot(simulated.manifest, rows)).manifest).toEqual(simulated.manifest)
   expect(
-    Result.isFailure(constructSimulatedSnapshot(cursor, { ...source, technicalFeatureTopic: 'other' }, query)),
+    Result.isFailure(
+      constructSimulatedSnapshot(
+        cursor,
+        { ...source, marketSources: [{ ...universe, topics: { ...universe.topics, technicalFeatures: 'other' } }] },
+        query,
+      ),
+    ),
   ).toBe(true)
 })

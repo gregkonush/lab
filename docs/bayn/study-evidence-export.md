@@ -1,12 +1,12 @@
 # Retained Jev session evidence
 
-Run `bayn-jev-study-export` to export the complete committed batch inventory for one configured account and session.
-The Bayn image installs this wrapper and its compiled Node entry point. `--help` needs no configuration.
+Run `bun run --filter @proompteng/bayn jev:study-export` to export the complete committed batch inventory for one configured account and session.
+Build the offline commands with `bun run --filter @proompteng/bayn build:research`. `--help` needs no configuration.
 It reads PostgreSQL and writes a new private local directory. It requires the configured account ID, PostgreSQL URL,
 and the existing verified PostgreSQL CA. It has no broker or model client and requires neither credential.
 
 ```sh
-node dist/jev-study-export-command.js --session YYYY-MM-DD --output /private/new-session-directory
+node services/bayn/dist/research/jev-study-export-command.js --session YYYY-MM-DD --output /private/new-session-directory
 ```
 
 Use the native command instead of a `json_agg` over full observation payloads. PostgreSQL aggregate transition state

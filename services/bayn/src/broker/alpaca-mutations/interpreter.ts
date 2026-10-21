@@ -4,7 +4,7 @@ import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effe
 import type { ExecutionAuthority } from '../../execution/authority'
 import type { Intent } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
-import type { BrokerSessionShape } from '../alpaca'
+import type { BrokerSessionShape } from '../alpaca/session'
 import { ResponseHeadersSchema, redactedHeaders, responseParseOptions } from '../alpaca/model'
 import { cancelOrderUrl, submitOrderUrl } from '../alpaca/requests'
 import {
@@ -23,7 +23,7 @@ import {
   type BrokerMutationShape,
 } from './model'
 import { withObservedStage } from '../../telemetry'
-import { Pipeable } from '../../pipeable'
+
 import { SubmissionDenialReason } from '../../execution/submission-denial'
 
 const decodeHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -109,7 +109,7 @@ const readCancelBody = (
         ),
       )
 
-const makeMutationDataFirst = (
+export const makeMutation = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
   client: HttpClient.HttpClient,
@@ -209,5 +209,3 @@ const makeMutationDataFirst = (
       orderByClientId: session.read.orderByClientId,
     }
   })
-
-export const makeMutation = Pipeable.dual(3, makeMutationDataFirst)

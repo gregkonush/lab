@@ -1,3 +1,4 @@
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { jevStalePricingSymbols } from '../../jev/trading-signals'
 import { replayHistoricalMarketArrivals } from './historical'
 import { featureAvailabilityMeasurement, projectionCoverageMeasurements } from './telemetry'
@@ -12,7 +13,7 @@ import { constructStreamingSnapshot } from './snapshot'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
 import { IntradaySnapshotPurpose, type IntradayQuote, type IntradaySnapshotQuery } from '../intraday/model'
-import { canonicalHashV1, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import { checkProperty } from '../../testing/property-test-support'
 import {
   captureKafkaTransport,
@@ -178,6 +179,23 @@ describe('streaming raw and rolling feature projection', () => {
 
             const history = state.quoteHistory.get('AAPL')
             if (history === undefined) throw new Error('missing accepted quote history')
+            const first = history[0]
+            if (first === undefined) throw new Error('missing first retained quote')
+            const source = {
+              topic: first.value.sourceTopic,
+              partition: first.value.sourcePartition,
+              offset: first.value.sourceOffset,
+              availableAtMs: first.availableAtMs,
+            }
+            expect(observedQuoteAt(state, 'AAPL', end + 5000, source)).toEqual(first)
+            expect(observedQuoteAt(state, 'AAPL', first.availableAtMs - 1, source)).toBeUndefined()
+            for (const mismatched of [
+              { ...source, topic: 'other.quote.topic' },
+              { ...source, partition: source.partition + 1 },
+              { ...source, offset: String(BigInt(source.offset) + 1_000_000n) },
+              { ...source, availableAtMs: source.availableAtMs + 1 },
+            ])
+              expect(observedQuoteAt(state, 'AAPL', end + 5000, mismatched)).toBeUndefined()
             Object.freeze(history)
             const duplicate = incorporateMarketRecord(state, latestRecord, universe, end + 4000)
             expect(duplicate).toBe(state)
@@ -293,7 +311,7 @@ describe('streaming raw and rolling feature projection', () => {
           value: JSON.stringify({
             ...feature,
             material,
-            featureId: canonicalHashV1(material),
+            featureId: Result.getOrThrow(canonicalHashV1Result(material)),
             computedAtMs: feature.computedAtMs + shiftMs,
           }),
         },
@@ -381,7 +399,7 @@ describe('streaming raw and rolling feature projection', () => {
       inputs,
       values: { ...feature.material.values, referencePriceMicros: '100500000' },
     }
-    const replacement = { ...feature, material, featureId: canonicalHashV1(material) }
+    const replacement = { ...feature, material, featureId: Result.getOrThrow(canonicalHashV1Result(material)) }
     const corrected = incorporateMarketRecord(initial, correctedRecord, universe, end + 4000)
     expect(Result.getOrThrow(select(corrected, end + 3000)).feature.value.featureId).toBe(feature.featureId)
     const previousCut = Result.getOrThrow(constructStreamingSnapshot(cutFor(corrected), query))
@@ -556,16 +574,16 @@ describe('streaming raw and rolling feature projection', () => {
   })
 })
 
-const calendarMaterial = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+const calendarMaterial = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
   source: 'alpaca-v2-calendar' as const,
   requestedRange: { start: '2026-09-11', end: '2026-09-11' },
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-09-11', openAt: '2026-09-11T13:30:00.000Z', closeAt: '2026-09-11T20:00:00.000Z' }],
-}
+})
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
-  calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+  calendar: { ...calendarMaterial, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)) },
   rangeStartAt: new Date(start).toISOString(),
   rangeEndAt: new Date(end).toISOString(),
   observedAt: new Date(end + 3000).toISOString(),
@@ -897,8 +915,8 @@ describe('verified streaming decision snapshot', () => {
     expect(snapshot.manifest.streaming.records).toHaveLength(32)
     expect(snapshot.manifest.streaming.features[0]?.value.featureId).toBe(feature.featureId)
     const { snapshotId, contentHash, ...material } = snapshot.manifest
-    expect(contentHash).toBe(canonicalHashV1(material))
-    expect(snapshotId).toBe(canonicalHashV1({ ...material, contentHash }))
+    expect(contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
+    expect(snapshotId).toBe(Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })))
   })
 
   test('selects quote state as of observation even when a newer quote is incorporated before the request executes', () => {
@@ -966,7 +984,7 @@ describe('explicit historical delivery model', () => {
       observedAtMs: end + 3000,
       events: [...raw(), regenerated].map((record) => ({ record, availableAtMs: end + 3000 })),
     }
-    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
     expect(Result.getOrThrow(select(replay.projection)).feature.value.computedAtMs).toBe(recordedAtMs)
     expect(replay.regeneratedFeatures?.runId).toBe('c'.repeat(64))
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(replay.projection), query))).toBe(true)
@@ -974,7 +992,7 @@ describe('explicit historical delivery model', () => {
     expect(Result.isFailure(select(live))).toBe(true)
     const { regeneratedFeatures: _regenerated, ...undeclared } = input
     expect(
-      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, universe)).projection)),
+      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, [universe])).projection)),
     ).toBe(true)
   })
 
@@ -993,10 +1011,10 @@ describe('explicit historical delivery model', () => {
         { record: featureRecord, availableAtMs: end + 5000 },
       ],
     }
-    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
     expect(before.evidenceMode).toBe('simulated-consumer-availability')
     expect(Result.isFailure(select(before.projection, end + 3000))).toBe(true)
-    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, universe))
+    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, [universe]))
     expect(Result.getOrThrow(select(after.projection, end + 5000)).feature.value.computedAtMs).toBe(
       feature.computedAtMs,
     )

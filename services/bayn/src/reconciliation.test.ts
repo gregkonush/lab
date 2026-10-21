@@ -1,6 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
+import fc from 'fast-check'
+import { checkProperty } from './testing/property-test-support'
 
 import {
   AccountStatus,
@@ -17,13 +19,13 @@ import {
   type Position,
   type Valuation,
 } from './execution/contracts'
+import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type ReconciliationDecisionError,
   type ReconciliationSnapshot,
-} from './reconciliation'
+} from './simulation-reconciliation/broker-model'
 
 const successOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): A => Result.getOrThrow(result)
 const failureOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): ReconciliationDecisionError => {
@@ -47,7 +49,8 @@ const account: AccountSnapshot = {
 }
 
 const position: Position = {
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: '90000000',
   accountId: account.accountId,
   symbol: 'NVDA',
   quantityAtoms: '1000000000',
@@ -128,7 +131,14 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
     },
   ],
   durableFills: [{ fillId: fill.fillId, brokerOrderId: fill.brokerOrderId, accounted: true }],
-  projectedPositions: [{ symbol: position.symbol, quantityAtoms: position.quantityAtoms, costBasisMicros: '90000000' }],
+  projectedPositions: [
+    {
+      costBasisAnchor: null,
+      symbol: position.symbol,
+      quantityAtoms: position.quantityAtoms,
+      costBasisMicros: '90000000',
+    },
+  ],
   expectedCashMicros: account.cashMicros,
   valuation,
   accountingHash: hash('5'),
@@ -293,7 +303,9 @@ describe('execution reconciliation', () => {
 
   test('detects broker position cost drift independently of quantity', () => {
     const result = successOf(
-      compareReconciliation(snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000' }] })),
+      compareReconciliation(
+        snapshot({ positions: [{ ...position, averageEntryPriceMicros: '91000000', costBasisMicros: '91000000' }] }),
+      ),
     )
 
     expect(result.discrepancies).toHaveLength(1)
@@ -309,8 +321,10 @@ describe('execution reconciliation', () => {
     const result = successOf(
       compareReconciliation(
         snapshot({
-          positions: [{ ...position, quantityAtoms: '500000000', averageEntryPriceMicros: '1' }],
-          projectedPositions: [{ symbol: position.symbol, quantityAtoms: '500000000', costBasisMicros: '0' }],
+          positions: [{ ...position, quantityAtoms: '500000000', averageEntryPriceMicros: '1', costBasisMicros: '1' }],
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '500000000', costBasisMicros: '0' },
+          ],
         }),
       ),
     )
@@ -328,6 +342,103 @@ describe('execution reconciliation', () => {
     ])
   })
 
+  test('reproduces rounded-average broker position reporting from exact NVDA fill cost', () => {
+    const positions: Position[] = [
+      {
+        ...position,
+        schemaVersion: 'bayn.position.v2',
+        quantityAtoms: '91000000000',
+        averageEntryPriceMicros: '217158242',
+        costBasisMicros: '19761400022',
+      },
+    ]
+    const input = snapshot({
+      positions,
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400000' },
+      ],
+    })
+    expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+    for (const costBasisMicros of ['19761400021', '19761400023', '19761400100']) {
+      expect(
+        successOf(
+          compareReconciliation({
+            ...input,
+            positions: [
+              {
+                ...positions[0],
+                ...position,
+                schemaVersion: 'bayn.position.v2',
+                quantityAtoms: '91000000000',
+                averageEntryPriceMicros: '217158242',
+                costBasisMicros,
+              },
+            ],
+          }),
+        ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+      ).toBe(true)
+    }
+    expect(
+      successOf(
+        compareReconciliation({
+          ...input,
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400100' },
+          ],
+        }),
+      ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+    ).toBe(true)
+  })
+
+  test('property: rounded-average position reporting rejects unrelated basis and quantity changes', () => {
+    checkProperty(
+      'position-cost-reporting',
+      fc.property(
+        fc.bigInt({ min: 1_000_000_000n, max: 1_000_000_000_000n }),
+        fc.bigInt({ min: 1_000_000n, max: 1_000_000_000_000n }),
+        (quantity, cost) => {
+          const price = (cost * 1_000_000_000n * 2n + quantity) / (quantity * 2n)
+          const reportedCost = (quantity * price + 500_000_000n) / 1_000_000_000n
+          const observed: Position = {
+            ...position,
+            quantityAtoms: String(quantity),
+            averageEntryPriceMicros: String(price),
+            costBasisMicros: String(reportedCost),
+          }
+          const input = snapshot({
+            positions: [observed],
+            projectedPositions: [
+              {
+                costBasisAnchor: null,
+                symbol: position.symbol,
+                quantityAtoms: String(quantity),
+                costBasisMicros: String(cost),
+              },
+            ],
+          })
+          expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
+          const changedCost = reportedCost + (reportedCost === cost - 1n ? 2n : 1n)
+          expect(
+            successOf(
+              compareReconciliation({
+                ...input,
+                positions: [{ ...observed, costBasisMicros: String(changedCost) }],
+              }),
+            ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
+          ).toBe(true)
+          expect(
+            successOf(
+              compareReconciliation({
+                ...input,
+                positions: [{ ...observed, quantityAtoms: String(quantity + 1n) }],
+              }),
+            ).discrepancies.some(({ identity }) => identity === 'NVDA:quantity'),
+          ).toBe(true)
+        },
+      ),
+    )
+  })
+
   test('uses broker cost basis without reconstructing it from rounded average entry price', () => {
     const input = snapshot({
       positions: [
@@ -339,7 +450,9 @@ describe('execution reconciliation', () => {
           costBasisMicros: '301000000',
         },
       ],
-      projectedPositions: [{ symbol: position.symbol, quantityAtoms: '3000000000', costBasisMicros: '301000000' }],
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '3000000000', costBasisMicros: '301000000' },
+      ],
     })
     expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
     const drift = successOf(
@@ -374,9 +487,10 @@ describe('execution reconciliation', () => {
               ...position,
               quantityAtoms,
               averageEntryPriceMicros: '340282366920938463463374607431768211455',
+              costBasisMicros: '57896044618658097711785492504343953926124568782438874324533730092809',
             },
           ],
-          projectedPositions: [{ symbol: position.symbol, quantityAtoms, costBasisMicros: '0' }],
+          projectedPositions: [{ costBasisAnchor: null, symbol: position.symbol, quantityAtoms, costBasisMicros: '0' }],
         }),
       ),
     )

@@ -1,8 +1,8 @@
 import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../schemas'
-import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca'
+import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
-import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca'
+import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { AccountStatus, Authority, KillState, ReconciliationStatus } from './contracts'
 import type { CachedBrokerState } from './broker-state-cache'
 
@@ -64,14 +64,13 @@ export const cachedBrokerStateFixture = (
           symbol: position.symbol,
           quantityAtoms: position.quantityAtoms,
           averageEntryPriceMicros: position.averageEntryPriceMicros,
+          costBasisMicros: position.costBasisMicros,
           marketPriceMicros: position.marketPriceMicros,
           marketValueMicros: position.marketValueMicros,
           unrealizedPnlMicros: position.unrealizedPnlMicros,
           observedAt: position.observedAt,
         }
-        return position.costBasisMicros === undefined
-          ? { ...material, schemaVersion: 'bayn.paper-position.v1' as const }
-          : { ...material, schemaVersion: 'bayn.position.v2' as const, costBasisMicros: position.costBasisMicros }
+        return { ...material, schemaVersion: 'bayn.position.v2' as const }
       }),
       positionsObservedAt: account.observedAt,
       orders: [],

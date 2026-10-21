@@ -1,4 +1,6 @@
 import { pipe, Result, Schema } from 'effect'
+import { instrumentMarket, MarketKind } from '../instruments'
+import { quantityScale } from '../quantity'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { ResearchCapitalGrantSchema } from './mandate'
@@ -13,7 +15,7 @@ import {
   UtcOrderTimestampSchema as UtcOrderTimestamp,
   strictParseOptions as StrictParseOptions,
 } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import {
   legacyAccountingReceiptSchemaVersion,
   legacyAccountSnapshotSchemaVersion,
@@ -21,20 +23,20 @@ import {
   legacyAuthorityGenerationV3SchemaVersion,
   legacyAuthorityProofBindingSchemaVersion,
   legacyAuthorityStateSchemaVersion,
-  legacyBrokerErrorSchemaVersion,
   legacyBrokerEventSchemaVersion,
-  legacyExecutionIntentSchemaVersion,
   legacyFillSchemaVersion,
   legacyOrderV2SchemaVersion,
-  legacyPositionSchemaVersion,
-  legacyRateLimitSchemaVersion,
   legacyReconciliationSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
   legacyResearchGrantProofSchemaVersion,
   legacyRiskDecisionSchemaVersion,
   legacyRiskInputSchemaVersion,
   legacyValuationSchemaVersion,
 } from './legacy-wire'
+
+export const executionIntentSchemaVersion = 'bayn.execution-intent.v5' as const
+export const referenceIntentSchemaVersion = 'bayn.reference-intent.v4' as const
+export const intentPlanSchemaVersion = 'bayn.intent-plan.v3' as const
+export const intentIdentitySchemaVersion = 'bayn.execution-intent-identity.v5' as const
 
 const U32_MAX = 4_294_967_295
 const U64_MAX = 18_446_744_073_709_551_615n
@@ -101,7 +103,23 @@ export enum OrderSide {
 export enum OrderType {
   Market = 'MARKET',
   Limit = 'LIMIT',
+  StopLimit = 'STOP_LIMIT',
 }
+
+const ProtectivePrices = {
+  stopPriceMicros: PositiveMicros,
+  stopLimitPriceMicros: PositiveMicros,
+  profitLimitPriceMicros: PositiveMicros,
+}
+
+export const NativeProtectionSchema = Schema.TaggedUnion({
+  Bracket: ProtectivePrices,
+  Oco: { ...ProtectivePrices, entryDecisionHash: Sha256 },
+  StopLimit: { stopPriceMicros: PositiveMicros, entryDecisionHash: Sha256 },
+})
+export type NativeProtection = typeof NativeProtectionSchema.Type
+export const submittedBrokerOrderCount = (protection: NativeProtection | undefined): number =>
+  protection?._tag === 'Bracket' ? 3 : protection?._tag === 'Oco' ? 2 : 1
 
 export enum TimeInForce {
   Day = 'DAY',
@@ -189,31 +207,25 @@ const AccountSnapshotBase = Schema.Struct({
 export const AccountSnapshotSchema = AccountSnapshotBase
 export type AccountSnapshot = typeof AccountSnapshotSchema.Type
 
-const LegacyPositionSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyPositionSchemaVersion),
+export const PositionSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.position.v2'),
   accountId: NonEmptyString,
   symbol: SymbolName,
   quantityAtoms: SignedMicros,
   averageEntryPriceMicros: UnsignedMicros,
+  costBasisMicros: SignedMicros,
   marketPriceMicros: UnsignedMicros,
   marketValueMicros: SignedMicros,
   unrealizedPnlMicros: SignedMicros,
   observedAt: UtcInstant,
 })
-export const PositionSchema = Schema.Union([
-  LegacyPositionSchema,
-  Schema.Struct({
-    ...LegacyPositionSchema.fields,
-    schemaVersion: Schema.Literal('bayn.position.v2'),
-    costBasisMicros: SignedMicros,
-  }),
-])
 export type Position = typeof PositionSchema.Type
 
 const OrderBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyOrderV2SchemaVersion),
   accountId: NonEmptyString,
   brokerOrderId: NonEmptyString,
+  parentBrokerOrderId: Schema.optionalKey(NonEmptyString),
   clientOrderId: NonEmptyString,
   intentId: Schema.optionalKey(Sha256),
   symbol: SymbolName,
@@ -224,6 +236,7 @@ const OrderBase = Schema.Struct({
   notionalMicros: Schema.optionalKey(PositiveMicros),
   filledQuantityAtoms: UnsignedMicros,
   limitPriceMicros: Schema.optionalKey(PositiveMicros),
+  stopPriceMicros: Schema.optionalKey(PositiveMicros),
   status: Schema.Enum(OrderStatus),
   observedAt: UtcInstant,
 })
@@ -271,9 +284,14 @@ export const OrderSchema = OrderBase.check(
     if ((order.status === OrderStatus.New || order.status === OrderStatus.Pending) && filledQuantity !== 0n) {
       issues.push({ path: ['filledQuantityAtoms'], issue: 'must be zero before any fill' })
     }
-    if (order.orderType === OrderType.Limit && order.limitPriceMicros === undefined) {
+    if (
+      (order.orderType === OrderType.Limit || order.orderType === OrderType.StopLimit) &&
+      order.limitPriceMicros === undefined
+    ) {
       issues.push({ path: ['limitPriceMicros'], issue: 'is required for a limit order' })
     }
+    if ((order.orderType === OrderType.StopLimit) !== (order.stopPriceMicros !== undefined))
+      issues.push({ path: ['stopPriceMicros'], issue: 'is required exactly for a stop-limit order' })
     if (order.orderType === OrderType.Market && order.limitPriceMicros !== undefined) {
       issues.push({ path: ['limitPriceMicros'], issue: 'must be absent for a market order' })
     }
@@ -301,34 +319,6 @@ export const FillSchema = Schema.Struct({
 })
 export type Fill = typeof FillSchema.Type
 
-export const BrokerErrorSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyBrokerErrorSchemaVersion),
-  requestId: NonEmptyString,
-  code: NonEmptyString,
-  message: NonEmptyString,
-  retryable: Schema.Boolean,
-  mutationOutcome: Schema.Enum(MutationOutcome),
-  observedAt: UtcInstant,
-})
-export type BrokerError = typeof BrokerErrorSchema.Type
-
-const RateLimitBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyRateLimitSchemaVersion),
-  limit: Sequence,
-  remaining: Sequence,
-  resetsAt: UtcInstant,
-  observedAt: UtcInstant,
-})
-
-export const RateLimitSchema = RateLimitBase.check(
-  Schema.makeFilter((rateLimit: typeof RateLimitBase.Type) =>
-    BigInt(rateLimit.remaining) <= BigInt(rateLimit.limit)
-      ? []
-      : [{ path: ['remaining'], issue: 'must not exceed limit' }],
-  ),
-)
-export type RateLimit = typeof RateLimitSchema.Type
-
 const SourceFields = {
   schemaVersion: Schema.Literal(legacyBrokerEventSchemaVersion),
   eventId: Sha256,
@@ -346,8 +336,6 @@ const BrokerEventBase = Schema.TaggedUnion({
   Position: { ...SourceFields, position: PositionSchema },
   Order: { ...SourceFields, order: OrderSchema },
   Fill: { ...SourceFields, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
-  Error: { ...SourceFields, error: BrokerErrorSchema },
-  RateLimit: { ...SourceFields, rateLimit: RateLimitSchema },
 })
 
 const brokerEventAccountId = (event: typeof BrokerEventBase.Type): string => {
@@ -360,9 +348,6 @@ const brokerEventAccountId = (event: typeof BrokerEventBase.Type): string => {
       return event.order.accountId
     case 'Fill':
       return event.fill.accountId
-    case 'Error':
-    case 'RateLimit':
-      return event.accountId
   }
 }
 
@@ -376,10 +361,6 @@ const brokerEventPayloadTime = (event: typeof BrokerEventBase.Type): string => {
       return event.order.observedAt
     case 'Fill':
       return event.fill.occurredAt
-    case 'Error':
-      return event.error.observedAt
-    case 'RateLimit':
-      return event.rateLimit.observedAt
   }
 }
 
@@ -400,7 +381,6 @@ export const BrokerEventSchema = BrokerEventBase.check(
     return issues
   }),
 )
-export type BrokerEvent = typeof BrokerEventSchema.Type
 
 const intentFields = {
   intentId: Sha256,
@@ -413,10 +393,12 @@ const intentFields = {
   clientOrderId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Enum(OrderType),
-  timeInForce: Schema.Enum(TimeInForce),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled]),
   quantityAtoms: PositiveMicros,
   notionalLimitMicros: PositiveMicros,
+  limitPriceMicros: PositiveMicros,
+  protection: Schema.optionalKey(NativeProtectionSchema),
   /** Hash of the prior close plan that authorizes a distinct residual close generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),
   state: Schema.Enum(IntentState),
@@ -425,12 +407,12 @@ const intentFields = {
 } as const
 
 const ReferenceIntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyReferenceIntentSchemaVersion),
+  schemaVersion: Schema.Literal(referenceIntentSchemaVersion),
   ...intentFields,
 })
 
 const IntentBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyExecutionIntentSchemaVersion),
+  schemaVersion: Schema.Literal(executionIntentSchemaVersion),
   authorityGenerationHash: Sha256,
   ...intentFields,
 })
@@ -439,6 +421,41 @@ type IntentContract = typeof ReferenceIntentBase.Type | typeof IntentBase.Type
 
 const intentContractIssues = (intent: IntentContract): readonly Schema.FilterIssue[] => {
   const issues: Schema.FilterIssue[] = []
+  const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
+  const protection = intent.protection
+  const stop = protection?._tag === 'StopLimit'
+  const group = protection?._tag === 'Bracket' || protection?._tag === 'Oco'
+  if (
+    stop !== (intent.orderType === OrderType.StopLimit) ||
+    (protection?._tag === 'Bracket' && (crypto || intent.side !== OrderSide.Buy)) ||
+    (protection?._tag === 'Oco' && (crypto || intent.side !== OrderSide.Sell)) ||
+    (stop && intent.side !== OrderSide.Sell)
+  )
+    issues.push({ path: ['protection'], issue: 'native protection must match its market, side and order type' })
+  if (stop && BigInt(intent.limitPriceMicros) > BigInt(protection.stopPriceMicros))
+    issues.push({ path: ['limitPriceMicros'], issue: 'a sell stop-limit floor cannot exceed its trigger' })
+  if (
+    group &&
+    (BigInt(protection.stopLimitPriceMicros) > BigInt(protection.stopPriceMicros) ||
+      BigInt(protection.stopPriceMicros) >= BigInt(protection.profitLimitPriceMicros) ||
+      (protection._tag === 'Oco' && intent.limitPriceMicros !== protection.profitLimitPriceMicros))
+  )
+    issues.push({ path: ['protection'], issue: 'linked sell exits must preserve their ordered strategy prices' })
+  const duration = stop
+    ? crypto
+      ? TimeInForce.GoodUntilCanceled
+      : TimeInForce.Day
+    : crypto
+      ? TimeInForce.ImmediateOrCancel
+      : TimeInForce.Day
+  if (intent.timeInForce !== duration)
+    issues.push({ path: ['timeInForce'], issue: 'must use the native instrument LIMIT duration' })
+  const notional =
+    (BigInt(intent.quantityAtoms) * BigInt(intent.limitPriceMicros) +
+      (intent.side === OrderSide.Buy ? quantityScale - 1n : 0n)) /
+    quantityScale
+  if (notional !== BigInt(intent.notionalLimitMicros))
+    issues.push({ path: ['notionalLimitMicros'], issue: 'must match the explicit LIMIT price and quantity' })
   const terminal = intent.state === IntentState.Terminal
   if (terminal !== (intent.terminalOutcome !== undefined)) {
     issues.push({
@@ -462,54 +479,6 @@ export type ReferenceIntent = typeof ReferenceIntentSchema.Type
 export const IntentSchema = IntentBase.check(Schema.makeFilter(intentContractIssues))
 export type Intent = typeof IntentSchema.Type
 
-const allowedTransitions: Readonly<Record<IntentState, readonly IntentState[]>> = {
-  [IntentState.Planned]: [IntentState.Approved, IntentState.Terminal],
-  [IntentState.Approved]: [IntentState.IoStarted, IntentState.Terminal],
-  [IntentState.IoStarted]: [IntentState.Acknowledged, IntentState.Unknown, IntentState.Terminal],
-  [IntentState.Acknowledged]: [IntentState.Terminal],
-  [IntentState.Unknown]: [IntentState.Recovered],
-  [IntentState.Recovered]: [IntentState.Acknowledged, IntentState.Terminal],
-  [IntentState.Terminal]: [],
-}
-
-const allowedTerminalOutcomes: Readonly<Partial<Record<IntentState, readonly TerminalOutcome[]>>> = {
-  [IntentState.Planned]: [TerminalOutcome.Blocked],
-  [IntentState.Approved]: [TerminalOutcome.Blocked, TerminalOutcome.Canceled],
-  [IntentState.IoStarted]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-  [IntentState.Acknowledged]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-  [IntentState.Recovered]: [
-    TerminalOutcome.Filled,
-    TerminalOutcome.Canceled,
-    TerminalOutcome.Expired,
-    TerminalOutcome.Rejected,
-  ],
-}
-
-export interface IntentTransitionInput {
-  readonly from: IntentState
-  readonly to: IntentState
-  readonly terminalOutcome?: TerminalOutcome
-}
-
-export const isIntentTransitionAllowed = (input: IntentTransitionInput): boolean => {
-  if (!allowedTransitions[input.from].includes(input.to)) return false
-  if (input.to !== IntentState.Terminal) return input.terminalOutcome === undefined
-  return (
-    input.terminalOutcome !== undefined &&
-    (allowedTerminalOutcomes[input.from]?.includes(input.terminalOutcome) ?? false)
-  )
-}
-
 const RiskInputBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskInputSchemaVersion),
   inputHash: Sha256,
@@ -528,7 +497,6 @@ export const RiskInputSchema = RiskInputBase.check(
     input.freshUntil > input.evaluatedAt ? [] : [{ path: ['freshUntil'], issue: 'must follow evaluatedAt' }],
   ),
 )
-export type RiskInput = typeof RiskInputSchema.Type
 
 const RiskDecisionBase = Schema.Struct({
   schemaVersion: Schema.Literal(legacyRiskDecisionSchemaVersion),
@@ -656,7 +624,6 @@ export const CapitalGrantProofBindingSchema = Schema.Struct({
   riskPolicyHash: Sha256,
   proofPlanHash: Sha256,
 })
-export type CapitalGrantProofBinding = typeof CapitalGrantProofBindingSchema.Type
 
 export const ResearchCapitalGrantProofBindingSchema = Schema.Struct({
   schemaVersion: Schema.Literal(legacyResearchGrantProofSchemaVersion),
@@ -927,80 +894,30 @@ export const AuthorityStateSchema = AuthorityStateBase.check(
 )
 export type AuthorityState = typeof AuthorityStateSchema.Type
 
-const decodeBrokerEventDataFirst = Schema.decodeUnknownEffect(BrokerEventSchema, StrictParseOptions)
+export const decodeBrokerEvent = Schema.decodeUnknownEffect(BrokerEventSchema, StrictParseOptions)
 
-export const decodeBrokerEvent = Pipeable.dual(1, (input: unknown) => decodeBrokerEventDataFirst(input))
-const decodeAccountSnapshotDataFirst = Schema.decodeUnknownEffect(AccountSnapshotSchema, StrictParseOptions)
+export const decodePosition = Schema.decodeUnknownEffect(PositionSchema, StrictParseOptions)
 
-export const decodeAccountSnapshot = Pipeable.dual(1, (input: unknown) => decodeAccountSnapshotDataFirst(input))
-const decodePositionDataFirst = Schema.decodeUnknownEffect(PositionSchema, StrictParseOptions)
+export const decodeOrder = Schema.decodeUnknownEffect(OrderSchema, StrictParseOptions)
 
-export const decodePosition = Pipeable.dual(1, (input: unknown) => decodePositionDataFirst(input))
-const decodeOrderDataFirst = Schema.decodeUnknownEffect(OrderSchema, StrictParseOptions)
+export const decodeFill = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
 
-export const decodeOrder = Pipeable.dual(1, (input: unknown) => decodeOrderDataFirst(input))
-const decodeFillDataFirst = Schema.decodeUnknownEffect(FillSchema, StrictParseOptions)
+export const decodeIntent = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
 
-export const decodeFill = Pipeable.dual(1, (input: unknown) => decodeFillDataFirst(input))
-const decodeBrokerErrorDataFirst = Schema.decodeUnknownEffect(BrokerErrorSchema, StrictParseOptions)
+export const decodeAccountingReceipt = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
 
-export const decodeBrokerError = Pipeable.dual(1, (input: unknown) => decodeBrokerErrorDataFirst(input))
-const decodeRateLimitDataFirst = Schema.decodeUnknownEffect(RateLimitSchema, StrictParseOptions)
+export const decodeValuation = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
 
-export const decodeRateLimit = Pipeable.dual(1, (input: unknown) => decodeRateLimitDataFirst(input))
-const decodeReferenceIntentDataFirst = Schema.decodeUnknownEffect(ReferenceIntentSchema, StrictParseOptions)
+export const decodeReconciliation = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
 
-export const decodeReferenceIntent = Pipeable.dual(1, (input: unknown) => decodeReferenceIntentDataFirst(input))
-const decodeIntentDataFirst = Schema.decodeUnknownEffect(IntentSchema, StrictParseOptions)
-
-export const decodeIntent = Pipeable.dual(1, (input: unknown) => decodeIntentDataFirst(input))
-const decodeRiskInputDataFirst = Schema.decodeUnknownEffect(RiskInputSchema, StrictParseOptions)
-
-export const decodeRiskInput = Pipeable.dual(1, (input: unknown) => decodeRiskInputDataFirst(input))
-const decodeRiskDecisionDataFirst = Schema.decodeUnknownEffect(RiskDecisionSchema, StrictParseOptions)
-
-export const decodeRiskDecision = Pipeable.dual(1, (input: unknown) => decodeRiskDecisionDataFirst(input))
-const decodeAccountingReceiptDataFirst = Schema.decodeUnknownEffect(AccountingReceiptSchema, StrictParseOptions)
-
-export const decodeAccountingReceipt = Pipeable.dual(1, (input: unknown) => decodeAccountingReceiptDataFirst(input))
-const decodeValuationDataFirst = Schema.decodeUnknownEffect(ValuationSchema, StrictParseOptions)
-
-export const decodeValuation = Pipeable.dual(1, (input: unknown) => decodeValuationDataFirst(input))
-const decodeReconciliationDataFirst = Schema.decodeUnknownEffect(ReconciliationSchema, StrictParseOptions)
-
-export const decodeReconciliation = Pipeable.dual(1, (input: unknown) => decodeReconciliationDataFirst(input))
-const decodeCapitalGrantProofBindingDataFirst = Schema.decodeUnknownEffect(
-  CapitalGrantProofBindingSchema,
-  StrictParseOptions,
-)
-
-export const decodeCapitalGrantProofBinding = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalGrantProofBindingDataFirst(input),
-)
-const decodeResearchCapitalGrantProofBindingDataFirst = Schema.decodeUnknownEffect(
+export const decodeResearchCapitalGrantProofBinding = Schema.decodeUnknownEffect(
   ResearchCapitalGrantProofBindingSchema,
   StrictParseOptions,
 )
 
-export const decodeResearchCapitalGrantProofBinding = Pipeable.dual(1, (input: unknown) =>
-  decodeResearchCapitalGrantProofBindingDataFirst(input),
-)
-const decodeCapitalGrantGenerationDataFirst = Schema.decodeUnknownEffect(
-  CapitalGrantGenerationSchema,
-  StrictParseOptions,
-)
-
-export const decodeCapitalGrantGeneration = Pipeable.dual(1, (input: unknown) =>
-  decodeCapitalGrantGenerationDataFirst(input),
-)
-const decodeResearchCapitalGrantGenerationDataFirst = Schema.decodeUnknownEffect(
+export const decodeResearchCapitalGrantGeneration = Schema.decodeUnknownEffect(
   ResearchCapitalGrantGenerationSchema,
   StrictParseOptions,
 )
 
-export const decodeResearchCapitalGrantGeneration = Pipeable.dual(1, (input: unknown) =>
-  decodeResearchCapitalGrantGenerationDataFirst(input),
-)
-const decodeAuthorityStateDataFirst = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)
-
-export const decodeAuthorityState = Pipeable.dual(1, (input: unknown) => decodeAuthorityStateDataFirst(input))
+export const decodeAuthorityState = Schema.decodeUnknownEffect(AuthorityStateSchema, StrictParseOptions)

@@ -13,8 +13,10 @@ use tokio::{fs, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
-    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient,
-    probe_output::ProbeOutput, runner, supervisor,
+    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState,
+    client::SlotClient,
+    probe_output::{EDITOR_READY, ProbeOutput, editor_probe_command},
+    runner, supervisor,
 };
 use crate::{
     guest::rpc::{RpcClient, proto},
@@ -243,11 +245,15 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
-    rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
-        .await?;
+    rpc.write_file(
+        "/workspace/continuity.txt",
+        b"private-home-continuity",
+        "missing",
+    )
+    .await?;
     stage("files");
     let terminal = rpc
-        .create_terminal("fixture-terminal-continuity", "/", 80, 24)
+        .create_terminal("fixture-terminal-continuity", "/workspace", 80, 24)
         .await?
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
@@ -262,7 +268,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     let (_, file, _) = tokio::try_join!(
         rpc.verify_identity("33333333-3333-4333-8333-333333333333"),
-        rpc.read_file("/continuity.txt"),
+        rpc.read_file("/workspace/continuity.txt"),
         rpc.codex_call("model/list", json!({})),
     )?;
     ensure!(
@@ -290,7 +296,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         );
     }
     rpc.write_file(
-        "/kvm-admin.sh",
+        "/workspace/kvm-admin.sh",
         &fs::read("/fixture/test-guest-admin.sh").await?,
         "missing",
     )
@@ -339,6 +345,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO before:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory before: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
         let started = Instant::now();
         let stage = |name: &str| {
             eprintln!(
@@ -353,7 +369,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         rpc.verify_identity("33333333-3333-4333-8333-333333333333")
             .await?;
         ensure!(
-            rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
+            rpc.read_file("/workspace/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
         );
         stage("files");
@@ -371,6 +387,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             "real KVM resume {} CPU after:\n{}",
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+        );
+        eprintln!(
+            "real KVM resume {} IO after:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory after: {}",
+            index + 1,
+            cgroup_memory().await?
         );
     }
     let rpc = guest(&identity, &claim, &token, database.clone())?;
@@ -397,16 +423,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
     client.lifecycle("stop", &claim, fence).await?;
-    timings.sort_by(f64::total_cmp);
-    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
-    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
+    let mut sorted_timings = timings.clone();
+    sorted_timings.sort_by(f64::total_cmp);
+    let p95 = (samples >= 50).then(|| sorted_timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(sorted_timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
         "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
         "cpuMax":cpu_max.trim(),
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
-        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
+        "resumeP50Ms":sorted_timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":sorted_timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
         "browserStarted":true,"browserComputerToolInstalled":true,
@@ -568,7 +595,10 @@ struct TerminalProbe {
 
 impl TerminalProbe {
     async fn open(rpc: &RpcClient, name: &str) -> anyhow::Result<Self> {
-        let terminal = rpc.create_terminal(name, "/", 100, 30).await?.session;
+        let terminal = rpc
+            .create_terminal(name, "/workspace", 100, 30)
+            .await?
+            .session;
         let (sender, receiver) = mpsc::channel(4);
         sender
             .send(proto::TerminalInput {
@@ -643,7 +673,10 @@ impl TerminalProbe {
         if let Some(proto::terminal_output::Event::Output(data)) =
             message.as_ref().and_then(|message| message.event.as_ref())
         {
-            self.output.append(&data.data)?;
+            let replies = self.output.append(&data.data)?;
+            if !replies.is_empty() {
+                self.input(&replies).await?;
+            }
         }
         Ok(message)
     }
@@ -684,8 +717,8 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.marker(b"\x1eTENGRI_OUTPUT_READY\x1f").await?;
     let first_output_ms = started.elapsed().as_secs_f64() * 1000.0;
     let started = Instant::now();
-    terminal.input(b"nvim /tmp/tengri-kvm-editor.txt +\"lua vim.schedule(function() vim.cmd('redraw'); io.stderr:write(string.char(30)..'TENGRI_EDITOR_READY'..string.char(31)); io.stderr:flush() end)\"; printf '\\036TENGRI_EDITOR_EXIT\\037'\n").await?;
-    terminal.marker(b"\x1eTENGRI_EDITOR_READY\x1f").await?;
+    terminal.input(&editor_probe_command()).await?;
+    terminal.marker(EDITOR_READY).await?;
     let editor_ms = started.elapsed().as_secs_f64() * 1000.0;
     terminal.input(b"\x1b:qall!\r").await?;
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
@@ -851,7 +884,18 @@ async fn cgroup_memory() -> anyhow::Result<serde_json::Value> {
     for line in status.lines() {
         let mut fields = line.split_whitespace();
         let key = fields.next().context("empty cgroup counter")?;
-        if ["anon", "file", "file_dirty", "file_writeback"].contains(&key) {
+        if [
+            "anon",
+            "file",
+            "file_dirty",
+            "file_writeback",
+            "pgfault",
+            "pgmajfault",
+            "pgscan",
+            "pgsteal",
+        ]
+        .contains(&key)
+        {
             values.insert(
                 key.into(),
                 json!(

@@ -1,3 +1,4 @@
+import { strictParseOptions } from '../schemas'
 import { describe, expect, test } from 'bun:test'
 
 import { Effect, Exit, Result, Schema } from 'effect'
@@ -17,23 +18,20 @@ import {
   TerminalOutcome,
   TimeInForce,
   decodeAccountingReceipt,
-  decodeAccountSnapshot,
   decodeAuthorityState,
-  decodeBrokerError,
   decodeBrokerEvent,
   decodeFill,
   decodeIntent,
   decodeOrder,
   decodePosition,
-  decodeCapitalGrantProofBinding,
-  decodeCapitalGrantGeneration,
-  decodeRateLimit,
   decodeReconciliation,
-  decodeRiskDecision,
-  decodeRiskInput,
   decodeValuation,
-  isIntentTransitionAllowed,
   makeCapitalGrantGenerationResult,
+  AccountSnapshotSchema,
+  CapitalGrantProofBindingSchema,
+  CapitalGrantGenerationSchema,
+  RiskDecisionSchema,
+  RiskInputSchema,
 } from './contracts'
 
 const instant = '2026-07-22T06:00:00.000Z'
@@ -62,7 +60,8 @@ const account = {
 }
 
 const position = {
-  schemaVersion: 'bayn.paper-position.v1' as const,
+  schemaVersion: 'bayn.position.v2' as const,
+  costBasisMicros: '100000000',
   accountId: account.accountId,
   symbol: 'NVDA',
   quantityAtoms: '1000000000',
@@ -135,7 +134,7 @@ const source = {
 }
 
 const intent = {
-  schemaVersion: 'bayn.paper-intent.v3' as const,
+  schemaVersion: 'bayn.execution-intent.v5' as const,
   intentId: hash('4'),
   authorityGenerationHash: hash('8'),
   strategyName: 'risk-balanced-trend',
@@ -146,26 +145,40 @@ const intent = {
   clientOrderId: order.clientOrderId,
   symbol: order.symbol,
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1000000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '200000000',
   state: IntentState.Planned,
   createdAt: instant,
-}
+} as const
 
 describe('execution contracts', () => {
+  test.each([
+    { _tag: 'Error', ...source, error: brokerError },
+    { _tag: 'RateLimit', ...source, rateLimit },
+  ])('rejects retired broker event $_tag', async (event) => {
+    await expectFailure(decodeBrokerEvent(event))
+  })
+  test('requires explicit position cost basis and rejects the retired position contract', async () => {
+    expect(
+      Exit.isFailure(
+        await Effect.runPromiseExit(decodePosition({ ...position, schemaVersion: 'bayn.paper-position.v1' })),
+      ),
+    ).toBe(true)
+    const { costBasisMicros: _cost, ...withoutCost } = position
+    expect(Exit.isFailure(await Effect.runPromiseExit(decodePosition(withoutCost)))).toBe(true)
+  })
   test('strictly decodes every broker payload and tagged event', async () => {
     const contracts: ReadonlyArray<{
       decode: (value: unknown) => Effect.Effect<unknown, Schema.SchemaError>
       value: Record<string, unknown>
     }> = [
-      { decode: decodeAccountSnapshot, value: account },
+      { decode: Schema.decodeUnknownEffect(AccountSnapshotSchema, strictParseOptions), value: account },
       { decode: decodePosition, value: position },
       { decode: decodeOrder, value: order },
       { decode: decodeFill, value: fill },
-      { decode: decodeBrokerError, value: brokerError },
-      { decode: decodeRateLimit, value: rateLimit },
     ]
 
     for (const contract of contracts) {
@@ -178,18 +191,15 @@ describe('execution contracts', () => {
       { _tag: 'Position' as const, ...source, position },
       { _tag: 'Order' as const, ...source, order },
       { _tag: 'Fill' as const, ...source, sourceTimestamp: '2026-07-22T06:00:00.000000000Z', fill },
-      { _tag: 'Error' as const, ...source, error: brokerError },
-      { _tag: 'RateLimit' as const, ...source, rateLimit },
     ]
     for (const event of events) expect(await Effect.runPromise(decodeBrokerEvent(event))).toEqual(event)
 
     await expectFailure(decodeBrokerEvent({ ...events[0], observedAt: '2026-07-22T05:59:00.000Z' }))
     await expectFailure(decodeBrokerEvent({ ...events[1], position: { ...position, accountId: 'other-account' } }))
-    await expectFailure(decodeBrokerEvent({ ...events[4], error: { ...brokerError, observedAt: instant } }))
     await expectFailure(decodeBrokerEvent({ ...events[2], futureField: true }))
   })
 
-  test('enforces order and rate-limit invariants', async () => {
+  test('enforces order invariants', async () => {
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '1000001000' }))
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: '0' }))
     await expectFailure(decodeOrder({ ...order, filledQuantityAtoms: order.quantityAtoms }))
@@ -231,20 +241,38 @@ describe('execution contracts', () => {
         decodeOrder({ ...notionalOrder, status: OrderStatus.Filled, filledQuantityAtoms: '1999999000' }),
       ),
     ).toMatchObject({ status: OrderStatus.Filled })
-    await expectFailure(decodeRateLimit({ ...rateLimit, remaining: '201' }))
   })
 
   test('accepts exact integer boundaries and rejects noncanonical or overflowing values', async () => {
     expect(
       await Effect.runPromise(
-        decodeAccountSnapshot({ ...account, cashMicros: i128Min, equityMicros: i128Max, buyingPowerMicros: i128Max }),
+        Schema.decodeUnknownEffect(
+          AccountSnapshotSchema,
+          strictParseOptions,
+        )({ ...account, cashMicros: i128Min, equityMicros: i128Max, buyingPowerMicros: i128Max }),
       ),
     ).toMatchObject({ cashMicros: i128Min, buyingPowerMicros: i128Max })
-    await expectFailure(decodeAccountSnapshot({ ...account, cashMicros: '-170141183460469231731687303715884105729' }))
-    await expectFailure(decodeAccountSnapshot({ ...account, equityMicros: '170141183460469231731687303715884105728' }))
-    await expectFailure(decodeAccountSnapshot({ ...account, cashMicros: '-0' }))
-    await expectFailure(decodeAccountSnapshot({ ...account, cashMicros: '01' }))
-    await expectFailure(decodeAccountSnapshot({ ...account, cashMicros: 1 }))
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        AccountSnapshotSchema,
+        strictParseOptions,
+      )({ ...account, cashMicros: '-170141183460469231731687303715884105729' }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        AccountSnapshotSchema,
+        strictParseOptions,
+      )({ ...account, equityMicros: '170141183460469231731687303715884105728' }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(AccountSnapshotSchema, strictParseOptions)({ ...account, cashMicros: '-0' }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(AccountSnapshotSchema, strictParseOptions)({ ...account, cashMicros: '01' }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(AccountSnapshotSchema, strictParseOptions)({ ...account, cashMicros: 1 }),
+    )
 
     expect(
       await Effect.runPromise(decodeBrokerEvent({ _tag: 'Account', ...source, sourceSequence: u64Max, account })),
@@ -269,58 +297,6 @@ describe('execution contracts', () => {
     await expectFailure(decodeIntent({ ...terminal, terminalOutcome: undefined }))
   })
 
-  test('defines the complete closed mutation transition graph', () => {
-    const allowed = new Set([
-      'PLANNED:APPROVED',
-      'PLANNED:TERMINAL',
-      'APPROVED:IO_STARTED',
-      'APPROVED:TERMINAL',
-      'IO_STARTED:ACKNOWLEDGED',
-      'IO_STARTED:UNKNOWN',
-      'IO_STARTED:TERMINAL',
-      'ACKNOWLEDGED:TERMINAL',
-      'UNKNOWN:RECOVERED',
-      'RECOVERED:ACKNOWLEDGED',
-      'RECOVERED:TERMINAL',
-    ])
-
-    const allowedTerminal = new Set([
-      'PLANNED:BLOCKED',
-      'APPROVED:BLOCKED',
-      'APPROVED:CANCELED',
-      'IO_STARTED:FILLED',
-      'IO_STARTED:CANCELED',
-      'IO_STARTED:EXPIRED',
-      'IO_STARTED:REJECTED',
-      'ACKNOWLEDGED:FILLED',
-      'ACKNOWLEDGED:CANCELED',
-      'ACKNOWLEDGED:EXPIRED',
-      'ACKNOWLEDGED:REJECTED',
-      'RECOVERED:FILLED',
-      'RECOVERED:CANCELED',
-      'RECOVERED:EXPIRED',
-      'RECOVERED:REJECTED',
-    ])
-
-    for (const from of Object.values(IntentState)) {
-      for (const to of Object.values(IntentState)) {
-        if (to === IntentState.Terminal) {
-          for (const outcome of Object.values(TerminalOutcome)) {
-            expect(isIntentTransitionAllowed({ from, to, terminalOutcome: outcome }), `${from}:${outcome}`).toBe(
-              allowedTerminal.has(`${from}:${outcome}`),
-            )
-          }
-          continue
-        }
-        expect(isIntentTransitionAllowed({ from, to }), `${from}:${to}`).toBe(allowed.has(`${from}:${to}`))
-        expect(
-          isIntentTransitionAllowed({ from, to, terminalOutcome: TerminalOutcome.Blocked }),
-          `${from}:${to}:unexpected outcome`,
-        ).toBe(false)
-      }
-    }
-  })
-
   test('requires fresh risk inputs and immutable decisions with coherent reasons', async () => {
     const input = {
       schemaVersion: 'bayn.paper-risk-input.v1' as const,
@@ -334,9 +310,15 @@ describe('execution contracts', () => {
       evaluatedAt: instant,
       freshUntil: later,
     }
-    expect(await Effect.runPromise(decodeRiskInput(input))).toEqual(input)
-    await expectFailure(decodeRiskInput({ ...input, freshUntil: instant }))
-    await expectFailure(decodeRiskInput({ ...input, futureField: true }))
+    expect(await Effect.runPromise(Schema.decodeUnknownEffect(RiskInputSchema, strictParseOptions)(input))).toEqual(
+      input,
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(RiskInputSchema, strictParseOptions)({ ...input, freshUntil: instant }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(RiskInputSchema, strictParseOptions)({ ...input, futureField: true }),
+    )
 
     const approved = {
       schemaVersion: 'bayn.paper-risk-decision.v1' as const,
@@ -349,12 +331,24 @@ describe('execution contracts', () => {
       decidedAt: instant,
       expiresAt: later,
     }
-    expect(await Effect.runPromise(decodeRiskDecision(approved))).toEqual(approved)
-    await expectFailure(decodeRiskDecision({ ...approved, reasonCodes: ['SHOULD_BE_EMPTY'] }))
-    await expectFailure(decodeRiskDecision({ ...approved, expiresAt: instant }))
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(RiskDecisionSchema, strictParseOptions)(approved)),
+    ).toEqual(approved)
+    await expectFailure(
+      Schema.decodeUnknownEffect(
+        RiskDecisionSchema,
+        strictParseOptions,
+      )({ ...approved, reasonCodes: ['SHOULD_BE_EMPTY'] }),
+    )
+    await expectFailure(
+      Schema.decodeUnknownEffect(RiskDecisionSchema, strictParseOptions)({ ...approved, expiresAt: instant }),
+    )
     expect(
       await Effect.runPromise(
-        decodeRiskDecision({ ...approved, outcome: RiskOutcome.Blocked, reasonCodes: ['KILL_ACTIVE'] }),
+        Schema.decodeUnknownEffect(
+          RiskDecisionSchema,
+          strictParseOptions,
+        )({ ...approved, outcome: RiskOutcome.Blocked, reasonCodes: ['KILL_ACTIVE'] }),
       ),
     ).toMatchObject({ outcome: RiskOutcome.Blocked })
   })
@@ -478,20 +472,30 @@ describe('execution contracts', () => {
     const generation = makeCapitalGrantGeneration(material)
     const generationResult = makeCapitalGrantGenerationResult(material)
 
-    expect(await Effect.runPromise(decodeCapitalGrantProofBinding(proof))).toEqual(proof)
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(CapitalGrantProofBindingSchema, strictParseOptions)(proof)),
+    ).toEqual(proof)
     await expectFailure(
-      decodeCapitalGrantProofBinding({
+      Schema.decodeUnknownEffect(
+        CapitalGrantProofBindingSchema,
+        strictParseOptions,
+      )({
         ...proof,
         previousGenerationHash: material.previousGenerationHash,
       }),
     )
     await expectFailure(
-      decodeCapitalGrantProofBinding({
+      Schema.decodeUnknownEffect(
+        CapitalGrantProofBindingSchema,
+        strictParseOptions,
+      )({
         ...proof,
         reconciliationId: material.reconciliationId,
       }),
     )
-    expect(await Effect.runPromise(decodeCapitalGrantGeneration(generation))).toEqual(generation)
+    expect(
+      await Effect.runPromise(Schema.decodeUnknownEffect(CapitalGrantGenerationSchema, strictParseOptions)(generation)),
+    ).toEqual(generation)
     expect(Result.isSuccess(generationResult)).toBe(true)
     if (Result.isSuccess(generationResult)) expect(generationResult.success).toEqual(generation)
     expect(generation.generationHash).toMatch(/^[0-9a-f]{64}$/)
@@ -516,13 +520,19 @@ describe('execution contracts', () => {
       }).generationHash,
     ).toBe(generation.generationHash)
     await expectFailure(
-      decodeCapitalGrantGeneration({
+      Schema.decodeUnknownEffect(
+        CapitalGrantGenerationSchema,
+        strictParseOptions,
+      )({
         ...generation,
         generationHash: hash('1'),
       }),
     )
     await expectFailure(
-      decodeCapitalGrantGeneration({
+      Schema.decodeUnknownEffect(
+        CapitalGrantGenerationSchema,
+        strictParseOptions,
+      )({
         ...generation,
         schemaVersion: 'bayn.paper-authority-generation.v1',
       }),

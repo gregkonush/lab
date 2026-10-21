@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Effect, Redacted, Result } from 'effect'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -14,9 +14,9 @@ import {
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
 import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
-import type { ReconciledBrokerState } from '../reconciliation'
+import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   configuredCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
@@ -63,7 +63,7 @@ const request = (
     }),
   )
 }
-const plan = (serialized?: string): ApplicationPlanFor<'AutonomousService'> => ({
+const plan = (serialized?: string): ApplicationPlan => ({
   _tag: 'AutonomousService',
   config: {
     ...config,
@@ -115,7 +115,7 @@ test('retains the exact compatible mandate without changing its account or risk 
 test('validates both exact sandbox mandate policies while rejecting an unknown hash', async () => {
   for (const environment of [BrokerEnvironment.Sandbox, BrokerEnvironment.Live]) {
     const policy = await Effect.runPromise(
-      loadQuoteBoundExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
+      loadExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe, environment),
     )
     const hash = Result.getOrThrow(canonicalHashV1Result(policy))
     const outcome = await Effect.runPromise(
@@ -186,7 +186,8 @@ test('activation consumes the current reconciliation rather than the startup pos
     ...flat,
     positions: [
       {
-        schemaVersion: 'bayn.paper-position.v1',
+        schemaVersion: 'bayn.position.v2',
+        costBasisMicros: '2015820000',
         accountId,
         symbol: 'AAPL',
         quantityAtoms: '6000000000',

@@ -67,13 +67,11 @@ cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+harness_wrapper="$(resolve_image_entry /bin/bayn-harness2)"
+harness_runner="$(resolve_image_entry /app/services/bayn/harness2/runner.py)"
+harness_probe_wrapper="$(resolve_image_entry /bin/bayn-harness2-probe)"
+harness_probe_command="$(resolve_image_entry /app/services/bayn/dist/harness2-command.js)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
-replay_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
-replay_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
-control_wrapper="$(resolve_image_entry /bin/bayn-control-study)"
-control_command="$(resolve_image_entry /app/services/bayn/dist/control-study-command.js)"
-study_export_wrapper="$(resolve_image_entry /bin/bayn-jev-study-export)"
-study_export_command="$(resolve_image_entry /app/services/bayn/dist/jev-study-export-command.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
 streaming_diagnostics="$(resolve_image_entry /app/services/bayn/dist/streaming-diagnostics-command.js)"
@@ -84,13 +82,11 @@ test -x "${cost_wrapper}"
 test -f "${cost_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
+test -x "${harness_wrapper}"
+test -f "${harness_runner}"
+test -x "${harness_probe_wrapper}"
+test -f "${harness_probe_command}"
 test -f "${research_server}"
-test -x "${replay_wrapper}"
-test -f "${replay_command}"
-test -x "${control_wrapper}"
-test -f "${control_command}"
-test -x "${study_export_wrapper}"
-test -f "${study_export_command}"
 test -f "${execution_server}"
 test -x "${image_node}"
 test -f "${streaming_diagnostics}"
@@ -141,77 +137,19 @@ if [[ "${research_actual}" != "${expected_research}" ]]; then
   exit 1
 fi
 
-replay_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/bayn-backtest \
-    "${image_id}" \
-    --help
-)"
-expected_replay='Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help'
-if [[ "${replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected Bayn backtest help output:\n%s\n' "${replay_actual}" >&2
+harness_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-harness2 "${image_id}" --help)"
+if [[ "${harness_actual}" != *'usage: bayn-harness2'* ]]; then
+  printf 'Unexpected Bayn Harness2 help output: %s\n' "${harness_actual}" >&2
   exit 1
 fi
 
-compiled_replay_actual="$(
-  docker run --rm \
-    --network none \
-    --read-only \
-    --cap-drop ALL \
-    --security-opt no-new-privileges:true \
-    --pids-limit 64 \
-    --memory 512m \
-    --cpus 1 \
-    --env NODE_ENV=production \
-    --entrypoint /bin/node \
-    "${image_id}" \
-    /app/services/bayn/dist/backtest-command.js \
-    --help
-)"
-if [[ "${compiled_replay_actual}" != "${expected_replay}" ]]; then
-  printf 'Unexpected compiled Bayn backtest help output:\n%s\n' "${compiled_replay_actual}" >&2
-  exit 1
-fi
-
-expected_control='Usage: bayn-control-study --input <json> --input-sha256 <sha256> --arrivals <ndjson.gz> --source-receipt <json> --source-receipt-sha256 <sha256> --output <new-json> [--mode study|preflight] [--evidence-directory <new-directory-required-for-JEV-study>] | --help'
-control_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+harness_probe_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/bayn-control-study "${image_id}" --help)"
-if [[ "${control_actual}" != "${expected_control}" ]]; then
-  printf 'Unexpected Bayn control-study help output: %s\n' "${control_actual}" >&2
-  exit 1
-fi
-compiled_control_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
-  /app/services/bayn/dist/control-study-command.js --help)"
-if [[ "${compiled_control_actual}" != "${expected_control}" ]]; then
-  printf 'Unexpected compiled Bayn control-study help output: %s\n' "${compiled_control_actual}" >&2
-  exit 1
-fi
-
-expected_study_export='Usage: bayn-jev-study-export --session YYYY-MM-DD --output <new-private-directory> | --help'
-study_export_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/bayn-jev-study-export "${image_id}" --help)"
-if [[ "${study_export_actual}" != "${expected_study_export}" ]]; then
-  printf 'Unexpected Bayn Jev study-export help output: %s\n' "${study_export_actual}" >&2
-  exit 1
-fi
-compiled_study_export_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --env NODE_ENV=production --entrypoint /bin/node "${image_id}" \
-  /app/services/bayn/dist/jev-study-export-command.js --help)"
-if [[ "${compiled_study_export_actual}" != "${expected_study_export}" ]]; then
-  printf 'Unexpected compiled Bayn Jev study-export help output: %s\n' "${compiled_study_export_actual}" >&2
+  --entrypoint /bin/bayn-harness2-probe "${image_id}" --help)"
+if [[ "${harness_probe_actual}" != 'Usage: bayn-harness2-probe '* ]]; then
+  printf 'Unexpected Bayn Jev probe help output: %s\n' "${harness_probe_actual}" >&2
   exit 1
 fi
 

@@ -27,9 +27,11 @@ class RetainedFeatureReplayTest {
     partition: Int,
     offset: Int = minute,
     close: Double = 100.0,
+    sessionStart: Instant = start,
+    marketSession: String = "regular",
   ): RetainedFeatureArrival {
-    val event = start.plusSeconds(minute * 60L)
-    val ingest = start.plusSeconds((offset + 1) * 60L + 1)
+    val event = sessionStart.plusSeconds(minute * 60L)
+    val ingest = sessionStart.plusSeconds((offset + 1) * 60L + 1)
     val envelope =
       Envelope(
         ingestTs = ingest,
@@ -50,7 +52,7 @@ class RetainedFeatureReplayTest {
             timestamp = event.toString(),
           ),
         provider = "alpaca",
-        marketSession = "regular",
+        marketSession = marketSession,
         delayClass = "real_time_exchange_only",
         version = 2,
       )
@@ -101,6 +103,31 @@ class RetainedFeatureReplayTest {
     val summary = bytes.inputStream().use { replayRetainedFeatures(it, config, clock) { arrivals.add(it) } }
     assertEquals(arrivals.size, summary.outputRecordCount)
     return CapturedReplay(arrivals, summary.skippedBars, summary.rejectedBars, summary.recordedAtMs)
+  }
+
+  @Test fun `retained replay emits the same extended-session feature definitions as live input`() {
+    for ((at, session) in listOf("2026-09-11T12:00:00Z" to "pre", "2026-09-11T20:00:00Z" to "post")) {
+      val sessionStart = Instant.parse(at)
+      val arrivals =
+        (0..1).flatMap { minute ->
+          symbols.indices.map { arrival(minute, it, sessionStart = sessionStart, marketSession = session) }
+        }
+      val source = bytes(arrivals)
+      val replay = captureReplay(source, config(source, arrivals.size), clock)
+      assertEquals(0, replay.skippedBars)
+      assertEquals(0, replay.rejectedBars)
+      assertEquals(4, replay.rolling.size)
+      assertEquals(4, replay.technical.size)
+      val latest =
+        Json.decodeFromString<RollingMarketFeature>(
+          replay.rolling
+            .last()
+            .record.value,
+        )
+      assertEquals(ROLLING_FEATURE_DEFINITION, latest.material.definitionId)
+      assertEquals(sessionStart.toEpochMilli(), latest.material.windowStartMs)
+      assertEquals(sessionStart.plusSeconds(120).toEpochMilli(), latest.material.windowEndMs)
+    }
   }
 
   @Test fun `command streams sources larger than 128 MiB without resetting feature state`() {

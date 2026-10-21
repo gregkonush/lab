@@ -447,7 +447,7 @@ discovery.relabel "bayn_pod_logs" {
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
-		regex         = "bayn|execution-controller|activate|research|postgres|vllm|provision-model"
+		regex         = "bayn|execution-controller|activate|research|postgres|squid|tigerbeetle|vllm|provision-model"
 	}
 
 	rule {

@@ -33,14 +33,13 @@ import {
   decodeTransactionRows,
   decodeUnresolvedPredecessor,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export interface AccountingInterpreter {
   readonly account: (input: FillEventInput) => Effect.Effect<AccountingReceipt, ExecutionStoreError>
   readonly verifyCompleted: (inputs: readonly FillEventInput[]) => Effect.Effect<void, ExecutionStoreError>
 }
 
-const makeAccountingInterpreterDataFirst = (
+export const makeAccountingInterpreter = (
   sql: PgClient.PgClient,
   journal: JournalService,
   config: ExecutionStoreRuntimeConfig,
@@ -377,5 +376,3 @@ const makeAccountingInterpreterDataFirst = (
 
   return { account, verifyCompleted }
 }
-
-export const makeAccountingInterpreter = Pipeable.dual(5, makeAccountingInterpreterDataFirst)
