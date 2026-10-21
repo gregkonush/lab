@@ -60,7 +60,7 @@ export class CycleStoreError extends Data.TaggedError('CycleStoreError')<{
     | 'read-authority-slot'
     | 'read-decision-document'
     | 'read-oldest-unfinished'
-  readonly failure: 'conflict' | 'decode' | 'invariant' | 'not-found' | 'query'
+  readonly failure: 'conflict' | 'decode' | 'entry-expired' | 'invariant' | 'not-found' | 'query'
   readonly persistenceFailure?: 'connectivity' | 'constraint' | 'decode' | 'invariant' | 'query' | 'transaction'
   readonly message: string
   readonly cause?: unknown
@@ -110,6 +110,7 @@ const defaultPersistenceFailure = (
 ): NonNullable<CycleStoreError['persistenceFailure']> => {
   switch (failure) {
     case 'conflict':
+    case 'entry-expired':
       return 'constraint'
     case 'decode':
       return 'decode'
@@ -140,6 +141,14 @@ export const cycleStoreError = (input: CycleStoreErrorInput): CycleStoreError =>
   })
 }
 
+const EntryAdmissionViolation = Schema.Struct({
+  code: Schema.Literal('23514'),
+  constraint: Schema.Literal('autonomous_cycles_entry_admission_deadline'),
+})
+
+export const isEntryAdmissionViolation = (cause: unknown): boolean =>
+  isSqlError(cause) && cause.reason._tag === 'ConstraintError' && Schema.is(EntryAdmissionViolation)(cause.reason.cause)
+
 export const runCycleStore = <A, E, R>(
   operation: CycleStoreError['operation'],
   effect: Effect.Effect<A, E, R>,
@@ -156,6 +165,14 @@ export const runCycleStore = <A, E, R>(
         })
       }
       if (isSqlError(cause)) {
+        if (operation === 'bind-decision' && isEntryAdmissionViolation(cause)) {
+          return cycleStoreError({
+            operation,
+            failure: 'entry-expired',
+            message: 'entry admission expired before its decision binding committed',
+            cause,
+          })
+        }
         const failure =
           cause.reason._tag === 'ConstraintError' || cause.reason._tag === 'UniqueViolation' ? 'conflict' : 'query'
         const persistenceFailure = (() => {

@@ -6,7 +6,7 @@ import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { IsoDateSchema } from '../../schemas'
-import { CycleState, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
 import { CycleStore } from '../store/model'
@@ -300,12 +300,23 @@ const recoverCycle = <R>(
                     pipe(
                       CycleStore,
                       Effect.flatMap((store) => {
-                        const binding = store.bindDecision(
-                          selection.cycle.identity.cycleId,
-                          document,
-                          bindObservedAt,
-                          evidence,
-                        )
+                        const binding = store
+                          .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence)
+                          .pipe(
+                            Effect.catchTag('CycleStoreError', (cause) =>
+                              cause.failure === 'entry-expired'
+                                ? currentUtcInstant.pipe(
+                                    Effect.flatMap((expiredAt) =>
+                                      store.block(
+                                        selection.cycle.identity.cycleId,
+                                        CycleTerminalReason.UnusedEntryExpired,
+                                        expiredAt,
+                                      ),
+                                    ),
+                                  )
+                                : Effect.fail(cause),
+                            ),
+                          )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
                         if (target?.schemaVersion !== 'bayn.jev-entry-target.v5') return binding
                         const timingAttributes = {

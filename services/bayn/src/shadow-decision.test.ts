@@ -24,9 +24,11 @@ import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { CycleStore } from './cycle/store/model'
-import { CycleStoreLive, makeCycleStore } from './cycle/store/postgres'
+import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
 import { makeCycleQueries } from './cycle/store/queries'
-import { DecisionEvidenceMismatch, cycleStoreError } from './cycle/store/model'
+import { DecisionEvidenceMismatch, cycleStoreError, runCycleStore } from './cycle/store/model'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { unusedEntryExpiresAt } from './cycle/entry-admission'
 import { makeCycleReadPrograms } from './cycle/store/read-program'
 import { cycleDecisionStoreEvidence } from './cycle/store/decision-contract'
 import { PostgresClientLive } from './db/postgres-client'
@@ -864,6 +866,108 @@ describe('intraday shadow decision', () => {
   })
 
   const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
+  postgresTest.each(['statement', 'commit'] as const)(
+    'migrated cycle guard rolls back entry lease rejection at %s and permits normal expiry',
+    async (rejectedAt) => {
+      if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
+      const url = new URL(baynTestPostgresUrl)
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
+        throw new Error('expiry regression requires a disposable local test database')
+      }
+      const original = fixture({ AAPL: 0.02 }, false, `replay-${hash('e')}`)
+      const input = {
+        ...original,
+        cycle: { ...original.cycle, createdAt: brokerObservedAt, updatedAt: brokerObservedAt },
+      }
+      const document = await Effect.runPromise(
+        buildExecutionDecision({
+          ...input,
+          authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
+          executionSession: executionSession(input),
+        }),
+      )
+      const expiredAt = new Date(unusedEntryExpiresAt(input.cycle)).toISOString()
+      const runtime = ManagedRuntime.make(
+        WriterFenceLive.pipe(
+          Layer.provideMerge(
+            PostgresClientLive({
+              operationTimeoutMs: 30_000,
+              postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      )
+      try {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const fence = yield* WriterFence
+            yield* sql`DROP SCHEMA public CASCADE`
+            yield* sql`CREATE SCHEMA public`
+            yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+            VALUES (${input.cycle.identity.accountId}, ${hash('e')}, ${document.createdAt})`
+            const cycles = yield* makeCycleStore()
+            yield* cycles.acquire(
+              value(makeCycleDraft(input.cycle.identity, input.cycle.window)),
+              input.cycle.createdAt,
+            )
+            yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
+            const expire = sql`UPDATE simulated_execution_clocks SET observed_at = ${expiredAt}
+            WHERE account_id = ${input.cycle.identity.accountId}`
+            // Exercise the migrated row and deferred guards with a complete decoded document,
+            // independently of external source and capital-activation fixture setup.
+            const binding = runCycleStore(
+              'bind-decision',
+              sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`INSERT INTO autonomous_cycle_shadow_decisions (cycle_id, schema_version, document, created_at)
+              VALUES (${input.cycle.identity.cycleId}, ${document.schemaVersion}, ${sql.json(document)}, ${document.createdAt})`
+                  if (rejectedAt === 'statement') yield* expire
+                  yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId},
+              decision_hash = ${document.contentHash}, state_version = state_version + 1,
+              updated_at = ${document.createdAt} WHERE cycle_id = ${input.cycle.identity.cycleId}`
+                  if (rejectedAt === 'commit') yield* expire
+                  return { cycle: input.cycle, changed: true }
+                }),
+              ),
+            )
+            const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence)
+            const result = yield* fenced
+              .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+              .pipe(Effect.result)
+            expect(result).toMatchObject({
+              _tag: 'Failure',
+              failure: { failure: 'entry-expired', persistenceFailure: 'constraint' },
+            })
+            expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId))).toMatchObject({
+              state: CycleState.Active,
+              bindings: {},
+            })
+            expect(Option.isNone(yield* cycles.readDecisionDocument(input.cycle.identity.cycleId))).toBe(true)
+            const [counts] = yield* sql`SELECT (SELECT count(*)::integer FROM intents) AS intents,
+            (SELECT count(*)::integer FROM mutation_events) AS mutations, (SELECT count(*)::integer FROM orders) AS orders`
+            expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
+            const blocked = yield* fenced.block(
+              input.cycle.identity.cycleId,
+              CycleTerminalReason.UnusedEntryExpired,
+              expiredAt,
+            )
+            expect(blocked.cycle).toMatchObject({
+              state: CycleState.Blocked,
+              terminalReason: CycleTerminalReason.UnusedEntryExpired,
+              bindings: {},
+            })
+          }),
+        )
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    30_000,
+  )
   postgresTest(
     'migrated cycle guard validates constructed no-trade plans against durable risk facts',
     async () => {

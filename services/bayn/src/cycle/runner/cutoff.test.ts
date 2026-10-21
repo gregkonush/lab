@@ -10,16 +10,20 @@ import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contrac
 import { TargetPlanReason, TargetPlanStatus } from '../../target-planner/index'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
-import { CycleStore, type CycleStoreShape } from '../store/model'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
 import { decideBlock, decideDecisionBinding, makeInitialCycle } from '../store/decisions'
 import { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'
 
 const cutoffAt = '2026-09-04T19:55:00.000Z'
 const beforeCutoff = '2026-09-04T19:54:59.000Z'
 
-test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
-  'a decision started before cutoff and bound at %s releases its unused admission after cooldown',
-  async (bindAt) => {
+test.each(
+  [cutoffAt, '2026-09-04T19:55:00.001Z'].flatMap((bindAt) =>
+    [false, true].map((expiresDuringBinding) => ({ bindAt, expiresDuringBinding })),
+  ),
+)(
+  'binding at $bindAt releases its unused admission after cooldown (database expiry=$expiresDuringBinding)',
+  async ({ bindAt, expiresDuringBinding }) => {
     const native = nativeJevFixture(undefined, beforeCutoff)
     const cycle = { ...makeInitialCycle(native.draft, beforeCutoff), state: CycleState.Active, stateVersion: 2 }
     expect(cycle.window.submissionCutoffAt).toBe(cutoffAt)
@@ -114,7 +118,21 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
       readOldestUnfinished: forbidden,
       activate: forbidden,
       finish: forbidden,
-      block: forbidden,
+      block: (_id, reason, observedAt) =>
+        Effect.sync(() => {
+          expect(reason).toBe(CycleTerminalReason.UnusedEntryExpired)
+          expect(observedAt).toBe(bindAt)
+          operations.push('expire')
+          latest = {
+            ...cycle,
+            state: CycleState.Blocked,
+            stateVersion: 3,
+            terminalReason: reason,
+            terminalAt: observedAt,
+            updatedAt: observedAt,
+          }
+          return { cycle: latest, changed: true }
+        }),
       readAuthoritySlot: () => Effect.sync(() => Option.some(latest)),
       readDecisionDocument: () => Effect.succeed(Option.none()),
       acquire: (draft, observedAt) =>
@@ -124,22 +142,41 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           return { cycle: latest, created: true }
         }),
       bindDecision: (_id, input, observedAt) =>
-        Effect.sync(() => {
-          operations.push('bind')
-          expect(observedAt).toBe(bindAt)
-          const decision = Result.getOrThrow(decideDecisionBinding(cycle, input, observedAt, []))
-          if (decision._tag !== 'Block') throw new Error('late decision must not bind')
-          expect(Result.getOrThrow(decideBlock(cycle, decision.reason, observedAt))._tag).toBe('Persist')
-          latest = {
-            ...cycle,
-            state: CycleState.Blocked,
-            stateVersion: 3,
-            terminalReason: decision.reason,
-            terminalAt: observedAt,
-            updatedAt: observedAt,
-          }
-          return { cycle: latest, changed: true }
-        }),
+        expiresDuringBinding
+          ? TestClock.setTime(Date.parse(bindAt)).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  operations.push('bind')
+                  expect(observedAt).toBe(beforeCutoff)
+                }),
+              ),
+              Effect.andThen(
+                Effect.fail(
+                  new CycleStoreError({
+                    operation: 'bind-decision',
+                    failure: 'entry-expired',
+                    persistenceFailure: 'constraint',
+                    message: 'entry admission expired in PostgreSQL',
+                  }),
+                ),
+              ),
+            )
+          : Effect.sync(() => {
+              operations.push('bind')
+              expect(observedAt).toBe(bindAt)
+              const decision = Result.getOrThrow(decideDecisionBinding(cycle, input, observedAt, []))
+              if (decision._tag !== 'Block') throw new Error('late decision must not bind')
+              expect(Result.getOrThrow(decideBlock(cycle, decision.reason, observedAt))._tag).toBe('Persist')
+              latest = {
+                ...cycle,
+                state: CycleState.Blocked,
+                stateVersion: 3,
+                terminalReason: decision.reason,
+                terminalAt: observedAt,
+                updatedAt: observedAt,
+              }
+              return { cycle: latest, changed: true }
+            }),
     }
     if (cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
       throw new Error('expected current execution policy')
@@ -156,7 +193,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           return document
         }),
       buildDecisionEvidence: () =>
-        TestClock.setTime(Date.parse(bindAt)).pipe(
+        TestClock.setTime(Date.parse(expiresDuringBinding ? beforeCutoff : bindAt)).pipe(
           Effect.andThen(
             Effect.sync(() => {
               operations.push('verify')
@@ -203,7 +240,9 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(operations).toEqual(['build', 'verify', 'bind'])
+    expect(operations).toEqual(
+      expiresDuringBinding ? ['build', 'verify', 'bind', 'expire'] : ['build', 'verify', 'bind'],
+    )
     expect(acquisitions).toBe(1)
   },
 )
