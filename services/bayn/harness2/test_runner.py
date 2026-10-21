@@ -155,9 +155,65 @@ class RunnerTests(unittest.TestCase):
         self.assertEqual(receipt, original)
         self.assertLess(len(encode(summary)), 2000)
         row = summary["observations"][0]
-        self.assertIn('"returnsBps":25', row["stateExcerpt"])
+        self.assertEqual(row["signals"]["candidate"]["returnsBps"], 25)
         self.assertEqual(row["omittedHistory"]["candidate"]["bars1mCount"], 500)
         self.assertEqual(row["answers"]["action"]["selectedProbability"], 0.6)
+
+    def test_full_universe_keeps_every_signal_group_within_editor_budget(self):
+        state = {
+            "relativeSignals": {
+                "excessReturnBps": 15,
+                "lookbackReturnBps": 25,
+                "spreadBps": 3,
+                "rangeLocationPpm": 42000,
+                "referenceAt": "x" * 1000,
+            },
+            "entryEconomics": {
+                "breakEvenExitBidUsd": 83514.937133,
+                "requiredBidRiseBps": 82.74,
+                "maximumHoldingMinutes": 15,
+                "operatingCostCoverage": "UNKNOWN",
+            },
+            "candidate": {
+                "symbol": "AAPL",
+                "returnsBps": {"1": 0.01, "5": -2.01, "15": -5.83, "30": -30.88},
+                "quote": {"bid": 100, "ask": 100.1},
+                "priceWindow": {"referencePrice": 99, "rangeHigh": 103, "rangeLow": 98},
+                "bars1m": [{}] * 500,
+            },
+            "benchmark": {
+                "symbol": "SPY",
+                "returnsBps": {"1": 0.01, "5": -2.01, "15": -5.83, "30": -30.88},
+                "latestCompletedClose": 110,
+                "priceWindow": {
+                    "referencePrice": 109,
+                    "rangeHigh": 113,
+                    "rangeLow": 108,
+                },
+                "bars1m": [{}] * 500,
+            },
+        }
+        receipt = {
+            "decision": {"selected": []},
+            "requests": [
+                {
+                    "symbol": f"C{index}",
+                    "requestHash": "a" * 64,
+                    "request": {"state": copy.deepcopy(state)},
+                    "inference": None,
+                }
+                for index in range(18)
+            ],
+        }
+        summary = native_evidence(receipt)
+        for row in summary["observations"]:
+            self.assertEqual(row["signals"]["relativeSignals"]["excessReturnBps"], 15)
+            self.assertEqual(
+                row["signals"]["entryEconomics"]["requiredBidRiseBps"], 82.74
+            )
+            self.assertEqual(row["signals"]["candidate"]["priceWindow"]["rangeLow"], 98)
+            self.assertEqual(row["signals"]["benchmark"]["latestCompletedClose"], 110)
+        self.assertLess(len(encode(summary)) * 4, 90000)
 
     def test_real_upstream_refines_jev_and_only_then_evaluates_untouched_observations(
         self,

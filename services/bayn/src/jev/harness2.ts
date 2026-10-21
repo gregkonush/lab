@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { JevCandidatePlanStatus } from './batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import {
   JevContractError,
   JevFailure,
@@ -17,7 +17,7 @@ import { JevInstructionsSchema, type JevInstructions } from './instructions'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
-import { jevEntryQuoteExclusion, makeJevTradingSignalRequest } from './trading-signals'
+import { makeJevTradingSignalBatch } from './trading-signals'
 import type { JevInference } from './client'
 
 const HarnessInferenceSchema = Schema.Struct({
@@ -92,13 +92,15 @@ export const prepareJevHarnessProbe = (input: unknown) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Harness2 refines native entry and protection choices only' }),
       )
+    const plan = yield* makeJevTradingSignalBatch({
+      observation: run.observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V5,
+    })
     const requests = []
-    for (const symbol of observation.snapshot.manifest.candidateSymbols ?? []) {
-      const quote = observation.snapshot.latestQuotes[symbol]
-      if (quote === undefined)
-        return yield* Result.fail(new JevContractError({ message: 'Harness candidate has no verified quote' }))
-      if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
-      const original = yield* makeJevTradingSignalRequest(run.observation, symbol)
+    for (const candidate of plan.candidates) {
+      if (candidate.status === JevCandidatePlanStatus.Excluded) continue
+      const { symbol, request: original } = candidate
       const prepared = yield* applyJevInstructions(original.request, run.instructions)
       requests.push({ symbol, originalRequestHash: original.requestHash, ...prepared })
     }

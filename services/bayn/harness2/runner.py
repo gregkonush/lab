@@ -374,30 +374,57 @@ class Substrate:
 
 
 def native_evidence(receipt):
+    def fields(value, names):
+        return {name: value[name] for name in names if name in value}
+
     observations = []
-    excerpt_limit = max(200, 4000 // max(1, len(receipt["requests"])))
     for row in receipt["requests"]:
-        state = copy.deepcopy(row["request"]["state"])
-        omitted = {}
+        state = row["request"]["state"]
+        signals, omitted = {}, {}
         for name in ("candidate", "benchmark"):
-            if isinstance(state.get(name), dict):
-                bars = state[name].pop("bars1m", [])
-                omitted[name] = {"bars1mCount": len(bars)}
+            source = state.get(name, {})
+            signals[name] = fields(
+                source,
+                (
+                    "symbol",
+                    "returnsBps",
+                    "minuteLogReturnVolatilityBps",
+                    "latestCompletedClose",
+                ),
+            )
+            signals[name]["quote"] = fields(source.get("quote", {}), ("bid", "ask"))
+            signals[name]["priceWindow"] = fields(
+                source.get("priceWindow", {}),
+                ("referencePrice", "rangeHigh", "rangeLow"),
+            )
+            omitted[name] = {"bars1mCount": len(source.get("bars1m", []))}
         inference = row.get("inference")
         response = inference["response"] if inference is not None else None
         observations.append(
             {
                 "symbol": row["symbol"],
                 "requestHash": row.get("requestHash"),
-                "stateExcerpt": json.dumps(
-                    {
-                        "relativeSignals": state.get("relativeSignals"),
-                        "entryEconomics": state.get("entryEconomics"),
-                        "candidate": state.get("candidate"),
-                        "benchmark": state.get("benchmark"),
-                    },
-                    separators=(",", ":"),
-                )[:excerpt_limit],
+                "signals": {
+                    "relativeSignals": fields(
+                        state.get("relativeSignals", {}),
+                        (
+                            "lookbackReturnBps",
+                            "excessReturnBps",
+                            "spreadBps",
+                            "rangeLocationPpm",
+                        ),
+                    ),
+                    "entryEconomics": fields(
+                        state.get("entryEconomics") or {},
+                        (
+                            "breakEvenExitBidUsd",
+                            "requiredBidRiseBps",
+                            "maximumHoldingMinutes",
+                            "operatingCostCoverage",
+                        ),
+                    ),
+                    **signals,
+                },
                 "omittedHistory": omitted,
                 "answers": None
                 if response is None
@@ -414,7 +441,7 @@ def native_evidence(receipt):
             }
         )
     return {
-        "notice": "Editor summary only. State excerpts may be truncated; do not infer missing evidence. Jev received the complete original state and all answer choices; full requests and responses remain in the receipt.",
+        "notice": "Editor summary only. Only the named signals are represented; do not infer missing evidence. Jev received the complete original state and all answer choices; full requests and responses remain in the receipt.",
         "observations": observations,
         "decision": receipt["decision"],
     }
@@ -478,7 +505,9 @@ class Adapter:
         (directory / "answer.txt").write_text(json.dumps(receipt["decision"]))
         (directory / "trajectory.md").write_text(
             "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[OBSERVATION]\n"
-            + json.dumps(native_evidence(receipt), sort_keys=True)
+            + json.dumps(
+                native_evidence(receipt), sort_keys=True, separators=(",", ":")
+            )
         )
         if run_id.endswith("/c1"):
             (self.root / "candidate-instructions.json").write_text(prompt)

@@ -2,12 +2,21 @@ import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
+import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import { streamingFixture } from '../testing/streaming-market-fixture'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { decideJevEntry } from './decision'
 import { JevPurpose } from './portfolio'
 import { jevInstructions } from './instructions'
 import { jevHarnessDecision, prepareJevHarnessProbe, verifyJevHarnessReceipt } from './harness2'
-import { nativeJevDecisionEvidence, nativeJevFixture, nativeJevInference } from './native.test-support'
-import { makeJevTradingSignalRequest } from './trading-signals'
+import {
+  jevObservationForSnapshot,
+  nativeJevDecisionEvidence,
+  nativeJevFixture,
+  nativeJevInference,
+} from './native.test-support'
+import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 
 const fixture = nativeJevFixture()
 const run = () => ({
@@ -22,6 +31,36 @@ const run = () => ({
 const at = new Date(Date.parse(fixture.observation.payload.observedAt) + 100).toISOString()
 
 describe('Harness2 uses native Jev requests and decision policy', () => {
+  test('reproduces native exclusions when a candidate lacks window trades', () => {
+    const { cut, query } = streamingFixture()
+    const tradeHistory = new Map(cut.projection.tradeHistory)
+    tradeHistory.delete('AAPL')
+    const snapshot = Result.getOrThrow(
+      constructStreamingSnapshot(
+        { ...cut, projection: { ...cut.projection, tradeHistory } },
+        { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade },
+      ),
+    )
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
+    const native = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: observation.payload,
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + observation.payload.protocol.inferenceValidityMs,
+        ).toISOString(),
+        planVersion: JevBatchPlanVersion.V5,
+      }),
+    )
+    expect(native.candidates.some((entry) => entry.status === JevCandidatePlanStatus.Excluded)).toBe(true)
+    const prepared = Result.getOrThrow(prepareJevHarnessProbe({ ...run(), observation: observation.payload }))
+    expect(prepared.requests.map(({ symbol, requestHash }) => ({ symbol, requestHash }))).toEqual(
+      native.candidates.flatMap((entry) =>
+        entry.status === JevCandidatePlanStatus.Requested
+          ? [{ symbol: entry.symbol, requestHash: entry.request.requestHash }]
+          : [],
+      ),
+    )
+  })
   test('baseline reproduces live request bytes and funded entry selections', () => {
     const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
     for (const request of prepared.requests)
