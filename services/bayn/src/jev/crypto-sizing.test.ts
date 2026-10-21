@@ -9,7 +9,7 @@ import { compileJevEntry } from './runtime'
 import { makeJevTradingSignalBatch } from './trading-signals'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} requests a model decision, then rejects an unsupported protected entry without an order`, () => {
+  test(`${symbol} compiles the model-selected complete plan with a funded quantity ceiling`, () => {
     const { snapshot } = cryptoMarketFixture(symbol, { quoteAskSize: 0.8 })
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const batchPlan = Result.getOrThrow(
@@ -18,7 +18,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         expiresAt: new Date(
           Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -30,10 +30,10 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         decidedAt,
       }),
     )
-    expect(decision.selectedSymbols).toEqual([])
+    expect(decision.selectedSymbols).toEqual([symbol])
     expect(batchPlan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Requested }])
     const compiled = Result.getOrThrow(compileJevEntry(decision, snapshot, snapshot))
-    expect(compiled.maximumBuyQuantityAtoms).toEqual({})
+    expect(BigInt(compiled.maximumBuyQuantityAtoms[symbol] ?? '0')).toBeGreaterThan(0n)
   })
 }
 
@@ -44,7 +44,7 @@ test('SOL within the spread limit still requires a model-selected exit plan', ()
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   expect(plan.candidates.find((candidate) => candidate.symbol === 'SOL/USD')?.status).toBe(

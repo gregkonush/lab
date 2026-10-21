@@ -1,3 +1,4 @@
+import completePlanChoice from '../../migrations/0133_complete_plan_choice'
 import jevHarness2 from '../../migrations/0132_jev_harness2'
 import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
 import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
@@ -139,6 +140,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '128_strategy_native_protection': strategyNativeProtection,
   '132_jev_harness2': jevHarness2,
   '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '133_complete_plan_choice': completePlanChoice,
   '129_harness2_research': harness2Research,
   '130_fee_source_created_at': feeSourceCreatedAt,
   '123_setup_action_protocol': setupActionProtocol,

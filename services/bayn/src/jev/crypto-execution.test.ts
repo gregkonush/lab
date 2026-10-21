@@ -36,7 +36,7 @@ import { decideJevEntry, jevPlanningTargetWeights, JevEntryTargetSchema } from '
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test.each([false, true])(
-    `${symbol} rejects unfunded entry and retains exact reducing precision with first-minute history=%s`,
+    `${symbol} honors model abstention and retains exact reducing precision with first-minute history=%s`,
     async (firstMinute) => {
       const { cut, query, snapshot } = cryptoMarketFixture(symbol, { firstMinute })
       expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 30)
@@ -85,7 +85,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       const batchPlan = Result.getOrThrow(
         makeJevTradingSignalBatch({
           observation,
-          planVersion: JevBatchPlanVersion.V5,
+          planVersion: JevBatchPlanVersion.V6,
           expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
         }),
       )
@@ -94,7 +94,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         decideJevEntry({
           observation,
           batchPlan,
-          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'enter', 0.42),
+          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => 'wait', 0.42),
           decidedAt,
         }),
       )
