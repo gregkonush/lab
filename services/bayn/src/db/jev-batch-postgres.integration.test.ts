@@ -5,7 +5,7 @@ import { equityMarketProfile } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
 import { JevPurpose } from '../jev/portfolio'
 import { exchangeSessions } from '../market-hours'
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import {
@@ -56,6 +56,8 @@ import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+
+setDefaultTimeout(30_000)
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -860,7 +862,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         ).toEqual([{ count: requested.length }])
       }).pipe(atObservation),
     )
-  }, 30_000)
+  })
 
   test('finalizes recorded candidates before the deadline without serial evaluation reads', async () => {
     await runtime.runPromise(
