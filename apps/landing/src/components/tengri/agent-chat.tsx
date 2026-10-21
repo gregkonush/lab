@@ -14,8 +14,20 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@proompteng/design/ui'
-import { ArrowDown, ArrowUp, Command, ExternalLink, LoaderCircle, PanelLeft, Plus, Square, X } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import {
+  ArrowDown,
+  ArrowUp,
+  ChevronDown,
+  Command,
+  ExternalLink,
+  LoaderCircle,
+  PanelLeft,
+  Plus,
+  Square,
+  Wrench,
+  X,
+} from 'lucide-react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useId, type ReactNode } from 'react'
 import {
   codexOptionsForSelection,
   codexReasoningLabels,
@@ -56,6 +68,7 @@ import {
 import { CodexQuestionCard } from './codex-question-card'
 import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
+import { groupCodexActivity } from './codex-activity'
 import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
 import { WorkspaceFileLinkProvider } from './workspace-file-link'
 import { CodexCopyButton } from './codex-copy-button'
@@ -68,6 +81,7 @@ import {
   codexApprovalTitle,
   codexEventConfirmsRuntimeReady,
   codexEventDisplayText,
+  codexEventActivityTitle,
   codexEventIsIndependentOfThreadSnapshot,
   codexEventIsRuntimeError,
   codexEventKey,
@@ -685,7 +699,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     () =>
       events
         .filter((event) => codexEventShouldRender(event, threadId, historyIds, restoredHistorySequence))
-        .map((event) => ({ event, text: codexEventDisplayText(event) }))
+        .map((event) => ({ event, text: codexEventDisplayText(event), activityTitle: codexEventActivityTitle(event) }))
         .filter(
           ({ event, text }) =>
             Boolean(text) || event.kind === 'approval' || event.kind === 'warning' || event.kind === 'error',
@@ -717,6 +731,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           <CodexEventCard
             key={`wrap-${threadId}-${item.id}-${item.kind}`}
             agentId={agentId}
+            activityTitle={item.activityTitle}
             kind={item.kind}
             text={item.text}
           />
@@ -804,7 +819,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     })
   }
 
-  function renderEvent({ event, text }: (typeof renderedEvents)[number]) {
+  function renderEvent({ event, text, activityTitle }: (typeof renderedEvents)[number]) {
     const question = codexQuestionRequest(event)
     if (question)
       return (
@@ -829,6 +844,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       <CodexEventCard
         key={codexEventWrapperKey(event)}
         agentId={agentId}
+        activityTitle={activityTitle}
         approvalDecisions={event.kind === 'approval' ? codexApprovalDecisions(event) : undefined}
         approvalTitle={codexApprovalTitle(event)}
         approvalId={event.approvalId}
@@ -1205,7 +1221,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <Plus className="size-3.5" aria-hidden="true" />
           </button>
         </div>
-        <nav aria-label="Conversations" className="min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]">
+        <nav
+          aria-label="Conversations"
+          className="tengri-chat-scrollbar min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]"
+        >
           {sortedConversations.length === 0 ? (
             <p className="px-3 py-2 text-label-12 text-zinc-400">No conversations yet</p>
           ) : (
@@ -1278,7 +1297,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <div
               ref={conversationRef}
               data-testid="agent-conversation-scroll"
-              className="h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
+              className="tengri-chat-scrollbar h-full overflow-auto px-4 pt-5 pb-10 [scrollbar-gutter:stable] scroll-pb-8 @[540px]/agent:px-6"
               onScroll={(event) => {
                 const conversation = event.currentTarget
                 if (threadId && !threadReady) {
@@ -1311,7 +1330,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 aria-live="polite"
                 aria-relevant="additions text"
               >
-                {transcriptCards.map((item) => item.card)}
+                {groupCodexActivity(transcriptCards).map((group) =>
+                  group.activity ? (
+                    <ToolActivityGroup key={`activity-${threadId}-${group.id}`} count={group.items.length}>
+                      {group.items.map((item) => item.card)}
+                    </ToolActivityGroup>
+                  ) : (
+                    group.items[0].card
+                  ),
+                )}
                 {activeTurnId && !approvalPending ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
@@ -1973,4 +2000,32 @@ function safeVerificationUrl(value: string) {
   } catch {
     return ''
   }
+}
+
+function ToolActivityGroup({ count, children }: { count: number; children: ReactNode }) {
+  const [expanded, setExpanded] = useState(true)
+  const id = useId()
+  return (
+    <div className="py-1">
+      {count > 1 ? (
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={id}
+          onClick={() => setExpanded((value) => !value)}
+          className="flex min-h-6 items-center gap-2 rounded px-1 py-0.5 text-label-14 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
+        >
+          <Wrench className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
+          Tools and commands
+          <ChevronDown
+            className={cn('size-3.5 transition-transform motion-reduce:transition-none', !expanded && '-rotate-90')}
+            aria-hidden="true"
+          />
+        </button>
+      ) : null}
+      <div id={id} hidden={count > 1 && !expanded} className="space-y-0">
+        {children}
+      </div>
+    </div>
+  )
 }

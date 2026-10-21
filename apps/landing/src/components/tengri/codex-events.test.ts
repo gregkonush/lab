@@ -1224,10 +1224,15 @@ describe('Codex thread restoration', () => {
       { id: 'assistant-1', kind: 'assistant-text', text: 'Done' },
       { id: 'plan-1', kind: 'plan', text: '- [x] Build it' },
       { id: 'reasoning-1', kind: 'reasoning-summary', text: 'Checked the result' },
-      { id: 'command-1', kind: 'tool-output', text: '12 pass' },
-      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)' },
+      { id: 'command-1', kind: 'tool-output', text: '12 pass', activityTitle: 'bun test' },
+      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)', activityTitle: 'true' },
       { id: 'file-1', kind: 'file-diff', text: '+export {}' },
-      { id: 'mcp-1', kind: 'tool-output', text: '{\n  "id": "ENG-123",\n  "state": "Done"\n}' },
+      {
+        id: 'mcp-1',
+        kind: 'tool-output',
+        activityTitle: 'linear/get_issue',
+        text: 'linear/get_issue\n{\n  "id": "ENG-123",\n  "state": "Done"\n}',
+      },
       { id: 'search-1', kind: 'tool-call', text: 'Web search: Kata Firecracker' },
       {
         id: 'collab-1',
@@ -1351,4 +1356,37 @@ describe('Codex buffering equivalence', () => {
       }
     }
   })
+})
+
+test('app tools expose their arguments and structured result instead of generic transport text', () => {
+  const item = {
+    type: 'mcpToolCall',
+    server: 'codex_apps',
+    tool: 'github.create_branch',
+    arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/ui' },
+  }
+  const call = {
+    ...event,
+    kind: 'tool-call' as const,
+    text: 'codex_apps/github.create_branch',
+    rawJson: JSON.stringify({ params: { item } }),
+  }
+  expect(codexEventDisplayText(call)).toBe(
+    'codex_apps/github.create_branch\n{\n  "repository_full_name": "proompteng/lab",\n  "branch_name": "codex/ui"\n}',
+  )
+  const completed = {
+    ...item,
+    result: { content: [{ type: 'text', text: 'Action completed.' }], structuredContent: { branch: 'codex/ui' } },
+  }
+  const output = {
+    ...call,
+    kind: 'tool-output' as const,
+    text: 'Action completed.',
+    rawJson: JSON.stringify({ params: { item: completed } }),
+  }
+  expect(codexEventDisplayText(output)).toContain('"branch": "codex/ui"')
+  const history = codexTranscriptFromThread(
+    JSON.stringify({ thread: { turns: [{ items: [{ ...completed, id: 'app-output' }] }] } }),
+  )
+  expect(history[0].text).toBe(codexEventDisplayText(output))
 })

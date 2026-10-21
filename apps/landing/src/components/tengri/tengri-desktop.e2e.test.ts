@@ -6629,6 +6629,110 @@ test('recovery follows the latest restored message and stays at the bottom after
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toHaveValue('Keep my recovery draft')
 })
 
+test('groups tool activity into a quiet readable transcript with working disclosure controls', async ({ page }) => {
+  await mockTengri(page, {
+    resumeThreadRawJson: JSON.stringify({
+      thread: {
+        turns: [
+          {
+            id: 'turn-1',
+            status: 'inProgress',
+            items: [
+              {
+                id: 'intro',
+                type: 'agentMessage',
+                text: 'I’ll inspect the workspace and trace the conversation state before making changes.',
+              },
+              { id: 'read', type: 'commandExecution', command: 'cat /workspace/AGENTS.md', status: 'completed' },
+              {
+                id: 'search',
+                type: 'commandExecution',
+                command: 'rg -n recovery services/tengri',
+                status: 'completed',
+              },
+              {
+                id: 'result',
+                type: 'commandExecution',
+                aggregatedOutput:
+                  'Found the recovery state and its callers.\nThe composer waits for the selected conversation.',
+                status: 'completed',
+                exitCode: 0,
+              },
+              {
+                id: 'explanation',
+                type: 'agentMessage',
+                text: 'The conversation loads normally. I’m checking how late responses are discarded and how the view follows the latest message.\n\nThe existing draft stays with its conversation while these checks run.',
+              },
+              { id: 'status', type: 'commandExecution', command: 'git status --short', status: 'inProgress' },
+              {
+                id: 'github',
+                type: 'mcpToolCall',
+                server: 'codex_apps',
+                tool: 'github.create_branch',
+                arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/chat-polish' },
+              },
+              {
+                id: 'github-result',
+                type: 'mcpToolCall',
+                server: 'codex_apps',
+                tool: 'github.create_branch',
+                arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/chat-polish' },
+                result: {
+                  content: [{ type: 'text', text: 'Action completed.' }],
+                  structuredContent: { branch: 'codex/chat-polish', sha: 'abc123' },
+                },
+              },
+            ],
+          },
+        ],
+      },
+    }),
+  })
+  await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-1'))
+  await page.goto('/')
+  const tengri = page.getByRole('region', { name: 'Tengri window' })
+  await tengri.getByRole('button', { name: 'Maximize Tengri', exact: true }).click()
+  const group = tengri.getByRole('button', { name: 'Tools and commands', exact: true }).first()
+  await expect(group).toHaveAttribute('aria-expanded', 'true')
+  await expect(tengri.getByText('Read AGENTS.md', { exact: true })).toBeVisible()
+  await expect(tengri.getByText('Searched rg -n recovery services/tengri', { exact: true })).toBeVisible()
+  const output = tengri.getByRole('article', { name: 'Codex output' }).filter({ hasText: 'Found the recovery state' })
+  await output.locator('summary').click()
+  await expect(output.locator('pre')).toBeVisible()
+  await expect(output.locator('pre')).not.toContainText('[2m')
+  await group.focus()
+  await group.press('Enter')
+  await expect(group).toHaveAttribute('aria-expanded', 'false')
+  await expect(output).toBeHidden()
+  await expect(tengri.getByText(/The conversation loads normally/)).toBeVisible()
+  await group.press('Enter')
+  await expect(output.locator('pre')).toBeVisible()
+  await output.locator('summary').click()
+  const github = tengri.getByRole('article', { name: 'Codex activity' }).filter({ hasText: 'GitHub · Create branch' })
+  await expect(github.locator('summary')).toHaveText('GitHub · Create branch · codex/chat-polish')
+  await github.locator('summary').click()
+  await expect(github.locator('pre')).toContainText('codex/chat-polish')
+  await github.locator('summary').click()
+  const githubResult = tengri
+    .getByRole('article', { name: 'Codex output' })
+    .filter({ hasText: 'GitHub · Create branch' })
+  await githubResult.locator('summary').click()
+  await expect(githubResult.locator('pre')).toContainText('"sha": "abc123"')
+  await githubResult.screenshot({ path: 'test-results/agent-github-tool-expanded.png' })
+  await githubResult.locator('summary').click()
+  await group.locator('..').screenshot({ path: 'test-results/agent-activity-group.png' })
+  await tengri.screenshot({ path: 'test-results/agent-chat-polish-desktop.png' })
+  await tengri
+    .getByTestId('agent-conversation-scroll')
+    .screenshot({ path: 'test-results/agent-chat-polish-transcript.png' })
+  await page.setViewportSize({ width: 390, height: 844 })
+  await expect(group).toBeVisible()
+  const conversation = tengri.getByTestId('agent-conversation-scroll')
+  expect(await conversation.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true)
+  await tengri.screenshot({ path: 'test-results/agent-chat-polish-mobile.png' })
+  expect((await new AxeBuilder({ page }).include('[aria-label="Tengri window"]').analyze()).violations).toEqual([])
+})
+
 test('preserves the reading position while new events arrive and returns to the latest message on request', async ({
   page,
 }) => {
@@ -6674,6 +6778,7 @@ test('preserves the reading position while new events arrive and returns to the 
   })
   await expect(tengri.getByText('The newest streamed message.', { exact: true })).toBeAttached()
   expect(await conversation.evaluate((element) => element.scrollTop)).toBe(0)
+  await tengri.screenshot({ path: 'test-results/agent-chat-scrollbar.png' })
   await tengri.getByRole('textbox', { name: 'Steer the current turn' }).fill('A long draft\n'.repeat(10))
   expect(await conversation.evaluate((element) => element.scrollTop)).toBe(0)
   await tengri.getByRole('button', { name: 'Jump to latest' }).click()
