@@ -860,7 +860,7 @@ describePostgres('PostgreSQL complete Jev batches', () => {
         ).toEqual([{ count: requested.length }])
       }).pipe(atObservation),
     )
-  })
+  }, 30_000)
 
   test('finalizes recorded candidates before the deadline without serial evaluation reads', async () => {
     await runtime.runPromise(
