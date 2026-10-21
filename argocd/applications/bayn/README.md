@@ -408,10 +408,10 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
-97 and 131, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+97 and 133, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v15 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 131, the source-bound controller plan v3
+containing this migration and the current Jev v16 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 133, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -572,8 +572,8 @@ at the first completed minute plus two seconds. Crypto uses its current complete
 up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
 
 Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
-settled orders, fresh exact reconciliation and complete fill accounting. The current hard cutover uses migration
-124, 125, 126, 127, 128, 129 and the v15 activation procedure above. Retired feature and strategy contracts cannot authorize execution.
+settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 133 and the [v16 activation procedure](#jev-protocol-activation)
+own the current complete-plan cutover. Retired feature and strategy contracts cannot authorize execution.
 The broker account and order-risk limits remain the same.
 
 Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
@@ -581,8 +581,8 @@ LIMIT/IOC through the shared planner, coordinator and generic completion proof. 
 entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
 reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
 than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
-and instrument precision. Current PAPER authority requires a new mandate bound to the published v15 strategy after
-the migration-123 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v16 strategy after
+the migration-133 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
 target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
 reconciliation remain required runtime evidence.
 
@@ -594,7 +594,8 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 
 ### Jev-selected trade-plan cutover
 
-Protocol v15 / state v14 and entry/exit targets v4 replace the geometric exit policy and momentum gate.
+Protocol v16, signal state v15, batch v6 and entry/exit targets v5 use one Choice over complete funded plans.
+Jev selects the entry, stop and target together or abstains. Hypothetical order prices remain distinct from observed market evidence.
 Migration 133 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
 retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
 published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the

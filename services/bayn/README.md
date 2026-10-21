@@ -130,8 +130,8 @@ nine-decimal broker averages before rounding the reported remaining cost to micr
 
 Entry inference uses an explicit transaction-cost break-even exit bid computed for the capital-weighted target,
 including the observed spread, up to 10 bp of refreshed quote drift, the existing 10 bp order limit allowance,
-coin-denominated buy fees and the existing rounded transaction-fee schedule. Jev selects the setup with its
-`enter`, `wait` or `avoid` action. The extra `net_economics` question and mandatory model-support veto have been
+coin-denominated buy fees and the existing rounded transaction-fee schedule. Jev selects a complete funded plan with its
+`plan_*` action or abstains with `wait` or `avoid`. The extra `net_economics` question and mandatory model-support veto have been
 removed: a paired comparison found they suppressed setup entries, and they had not been qualified as a profitable
 selection policy. Entry still requires a funded target and every native source, sizing, price and risk check.
 These model actions remain uncalibrated and do not establish positive fee-net returns. Partial fills can change realized fees, and operating costs remain unknown. Fresh pricing
@@ -1503,7 +1503,7 @@ it does not reuse historical model answers or establish profitability. A new evi
 
 `entry: "DETERMINISTIC"` with `management: "MECHANICAL"` creates no provider client. Jev is available only for
 entry selection. Independent controls share their explicit IOC execution, finite liquidity, fees, turnover,
-loss/drawdown, stop, holding and close rules. They do not qualify the v15 native broker lifecycle or grant authority.
+loss/drawdown, stop, holding and close rules. They do not qualify the v16 native broker lifecycle or grant authority.
 
 `turnoverPolicy: "ENTRY_AND_EXPECTED_EXIT"` reserves both entry notional and a modeled exit allowance;
 `IMMEDIATE_ADJUSTMENT` uses immediate entry admission. These scenario choices cannot block mandatory reducing exits
@@ -1530,7 +1530,7 @@ The separate [control portfolio command](../../docs/bayn/control-portfolios.md) 
 development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
 accounting. External data expenses reduce reported net equity without changing broker cash, sizing or risk, as in
 native replay. The control command accepts only `MECHANICAL` management. Its independent fixed exit profile is an
-offline comparison and does not qualify the active v15 strategy or its native broker lifecycle. Retired research model
+offline comparison and does not qualify the active v16 strategy or its native broker lifecycle. Retired research model
 management and its duplicate execution implementation have been removed. Timing and execution assumptions still
 require calibration before prospective acceptance.
 
