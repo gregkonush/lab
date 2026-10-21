@@ -32,6 +32,7 @@ async fn identity_is_verified_over_authenticated_grpc() {
                 Ok(proto::GuestInfo {
                     microvm_id: id.into(),
                     protocol_version: version,
+                    ..Default::default()
                 })
             })),
             ..Default::default()
@@ -353,6 +354,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
                             protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                            ..Default::default()
                         })
                     })),
                     ..Default::default()

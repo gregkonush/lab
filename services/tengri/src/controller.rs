@@ -15,7 +15,7 @@ use kube::{
 use serde_json::json;
 
 use crate::{
-    activity::{idle_deadline_passed, last_activity_at},
+    activity::{AgentWorkMonitor, idle_deadline_passed, last_activity_at},
     crd::{
         MicroVM, MicroVMArchitecture, MicroVMCondition, MicroVMDesiredState, MicroVMPhase,
         MicroVMSlot, MicroVMStatus,
@@ -49,6 +49,7 @@ pub struct ControllerContext {
     pub identity: WorkloadIdentity,
     pub authorization: crate::authz::WorkspaceAuthorization,
     pub leadership: Option<crate::leadership::Guard>,
+    pub agent_work: AgentWorkMonitor,
 }
 
 impl ControllerContext {
@@ -114,17 +115,7 @@ async fn reconcile(
     let result = if microvm.metadata.deletion_timestamp.is_some() {
         cleanup(&context, &microvm).await.map(|_| ())
     } else {
-        converge(
-            &context.client,
-            &context.namespace,
-            &microvm,
-            &context.identity,
-            &context.tickets,
-            &context.authorization,
-            leadership,
-        )
-        .await
-        .map(|_| ())
+        converge(&context, &microvm, leadership).await.map(|_| ())
     };
     if let Err(error) = &result
         && let Ok(Some(current)) =
@@ -218,14 +209,19 @@ fn failure_status(microvm: &MicroVM, error: &anyhow::Error) -> MicroVMStatus {
 }
 
 pub async fn converge(
-    client: &Client,
-    namespace: &str,
+    context: &ControllerContext,
     microvm: &MicroVM,
-    identity: &WorkloadIdentity,
-    tickets: &TicketStore,
-    authorization: &crate::authz::WorkspaceAuthorization,
     leadership: &crate::leadership::Guard,
 ) -> anyhow::Result<MicroVM> {
+    let ControllerContext {
+        client,
+        namespace,
+        identity,
+        tickets,
+        authorization,
+        agent_work,
+        ..
+    } = context;
     ensure!(
         microvm.metadata.deletion_timestamp.is_none(),
         "agent is terminating"
@@ -340,14 +336,6 @@ pub async fn converge(
     )?;
     let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
-    let now = Utc::now();
-    if idle_deadline_passed(&microvm, now)
-        && microvm.spec.desired_state != MicroVMDesiredState::Sleeping
-    {
-        leadership.fence()?;
-        authorization.stop_runtime(&microvm).await?;
-        return api.get(&microvm.name_any()).await.map_err(Into::into);
-    }
     let status = supervisor.status().await?;
     ensure!(
         matches!(status.state, SlotState::Vacant { .. })
@@ -357,6 +345,29 @@ pub async fn converge(
                 .is_some_and(|claim| claim.allocation() == allocation),
         "slot owner or epoch changed"
     );
+    let now = Utc::now();
+    if microvm.spec.desired_state == MicroVMDesiredState::Running
+        && status.state.serves(&claim_for(&microvm)?)
+        && idle_deadline_passed(&microvm, now)
+        && match agent_work.permits_sleep(&microvm).await {
+            Ok(permitted) => permitted,
+            Err(error) => {
+                tracing::warn!(agent_id = %microvm.name_any(), error = %error, "automatic sleep deferred: agent work state cannot be confirmed");
+                false
+            }
+        }
+    {
+        // Check fresh authenticated activity and ownership after the guest probe.
+        let current = api.get(&microvm.name_any()).await?;
+        if current.resource_version() != microvm.resource_version()
+            || !idle_deadline_passed(&current, Utc::now())
+        {
+            return Ok(current);
+        }
+        leadership.fence()?;
+        authorization.stop_runtime(&current).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
     let state = match microvm.spec.desired_state {
         MicroVMDesiredState::Running => {
             let claim = claim_for(&microvm)?;
@@ -1724,6 +1735,15 @@ mod tests {
 
     fn context(client: Client) -> ControllerContext {
         ControllerContext {
+            agent_work: AgentWorkMonitor::new(
+                crate::guest::GuestPool::new(
+                    client.clone(),
+                    "tengri",
+                    WorkloadIdentity::Fixture(8080),
+                ),
+                crate::guest::authorization::GuestAuthority::fixture(),
+                crate::activity::ActivityTracker::new(client.clone(), "tengri".into()),
+            ),
             client,
             namespace: "tengri".into(),
             tickets: TicketStore::new(
@@ -1946,17 +1966,9 @@ mod tests {
         context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
             std::sync::atomic::AtomicU8::new(5),
         ));
-        let result = converge(
-            &context.client,
-            &context.namespace,
-            &microvm,
-            &context.identity,
-            &context.tickets,
-            &context.authorization,
-            context.leader().unwrap(),
-        )
-        .await
-        .unwrap();
+        let result = converge(&context, &microvm, context.leader().unwrap())
+            .await
+            .unwrap();
         assert!(result.metadata.deletion_timestamp.is_some());
         assert!(result.spec.slot.is_none());
         assert!(pending.lock().unwrap().is_empty());
@@ -2091,16 +2103,7 @@ mod tests {
             let mut context = context(client);
             context.identity = WorkloadIdentity::Fixture(port);
             context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(mode);
-            let result = converge(
-                &context.client,
-                &context.namespace,
-                &microvm,
-                &context.identity,
-                &context.tickets,
-                &context.authorization,
-                context.leader().unwrap(),
-            )
-            .await;
+            let result = converge(&context, &microvm, context.leader().unwrap()).await;
             server.abort();
             if after_status == 6 {
                 result.expect("fresh unchanged authority must still restore after the initial decision expires");
@@ -2133,17 +2136,9 @@ mod tests {
             ));
         let (client, pending) = mock(vec![]);
         let context = context(client);
-        let error = converge(
-            &context.client,
-            &context.namespace,
-            &microvm,
-            &context.identity,
-            &context.tickets,
-            &context.authorization,
-            context.leader().unwrap(),
-        )
-        .await
-        .unwrap_err();
+        let error = converge(&context, &microvm, context.leader().unwrap())
+            .await
+            .unwrap_err();
         assert!(error.to_string().contains("agent is terminating"));
         assert!(pending.lock().unwrap().is_empty());
     }

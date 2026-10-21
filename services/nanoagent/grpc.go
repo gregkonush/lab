@@ -112,7 +112,11 @@ func protoTerminal(session terminalSessionView) *pb.TerminalSession {
 }
 
 func (server *guestRPCServer) GetInfo(context.Context, *pb.Empty) (*pb.GuestInfo, error) {
-	return &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}, nil
+	info := &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}
+	if server.api.codex != nil {
+		info.CodexActivity = server.api.codex.activitySnapshot()
+	}
+	return info, nil
 }
 func (server *guestRPCServer) OpenBrowser(ctx context.Context, _ *pb.Empty) (*pb.Browser, error) {
 	if server.api.browser == nil {

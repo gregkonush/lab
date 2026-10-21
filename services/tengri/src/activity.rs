@@ -6,15 +6,59 @@ use std::{
 
 use chrono::{DateTime, Utc};
 use kube::{
-    Api, Client,
+    Api, Client, ResourceExt,
     api::{Patch, PatchParams},
 };
 use serde_json::json;
 use tracing::warn;
 
-use crate::crd::MicroVM;
+use crate::{
+    crd::MicroVM,
+    guest::{GuestPool, authorization::GuestAuthority},
+};
+
+#[derive(Clone)]
+pub struct AgentWorkMonitor {
+    guests: GuestPool,
+    authority: GuestAuthority,
+    activity: ActivityTracker,
+}
+
+impl AgentWorkMonitor {
+    pub fn new(guests: GuestPool, authority: GuestAuthority, activity: ActivityTracker) -> Self {
+        Self {
+            guests,
+            authority,
+            activity,
+        }
+    }
+
+    // Read directly from the guest; an absent subscriber, lost replay window or
+    // controller restart must never turn ongoing work into an idle workspace.
+    pub async fn permits_sleep(&self, microvm: &MicroVM) -> anyhow::Result<bool> {
+        let guest = self
+            .guests
+            .for_microvm(microvm, self.authority.probe())
+            .await?;
+        let work = guest.codex_activity().await?;
+        let now = Utc::now();
+        let idle_ms = work.idle_for_ms.min(i64::MAX as u64) as i64;
+        if work.working || idle_ms < i64::from(microvm.spec.power.idle_timeout_minutes) * 60_000 {
+            let changed_at = if work.working {
+                now
+            } else {
+                now.checked_sub_signed(chrono::Duration::milliseconds(idle_ms))
+                    .ok_or_else(|| anyhow::anyhow!("invalid agent idle interval"))?
+            };
+            self.activity.touch_agent_work(microvm, changed_at).await?;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+}
 
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
+pub const LAST_AGENT_WORK_ANNOTATION: &str = "runtime.proompteng.ai/last-agent-work-at";
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
 pub const RESUME_STARTED_AT_ANNOTATION: &str = "runtime.proompteng.ai/resume-started-at";
 
@@ -41,6 +85,25 @@ impl ActivityTracker {
                 agent_id,
                 &PatchParams::default(),
                 &Patch::Merge(activity_metadata_patch(now)),
+            )
+            .await?;
+        Ok(())
+    }
+
+    async fn touch_agent_work(
+        &self,
+        microvm: &MicroVM,
+        at: DateTime<Utc>,
+    ) -> Result<(), kube::Error> {
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        agents
+            .patch(
+                &microvm.name_any(),
+                &PatchParams::default(),
+                &Patch::Merge(json!({
+                    "metadata": { "uid": microvm.uid(), "resourceVersion": microvm.resource_version(),
+                        "annotations": { LAST_AGENT_WORK_ANNOTATION: at.to_rfc3339() } }
+                })),
             )
             .await?;
         Ok(())
@@ -81,21 +144,31 @@ pub fn last_activity_at(microvm: &MicroVM) -> Option<String> {
         .annotations
         .as_ref()
         .and_then(|annotations| annotations.get(LAST_ACTIVITY_ANNOTATION));
+    let agent_work = microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|annotations| annotations.get(LAST_AGENT_WORK_ANNOTATION));
     let status = microvm
         .status
         .as_ref()
         .and_then(|status| status.last_activity_at.as_ref());
 
-    [annotation, status, Some(&microvm.spec.created_at)]
-        .into_iter()
-        .flatten()
-        .filter_map(|value| {
-            DateTime::parse_from_rfc3339(value)
-                .ok()
-                .map(|parsed| (parsed, value))
-        })
-        .max_by_key(|(parsed, _)| *parsed)
-        .map(|(_, value)| value.to_owned())
+    [
+        annotation,
+        agent_work,
+        status,
+        Some(&microvm.spec.created_at),
+    ]
+    .into_iter()
+    .flatten()
+    .filter_map(|value| {
+        DateTime::parse_from_rfc3339(value)
+            .ok()
+            .map(|parsed| (parsed, value))
+    })
+    .max_by_key(|(parsed, _)| *parsed)
+    .map(|(_, value)| value.to_owned())
 }
 
 pub fn idle_deadline_passed(microvm: &MicroVM, now: DateTime<Utc>) -> bool {
@@ -267,6 +340,32 @@ mod tests {
         assert!(idle_deadline_passed(
             &microvm,
             now + chrono::Duration::minutes(IDLE_MINUTES + 1),
+        ));
+    }
+
+    #[test]
+    fn guest_work_and_user_activity_extend_idle_independently() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.annotations = Some(std::collections::BTreeMap::from([
+            (LAST_ACTIVITY_ANNOTATION.to_owned(), now.to_rfc3339()),
+            (
+                LAST_AGENT_WORK_ANNOTATION.to_owned(),
+                (now - chrono::Duration::minutes(10)).to_rfc3339(),
+            ),
+        ]));
+        assert_eq!(last_activity_at(&microvm), Some(now.to_rfc3339()));
+        microvm.metadata.annotations.as_mut().unwrap().insert(
+            LAST_AGENT_WORK_ANNOTATION.to_owned(),
+            (now + chrono::Duration::minutes(10)).to_rfc3339(),
+        );
+        assert_eq!(
+            last_activity_at(&microvm),
+            Some((now + chrono::Duration::minutes(10)).to_rfc3339())
+        );
+        assert!(!idle_deadline_passed(
+            &microvm,
+            now + chrono::Duration::minutes(IDLE_MINUTES)
         ));
     }
 

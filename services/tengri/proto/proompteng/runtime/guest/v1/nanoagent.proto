@@ -33,6 +33,13 @@ message Empty {}
 message GuestInfo {
   string microvm_id = 1;
   uint32 protocol_version = 2;
+  // Absent until the Codex process can authoritatively report its work state.
+  CodexActivity codex_activity = 3;
+}
+message CodexActivity {
+  bool working = 1;
+  // Monotonic elapsed time since work ended; probes do not reset this timer.
+  uint64 idle_for_ms = 2;
 }
 message Editor {
   uint32 port = 1;

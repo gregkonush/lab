@@ -209,6 +209,24 @@ impl RpcClient {
         Ok(response)
     }
 
+    pub async fn codex_activity(&self) -> Result<proto::CodexActivity, GuestError> {
+        let info = self
+            .call(
+                "GetInfo",
+                "",
+                proto::Empty {},
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.get_info(request).await },
+            )
+            .await
+            .map_err(rpc_error)?
+            .into_inner();
+        info.codex_activity.ok_or_else(|| GuestError::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Agent work state cannot be confirmed; automatic sleep deferred".into(),
+        })
+    }
+
     pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
         let info = self.call("GetInfo", "", proto::Empty {}, Some(GUEST_UNARY_TIMEOUT), |mut client, request| async move { client.get_info(request).await })
             .await

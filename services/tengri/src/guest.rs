@@ -286,6 +286,10 @@ impl GuestTransport {
 }
 
 impl GuestClient {
+    pub async fn codex_activity(&self) -> Result<rpc::proto::CodexActivity, GuestError> {
+        self.rpc.codex_activity().await
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -471,6 +475,7 @@ mod tests {
                                 Ok(rpc::proto::GuestInfo {
                                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
                                     protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                                    ..Default::default()
                                 })
                             })),
                             ..Default::default()
