@@ -15,7 +15,7 @@ const batch = (snapshot: ReturnType<typeof cryptoMarketFixture>['snapshot']) => 
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
 }

@@ -223,8 +223,8 @@ export const nativeJevFixture = (
                   protocol,
                   economics,
                   levels: {
-                    schemaVersion: 'bayn.jev-strategy-exit-plan.v2',
-                    rule: 'model-selected-observed-prices',
+                    schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
+                    rule: 'model-selected-complete-plan',
                     symbol: 'AAPL',
                     sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
                     sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
@@ -292,13 +292,11 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
     else if (question.type === 'choice') {
       const choices = Object.keys(question.criteria)
       const selected =
-        key === 'action'
-          ? action
-          : key === 'take_profit'
-            ? choices.at(-1)
-            : key === 'stop_loss'
-              ? choices.find((choice) => choice !== 'none')
-              : choices[0]
+        key === 'action' && action === 'enter'
+          ? (choices.find((choice) => choice.startsWith('plan_')) ?? 'wait')
+          : key === 'action'
+            ? action
+            : choices[0]
       const choiceProbability = key === 'action' ? probability : 0.8
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
@@ -345,7 +343,7 @@ export const nativeJevDecisionEvidence = (
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)

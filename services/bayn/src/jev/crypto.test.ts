@@ -12,7 +12,7 @@ import { decideJevEntry } from './decision'
 import { adverseQuotePrices } from '../observe-composition/intraday-market-data'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} retains native Sunday signals while rejecting an unfunded flat-range entry`, () => {
+  test(`${symbol} retains native Sunday signals and a model-selected complete entry plan`, () => {
     const { snapshot } = cryptoMarketFixture(symbol)
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol, observedAt } = observation
@@ -20,7 +20,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Requested }])
@@ -34,7 +34,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     const decision = Result.getOrThrow(
       decideJevEntry({ observation, batchPlan: plan, batchResult: nativeJevBatchResult(plan, decidedAt), decidedAt }),
     )
-    expect(decision.selectedSymbols).toEqual([])
+    expect(decision.selectedSymbols).toEqual([symbol])
     expect(
       Result.getOrThrow(
         maximumAllocatedBuyQuantities({
@@ -78,7 +78,7 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observation.observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual(symbols)

@@ -63,6 +63,8 @@ import type { ReconciliationPassResult } from './reconciler'
 
 import { bindCycleExecutionSession } from './execution-session'
 import { canonicalHashV1Result } from './hash'
+import { CycleDecisionRow } from './forward-performance/postgres/model'
+import { verifyPerformanceDecisions } from './forward-performance/postgres/projection'
 import { IntradaySnapshotPurpose, type IntradaySnapshotRequest } from './market-data/intraday/model'
 import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { BrokerMode, Gate, PolicySchema, Reason, evaluate, type Policy, StateSchema } from './risk'
@@ -333,12 +335,12 @@ const fixture = (
     )
   })()
   const planningTargetWeights =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v4'
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5'
       ? jevPlanningTargetWeights(compiledDecision)
       : compiledDecision.targetWeights
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v4' && compiledDecision.selectedSymbols.length > 0
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5' && compiledDecision.selectedSymbols.length > 0
   const {
     candidateEvidencePolicy: _policy,
     benchmarkEvidencePolicy: _benchmark,
@@ -419,7 +421,7 @@ const fixture = (
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
       maximumBuyQuantityAtoms:
-        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v4'
+        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5'
           ? value(
               maximumFundedBuyQuantities({
                 plans: compiledDecision.exitPolicy.plans,
@@ -563,6 +565,57 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
+    'retains historical %s decision identities in financial reads without making them executable',
+    async (schemaVersion) => {
+      const input = fixture({ AAPL: 0.02 })
+      const document = await Effect.runPromise(
+        buildExecutionDecision({
+          ...input,
+          authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
+          executionSession: executionSession(input),
+        }),
+      )
+      const row = Schema.decodeUnknownSync(CycleDecisionRow)({
+        cycle_id: document.bindings.cycleId,
+        decision_hash: document.contentHash,
+        document,
+        created_at: new Date(document.createdAt),
+      })
+      expect(verifyPerformanceDecisions([row]).verifiedRows).toHaveLength(1)
+      const { executionTerms: _terms, allocationCapitalMicros, ...currentInput } = input.plannerInput
+      const referenceMaterial = {
+        schemaVersion: 'bayn.signal-session-reference-prices.v1',
+        signalDate: currentInput.signalDate,
+        observedAt: currentInput.referencePrices.observedAt,
+        priceMicros: currentInput.referencePrices.priceMicros,
+      }
+      const retiredInput = {
+        ...currentInput,
+        schemaVersion,
+        ...(schemaVersion.endsWith('.v2') ? { allocationCapitalMicros } : {}),
+        referencePrices: {
+          ...referenceMaterial,
+          contentHash: value(canonicalHashV1Result(referenceMaterial)),
+        },
+      }
+      const { contentHash: _contentHash, ...currentMaterial } = document
+      const retainedMaterial = { ...currentMaterial, plannerInput: retiredInput }
+      const retainedDocument = {
+        ...retainedMaterial,
+        contentHash: value(canonicalHashV1Result(retainedMaterial)),
+      }
+      const retainedRow = { ...row, decision_hash: retainedDocument.contentHash, document: retainedDocument }
+      const originalBytes = JSON.stringify(retainedRow)
+      expect(Result.isFailure(decodeExecutionDecisionDocument(retainedDocument))).toBe(true)
+      const projected = verifyPerformanceDecisions([retainedRow, row, retainedRow])
+      expect(projected.verifiedRows.map(({ decision_hash }) => decision_hash)).toEqual([document.contentHash])
+      expect(projected.unverifiedDecisionHashes).toEqual([retainedDocument.contentHash])
+      expect(JSON.stringify(retainedRow)).toBe(originalBytes)
+    },
+  )
+
   test('decision rereads reuse only exact fresh JSON and retain current database evidence', async () => {
     const original = await Effect.runPromise(buildObserveShadowDecision(fixture()))
     const alternate = await Effect.runPromise(buildObserveShadowDecision(fixture({}, false, 'another-account')))
@@ -870,7 +923,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v15', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v16', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -895,7 +948,7 @@ describe('intraday shadow decision', () => {
           })})`
             const store = yield* makeCycleStore()
             yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
-            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v4')
+            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5')
               throw new Error('missing Jev evidence')
             const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
             yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
@@ -964,7 +1017,7 @@ describe('intraday shadow decision', () => {
           JSON.stringify({
             targetPlan: document.targetPlan,
             selected:
-              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v4'
+              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v5'
                 ? document.strategyDecision.selectedSymbols
                 : [],
           }),
@@ -1592,7 +1645,7 @@ describe('intraday shadow decision', () => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v4') {
+    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v5') {
       throw new Error('Jev fixture requires one entry decision')
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])

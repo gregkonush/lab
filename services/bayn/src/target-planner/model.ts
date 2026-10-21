@@ -9,12 +9,7 @@ import {
   ReconciliationStatus,
   TimeInForce,
 } from '../execution/contracts'
-import {
-  legacyReconciliationSchemaVersion,
-  legacyReferenceTargetPlanSchemaVersion,
-  legacyTargetPlannerInputV1SchemaVersion,
-  legacyTargetPlannerInputV2SchemaVersion,
-} from '../execution/legacy-wire'
+import { legacyReconciliationSchemaVersion, legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { IntentPlanSchema, type IntentPlan } from '../execution/intents/domain'
 import {
   IsoDateSchema,
@@ -29,14 +24,6 @@ import {
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../schemas'
-
-export const SignalSessionReferencePricesSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.signal-session-reference-prices.v1'),
-  signalDate: IsoDateSchema,
-  observedAt: UtcInstantSchema,
-  contentHash: Sha256Schema,
-  priceMicros: Schema.Record(SymbolSchema, PositiveMicrosSchema),
-})
 
 export const intradaySnapshotReferencePricesSchemaVersion = 'bayn.intraday-snapshot-reference-prices.v1' as const
 
@@ -157,9 +144,9 @@ const TargetPlannerInputFields = {
   decisionHash: Sha256Schema,
   policyHash: Sha256Schema,
   accountId: StrictNonEmptyStringSchema,
-  signalDate: SignalSessionReferencePricesSchema.fields.signalDate,
+  signalDate: IsoDateSchema,
   targetWeights: Schema.Record(SymbolSchema, UnitIntervalSchema),
-  referencePrices: SignalSessionReferencePricesSchema,
+  referencePrices: ExecutionReferencePricesSchema,
   brokerState: TargetPlannerBrokerStateSchema,
   precision: Schema.Struct({
     quantityIncrementAtoms: PositiveMicrosSchema,
@@ -201,26 +188,9 @@ export const TargetPlanExecutionTermsSchema = Schema.Struct({
 })
 export type TargetPlanExecutionTerms = typeof TargetPlanExecutionTermsSchema.Type
 
-export const TargetPlannerInputV1Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyTargetPlannerInputV1SchemaVersion),
-  ...TargetPlannerInputFields,
-})
-
-export const TargetPlannerInputV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyTargetPlannerInputV2SchemaVersion),
-  ...TargetPlannerInputFields,
-  allocationCapitalMicros: UnsignedMicrosSchema,
-})
-
 const QuoteBoundTargetPlannerInputBase = Schema.Struct({
   schemaVersion: Schema.Literal(quoteBoundTargetPlannerInputSchemaVersion),
   ...TargetPlannerInputFields,
-  referencePrices: ExecutionReferencePricesSchema,
-  precision: Schema.Struct({
-    quantityIncrementAtoms: PositiveMicrosSchema,
-    priceIncrementMicros: PositiveMicrosSchema,
-    minimumBuyNotionalMicros: PositiveMicrosSchema,
-  }),
   allocationCapitalMicros: UnsignedMicrosSchema,
   executionTerms: QuoteBoundExecutionTermsSchema,
 })
@@ -298,16 +268,10 @@ export const QuoteBoundTargetPlannerInputSchema = QuoteBoundTargetPlannerInputBa
   Schema.makeFilter(quoteBoundInputIssues),
 )
 
-export const TargetPlannerInputSchema = Schema.Union([
-  TargetPlannerInputV1Schema,
-  TargetPlannerInputV2Schema,
-  QuoteBoundTargetPlannerInputSchema,
-])
+export const TargetPlannerInputSchema = QuoteBoundTargetPlannerInputSchema
 
-export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
 export type IntradaySnapshotReferencePrices = typeof IntradaySnapshotReferencePricesSchema.Type
 export type ExecutionReferencePrices = typeof ExecutionReferencePricesSchema.Type
-export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
 export type QuoteBoundTargetPlannerInput = typeof QuoteBoundTargetPlannerInputSchema.Type
 export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 
