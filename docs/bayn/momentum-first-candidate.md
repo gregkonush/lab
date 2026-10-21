@@ -43,9 +43,9 @@ never justify postponing a protective exit.
 
 ## Bounded runtime and immutable evidence
 
-- The only active protocol is `bayn.jev.protocol.v10`, with `chosen-model-action` entry selection and
+- The only active protocol is `bayn.jev.protocol.v11`, with `chosen-model-action` entry selection and
   `capital-weighted-session-limit` sizing. A valid chosen enter action selects a funded target; no second model economic judgment is required. Retired protocols and their numeric entry floor are rejected by the runtime
-- The current behavior is `bayn.jev.setup-action.behavior.v1`. Protocol, behavior, observation, batch v4,
+- The current behavior is `bayn.jev.focused-action.behavior.v1`. Protocol, behavior, observation, batch v4,
   cycle and authority identities bind this policy. Retained historical evidence cannot start new active cycles
 - Trading-signal input v9 retains explicit fee break-even context and restores the setup question. Entry
   pricing retains its fresh-quote lifetime and must stay within the inference-bound price ceiling, in addition to

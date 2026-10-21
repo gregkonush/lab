@@ -69,6 +69,7 @@ export const driveReplaySession = <E>(
         const { reason } = pass.observation.readiness
         readinessCounts[reason] = (readinessCounts[reason] ?? 0) + 1
         switch (reason) {
+          case DecisionReadinessReason.AccountProtection:
           case DecisionReadinessReason.LookbackWarmup:
           case DecisionReadinessReason.NoEligibleCandidate:
           case DecisionReadinessReason.SignalWindowObserved:

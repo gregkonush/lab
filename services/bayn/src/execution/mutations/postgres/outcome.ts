@@ -2,7 +2,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Result } from 'effect'
 import type { SqlError } from 'effect/sql/SqlError'
 
-import { MutationOperation, type PartialMutationEvidence } from '../../../broker/alpaca-mutations'
+import { MutationOperation, type PartialMutationEvidence } from '../../../broker/alpaca-mutations/model'
 import { IntentState } from '../../contracts'
 import {
   decideAcknowledgedRecovery,

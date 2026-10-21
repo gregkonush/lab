@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Effect, Layer, Schema } from 'effect'
 import { PostgresClientLive } from '../db/postgres-client'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { Sha256Schema, strictParseOptions } from '../schemas'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerCheckpointSchema, ReplayCheckpointFailure } from './broker-checkpoint'

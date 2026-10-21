@@ -15,7 +15,7 @@ import {
   planTargets,
   quoteBoundTargetPlannerInputSchemaVersion,
   type QuoteBoundTargetPlannerInput,
-} from '../target-planner'
+} from '../target-planner/index'
 
 export const matchedCommittedDecisionFixture = (
   native: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {

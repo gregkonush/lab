@@ -16,9 +16,7 @@ test('setup selection asks the model for its setup action without a second econo
   const fixture = nativeJevFixture()
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(request.request.questions['net_economics']).toBeUndefined()
-  expect(request.request.questions['action']?.instructions).toBe(
-    'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
-  )
+  expect(request.request.questions['action']?.instructions).toContain('entryEconomics.profitTargetExitBidUsd')
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
@@ -40,6 +38,8 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
     const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const request = Result.getOrThrow(makeJevTradingSignalRequest(native, symbol))
     const state = JSON.parse(request.body).state
+    expect(state.entryEconomics.profitTargetNetBps).toBe(100)
+    expect(state.entryEconomics.profitTargetExitBidUsd).toBeGreaterThan(state.entryEconomics.breakEvenExitBidUsd)
     expect(state.entryEconomics.operatingCostCoverage).toBe('UNKNOWN')
     expect(state.entryEconomics.breakEvenExitBidUsd).toBeGreaterThan(state.candidate.quote.ask)
     expect(state.entryEconomics.requiredBidRiseBps).toBeGreaterThan(70)

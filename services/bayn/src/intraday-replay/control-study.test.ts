@@ -630,12 +630,12 @@ test('an equity peak between minute marks blocks re-entry after the drawdown lim
   const peakStartMs = openMs + 11 * 60_000 + 20_000
   const peakEndMs = openMs + 11 * 60_000 + 45_000
   const { report } = await simulate({
-    maximumDrawdownMicros: '100000000',
-    bidPriceAtMs: (atMs, referencePrice) => referencePrice + (atMs >= peakStartMs && atMs < peakEndMs ? 100 : 0),
+    maximumDrawdownMicros: '40000000',
+    bidPriceAtMs: (atMs, referencePrice) => referencePrice * (atMs >= peakStartMs && atMs < peakEndMs ? 1.006 : 1),
   })
   expect(report.completion).toBe('COMPLETE')
-  expect(BigInt(report.closingCapital.peakNetEquityMicros)).toBeGreaterThan(100_100_000_000n)
-  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(100_000_000n)
+  expect(BigInt(report.closingCapital.peakNetEquityMicros)).toBeGreaterThan(100_040_000_000n)
+  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(40_000_000n)
   expect(report.completedEpisodes).toBe(1)
   expect(report.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(1)
   expect(report.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
@@ -778,7 +778,7 @@ const frozenControlFixture = () => {
       inference: {
         mode: 'measured-provider',
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v9',
+        inputDefinition: 'bayn.jev-trading-signal-state.v12',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -832,7 +832,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       expect(report.sessions).toHaveLength(6)
       expect(report.definition).toMatchObject({
         ...controlStudyDefinition,
-        schemaVersion: 'bayn.control-study-definition.v10',
+        schemaVersion: 'bayn.control-study-definition.v11',
       })
       expect(
         report.sessions.every((session) => session.completion === 'INCOMPLETE' && session.modelCallCount === 0),
@@ -883,7 +883,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
         provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
       }
       const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
-      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v10')
+      expect(managed.definition.schemaVersion).toBe('bayn.control-study-definition.v11')
       expect(managed.runId).not.toBe(report.runId)
       const registration = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(Schema.Struct({ definition: Schema.Unknown, runId: Schema.String })),

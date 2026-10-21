@@ -57,6 +57,23 @@ const entry = () =>
     at + 100,
   )
 
+test('a matched arm realizes the native net-profit target before its stop or holding deadline', () => {
+  const crossed = quote(at + 5100, { bidPrice: 102, askPrice: 102.02 })
+  const triggered = step(entry(), MatchedEvent.Poll, at + 5100, crossed)
+  expect(triggered.portfolio.inventory).toMatchObject({ status: 'EXITING', reason: ControlExit.ProfitTarget })
+  const flat = step(
+    triggered,
+    MatchedEvent.ExitArrival,
+    at + 5200,
+    quote(at + 5200, { bidPrice: 102, askPrice: 102.02 }),
+  )
+  expect(finishMatchedLifecycle(flat).status).toBe('RESOLVED')
+  expect(flat.portfolio.episodes[0]?.reason).toBe(ControlExit.ProfitTarget)
+  const net = flat.portfolio.ledger.netRealizedPnlAfterCostsMicros
+  if (net === null) throw new Error('Completed matched profit exit requires known net execution P&L')
+  expect(BigInt(net)).toBeGreaterThan(0n)
+})
+
 test('protective trigger survives partial fills and an unchanged quote cannot replenish liquidity', () => {
   const stopped = step(entry(), MatchedEvent.Poll, at + 5100, quote(at + 5100, { bidPrice: 99, askPrice: 99.02 }))
   const arrival = quote(at + 5200, { bidPrice: 99, askPrice: 99.02, bidSize: 1 })

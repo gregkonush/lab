@@ -10,19 +10,16 @@ import { verifyAccountingReceipts, type ReconciliationAlgebraFailure } from '../
 import { verifyCashSettlement } from '../accounting/cash-settlement'
 import type { CanonicalJsonFailure } from '../hash'
 import { canonicalHashV1Result } from '../hash'
-import type { MarketDataSnapshot, SnapshotRequest } from '../market-data'
+import type { MarketDataSnapshot, SnapshotRequest } from '../market-data/model'
 import { makeMarketDataQueries } from '../market-data/queries'
 import { decodeSnapshotRows, type SnapshotRows } from '../market-data/rows'
-import { verifyFinalizedSnapshot } from '../market-data-verification'
+import { verifyFinalizedSnapshot } from '../market-data/verification/snapshot'
 import type { BrokerIdentity } from '../broker/identity'
 import type { IsoDate } from '../schemas'
 import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } from './domain'
 import { makeForwardPerformanceReport, type ForwardPerformanceReport } from './report'
-import {
-  readForwardPerformancePostgres,
-  type ForwardPerformancePostgresEvidence,
-  type ForwardPerformancePostgresError,
-} from './postgres'
+import { readForwardPerformancePostgres } from './postgres/read'
+import { type ForwardPerformancePostgresEvidence, type ForwardPerformancePostgresError } from './postgres/model'
 import {
   readForwardPerformanceLedger,
   type ForwardPerformanceLedgerEvidence,

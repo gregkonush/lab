@@ -84,11 +84,11 @@ statistical registration or economic qualification. The following offline comman
 
 ## Causal execution training command
 
-`bayn-ridge-training` is bundled in the Bayn image and is also callable from
-`services/bayn/src/ridge-training-command.ts`. It does not construct a model provider, broker client or live journal.
+`bayn-ridge-training` is an offline command built by `bun run --filter @proompteng/bayn build:research`.
+Run it with `bun run --filter @proompteng/bayn ridge:training`. It does not construct a model provider, broker client or live journal.
 
 ```sh
-bayn-ridge-training \
+node services/bayn/dist/research/ridge-training-command.js \
   --input training-input.json --input-sha256 <raw-input-byte-sha256> \
   --arrivals original-arrivals.ndjson.gz \
   --source-receipt original-replay-receipt.json --source-receipt-sha256 <raw-receipt-byte-sha256> \

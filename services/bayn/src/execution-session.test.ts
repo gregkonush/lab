@@ -3,17 +3,15 @@ import { describe, expect, test } from 'bun:test'
 
 import { Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation } from './broker/alpaca'
+import type { MarketCalendarObservation } from './broker/alpaca/model'
+import { CycleState, type AutonomousCycle } from './cycle/model'
 import {
-  CycleState,
-  isIntradayCycleDraft,
   makeCycleDraft,
   makeCycleExecutionPolicyFromModel,
   makeCycleIdentity,
   makeExecutionCalendarObservation,
   makeIntradayCycleWindow,
-  type IntradayAutonomousCycle,
-} from './cycle'
+} from './cycle/construction'
 import {
   bindCycleExecutionSession,
   ExecutionSessionBindingSchema,
@@ -48,7 +46,7 @@ const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservati
   return { ...material, normalizedResponseHash: canonicalHashV1(material) }
 }
 
-const activeCycle = (): IntradayAutonomousCycle => {
+const activeCycle = (): AutonomousCycle => {
   const session = calendar().sessions[0]
   if (session === undefined) throw new Error('test calendar requires one execution session')
   const observedCalendar = value(
@@ -66,7 +64,7 @@ const activeCycle = (): IntradayAutonomousCycle => {
     makeCycleIdentity({
       schemaVersion: 'bayn.autonomous-cycle-identity.v4',
       entryAttemptOrdinal: 1,
-      strategyName: 'intraday-momentum',
+      strategyName: 'jev',
       qualificationRunId: hash('1'),
       strategyProtocolHash: hash('2'),
       accountId: 'account-1',
@@ -79,7 +77,6 @@ const activeCycle = (): IntradayAutonomousCycle => {
   )
   const window = value(makeIntradayCycleWindow(observedCalendar, executionPolicy))
   const draft = value(makeCycleDraft(identity, window))
-  if (!isIntradayCycleDraft(draft)) throw new Error('intraday identity must construct an intraday cycle')
   return {
     ...draft,
     state: CycleState.Active,

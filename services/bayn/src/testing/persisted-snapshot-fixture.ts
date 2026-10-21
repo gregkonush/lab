@@ -1,5 +1,5 @@
 import { canonicalHashV1, sha256 } from '../hash'
-import type { MarketDataContract } from '../market-data'
+import type { MarketDataContract } from '../market-data/model'
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../types'
 import { fixtureProtocol } from './runtime-fixtures'
 

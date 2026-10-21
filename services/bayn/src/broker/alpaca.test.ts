@@ -13,13 +13,6 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
-  BrokerAccountPreflightError,
-  BrokerProvider,
-  BrokerSession,
-  BrokerSessionAcquisitionError,
-  BrokerSessionAcquisitionStage,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -27,16 +20,14 @@ import {
   PositionSide,
   SortDirection,
   TradeActivityType,
-  alpacaSandboxBaseUrl,
-  decodeBrokerConnection,
-  layer,
-  make,
-  makeProxyDispatcher,
   readPreflightTimeoutMs,
-  verifyReadAccess,
   type BrokerReadShape,
-  type BrokerConnection,
-} from './alpaca'
+} from './alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './alpaca/failures'
+import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/preflight'
+import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
+import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
+import { make, makeProxyDispatcher } from './alpaca/http'
 import { parseProxyUrl } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
