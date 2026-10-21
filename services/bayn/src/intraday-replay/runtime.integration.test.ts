@@ -1481,7 +1481,9 @@ durableTest.each(
             expect(measuredCalls).toHaveLength(eligibleEntrySymbols.length)
             const entryCalls = measuredCalls.filter((call) => {
               const action = call.request.questions['action']
-              return action?.type === 'choice' && 'enter' in action.criteria
+              return (
+                action?.type === 'choice' && Object.keys(action.criteria).some((choice) => choice.startsWith('plan_'))
+              )
             })
             expect(entryCalls).toHaveLength(eligibleEntrySymbols.length)
             for (const call of measuredCalls) {

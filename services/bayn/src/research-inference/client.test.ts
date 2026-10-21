@@ -16,11 +16,7 @@ const fixture = researchFixture()
 const id = Result.getOrThrow(hashResearch(fixture))
 const activeFixture = harnessEditorFixture()
 const activeId = Result.getOrThrow(hashResearch(activeFixture))
-const activeStream = () =>
-  streamFixture(
-    '<harness>{"entry":"Assess","stopLoss":"Choose stop","takeProfit":"Choose target"}</harness>',
-    activeFixture.policy.model,
-  )
+const activeStream = () => streamFixture('<harness>{"entry":"Assess"}</harness>', activeFixture.policy.model)
 const encode = (text: string) => new TextEncoder().encode(text)
 const finalUsageFrame = `data: ${JSON.stringify({
   id: 'chatcmpl-synthetic',

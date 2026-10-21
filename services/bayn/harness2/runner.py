@@ -127,8 +127,8 @@ def validate_study(value):
 
 
 def validate_instructions(value):
-    if not isinstance(value, dict) or set(value) != {"entry", "stopLoss", "takeProfit"}:
-        raise ValueError("Only the three native Jev question instructions are editable")
+    if not isinstance(value, dict) or set(value) != {"entry"}:
+        raise ValueError("Only the native Jev complete-plan question instruction is editable")
     if any(
         not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000
         for text in value.values()
@@ -458,8 +458,8 @@ class Adapter:
             install_mode="workspace_config",
             prompts=BenchPrompts(
                 work="evaluate typed Jev decisions from frozen native market signals",
-                inv_levers="Only edit the three Jev question instructions in instructions.json. Keep state, criteria, quantities and risk rules fixed.",
-                dom_levers="Refine native Jev entry, stop-loss and take-profit question wording.",
+                inv_levers="Only edit the Jev complete-plan question instruction in instructions.json. Keep state, criteria, quantities and risk rules fixed.",
+                dom_levers="Refine native Jev complete-plan entry question wording.",
                 yardstick="Use the supplied source material and behavioral contrasts. Never invent future returns.",
             ),
             channels={"proposer": channel, "selector": channel},
@@ -545,7 +545,7 @@ class Editor(Proposer):
             if path.is_file()
         )
         instruction = (
-            "Return a JSON object with exactly entry, stopLoss and takeProfit string fields, inside exactly one <harness>...</harness> block. Each string is bounded to 2000 characters and should use at most 100 words. Keep analysis brief and return the complete JSON within the token budget. "
+            "Return a JSON object with exactly one entry string field, inside exactly one <harness>...</harness> block. The string is bounded to 2000 characters and should use at most 100 words. Keep analysis brief and return the complete JSON within the token budget. "
             "followed by <notes>...</notes>. The Bayn executor only receives immutable market state and typed Jev questions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
             "References to those capabilities in the generic upstream mission do not apply to Bayn. "
             "Never instruct the executor to use them or invent a fallback path. "

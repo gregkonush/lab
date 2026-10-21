@@ -1,4 +1,4 @@
-import { describe, expect, test } from 'bun:test'
+import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -17,6 +17,8 @@ import {
   nativeJevInference,
 } from './native.test-support'
 import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
+
+setDefaultTimeout(30_000)
 
 const fixture = nativeJevFixture()
 const run = () => ({
@@ -48,7 +50,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + observation.payload.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V5,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(native.candidates.some((entry) => entry.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -101,8 +103,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         ...original?.request.questions['action'],
         instructions: 'Assess the supplied entry evidence and select the applicable action.',
       })
-      expect(request.request.questions['stop_loss']).toEqual(original?.request.questions['stop_loss'])
-      expect(request.request.questions['take_profit']).toEqual(original?.request.questions['take_profit'])
+      expect(Object.keys(request.request.questions)).toEqual(['action'])
       expect(request.requestHash).not.toBe(original?.requestHash)
     }
     expect(
@@ -111,6 +112,16 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
       ),
     ).toBe(true)
   }, 15_000)
+  test('retired separate protection instructions cannot enter the complete-plan harness', () => {
+    expect(
+      Result.isFailure(
+        prepareJevHarnessProbe({
+          ...run(),
+          instructions: { ...jevInstructions, stopLoss: 'Choose stop', takeProfit: 'Choose target' },
+        }),
+      ),
+    ).toBe(true)
+  })
   test('incomplete probes cannot become decisions and malformed native evidence fails', () => {
     const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
     expect(Result.isFailure(jevHarnessDecision(prepared, []))).toBe(true)

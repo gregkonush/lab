@@ -33,7 +33,7 @@ this deployment.
   path is closed rather than wrapped in another serving layer.
 
 The current `bayn.jev-harness2-editor.v2` contract accepts bounded instruction proposals and evidence-supported
-reflection. A proposal changes only the `entry`, `stopLoss` and `takeProfit` strings. Validate their schema and
+reflection. A proposal changes only the complete-plan `entry` instruction. Validate their schema and
 native request identity before a probe. Generated text is data; the editor cannot add executable code, change
 market state or choices, alter risk policy, or submit an order. A truncated, timed-out, malformed or foreign-model
 response cannot be a completed proposal. Retained Alpha-R1 registrations remain readable immutable evidence;

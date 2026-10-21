@@ -15,8 +15,8 @@ Jev remains the typed decision model. Every probe uses the production `JevClient
 response validation, proxy and ten-second request timeout. Probes reconstruct state and supplied answer choices from
 an original native Bayn observation. The baseline instructions must match the compiled live instructions exactly.
 
-Harness2 edits only `instructions.json`, containing `entry`, `stopLoss` and `takeProfit` strings of at most 2,000
-characters each. These are the actual question instructions used by `trading-signals.ts` and `trade-price-choices.ts`.
+Harness2 edits only `instructions.json`, containing one `entry` string of at most 2,000
+characters. This is the complete-plan question instruction used by `trade-plan-choices.ts`.
 The editor sees a bounded summary with original request hashes, relative returns, break-even economics, candidate
 and benchmark returns, price ranges, quotes, and selected answers. Unrepresented fields never establish missing
 facts. Each signal group remains represented for the full candidate universe.
@@ -46,7 +46,7 @@ native export or database receipt. Keep all inputs and outputs private.
   "sourceRevision": "<exact deployed source revision>",
   "maximumCalls": 128,
   "maximumWallSeconds": 1800,
-  "baseline": { "entry": "...", "stopLoss": "...", "takeProfit": "..." },
+  "baseline": { "entry": "..." },
   "editor": { "policy": {}, "costBasis": null },
   "tasks": [{ "id": "development", "observation": {} }],
   "validation": [{ "id": "untouched", "observation": {} }]
@@ -127,7 +127,7 @@ does not install candidates into the trading process.
 The research compiler replaces the data-only `src/jev/instructions.ts` module before bundling the ordinary
 `backtest-command.ts` entry point. Every request builder, decision decoder, persistence path and recovery check
 therefore consumes the same frozen instruction document. The trading build has no environment or request switch
-for these strings. The compiler accepts three strings as data and has no editable source path or executable-code
+for this instruction. The compiler accepts one string as data and has no editable source path or executable-code
 parameter.
 
 Use the pinned Bun 1.4.2 toolchain and committed source. The compiler verifies the requested Git revision and clean
@@ -140,7 +140,7 @@ Create a private specification:
   "sourceRevision": "<exact reviewed source revision>",
   "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
   "baseImageDigest": "sha256:<runtime image digest>",
-  "instructions": { "entry": "...", "stopLoss": "...", "takeProfit": "..." }
+  "instructions": { "entry": "..." }
 }
 ```
 

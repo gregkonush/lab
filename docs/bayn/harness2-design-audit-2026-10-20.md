@@ -7,12 +7,17 @@ Research date: 2026-10-20 America/Los_Angeles. Implementation inspected at
 The current adapter is a native Jev instruction proposal and decision-comparison tool. It is not a completed
 Bayn decision-improvement experiment. Its request reproduction and funded selection checks are useful, but its
 comparison cannot establish economic improvement. Delivering another healthy image would not close that gap.
-PR [#15233](https://github.com/proompteng/lab/pull/15233) is held in draft while the experiment is corrected.
+PR [#15233](https://github.com/proompteng/lab/pull/15233) delivers research tooling; its review and deployment do not
+establish economic acceptance of a generated candidate.
 
 The follow-up source now replaces the active Alpha-R1 policy with a pinned general instruction editor, supplies a
 research-only compiler for the native portfolio executable, binds its instruction hash and provider-call budget,
 and reads native economic reports. These implementation changes address parts of the gaps below. Full orchestration,
 real editor qualification, independent market coverage and a completed economic experiment remain unverified.
+Main subsequently adopted complete funded trade-plan choices in
+[PR #15230](https://github.com/proompteng/lab/pull/15230). The adapter and compiler now expose only that plan question's
+single `entry` instruction and reject the retired separate stop-loss and take-profit strings. The findings below
+describe the initially inspected implementation unless an update is stated.
 
 The original research question remains: does a frozen Harness2-generated change improve Bayn's actual decisions,
 after execution and operating costs, relative to the unchanged strategy and appropriate controls?
@@ -45,7 +50,7 @@ than the agent harness in the paper. An editor may improve literal question word
 that does not supply missing information about future prices. Whether these changes improve financial prediction
 is a separate empirical hypothesis. The paper's task scores do not establish that hypothesis.
 
-The three current questions also measure different things: an entry action, a thesis-invalidating observed stop
+The three questions at the initially inspected revision measured different things: an entry action, a thesis-invalidating observed stop
 price, and an observed take-profit price supported by the supplied evidence. All are decisions under uncertainty.
 Neither syntactic validity nor agreement between an editor and Jev establishes their future correctness.
 The evaluator must distinguish question interpretation defects from a lack of predictive signal. If a numerical

@@ -71,12 +71,7 @@ export const applyJevInstructions = (request: JevRequest, instructions: JevInstr
         name,
         {
           ...question,
-          instructions:
-            name === 'action'
-              ? instructions.entry
-              : name === 'stop_loss'
-                ? instructions.stopLoss
-                : instructions.takeProfit,
+          instructions: instructions.entry,
         },
       ]),
     ),
@@ -95,7 +90,7 @@ export const prepareJevHarnessProbe = (input: unknown) =>
     const plan = yield* makeJevTradingSignalBatch({
       observation: run.observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     })
     const requests = []
     for (const candidate of plan.candidates) {

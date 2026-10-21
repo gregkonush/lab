@@ -1,4 +1,4 @@
-import jevEditorMigration from '../../migrations/0133_jev_editor_identity'
+import jevEditorMigration from '../../migrations/0134_jev_editor_identity'
 import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
@@ -116,7 +116,7 @@ integration('research attempt durability with real PostgreSQL', () => {
   })
   test('claims and replays a harness proposal through the same immutable store', async () => {
     let calls = 0
-    const text = '<harness>{"entry":"Assess entry","stopLoss":"Select stop","takeProfit":"Select target"}</harness>'
+    const text = '<harness>{"entry":"Assess complete entry plans"}</harness>'
     const model = Bun.serve({
       port: 0,
       fetch: () => {
@@ -173,10 +173,7 @@ integration('research attempt durability with real PostgreSQL', () => {
       fetch: () => {
         calls++
         return new Response(
-          fullTokenBudgetStreamFixture(
-            harnessEditorFixture().policy.model,
-            '<harness>{"entry":"Assess","stopLoss":"Choose stop","takeProfit":"Choose target"}</harness>',
-          ),
+          fullTokenBudgetStreamFixture(harnessEditorFixture().policy.model, '<harness>{"entry":"Assess"}</harness>'),
           {
             headers: {
               'content-type': 'text/event-stream',
@@ -227,18 +224,12 @@ integration('research attempt durability with real PostgreSQL', () => {
     const model = Bun.serve({
       port: 0,
       fetch: () =>
-        new Response(
-          streamFixture(
-            '<harness>{"entry":"Assess","stopLoss":"Choose stop","takeProfit":"Choose target"}</harness>',
-            harnessEditorFixture().policy.model,
-          ),
-          {
-            headers: {
-              'content-type': 'text/event-stream',
-              'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
-            },
+        new Response(streamFixture('<harness>{"entry":"Assess"}</harness>', harnessEditorFixture().policy.model), {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
           },
-        ),
+        }),
     })
     try {
       await runtime.runPromise(

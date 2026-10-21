@@ -21,7 +21,7 @@ const ProbeSchema = Schema.Struct({
   injected: Schema.Boolean,
 })
 
-test('compiled candidate requests and decisions pass native reproduction with only the three instruction strings changed', async () => {
+test('compiled candidate requests and decisions pass native reproduction with only the complete-plan instruction changed', async () => {
   const directory = await mkdtemp(join(tmpdir(), 'bayn-jev-variant-'))
   try {
     await symlink(join(root, 'services/bayn/node_modules'), join(directory, 'node_modules'))
@@ -68,23 +68,18 @@ test('compiled candidate requests and decisions pass native reproduction with on
     const baseline = await probe(jevInstructions)
     const candidate = {
       entry: 'Assess the supplied entry evidence. Literal text: ";globalThis.__jevInjected=true;//',
-      stopLoss: 'Select the supplied observed price that invalidates the long thesis, or none.',
-      takeProfit: 'Select a supported supplied profit price after the computed costs, or none.',
     }
     const edited = await probe(candidate)
     expect(edited.instructions).toEqual(candidate)
     expect(edited.injected).toBe(false)
     expect(edited.request.state).toEqual(baseline.request.state)
     expect(edited.selectedSymbols).toEqual(baseline.selectedSymbols)
-    for (const [name, field] of [
-      ['action', 'entry'],
-      ['stop_loss', 'stopLoss'],
-      ['take_profit', 'takeProfit'],
-    ] as const) {
-      const question = edited.request.questions[name]
-      expect(question?.instructions).toBe(candidate[field])
-      expect({ ...question, instructions: null }).toEqual({ ...baseline.request.questions[name], instructions: null })
-    }
+    const question = edited.request.questions['action']
+    expect(question?.instructions).toBe(candidate.entry)
+    expect({ ...question, instructions: null }).toEqual({
+      ...baseline.request.questions['action'],
+      instructions: null,
+    })
   } finally {
     await rm(directory, { recursive: true, force: true })
   }

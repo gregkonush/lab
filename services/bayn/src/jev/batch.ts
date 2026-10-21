@@ -36,7 +36,7 @@ export enum JevEntryExclusion {
 }
 
 export enum JevBatchPlanVersion {
-  V5 = 'bayn.jev-batch-plan.v5',
+  V6 = 'bayn.jev-batch-plan.v6',
 }
 
 const CandidatePlanSchema = Schema.Union([

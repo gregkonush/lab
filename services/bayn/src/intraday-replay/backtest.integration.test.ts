@@ -247,7 +247,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
             mode: 'measured-provider',
             maximumCalls: 1000,
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v14',
+            inputDefinition: 'bayn.jev-trading-signal-state.v15',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: '0',

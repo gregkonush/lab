@@ -100,7 +100,7 @@ export const fundJevTradePlan = (input: {
     )
       return null
     const exitPlan: JevFundedExitPlan = {
-      schemaVersion: 'bayn.jev-funded-exit-plan.v2',
+      schemaVersion: 'bayn.jev-funded-exit-plan.v3',
       levels,
       maximumQuantityAtoms: economics.maximumQuantityAtoms,
       acquisitionCostMicros: economics.acquisitionCostMicros,
