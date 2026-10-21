@@ -169,6 +169,8 @@ fixed across arms. The provider uses the existing Jev credential and `BAYN_PUBLI
 Failed or interrupted dispatches consume their budget; exhausted slots cannot transmit. Report
 `bayn.backtest-report.v4` records the compiled instructions, provider dispatch inventory and native outcomes.
 The command retains its actual executable hash and writes full evidence privately; stdout contains a small summary.
+Economic comparison requires this digest for every arm. Raw engine reports without an identified executable cannot
+enter the comparison.
 Broker operations use the simulated broker. This command acquires no Alpaca trading credential and expands no capital authority.
 
 ## Native economic report comparison

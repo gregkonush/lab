@@ -34,7 +34,7 @@ const NativeEconomicReportSchema = Schema.Struct({
   jevInstructions: Schema.Struct({ contentHash: Sha256Schema, document: JevInstructionsSchema }),
   evidenceMode: Schema.Literal('simulated-production-execution'),
   runId: Sha256Schema,
-  executableSha256: Schema.optionalKey(Sha256Schema),
+  executableSha256: Sha256Schema,
   reportHash: Sha256Schema,
   inference: Schema.Struct({
     definition: BacktestInputSchema.fields.inference,
@@ -263,7 +263,7 @@ export const jevHarnessBacktestOutcome = (input: {
     return {
       reportHash: report.reportHash,
       runId: report.runId,
-      executableSha256: report.executableSha256 ?? null,
+      executableSha256: report.executableSha256,
       instructionsHash: yield* hash(instructions),
       contextHash: yield* hash({
         comparisonInputHash: report.comparisonInputHash,

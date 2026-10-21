@@ -43,7 +43,7 @@ const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
 const outcome = (run: string, net: readonly (string | null)[], candidate = false): JevHarnessBacktestOutcome => ({
   runId: run.repeat(64),
   reportHash: run.repeat(64),
-  executableSha256: null,
+  executableSha256: run.repeat(64),
   instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
   contextHash: 'd'.repeat(64),
   providerRequests: 8,
@@ -206,6 +206,7 @@ const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
   const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
   const material = {
     schemaVersion: 'bayn.backtest-report.v4',
+    executableSha256: sha256('SYNTHETIC economic fixture executable ' + run),
     jevInstructions: { document: instructions, contentHash: hash(instructions) },
     evidenceMode: 'simulated-production-execution',
     runId: run.repeat(64),
@@ -352,6 +353,12 @@ test('changed native report bytes, cash, costs and response identities fail inst
       jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
     ),
   ).toBe(true)
+})
+
+test('a native engine report without an identified executable cannot enter the economic comparison', () => {
+  const report = nativeReportFixture()
+  const { executableSha256: _executable, ...raw } = report
+  expect(Result.isFailure(project(reseal(raw)))).toBe(true)
 })
 
 test('fractional trading, broker assets, calendar and cadence changes cannot masquerade as instruction effects', () => {
