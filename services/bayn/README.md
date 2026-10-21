@@ -72,8 +72,8 @@ Migration 131 retires prior executable Jev authority after terminal mutation cyc
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v15 strategy identity.
 
-Migration 132 closes the remaining retired authority write paths: new PAPER generations require the research v3
-activation contract and Jev v15, while OBSERVE initialization and recovery remain available. It changes constraints
+Migration 134 closes the remaining retired authority write paths: new PAPER generations require the research v3
+activation contract and Jev v16, while OBSERVE initialization and recovery remain available. It changes constraints
 only, without rotating active authority, rewriting retained generations or changing accounting history. Historical
 qualified and retired-strategy generations remain readable and can still recover through their existing OBSERVE path.
 
@@ -1799,9 +1799,12 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Alpha-R1 research
 
-The [Harness2 adapter](../../docs/bayn/harness2.md) refines factor-selection prompts through the existing signed
-research API and retains probes, compositions, and lessons in the private research bucket. The installed
-`bayn-harness2` command produces unqualified research artifacts. It does not change the trading strategy or its authority.
+The [Harness2 adapter](../../docs/bayn/harness2.md) refines the same Jev entry, stop-loss, and take-profit
+question instructions used by the trading runtime. Native probes reproduce retained observations and use Bayn's
+funded entry-selection code. A separate generative editor proposes instructions; it cannot change market evidence,
+answer choices or execution controls. Frozen candidates are compared with the baseline on later observations hidden
+from the editor. The old Alpha-R1 factor-selection adapter is removed. Research output does not grant trading
+authority or establish economic improvement.
 
 `BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
 The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,

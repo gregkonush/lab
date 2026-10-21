@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
-import currentAuthorityWrites from '../../migrations/0132_current_authority_writes'
+import currentAuthorityWrites from '../../migrations/0134_current_authority_writes'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -79,7 +79,11 @@ const activate = (generationHash: string) =>
       kill_state='CLEAR',reason=NULL,version=(SELECT authority_version FROM authority_generations WHERE generation_hash=${generationHash}),
       updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${generationHash}) WHERE singleton`
   })
-const migrate = PgMigrator.run({ loader: migrationLoader, table: 'schema_migrations' })
+const fenceId = 134
+const migrate = PgMigrator.run({
+  loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= fenceId))),
+  table: 'schema_migrations',
+})
 const makeRuntime = () =>
   ManagedRuntime.make(
     PgClient.layer({ url: Redacted.make(url), maxConnections: 1 }).pipe(Layer.provideMerge(NodeServices.layer)),
@@ -101,7 +105,7 @@ integration('current authority write cutover', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 132))),
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < fenceId))),
           table: 'schema_migrations',
         })
       }),
@@ -161,10 +165,10 @@ integration('current authority write cutover', () => {
           })
           expect(yield* ensure({ generationHash: successor, maximum: Authority.Observe })).toEqual(recovered)
           const current = hash('current-paper')
-          yield* insertResearch(current, successor, recovered.version + 1, 'jev', 'bayn.jev.protocol.v15', 'after')
+          yield* insertResearch(current, successor, recovered.version + 1, 'jev', 'bayn.jev.protocol.v16', 'after')
           yield* activate(current)
           expect((yield* authority.readGeneration(current))[0]?.strategy_parameter_schema_version).toBe(
-            'bayn.jev.protocol.v15',
+            'bayn.jev.protocol.v16',
           )
           expect(
             yield* sql`SELECT to_jsonb(g)::text AS generation FROM authority_generations g WHERE generation_hash=${retained}`,
@@ -198,7 +202,7 @@ integration('current authority write cutover', () => {
   })
 
   test.each([
-    { strategy_name: null, strategy_parameter_schema_version: 'bayn.jev.protocol.v15' },
+    { strategy_name: null, strategy_parameter_schema_version: 'bayn.jev.protocol.v16' },
     { strategy_name: 'jev', strategy_parameter_schema_version: null },
   ])('rejects partially null strategy identity %j', async (identity) => {
     await runtime.runPromise(
@@ -208,13 +212,60 @@ integration('current authority write cutover', () => {
         const { ensure } = yield* makeStore
         yield* ensure({ generationHash: original, maximum: Authority.Observe })
         yield* reconcile('partial')
-        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v15', 'partial')
+        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v16', 'partial')
         const changed = { ...identity, generation_hash: hash('partial-rejected'), authority_version: 3 }
         const rejected = yield* sql`INSERT INTO authority_generations
           SELECT (jsonb_populate_record(NULL::authority_generations,to_jsonb(g)||${sql.json(changed)})).*
           FROM authority_generations g WHERE generation_hash=${retained}`.pipe(Effect.result)
         expect(Result.isFailure(rejected)).toBe(true)
         if (Result.isFailure(rejected)) expect(rejected.failure.reason.cause).toMatchObject({ code: '23514' })
+      }),
+    )
+  })
+
+  test('does not reopen the prior Jev protocol', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        yield* migrate
+        const { ensure } = yield* makeStore
+        yield* ensure({ generationHash: original, maximum: Authority.Observe })
+        yield* reconcile('retired-jev')
+        const rejected = yield* insertResearch(
+          retained,
+          original,
+          2,
+          'jev',
+          'bayn.jev.protocol.v15',
+          'retired-jev',
+        ).pipe(Effect.result)
+        expect(Result.isFailure(rejected)).toBe(true)
+        if (Result.isFailure(rejected))
+          expect(rejected.failure.reason.cause).toMatchObject({
+            code: '23514',
+            constraint: expect.stringContaining('authority_generations_strategy_'),
+          })
+      }),
+    )
+  })
+
+  test('preserves current PAPER authority without requiring a flat snapshot', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const { ensure } = yield* makeStore
+        yield* ensure({ generationHash: original, maximum: Authority.Observe })
+        yield* reconcile('current-paper')
+        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v16', 'current-paper')
+        yield* activate(retained)
+        yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at)
+          VALUES(${hash('non-flat-positions')},'bayn.paper-position-snapshot.v1',${broker.accountId},${hash('non-flat')},${hash('non-flat')},1,clock_timestamp())`
+        const before = yield* sql`SELECT to_jsonb(g)::text AS generation, to_jsonb(s)::text AS state
+          FROM authority_generations g JOIN authority_state s USING (generation_hash) WHERE g.generation_hash=${retained}`
+        yield* migrate
+        expect(
+          yield* sql`SELECT to_jsonb(g)::text AS generation, to_jsonb(s)::text AS state
+          FROM authority_generations g JOIN authority_state s USING (generation_hash) WHERE g.generation_hash=${retained}`,
+        ).toEqual(before)
       }),
     )
   })
@@ -226,7 +277,7 @@ integration('current authority write cutover', () => {
         const { ensure } = yield* makeStore
         yield* ensure({ generationHash: original, maximum: Authority.Observe })
         yield* reconcile('qualified')
-        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v15', 'qualified')
+        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v16', 'qualified')
         yield* sql.withTransaction(
           Effect.gen(function* () {
             // Copy the installed checks, without unrelated qualification evidence foreign keys.

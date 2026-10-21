@@ -18,10 +18,10 @@ export default Effect.gen(function* () {
       strategy_name = 'jev'
     ) NOT VALID,
     ADD CONSTRAINT authority_generations_strategy_parameter_schema_version_check CHECK (
-      strategy_parameter_schema_version = 'bayn.jev.protocol.v15'
+      strategy_parameter_schema_version = 'bayn.jev.protocol.v16'
     ) NOT VALID,
     ADD CONSTRAINT authority_generations_strategy_contract_check CHECK (
       ((strategy_name IS NULL AND strategy_parameter_schema_version IS NULL)
-      OR (strategy_name = 'jev' AND strategy_parameter_schema_version = 'bayn.jev.protocol.v15')) IS TRUE
+      OR (strategy_name = 'jev' AND strategy_parameter_schema_version = 'bayn.jev.protocol.v16')) IS TRUE
     ) NOT VALID`
 })
