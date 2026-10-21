@@ -114,7 +114,7 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       return
     }
     let management: ControlStudyManagement
-    if (input.management === ControlManagementMode.Jev || input.entry === ControlEntryMode.Jev) {
+    if (input.entry === ControlEntryMode.Jev) {
       if (evidenceDirectory === undefined)
         return yield* new ControlStudyFailure({ message: 'JEV controls require a new evidence directory' })
       const prepared = yield* Effect.fromResult(prepareBacktest(input.backtest, receipt))

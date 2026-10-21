@@ -50,7 +50,6 @@ import {
   type PreparedMutationCycleStep,
 } from './mutation-decisions'
 import { mutationRunnerError } from './mutation-interpreter'
-import { Pipeable } from '../pipeable'
 
 export type MutationPreparationFacts = {
   readonly snapshot: {
@@ -291,7 +290,7 @@ const entryCloseObligationIsUnresolved = (
   )
 }
 
-const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
+export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
   input: I,
   preparation: P,
   policy: Policy,
@@ -395,6 +394,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           ...lookup.targetIntent,
           notionalLimitMicros: lookup.riskBinding.notionalLimitMicros,
           limitPriceMicros: lookup.riskBinding.limitPriceMicros,
+          ...(lookup.riskBinding.protection === undefined ? {} : { protection: lookup.riskBinding.protection }),
           ...(document.replanGenerationHash === undefined
             ? {}
             : { replanGenerationHash: document.replanGenerationHash }),
@@ -754,6 +754,7 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
           if (observation._tag === 'StableOpen') {
             if (
               drainOpenOrders ||
+              (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
                   executionSubmitExpiresAt(submissionCutoffAt, prepared.riskBinding.evaluation.decision.expiresAt))
@@ -909,17 +910,3 @@ const prepareMutationIntentDataFirst = <R, E, I extends MutationIntentInput, P e
       ? { _tag: 'Complete', observedAt: facts.evaluatedAt }
       : { _tag: 'Wait', observedAt: facts.evaluatedAt, waitReason: completion.reason }
   })
-
-export const prepareMutationIntent = Pipeable.generic<
-  <R, E, I extends MutationIntentInput, P extends MutationPreparation>(
-    preparation: P,
-    policy: Policy,
-    cycle: AutonomousCycle,
-    document: ExecutionDecisionDocument,
-    reconcile: Effect.Effect<ReconciliationPassResult, E, R>,
-    allowSubmit: boolean,
-    drainOpenOrders: boolean,
-    dependencies: MutationPreparationDependencies<R, E, I, P>,
-  ) => (input: I) => Effect.Effect<PreparedMutationCycleStep, CycleRunnerError, R | IntentStore | MutationStore>,
-  typeof prepareMutationIntentDataFirst
->(9, prepareMutationIntentDataFirst)

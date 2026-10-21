@@ -1,3 +1,4 @@
+import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -5,8 +6,9 @@ import { NodeHttpClient } from '@effect/platform-node'
 import { SqlClient } from 'effect/sql'
 
 import migration from '../../migrations/0093_research_inference'
+import harnessMigration from '../../migrations/0129_harness2_research'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
+import { decodeResearchRun, HarnessPurpose, hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
 import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
 import { makeResearchStore, projectResearchExpenses, researchExpensePlan, verifyResearchReceipt } from './store'
 import { makeResearchRunner } from './runner'
@@ -36,6 +38,8 @@ integration('research attempt durability with real PostgreSQL', () => {
         yield* sql`CREATE SCHEMA bayn_research_inference_test`
         yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable fixture'; END; $$`
         yield* migration
+        yield* harnessMigration
+        yield* jevHarnessMigration
       }),
     )
   })
@@ -62,6 +66,63 @@ integration('research attempt durability with real PostgreSQL', () => {
         expect(yield* makeResearchStore(sql).read(runId)).toBeUndefined()
       }),
     )
+  })
+  test('claims and replays a harness proposal through the same immutable store', async () => {
+    let calls = 0
+    const text = '<harness>{"entry":"Assess entry","stopLoss":"Select stop","takeProfit":"Select target"}</harness>'
+    const model = Bun.serve({
+      port: 0,
+      fetch: () => {
+        calls++
+        return new Response(streamFixture(text), {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(researchFixture().policy)),
+          },
+        })
+      },
+    })
+    try {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const store = makeResearchStore(sql)
+          const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`)
+          const now = new Date().toISOString()
+          const fixture = researchFixture()
+          const { maximumFactors: _retired, ...policy } = fixture.policy
+          const run = Result.getOrThrow(
+            decodeResearchRun({
+              ...fixture,
+              context: { memory: fixture.context.memory },
+              policy,
+              schemaVersion: 'bayn.jev-harness2-editor.v1',
+              purpose: HarnessPurpose.PromptEdit,
+              registeredAt: now,
+              featureCutoff: now,
+              deadlineAt: new Date(Date.now() + 30_000).toISOString(),
+              costBasis: null,
+            }),
+          )
+          const first = yield* runner.run(run)
+          expect(first.outcome).toBe(ResearchOutcome.Complete)
+          expect(first.responseText).toBe(text)
+          expect(first.factors).toEqual([])
+          expect(yield* runner.run(run)).toEqual(first)
+          expect(calls).toBe(1)
+          const forged = { ...run, purpose: 'trade' }
+          expect(
+            Result.isFailure(
+              yield* sql`INSERT INTO research_inference_runs (run_id, payload) VALUES (${'4'.repeat(64)}, ${sql.json(forged)})`.pipe(
+                Effect.result,
+              ),
+            ),
+          ).toBe(true)
+        }),
+      )
+    } finally {
+      await model.stop(true)
+    }
   })
   test('replays a retained receipt without inference and never resends a claimed crash tail', async () => {
     let calls = 0

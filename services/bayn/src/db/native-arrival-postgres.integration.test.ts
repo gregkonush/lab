@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
-import { canonicalHashV1OrThrow, canonicalJsonV1Result } from '../hash'
+import { canonicalJsonV1Result, canonicalHashV1Result } from '../hash'
 import { makeNativeArrivalChunk, nativeArrival, type NativeArrivalChunk } from '../market-data/streaming/native-arrival'
 import {
   nativeArrivalEpochFixture as epoch,
@@ -226,7 +226,7 @@ describePostgres('PostgreSQL native arrival retention', () => {
           { ...first.header, recordsHash: null },
         ]) {
           const payload = Result.getOrThrow(canonicalJsonV1Result(header))
-          const contentHash = canonicalHashV1OrThrow(header)
+          const contentHash = Result.getOrThrow(canonicalHashV1Result(header))
           expect(
             Exit.isFailure(
               yield* Effect.exit(sql`INSERT INTO native_arrival_chunks (capture_id,ordinal,content_hash,header,compressed)

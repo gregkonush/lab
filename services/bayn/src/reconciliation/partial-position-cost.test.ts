@@ -7,13 +7,13 @@ import { prepareFeeAccrual, type FeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { AccountStatus, OrderSide, type AccountingReceipt, type Fill } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { checkProperty } from '../testing/property-test-support'
 import { compareOpeningCash, verifyAccountingReceipts } from './algebra'
 
 const accountId = 'partial-exit-account'
 const observedAt = '2026-10-19T03:13:58.921Z'
-const hash = (value: string) => canonicalHashV1({ value })
+const hash = (value: string) => Result.getOrThrow(canonicalHashV1Result({ value }))
 
 const actualSales: readonly [string, string][] = [
   ['13982000000', '105300000000'],

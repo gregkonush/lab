@@ -1,5 +1,5 @@
 import { Result } from 'effect'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { gzipSync } from 'node:zlib'
 import { validateBacktestSourceReceipt, type BacktestSourceManifest } from './source'
 import { prepareGapRecoverySession, gapRecoveryDefinition } from './gap-recovery'
@@ -19,7 +19,7 @@ export const gapSessionInput = (close = '16:00') => {
     schemaVersion: 'bayn.gap-recovery-session.v1',
     sessionDate: '2026-09-04',
     calendar,
-    calendarHash: canonicalHashV1(calendar),
+    calendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)),
   }
 }
 

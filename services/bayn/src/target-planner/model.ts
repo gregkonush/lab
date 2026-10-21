@@ -307,10 +307,7 @@ export const TargetPlannerInputSchema = Schema.Union([
 export type SignalSessionReferencePrices = typeof SignalSessionReferencePricesSchema.Type
 export type IntradaySnapshotReferencePrices = typeof IntradaySnapshotReferencePricesSchema.Type
 export type ExecutionReferencePrices = typeof ExecutionReferencePricesSchema.Type
-export type TargetPlannerBrokerState = typeof TargetPlannerBrokerStateSchema.Type
 export type TargetPlannerInputV1 = typeof TargetPlannerInputV1Schema.Type
-export type TargetPlannerInputV2 = typeof TargetPlannerInputV2Schema.Type
-export type QuoteBoundExecutionTerms = typeof QuoteBoundExecutionTermsSchema.Type
 export type QuoteBoundTargetPlannerInput = typeof QuoteBoundTargetPlannerInputSchema.Type
 export type TargetPlannerInput = typeof TargetPlannerInputSchema.Type
 

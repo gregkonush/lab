@@ -45,11 +45,11 @@ const portfolioWithBrokerAge = (ageMs: number) => {
 
 describe('native Jev exit targets', () => {
   test.each([
-    [0.02, 0, true],
+    [0.051, 0, true],
     [0.002, 0, false],
     [-0.02, 0, false],
-    [0.02, 10_001, false],
-    [0.02, -1, false],
+    [0.05, 10_001, false],
+    [0.05, -1, false],
   ])('profit exit requires a verified net target: change %s, quote age %i', (change, ageMs, accepted) => {
     const fixture = nativeJevFixture(JevPurpose.Manage, '2026-09-04T14:30:32.000Z')
     if (fixture.portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected held position')
@@ -208,6 +208,22 @@ describe('native Jev exit targets', () => {
       ...evidence,
       portfolio: {
         ...portfolio,
+        exitPolicy: {
+          ...portfolio.exitPolicy,
+          plans: Object.fromEntries(
+            Object.entries(portfolio.exitPolicy.plans).map(([symbol, plan]) => [
+              symbol,
+              {
+                ...plan,
+                levels: {
+                  ...plan.levels,
+                  sourceEndAt: new Date(Math.floor(firstAt / 60_000) * 60_000).toISOString(),
+                  sourceStartAt: new Date(Math.floor(firstAt / 60_000) * 60_000 - 15 * 60_000).toISOString(),
+                },
+              },
+            ]),
+          ),
+        },
         entryFills: portfolio.entryFills.map((fill, index) => ({
           ...fill,
           occurredAt: new Date(firstAt + index * 1000).toISOString(),
@@ -293,6 +309,22 @@ describe('native Jev exit targets', () => {
       ...evidence,
       portfolio: {
         ...fixture.portfolio,
+        exitPolicy: {
+          ...fixture.portfolio.exitPolicy,
+          plans: Object.fromEntries(
+            Object.entries(fixture.portfolio.exitPolicy.plans).map(([symbol, plan]) => [
+              symbol,
+              {
+                ...plan,
+                levels: {
+                  ...plan.levels,
+                  sourceEndAt: new Date(Math.floor(firstAt / 60_000) * 60_000).toISOString(),
+                  sourceStartAt: new Date(Math.floor(firstAt / 60_000) * 60_000 - 15 * 60_000).toISOString(),
+                },
+              },
+            ]),
+          ),
+        },
         entryFills: fixture.portfolio.entryFills.map((fill, index) => ({
           ...fill,
           occurredAt: new Date(firstAt + index * 1000).toISOString(),

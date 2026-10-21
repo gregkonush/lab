@@ -1,3 +1,5 @@
+import modelSelectedTradePlanMigration from '../../migrations/0131_model_selected_trade_plan'
+import strategyNativeProtectionMigration from '../../migrations/0128_strategy_native_protection'
 import entryBoundExitsMigration from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgmentMigration from '../../migrations/0125_market_management_judgment'
 import focusedJevJudgmentsMigration from '../../migrations/0124_focused_jev_judgments'
@@ -33,6 +35,18 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  {
+    label: 'model-selected-trade-plan',
+    id: 131,
+    protocol: 'bayn.jev.protocol.v15',
+    migration: modelSelectedTradePlanMigration,
+  },
+  {
+    label: 'strategy-native-protection',
+    id: 128,
+    protocol: 'bayn.jev.protocol.v14',
+    migration: strategyNativeProtectionMigration,
+  },
   { label: 'jev-native-exits', id: 126, protocol: 'bayn.jev.protocol.v13', migration: entryBoundExitsMigration },
   {
     label: 'jev-market-management',
@@ -105,21 +119,28 @@ for (const { label, id, protocol, migration } of [
       )
     })
 
-    if (id === 124 || id === 125) {
+    if (id === 124 || id === 125 || id === 131) {
       const retired =
-        id === 125
+        id === 131
           ? {
-              protocol: 'bayn.jev.protocol.v11' as const,
-              behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
-              parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
-              protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+              protocol: 'bayn.jev.protocol.v14' as const,
+              behavior: '9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29',
+              parameters: '7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de',
+              protocolHash: 'f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e',
             }
-          : {
-              protocol: 'bayn.jev.protocol.v10' as const,
-              behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
-              parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
-              protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
-            }
+          : id === 125
+            ? {
+                protocol: 'bayn.jev.protocol.v11' as const,
+                behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
+                parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
+                protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+              }
+            : {
+                protocol: 'bayn.jev.protocol.v10' as const,
+                behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
+                parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
+                protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
+              }
       test('recovers the retained prior authority through native OBSERVE after cutover', async () => {
         await runtime.runPromise(
           Effect.gen(function* () {

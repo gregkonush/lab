@@ -3,7 +3,7 @@ import { describe, expect, test } from 'bun:test'
 import { Option, Result } from 'effect'
 
 import { MutationOperation, type MutationEvidence } from '../broker/alpaca-mutations/model'
-import { cancelRequestHash, orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { orderRequestBody, prepareCancel } from '../broker/alpaca-mutations/decisions'
 import {
   AssetClass,
   OrderClass,
@@ -13,7 +13,7 @@ import {
   TimeInForce as BrokerTimeInForce,
   type Order,
 } from '../broker/alpaca/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   IntentState,
   OrderSide,
@@ -25,6 +25,7 @@ import {
   type RiskDecision,
 } from './contracts'
 import {
+  cancellationIdentity,
   decideRecoverySuccess,
   decideSubmitSuccess,
   encodeOrder,
@@ -51,7 +52,7 @@ const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const decisionId = 'b'.repeat(64)
 
 const intent: Intent = {
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: decisionId,
@@ -134,8 +135,8 @@ const mutation = (
 ): MutationEvent => {
   const requestHash =
     operation === MutationOperation.Submit
-      ? canonicalHashV1(encodedRequest(stateIntent))
-      : cancelRequestHash(brokerOrderId)
+      ? Result.getOrThrow(canonicalHashV1Result(encodedRequest(stateIntent)))
+      : Result.getOrThrow(prepareCancel(brokerOrderId)).requestHash
   return {
     schemaVersion: 'bayn.paper-mutation-event.v1',
     eventId: '3'.repeat(64),
@@ -152,6 +153,14 @@ const mutation = (
 }
 
 describe('execution coordinator decisions', () => {
+  test.each(['not-an-order-id', '\ud800'])('rejects malformed cancellation order ID %j as a typed failure', (id) => {
+    const event = { ...mutation(MutationOperation.Submit, MutationEventType.SubmitAccepted), brokerOrderId: id }
+    expect(Option.getOrUndefined(Result.getFailure(cancellationIdentity(event)))).toMatchObject({
+      _tag: 'OrderCanonicalizationFailed',
+      operation: MutationOperation.Cancel,
+    })
+  })
+
   test('builds the dry-run request only from a currently approved durable decision', () => {
     const active = makeDryRunSubmit(stored(), Date.parse('2026-07-25T00:04:59.999Z'))
     const expired = makeDryRunSubmit(stored(), Date.parse(riskDecision.expiresAt))
@@ -160,7 +169,7 @@ describe('execution coordinator decisions', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(encodedRequest(intent)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
       request: encodedRequest(intent),
     })
     expect(Option.getOrUndefined(Result.getFailure(expired))).toMatchObject({
@@ -248,7 +257,7 @@ describe('execution coordinator decisions', () => {
     }
     const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(retiredRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(retiredRequest)),
     }
     expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
@@ -269,7 +278,7 @@ describe('execution coordinator decisions', () => {
     const retiredRequest = { ...base, notional: '200.009999' }
     const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(retiredRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(retiredRequest)),
     }
     expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
@@ -279,7 +288,7 @@ describe('execution coordinator decisions', () => {
     const closeOnlyRequest = Result.getOrThrow(orderRequestBody(unknownIntent))
     const interrupted = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(closeOnlyRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(closeOnlyRequest)),
     }
     const { notionalMicros: _notionalMicros, ...acceptedOrder } = order()
     const acceptedCover = { ...acceptedOrder, quantityAtoms: unknownIntent.quantityAtoms }
