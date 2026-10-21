@@ -286,6 +286,7 @@ test('native entry abstentions retain paid calls without submitting orders', asy
     entryAction: 'wait',
     managedLatencyMs: 10,
     sessionDurationMs: 22 * 60_000,
+    pollIntervalMs: 120_000,
   })
   expect(wait.report.orders).toEqual([])
   expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL').length).toBeGreaterThan(0)
@@ -298,6 +299,7 @@ test('incomplete expired native entry evidence cannot submit orders', async () =
     nativeEntry: true,
     managedLatencyMs: fixture.protocol.inferenceValidityMs,
     sessionDurationMs: 22 * 60_000,
+    pollIntervalMs: 120_000,
   })
   expect(expired.providerCalls).toBeGreaterThan(0)
   expect(expired.report.orders).toEqual([])

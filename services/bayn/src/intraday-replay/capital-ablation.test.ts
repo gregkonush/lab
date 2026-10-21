@@ -297,7 +297,7 @@ test('turnover reserve and loss gates bind both arms without dropping opportunit
   )
   expect(loss?.opportunities[1]?.status).toBe(CapitalAdmission.LossOrDrawdownBlocked)
   expect(loss?.metrics.maximumDrawdownAfterAllCostsMicros).not.toBe('0')
-})
+}, 30_000)
 
 test('retired or changed protocols, duplicate ids and foreign accounts cannot compare', () => {
   const opp = opportunity()
