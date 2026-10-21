@@ -14,13 +14,14 @@ rejected; all three consumers migrate in the same paired release.
 
 Every controller guest call requires a fresh Ofz decision and the current shared SQL leader fence. The proof expires
 at the earlier of the Ofz decision deadline and five seconds; signing does not restart the authorization lifetime.
-Controller ownership uses a 60-second SQL and Kubernetes lease, renewed every five seconds. Acquisition and renewal
+Controller ownership uses one 60-second SQL lease, renewed every five seconds. Kubernetes Leases only track slot
+claims; they do not elect the controller. Acquisition and renewal
 measure their local deadline from the start of the attempt, so a delayed commit never grants an extra lease window.
 Acquisition waits within that window for the durable result; an unconfirmed acquisition grants no authority. Renewal
 keeps its in-flight commit until the previously confirmed deadline, then fences all controller work. This covers the
 observed 20.9-second commit tail without changing request lifetimes or synchronous database durability. After a crash,
-ownership expires after 60 seconds; election polling and durable acquisition can add failover time. A known ownership
-loss still stops the controller immediately.
+ownership expires after 60 seconds; SQL acquisition polling and durable acquisition can add failover time. A known
+ownership loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
 Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
@@ -359,11 +360,14 @@ Supervisor readiness checks the shared database schema and runner state together
 A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
 unavailable. Process liveness remains independent of that dependency.
 
-The namespace reserves seven Leases for six slots and the controller election. Its twelve-Secret quota covers
+The namespace allows seven Leases for six slot claims and rolling-upgrade headroom, including a retired
+controller-election Lease left by older releases. The old Lease is ignored; it grants no controller authority.
+Its twelve-Secret quota covers
 six slot bootstraps, four Ofz credentials and the two old keys retained until the fenced cutover. NetworkPolicy
 permits the controller to call Ofz on 9443 and both controller and supervisors to reach only Ofz PostgreSQL on 5432.
 
-The controller combines the Kubernetes leader Lease with a database generation and lease deadline. Its work futures
+The controller acquires its generation and lease deadline atomically from shared SQL. Contending replicas use that
+single authority; a retired Kubernetes controller Lease cannot block acquisition or renewal. Its work futures
 are cancelled before releasing leadership, every mutation checks the current local guard, and each supervisor checks
 the installed database fence before and after lifecycle or guest forwarding. SQL failure or expired leadership rejects
 protected requests. Leadership alone is not proof of a guest execution permit; the complete execution fencing and

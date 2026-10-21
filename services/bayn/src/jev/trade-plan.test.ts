@@ -7,7 +7,7 @@ import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
 import { decideJevEntry, JevEntryTargetSchema } from './decision'
 import { nativeJevFixture, nativeJevDecisionEvidence } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
-import { selectedJevTradeLevels } from './trade-price-choices'
+import { selectedJevTradePlan } from './trade-plan-choices'
 import { nativeJevInference } from './native.test-support'
 
 const fixture = nativeJevFixture()
@@ -20,7 +20,7 @@ test('negative own and relative returns reach Jev without a momentum gate', () =
   const request = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === 'AAPL')
   if (request?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected Jev request')
   expect(JSON.stringify(request.request.request.state)).toContain('lookbackReturnBps')
-  expect(request.request.request.questions['stop_loss']?.type).toBe('choice')
+  expect(request.request.request.questions['action']?.type).toBe('choice')
 })
 
 test('the selected model stop and profit prices reproduce the sealed entry', () => {
@@ -31,16 +31,12 @@ test('the selected model stop and profit prices reproduce the sealed entry', () 
   const requested = evidence.batchPlan.candidates.find((candidate) => candidate.symbol === 'AAPL')
   if (plan === undefined || requested?.status !== JevCandidatePlanStatus.Requested)
     throw new Error('Expected model plan')
-  const stop = requested.request.request.questions['stop_loss']
-  const profit = requested.request.request.questions['take_profit']
-  expect(stop?.type).toBe('choice')
-  expect(profit?.type).toBe('choice')
-  expect(plan.levels.rule).toBe('model-selected-observed-prices')
-  expect(plan.levels.stopPriceMicros).toBe(
-    Object.keys(stop?.type === 'choice' ? stop.criteria : {})
-      .find((key) => key.startsWith('price_'))
-      ?.slice(6) ?? '',
-  )
+  const action = requested.request.request.questions['action']
+  expect(action?.type).toBe('choice')
+  expect(plan.levels.rule).toBe('model-selected-complete-plan')
+  if (action?.type !== 'choice') throw new Error('Expected complete-plan question')
+  const proposed = action.criteria['plan_0']
+  expect(proposed).toHaveProperty('plan', plan)
   expect(Schema.is(JevEntryTargetSchema)(target)).toBe(true)
   const forged = structuredClone(target)
   const forgedPlan = forged.exitPolicy.plans['AAPL']
@@ -56,48 +52,30 @@ test('the selected model stop and profit prices reproduce the sealed entry', () 
   ).toBe(false)
 })
 
-test('missing or declined model protection cannot authorize an entry', () => {
+test('abstention and an unknown complete plan cannot authorize entry', () => {
   const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
-  const inference = nativeJevInference(prepared.request, fixture.snapshot.manifest.observedAt)
-  const base = {
-    request: prepared.request,
-    response: inference.response,
-    symbol: 'AAPL',
-    bidMicros: 102_000_000n,
-    maximumEntryPriceMicros: 103_000_000n,
-    sourceStartAt: fixture.snapshot.manifest.rangeStartAt,
-    sourceEndAt: fixture.snapshot.manifest.rangeEndAt,
-    protocol: fixture.protocol,
+  const at = fixture.snapshot.manifest.observedAt
+  for (const choice of ['wait', 'avoid']) {
+    const inference = nativeJevInference(prepared.request, at, choice)
+    expect(Result.getOrThrow(selectedJevTradePlan(prepared.request, inference.response))).toBeNull()
+    expect(Result.getOrThrow(decideJevEntry(nativeJevDecisionEvidence(fixture, choice))).selectedSymbols).toEqual([])
   }
-  expect(
-    Result.getOrThrow(
-      selectedJevTradeLevels({
-        ...base,
-        response: { ...inference.response, answers: { action: inference.response.answers['action']! } },
-      }),
-    ),
-  ).toBeNull()
-  const stop = inference.response.answers['stop_loss']
-  if (stop?.type !== 'choice') throw new Error('Expected typed stop')
-  expect(
-    Result.getOrThrow(
-      selectedJevTradeLevels({
-        ...base,
-        response: {
-          ...inference.response,
-          answers: { ...inference.response.answers, stop_loss: { ...stop, choice: 'none' } },
-        },
-      }),
-    ),
-  ).toBeNull()
+  const inference = nativeJevInference(prepared.request, at)
+  const action = inference.response.answers['action']
+  if (action?.type !== 'choice') throw new Error('Expected plan choice')
   expect(
     Result.isFailure(
-      selectedJevTradeLevels({
-        ...base,
-        response: {
-          ...inference.response,
-          answers: { ...inference.response.answers, stop_loss: { ...stop, choice: 'price_1' } },
-        },
+      selectedJevTradePlan(prepared.request, {
+        ...inference.response,
+        answers: { action: { ...action, choice: 'plan_unknown' } },
+      }),
+    ),
+  ).toBe(true)
+  expect(
+    Result.isFailure(
+      selectedJevTradePlan(prepared.request, {
+        ...inference.response,
+        answers: {},
       }),
     ),
   ).toBe(true)

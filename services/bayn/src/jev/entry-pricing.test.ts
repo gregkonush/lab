@@ -27,7 +27,7 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const decision = Result.getOrThrow(

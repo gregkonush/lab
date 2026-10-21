@@ -10,8 +10,8 @@ Jev remains the typed decision model. Every probe uses the production `JevClient
 response validation, proxy and ten-second request timeout. Probes reconstruct state and supplied answer choices from
 an original native Bayn observation. The baseline instructions must match the compiled live instructions exactly.
 
-Harness2 edits only `instructions.json`, containing `entry`, `stopLoss` and `takeProfit` strings of at most 2,000
-characters each. These are the actual question instructions used by `trading-signals.ts` and `trade-price-choices.ts`.
+Harness2 edits only `instructions.json`, containing one `entry` string of at most 2,000
+characters. This is the actual complete-plan question instruction used by `trade-plan-choices.ts`.
 The editor cannot change question types, candidate prices, market state, position sizing, account limits, freshness,
 broker protection or execution authority. Bayn's shared `selectJevEntryCandidates` function converts the typed answers
 into the same funded selections and protection-plan rejections used by the live strategy.
@@ -37,10 +37,10 @@ native export or database receipt. Keep all inputs and outputs private.
   "sourceRevision": "<exact deployed source revision>",
   "maximumCalls": 128,
   "maximumWallSeconds": 1800,
-  "baseline": {"entry": "...", "stopLoss": "...", "takeProfit": "..."},
-  "editor": {"policy": {}, "costBasis": null},
-  "tasks": [{"id": "development", "observation": {}}],
-  "validation": [{"id": "untouched", "observation": {}}]
+  "baseline": { "entry": "..." },
+  "editor": { "policy": {}, "costBasis": null },
+  "tasks": [{ "id": "development", "observation": {} }],
+  "validation": [{ "id": "untouched", "observation": {} }]
 }
 ```
 

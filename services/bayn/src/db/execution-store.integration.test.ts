@@ -1071,7 +1071,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               (event_id, schema_version, content_hash, event_kind, broker, account_id, source_event_id,
                 source_sequence, occurred_at, observed_at)
               SELECT md5(n::text) || md5('event-' || n::text), 'bayn.paper-broker-event.v1',
-                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ERROR' ELSE 'ACCOUNT' END,
+                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ORDER' ELSE 'ACCOUNT' END,
                 'ALPACA', CASE WHEN n < 8192 THEN ${accountId} ELSE 'foreign-account' END,
                 'history-' || n, n, '2026-08-27T14:30:59.000Z'::timestamptz,
                 CASE WHEN n < 2 OR n >= 8192 THEN '2026-08-29T14:31:00.000Z'::timestamptz
