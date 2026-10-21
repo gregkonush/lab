@@ -1,7 +1,8 @@
 import { Result, Schema } from 'effect'
 
+import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import { MarketKind, instrumentMarket } from '../instruments'
-import { canonicalHashV1, sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   cryptoFeatureDefinitionMaterial,
   cryptoFeatureTopic,
@@ -33,12 +34,13 @@ export const cryptoMarketProfile = Object.freeze({
   universe: cryptoUniverse.symbols,
   candidateSymbols: cryptoUniverse.symbols,
   feed: 'us' as const,
+  benchmarkEvidencePolicy: IntradayBenchmarkEvidencePolicy.CompletedBars,
   delayClass: 'real_time_crypto' as const,
   sourceTopics: Object.freeze({ bars: cryptoRawTopic, quotes: cryptoRawTopic, trades: cryptoRawTopic }),
   streamingInput: Object.freeze({
     featureTopic: cryptoFeatureTopic,
     requiredDefinitionId: 'dorvud.crypto-continuous-1m.v2',
-    requiredDefinitionHash: canonicalHashV1(cryptoFeatureDefinitionMaterial),
+    requiredDefinitionHash: Result.getOrThrow(canonicalHashV1Result(cryptoFeatureDefinitionMaterial)),
   }),
 })
 export const jevMarketProfiles = Object.freeze([equityMarketProfile, cryptoMarketProfile])
@@ -48,14 +50,13 @@ export const jevCandidateSymbols = Object.freeze(
   jevMarketProfiles.flatMap((profile) => profile.candidateSymbols).sort(),
 )
 
-const profilesHash = canonicalHashV1(jevMarketProfiles)
+const profilesHash = Result.getOrThrow(canonicalHashV1Result(jevMarketProfiles))
 export const JevMarketProfilesSchema = Schema.declare<readonly JevMarketProfile[]>(
   (input): input is readonly JevMarketProfile[] => {
     const hash = canonicalHashV1Result(input)
     return Result.isSuccess(hash) && hash.success === profilesHash
   },
 )
-import { canonicalHashV1Result } from '../hash'
 
 export const jevMarketForSymbol = (symbol: string): JevMarketProfile =>
   instrumentMarket(symbol) === MarketKind.Crypto ? cryptoMarketProfile : equityMarketProfile

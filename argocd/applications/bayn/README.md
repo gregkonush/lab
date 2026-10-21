@@ -36,6 +36,11 @@ command is **not** run automatically from the trading service at startup.
 
 ## Isolated Alpha-R1 research
 
+The same immutable image includes `bayn-harness2` for bounded prompt refinement. Use the
+[Harness2 runbook](../../../docs/bayn/harness2.md) for frozen manifests, durable object-store evidence, restart behavior,
+and deployed verification. It uses the worker's existing research API and storage identity. It needs no broker access
+or additional network/database grants.
+
 `research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
 inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
 The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
@@ -173,17 +178,26 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The active implementation uses `bayn.jev.protocol.v8`, `bayn.jev.cost-supported-cash-spot.behavior.v1`, batch v4 and the
-pinned TypeSafe model `jev-1.13.0`. Equities and BTC/USD, ETH/USD and SOL/USD share one execution controller and
-account budget. The entry gate requires positive own and market-benchmark-relative momentum before Jev. A valid chosen `enter`
-action with supported net economics selects the capital-sized target; its probability ranks competing entries and does not add another entry gate.
-Migration 116 requires flat, settled inventory and fresh exact reconciliation, retires unused admissions, and
-rotates the previous PAPER generation through native OBSERVE recovery before a new v8 mandate can activate.
-The current strategy protocol hash is `04bf5314a5ab7886f1802f6aa5da64f4a080cb695b37c9adf042dbedf5fb3fba`.
+The implementation uses `bayn.jev.protocol.v16`, `bayn.jev.complete-plan-choice.behavior.v1`,
+trading-signal state v15, batch v6 and pinned `jev-1.13.0`. Jev selects one complete funded entry/stop/target plan or abstains. Its options label hypothetical future order prices
+separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
+limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
+and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Image promotion does not grant capital authority. Follow the continuous cash-spot cutover below to migrate in OBSERVE,
-then seal a PAPER mandate for the same sandbox account against the actual published image and current strategy.
-The new mandate retains the reviewed $1,000,000 daily gross-turnover budget and existing exposure/loss limits.
+Migration 133 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
+history. The strategy protocol hash is `762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86`.
+The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v16 image is
+published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
+together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
+account losses, peak equity and turnover history remain in place.
+
+Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
+through subsequent compatible image promotions; it does not require another rotation after each build. A future
+strategy or risk-policy change requires a fresh OBSERVE cutover and a new reviewed same-account mandate.
+The new mandate retains the reviewed $1,000,000 daily gross-turnover budget and exposure limits. The PAPER-only
+cumulative drawdown cap is $10,000 and the daily loss cap remains $5,000. Live limits remain unchanged. Account losses,
+peak equity and daily turnover are preserved when the mandate is rebound.
 Account/day turnover survives the rotation. A strategy or mandate mismatch rejects activation.
 
 The native activation hook validates the sealed request, all three runtime build lineages, compatible durable state
@@ -219,7 +233,8 @@ replica does not make an upstream bar published outside its permitted finalizati
 Migration 59 admits zero session-boundary offsets while retaining calendar ordering, exact offset bindings, and
 historical cycle contracts. It changes constraints without rewriting cycle or execution evidence. Apply it through
 normal worker startup before activating the new strategy identity. The submission window can start at market open;
-the strategy still waits for its complete rolling lookback and decision delay.
+the active strategy admits the first completed observed minute after its decision delay, with up to thirty minutes
+of actual observed history as context.
 
 The active day-trading policy admits entries until five minutes before the actual calendar close and starts forced
 flattening at that same boundary. Close submissions remain eligible until the closing bell. Verify both regular and
@@ -377,7 +392,7 @@ egress and its token-authenticated deployment activation call is made only by th
 Equities and `BTC/USD`, `ETH/USD`, `SOL/USD` use one account controller, planner, intent store, mutation coordinator,
 broker adapter and accounting pipeline. Market profiles select the recorded producer contract and instrument rules.
 The crypto profile consumes `bayn.market-data.crypto.v1` and `bayn.market-data.crypto.features.v1` continuously,
-including weekends and UTC midnight. Both crypto candidates and benchmarks require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
+including weekends and UTC midnight. Crypto candidates require fresh executable quotes and actual trades within the verified lookback window; the retained trade age remains contextual evidence. Crypto benchmarks require matching verified completed bars and native features, using the last completed close without an executable benchmark quote or trade. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Continuous cycles have a one-minute entry lease, at most fifteen minutes of
 holding, and three minutes of close recovery. Finished cycles rearm against the next admitted market window;
 the account risk day remains America/New_York for both markets. An unused continuous lease that expires without snapshot or decision evidence can rearm after its deadline and cooldown under the same approved account, strategy and execution policy. Each successor repeats fresh data, reconciliation and risk admission.
 
@@ -392,11 +407,11 @@ thirty-minute Kargo deployment budget covers that startup and native handoff. Th
 immutable history rewrite; readiness and native authority still require completed migrations and verified state.
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
-no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migration
-109, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
+97 and 133, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v5 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 109, the source-bound controller plan v3
+containing this migration and the current Jev v16 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 133, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -556,24 +571,36 @@ The current protocol removes the 30-minute admission requirement for equities an
 at the first completed minute plus two seconds. Crypto uses its current completed history continuously. Both retain
 up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
 
-Migration 108 requires terminal mutation cycles, fee-net flat inventory, no pending broker orders, fresh exact
-reconciliation and complete fill accounting. It restricts the old mandate to OBSERVE. Deploy the reviewed Bayn and
-Dorvud contracts with explicit read-only configuration, then rotate the existing sandbox mandate against the exact
-published new strategy/image before enabling PAPER through the normal Kargo activation path. Retired feature and
-strategy contracts do not authorize current execution. The broker account and order-risk limits remain the same.
+Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
+settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 133 and the [v16 activation procedure](#jev-protocol-activation)
+own the current complete-plan cutover. Retired feature and strategy contracts cannot authorize execution.
+The broker account and order-risk limits remain the same.
 
-The capital-sizing cutover uses migration 109 and one LIMIT/IOC execution path for equities and crypto. Market
-profiles bind equity entry spreads at 5 bps and crypto entry spreads at 25 bps. A canceled partial IOC entry can
-complete after an exact flat reconciliation consumes the same timestamped broker cut. Its trusted flat observation
-must remain strictly newer than the entry terminalization, and complete fills and settled orders remain required.
-Entry quantities follow the approved
-capital weight and instrument precision instead of one displayed ask size. The sealed PAPER mandate must bind the
-published v5 strategy after the OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation.
-Neither a wider entry spread nor the removal of the quote-size cap increases the 20% target weight or broker risk
-limits. Broker fills, fee-net inventory, ledger transfers and exact reconciliation remain required runtime evidence.
+Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
+LIMIT/IOC through the shared planner, coordinator and generic completion proof. Market profiles retain equity
+entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
+reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
+than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v16 strategy after
+the migration-133 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
+target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
+reconciliation remain required runtime evidence.
 
 Migration 110 recognizes the capital-sizing cutover restriction in the native terminal-generation recovery path.
 The same path retires bound, unused cycles left by the previous worker even after their admission window expires;
 cycles with snapshot, decision or intent evidence still block cutover recovery.
 The worker creates an OBSERVE successor only after fresh exact reconciliation and settled, flat account evidence.
 Unavailable reconciliation retains the restriction. The old PAPER generation and all financial evidence remain immutable.
+
+### Jev-selected trade-plan cutover
+
+Protocol v16, signal state v15, batch v6 and entry/exit targets v5 use one Choice over complete funded plans.
+Jev selects the entry, stop and target together or abstains. Hypothetical order prices remain distinct from observed market evidence.
+Migration 133 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
+published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
+existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,
+loss, drawdown, exposure, order and turnover limits and all financial history.
+
+See [strategy protection](../../../docs/bayn/strategy-protection.md) for model choices, validation and broker
+lifecycle details. Model choices are unqualified research decisions; deployment does not establish an edge.

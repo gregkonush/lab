@@ -224,9 +224,13 @@ impl RpcClient {
                 message: "Nanoagent identity does not match the current guest Pod".into(),
             });
         }
-        if info.protocol_version != tengri::guest_authorization::PROTOCOL_VERSION {
-            return Err(GuestError::Api { status: StatusCode::BAD_GATEWAY,
-                message: "Nanoagent uses an unsupported guest protocol version. Sleep and resume the agent to use the current guest image.".into() });
+        if info.protocol_version != tengri::GUEST_API_PROTOCOL_VERSION {
+            return Err(GuestError::Api {
+                status: StatusCode::BAD_GATEWAY,
+                message:
+                    "The agent requires a retained-home runtime upgrade before it can reconnect."
+                        .into(),
+            });
         }
         Ok(())
     }
@@ -567,6 +571,26 @@ impl RpcClient {
             started_at: result.started_at,
         })
     }
+    pub async fn answer_codex_input(
+        &self,
+        approval_id: &str,
+        response_json: Vec<u8>,
+    ) -> Result<(), GuestError> {
+        self.call(
+            "ResolveCodexApproval",
+            "",
+            proto::CodexApproval {
+                approval_id: approval_id.into(),
+                response_json,
+                ..Default::default()
+            },
+            Some(GUEST_UNARY_TIMEOUT),
+            |mut client, request| async move { client.resolve_codex_approval(request).await },
+        )
+        .await
+        .map_err(rpc_error)?;
+        Ok(())
+    }
     pub async fn resolve_codex_approval(
         &self,
         approval_id: &str,
@@ -578,6 +602,7 @@ impl RpcClient {
             proto::CodexApproval {
                 approval_id: approval_id.into(),
                 decision: decision.into(),
+                ..Default::default()
             },
             Some(GUEST_UNARY_TIMEOUT),
             |mut client, request| async move { client.resolve_codex_approval(request).await },

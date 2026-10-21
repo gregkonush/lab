@@ -144,6 +144,7 @@ does not make `go test ./services/...` cover every module.
 | Image delivery                    | [docs/release-automation.md](docs/release-automation.md)                                                    |
 | AgentRuns                         | [creation guide](docs/agents/agentrun-creation-guide.md), [CRD specification](docs/agents/crd-yaml-spec.md) |
 | Temporal                          | [skills/temporal/SKILL.md](skills/temporal/SKILL.md)                                                        |
+| Autonomous project execution      | [skills/autonomous-agents/SKILL.md](skills/autonomous-agents/SKILL.md)                                       |
 
 ## Infrastructure contracts
 

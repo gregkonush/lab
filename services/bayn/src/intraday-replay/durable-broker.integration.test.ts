@@ -10,12 +10,12 @@ import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
-import { Authority, IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
+import { Authority, IntentState, OrderSide, OrderType, type Intent } from '../execution/contracts'
 import { makeExecutionPersistence } from '../db/execution-store/postgres'
 import { PostgresClientLive } from '../db/postgres-client'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { JournalLive } from '../ledger'
 import { runReconciliation } from '../simulation-reconciliation/broker-reconciler-program'
 import { canonicalHashV1Result } from '../hash'
@@ -23,7 +23,7 @@ import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environ
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
-import { makeReplayBroker } from './broker'
+import { makeReplayBroker, type ReplayBrokerConfig } from './broker'
 import { prepareAccounting } from '../accounting/domain'
 import { prepareCashSettlement } from '../accounting/cash-settlement'
 import { readForwardPerformanceLedger } from '../forward-performance/tigerbeetle'
@@ -100,7 +100,7 @@ durableTest.each(['100004900', '100005100'])(
   30_000,
 )
 
-durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
+durableTest.each(['day', 'day-partial', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
   'production %s accounting survives client restart against PostgreSQL and real TigerBeetle',
   async (scenario) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -147,7 +147,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
     const result = await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse('2026-09-04T00:00:00.000Z'))
-        const broker = yield* makeReplayBroker({
+        const brokerConfig = {
           runId,
           sourceManifestHash: 'f'.repeat(64),
           openingCashMicros: '10000000000',
@@ -182,7 +182,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
               ),
             ),
           ],
-          quoteAt: (_symbol, nowMs) => {
+          quoteAt: (_symbol: string, nowMs: number) => {
             const price = nowMs >= entryMs + 200 ? 101 : 100
             const value = {
               ...quote,
@@ -195,7 +195,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
               bidPrice: price,
               askPrice: price,
               bidSize: 100,
-              askSize: 100,
+              askSize: scenario === 'day-partial' && nowMs < entryMs + 150 ? 1 : 100,
             }
             return Effect.succeed({
               value,
@@ -204,7 +204,8 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
               recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
             })
           },
-        })
+        } satisfies ReplayBrokerConfig
+        let broker = yield* makeReplayBroker(brokerConfig)
         const reconcile = Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           const observedAt = yield* currentUtcInstant
@@ -233,7 +234,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
         }).pipe(Effect.provide(stores()), Effect.provide(NodeServices.layer))
         yield* TestClock.setTime(entryMs)
         const order = (side: OrderSide): Intent => ({
-          schemaVersion: 'bayn.paper-intent.v3',
+          schemaVersion: 'bayn.execution-intent.v5',
           intentId: (side === OrderSide.Buy ? '1' : '2').repeat(64),
           authorityGenerationHash,
           riskDecisionId: '3'.repeat(64),
@@ -249,6 +250,7 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
           timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms: '3000000000',
           notionalLimitMicros: '300000000',
+          limitPriceMicros: '100000000',
           state: IntentState.IoStarted,
           createdAt: new Date(entryMs).toISOString(),
         })
@@ -258,11 +260,10 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
               {
                 ...order(OrderSide.Sell),
                 quantityAtoms: '2992500000',
-                orderType: OrderType.Market,
-                timeInForce: TimeInForce.GoodUntilCanceled,
+                notionalLimitMicros: '299250000',
               },
             ]
-          : scenario === 'ioc'
+          : scenario === 'day' || scenario === 'day-partial'
             ? [order(OrderSide.Buy), order(OrderSide.Sell)]
             : [
                 order(OrderSide.Buy),
@@ -270,16 +271,33 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
                   ...order(OrderSide.Sell),
                   clientOrderId: `fractional-${index}`,
                   quantityAtoms,
-                  orderType: OrderType.Market,
-                  timeInForce: TimeInForce.Day,
+                  notionalLimitMicros: ((BigInt(quantityAtoms) * 100000000n) / 1000000000n).toString(),
                 })),
               ]
         for (const requestIntent of orders) {
           const request = yield* broker.mutation
-            .submit(requestIntent, requestIntent.side === OrderSide.Sell)
+            .submit(requestIntent)
             .pipe(Effect.forkChild({ startImmediately: true }))
           yield* TestClock.adjust(100)
           yield* Fiber.join(request)
+          if (scenario === 'day-partial' && requestIntent.side === OrderSide.Buy) {
+            yield* TestClock.adjust(1)
+            const partial = yield* reconcile.pipe(Effect.provide(stores()))
+            expect(partial.report.metrics.accountingExact).toBe(true)
+            expect(partial.brokerState.positions[0]?.quantityAtoms).toBe('1000000000')
+            const checkpoint = yield* broker.checkpoint
+            broker = yield* makeReplayBroker({
+              ...brokerConfig,
+              restoreCheckpoint: { value: checkpoint, expectedHash: checkpoint.checkpointHash },
+            })
+            yield* TestClock.setTime(entryMs + 150)
+            const nextQuote = yield* brokerConfig.quoteAt(symbol, entryMs + 150)
+            yield* broker.observeMarket(entryMs + 150, nextQuote)
+            yield* TestClock.adjust(1)
+            const completed = yield* reconcile.pipe(Effect.provide(stores()))
+            expect(completed.report.metrics.accountingExact).toBe(true)
+            expect(completed.brokerState.positions[0]?.quantityAtoms).toBe('3000000000')
+          }
         }
         yield* TestClock.adjust(1)
         const first = yield* reconcile.pipe(Effect.provide(stores()))
@@ -297,8 +315,8 @@ durableTest.each(['ioc', 'fractional', 'BTC/USD', 'ETH/USD', 'SOL/USD'] as const
     expect(result.first.report.metrics.accountingExact).toBe(true)
     expect(result.restarted.report.metrics.accountingExact).toBe(true)
     expect(result.rows[0]).toEqual({
-      fills: scenario === 'fractional' ? 3 : 2,
-      transactions: scenario === 'fractional' ? 3 : 2,
+      fills: scenario === 'fractional' || scenario === 'day-partial' ? 3 : 2,
+      transactions: scenario === 'fractional' || scenario === 'day-partial' ? 3 : 2,
     })
     expect(result.restarted.brokerState.account.cashMicros).toBe(result.broker.ledger.cashMicros)
     expect(result.restarted.brokerState.positions).toEqual([])

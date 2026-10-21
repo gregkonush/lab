@@ -125,7 +125,6 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Ofz authority is unavailable")?;
     let auth = auth::Authenticator::new(
-        database.clone(),
         &PathBuf::from(required_env("TENGRI_INTERNAL_HMAC_KEY_FILE")?),
         desktop_origin,
     )?;
@@ -187,8 +186,6 @@ async fn main() -> anyhow::Result<()> {
     let controller_client = client.clone();
     let controller_namespace = namespace.clone();
     let election = leadership::Election::new(
-        client.clone(),
-        namespace.clone(),
         own_pod
             .uid()
             .context("controller Pod UID required")?

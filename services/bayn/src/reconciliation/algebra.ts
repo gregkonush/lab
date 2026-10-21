@@ -5,8 +5,8 @@ import { brokerFeePredatesOpeningCash } from '../accounting/broker-fees'
 import { rebuildAccountingLedger } from '../accounting/domain'
 import type { AccountingFailure } from '../accounting/failure'
 import type { AccountingTransaction } from '../accounting/schema'
-import { MutationOperation } from '../broker/alpaca-mutations'
-import { MutationEventType } from '../execution/mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { MutationEventType } from '../execution/mutations/model'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { LedgerPlan } from '../ledger-plan'
 import {
@@ -34,8 +34,8 @@ import {
   legacyReconciliationIdSchemaVersion,
   legacyReconciliationSchemaVersion,
 } from '../execution/legacy-wire'
+import { compareReconciliation } from '../simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type DurableFill,
@@ -44,11 +44,12 @@ import {
   type ReconciliationComparison,
   type ReconciliationDecisionError,
   type ReconciliationRiskContext,
-} from '../reconciliation'
+} from '../simulation-reconciliation/broker-model'
 import { strictParseOptions, type IsoDate } from '../schemas'
-import { Pipeable } from '../pipeable'
+
 import { reportedCashMicros, type CashReportingQuantum } from '../broker/alpaca/cash-reporting'
 import type { FeeAccrual } from '../accounting/fee-accrual'
+import { positionCostAnchor } from './position-cost-reporting'
 
 export interface IntentProjectionRow {
   readonly intent_id: string
@@ -367,7 +368,7 @@ const accountingHash = (value: unknown): Result.Result<string, ReconciliationAlg
     }),
   )
 
-const verifyAccountingReceiptsDataFirst = (
+export const verifyAccountingReceipts = (
   transactions: readonly AccountingTransaction[],
   receipts: readonly AccountingReceipt[],
   config: AccountingLedgerIdentity,
@@ -410,13 +411,11 @@ const verifyAccountingReceiptsDataFirst = (
     return { exactReceipts, plans: planned.map(({ plan }) => plan) }
   })
 
-export const verifyAccountingReceipts = Pipeable.dual(3, verifyAccountingReceiptsDataFirst)
-
 export const compareOpeningCash = (input: {
   readonly accountId: string
   readonly openingCash: OpeningCashRow
   readonly transactions: readonly AccountingTransaction[]
-  readonly fees?: readonly import('../broker/alpaca').FeeActivity[]
+  readonly fees?: readonly import('../broker/alpaca/model').FeeActivity[]
   readonly brokerFeeAccruals: readonly FeeAccrual[]
   readonly cashReportingOffsetMicros: string
   readonly cashSettlementDeltaMicros: string
@@ -427,7 +426,7 @@ export const compareOpeningCash = (input: {
   readonly snapshot: ReconciliationSnapshotMaterial
   readonly intents: readonly IntentExpectation[]
   readonly durableFills: readonly DurableFill[]
-  readonly projectedPositions: readonly ProjectedPosition[]
+  readonly projectedPositions: readonly Omit<ProjectedPosition, 'costBasisAnchor'>[]
 }): Result.Result<AccountingComparison, ReconciliationAlgebraFailure> =>
   Result.gen(function* () {
     const predecessor = input.transactions.find((transaction) => transaction.occurredAt < input.openingCash.observed_at)
@@ -499,7 +498,10 @@ export const compareOpeningCash = (input: {
         fills: input.snapshot.fills,
         intents: input.intents,
         durableFills: input.durableFills,
-        projectedPositions: input.projectedPositions,
+        projectedPositions: input.projectedPositions.map((position) => ({
+          ...position,
+          costBasisAnchor: positionCostAnchor(input.accountId, position, input.transactions, input.brokerFeeAccruals),
+        })),
         expectedCashMicros,
         valuation: input.snapshot.valuation,
         accountingHash: accountingHashValue,
@@ -511,7 +513,7 @@ export const compareOpeningCash = (input: {
     return { accountingHash: accountingHashValue, comparison }
   })
 
-const ageDiscrepanciesDataFirst = (
+export const ageDiscrepancies = (
   comparison: ReconciliationComparison,
   previous: readonly Discrepancy[],
   reconciledAt: string,
@@ -550,8 +552,6 @@ const ageDiscrepanciesDataFirst = (
     status: discrepancies.length === 0 ? ReconciliationStatus.Exact : ReconciliationStatus.Discrepancy,
   })
 }
-
-export const ageDiscrepancies = Pipeable.dual(3, ageDiscrepanciesDataFirst)
 
 export const makeReconciliationIdentity = (input: {
   readonly accountId: string
@@ -609,7 +609,7 @@ export const decideReconciliation = (input: {
     return yield* makeReconciliationIdentity({ ...input, aged })
   })
 
-const validateReconciliationReadbackDataFirst = (
+export const validateReconciliationReadback = (
   reconciliation: Reconciliation,
   storedContentHash: string,
 ): Result.Result<void, ReconciliationAlgebraFailure> =>
@@ -621,8 +621,6 @@ const validateReconciliationReadbackDataFirst = (
         expectedContentHash: reconciliation.contentHash,
         storedContentHash,
       })
-
-export const validateReconciliationReadback = Pipeable.dual(2, validateReconciliationReadbackDataFirst)
 
 const timestamp = (field: 'authority_observed_at', value: Date): Result.Result<string, ReconciliationAlgebraFailure> =>
   Number.isFinite(value.getTime())
@@ -637,7 +635,7 @@ const riskMaterial = (row: RiskContextRow, unknownMutationCount: number) => ({
   peakEquityMicros: row.peak_equity_micros,
 })
 
-const riskContextFromRowDataFirst = (
+export const riskContextFromRow = (
   row: RiskContextRow,
   unknownMutationCount: number,
 ): Result.Result<ReconciliationRiskContext, ReconciliationAlgebraFailure> =>
@@ -727,8 +725,6 @@ const riskContextFromRowDataFirst = (
       authorityObservedAt,
     }
   })
-
-export const riskContextFromRow = Pipeable.dual(2, riskContextFromRowDataFirst)
 
 interface ReconciliationAlgebraFailureDetails {
   readonly failure: 'decode' | 'invariant'

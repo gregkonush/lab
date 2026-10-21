@@ -73,7 +73,7 @@ mod tests {
                 probes.fetch_add(1, Ordering::SeqCst);
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
-                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                 })
             })),
             list_files: Some(Arc::new(move |request| {
@@ -251,7 +251,7 @@ mod tests {
             get_info: Some(Arc::new(|_| {
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
-                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                 })
             })),
             list_terminals: Some(Arc::new(move |request| {
@@ -395,7 +395,7 @@ mod tests {
                 default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
                 architecture: crate::crd::MicroVMArchitecture::Amd64,
                 database: database.clone(),
-                auth: Authenticator::fixture(database, "https://proompteng.ai".into()),
+                auth: Authenticator::fixture("https://proompteng.ai".into()),
                 public_url: "https://tengri.example.test".into(),
                 preview_origin: PreviewOrigin::parse(
                     "https://tengri-{session}.example.test".into(),
@@ -420,6 +420,7 @@ mod tests {
                 },
                 &principal,
                 "/proompteng.runtime.v1.MicroVMControlPlane/TerminateTerminal",
+                control.request_audience(),
             )
         };
         let ticket = || {
@@ -430,6 +431,7 @@ mod tests {
                 },
                 &principal,
                 "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket",
+                control.request_audience(),
             )
         };
         let terminated = control.terminate_terminal(terminate()).await;
@@ -445,10 +447,8 @@ mod tests {
             matches!(record.scope, TicketScope::Terminal { terminal_id } if terminal_id == "terminal-current")
         );
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let codex_principal = Principal {
-            action: Action::CodexControl,
-            ..principal.clone()
-        };
+        let mut codex_principal = principal.clone();
+        codex_principal.action = Action::CodexControl;
         let codex_access = authorization
             .agent_access(&codex_principal, &agent, "thread-current")
             .unwrap();
@@ -493,7 +493,8 @@ mod tests {
                             terminal_id: "terminal-current".into(),
                         },
                         &principal,
-                        "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket"
+                        "/proompteng.runtime.v1.MicroVMControlPlane/IssueTerminalTicket",
+                        control.request_audience(),
                     ))
                     .await
                     .unwrap_err()
@@ -533,7 +534,7 @@ mod tests {
                 }
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
-                    protocol_version: tengri::guest_authorization::PROTOCOL_VERSION,
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
                 })
             })),
             ..Default::default()

@@ -4,7 +4,7 @@ import { Clock, Effect, Logger, Redacted, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { makeBaynBrokerObservations } from '../../restate/restate-broker-observations'
 import {
@@ -102,7 +102,11 @@ test('normal broker polling emits diagnostics while native deployment activation
               Effect.gen(function* () {
                 const snapshot = yield* captureBrokerObservation(read, yield* currentUtcInstant, 30_000)
                 return {
-                  poll: { _tag: 'Published', snapshotHash: canonicalHashV1(snapshot), nextPollNotBeforeMs: 0 },
+                  poll: {
+                    _tag: 'Published',
+                    snapshotHash: Result.getOrThrow(canonicalHashV1Result(snapshot)),
+                    nextPollNotBeforeMs: 0,
+                  },
                   startedAtMs: Date.parse(snapshot.startedAt),
                   completedAtMs: Date.parse(snapshot.completedAt),
                 } as const

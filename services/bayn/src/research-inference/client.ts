@@ -3,7 +3,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
-  parseResearchFactors,
+  parseResearchOutput,
   ResearchError,
   ResearchOutcome,
   hashResearch,
@@ -169,7 +169,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         return yield* Result.fail(
           new ResearchError({ message: 'Research stream lacks complete termination, identity or usage' }),
         )
-      return yield* parseResearchFactors(run, output)
+      return yield* parseResearchOutput(run, output)
     })
   return { push, snapshot, complete }
 }

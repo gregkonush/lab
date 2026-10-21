@@ -12,7 +12,11 @@ import {
   UnsignedMicrosSchema,
   UtcInstantSchema,
 } from '../../schemas'
-import { IntradayCandidateEvidencePolicy, IntradaySnapshotPurpose } from '../intraday/model'
+import {
+  IntradayBenchmarkEvidencePolicy,
+  IntradayCandidateEvidencePolicy,
+  IntradaySnapshotPurpose,
+} from '../intraday/model'
 import { SimulatedSnapshotEvidenceSchema, StreamingSnapshotEvidenceSchema } from './evidence-schema'
 
 const ExchangeSnapshotCalendarSchema = Schema.Struct({
@@ -54,6 +58,8 @@ export const SnapshotManifestFields = {
   /** Independent entry evidence carries the complete candidate request and its availability result. */
   candidateSymbols: Schema.optionalKey(Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique())),
   candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
+  benchmarkEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayBenchmarkEvidencePolicy)),
+  benchmarkSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
   candidateExclusions: Schema.optionalKey(Schema.Array(ExecutionCandidateExclusionSchema).check(Schema.isUnique())),
   purpose: Schema.optionalKey(Schema.Enum(IntradaySnapshotPurpose)),
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip', 'us']),
@@ -90,7 +96,7 @@ export const StrategySnapshotManifestSchema = Schema.Union([
   }),
   Schema.Struct({
     ...SnapshotManifestFields,
-    schemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v1'),
+    schemaVersion: Schema.Literal('bayn.simulated-market-snapshot.v2'),
     universe: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isUnique()),
     streaming: SimulatedSnapshotEvidenceSchema,
   }),

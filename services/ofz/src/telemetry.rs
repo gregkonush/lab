@@ -1,3 +1,4 @@
+use anyhow::Context as _;
 use std::{env, sync::Arc, time::Duration};
 
 use opentelemetry::{
@@ -78,17 +79,23 @@ pub struct Telemetry {
     _traces: Option<SdkTracerProvider>,
 }
 
+const EXPORT_TIMEOUT: Duration = Duration::from_secs(10);
+
+fn trace_exporter(endpoint: String) -> anyhow::Result<opentelemetry_otlp::SpanExporter> {
+    Ok(opentelemetry_otlp::SpanExporter::builder()
+        .with_http()
+        .with_endpoint(endpoint)
+        .with_timeout(EXPORT_TIMEOUT)
+        .build()?)
+}
+
 pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
     global::set_text_map_propagator(TraceContextPropagator::new());
     let release = env::var("APP_SOURCE_REVISION").unwrap_or_else(|_| "development".into());
     let traces = env::var("OTEL_EXPORTER_OTLP_TRACES_ENDPOINT")
         .ok()
         .map(|endpoint| {
-            let exporter = opentelemetry_otlp::SpanExporter::builder()
-                .with_http()
-                .with_endpoint(endpoint)
-                .with_timeout(Duration::from_secs(3))
-                .build()?;
+            let exporter = trace_exporter(endpoint)?;
             Ok::<_, anyhow::Error>(
                 SdkTracerProvider::builder()
                     .with_batch_exporter(SanitizedExporter(exporter))
@@ -140,6 +147,14 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
                 event.tags.insert(tag.into(), value.into());
             }
         }
+        event.tags.remove("grpc_code");
+        if let Some(sentry::protocol::Context::Other(fields)) =
+            event.contexts.get("Rust Tracing Fields")
+            && let Some(code) = fields.get("grpc_code").and_then(|value| value.as_i64())
+            && (1..=16).contains(&code)
+        {
+            event.tags.insert("grpc_code".into(), code.to_string());
+        }
         if let Some(sentry::protocol::Context::Other(location)) =
             event.contexts.get("Rust Tracing Location")
         {
@@ -156,7 +171,7 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
         event.tags.retain(|key, _| {
             matches!(
                 key.as_str(),
-                "service" | "operation" | "sqlstate" | "trace_id"
+                "service" | "operation" | "sqlstate" | "trace_id" | "grpc_code"
             )
         });
         event.server_name = None;
@@ -166,7 +181,16 @@ pub fn init(service: &'static str) -> anyhow::Result<Telemetry> {
         event.extra.clear();
         event.contexts.clear();
         event.breadcrumbs = Default::default();
-        event.message = Some("Application operation failed; inspect the correlated trace".into());
+        event.message = Some(
+            event
+                .tags
+                .get("grpc_code")
+                .and_then(|code| code.parse::<i32>().ok())
+                .map(|code| format!("RPC operation failed ({:?})", tonic::Code::from_i32(code)))
+                .unwrap_or_else(|| {
+                    "Application operation failed; inspect the correlated trace".into()
+                }),
+        );
         for exception in &mut event.exception.values {
             exception.value = Some("Runtime message withheld".into());
             if let Some(stack) = &mut exception.stacktrace {
@@ -224,7 +248,7 @@ impl<B> tower_http::trace::MakeSpan<B> for RequestSpan {
             .find(|candidate| *candidate == path)
             .unwrap_or("unmatched.request");
         let span = tracing::info_span!("request", otel.name = %operation, otel.kind = "server", operation = %operation,
-            http.request.method = %request.method(), otel.status_code = field::Empty, http.response.status_code = field::Empty);
+            http.request.method = %request.method(), otel.status_code = field::Empty, http.response.status_code = field::Empty, rpc.grpc.status_code = field::Empty);
         let parent = global::get_text_map_propagator(|propagator| {
             propagator.extract(&Headers(request.headers()))
         });
@@ -250,12 +274,29 @@ pub fn inject<T>(request: &mut tonic::Request<T>) {
 }
 
 pub fn grpc_failure(
-    _failure: tower_http::classify::GrpcFailureClass,
+    failure: tower_http::classify::GrpcFailureClass,
     _latency: Duration,
     span: &Span,
 ) {
+    let code = match failure {
+        tower_http::classify::GrpcFailureClass::Code(code) => tonic::Code::from_i32(code.get()),
+        tower_http::classify::GrpcFailureClass::Error(_) => tonic::Code::Unknown,
+    };
+    span.record("rpc.grpc.status_code", code as i64);
     span.record("otel.status_code", "ERROR");
-    tracing::error!(parent: span, "RPC operation failed");
+    match code {
+        tonic::Code::Cancelled
+        | tonic::Code::InvalidArgument
+        | tonic::Code::NotFound
+        | tonic::Code::AlreadyExists
+        | tonic::Code::PermissionDenied
+        | tonic::Code::FailedPrecondition
+        | tonic::Code::OutOfRange
+        | tonic::Code::Unauthenticated => {
+            tracing::info!(parent: span, grpc_code = code as i32, "RPC request rejected");
+        }
+        _ => tracing::error!(parent: span, grpc_code = code as i32, "RPC operation failed"),
+    }
 }
 
 impl Telemetry {
@@ -294,10 +335,12 @@ impl Telemetry {
             trace_id != "00000000000000000000000000000000",
             "trace context is not initialized"
         );
-        provider.force_flush()?;
+        provider.force_flush().with_context(|| {
+            format!("OTLP flush failed for trace {trace_id} and event {event_id}")
+        })?;
         anyhow::ensure!(
-            client.flush(Some(Duration::from_secs(3))),
-            "GlitchTip export did not flush"
+            client.flush(Some(EXPORT_TIMEOUT)),
+            "GlitchTip export did not flush for event {event_id} and trace {trace_id}"
         );
         Ok(
             serde_json::json!({"eventId": event_id, "traceId": trace_id, "release": env::var("APP_SOURCE_REVISION").unwrap_or_default()}),
@@ -309,6 +352,66 @@ impl Telemetry {
 mod tests {
     use super::*;
     use tower_http::trace::MakeSpan;
+
+    #[test]
+    fn background_export_waits_for_a_delayed_collector_response() {
+        use std::io::{BufRead, Read, Write};
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let collector = std::thread::spawn(move || {
+            let deadline = std::time::Instant::now() + Duration::from_secs(10);
+            let mut stream = loop {
+                match listener.accept() {
+                    Ok((stream, _)) => break stream,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            std::time::Instant::now() < deadline,
+                            "export never reached the collector"
+                        );
+                        std::thread::sleep(Duration::from_millis(5));
+                    }
+                    Err(error) => panic!("collector accept: {error}"),
+                }
+            };
+            stream
+                .set_read_timeout(Some(Duration::from_secs(2)))
+                .unwrap();
+            let mut reader = std::io::BufReader::new(&mut stream);
+            let mut length = None;
+            loop {
+                let mut line = String::new();
+                assert!(reader.read_line(&mut line).unwrap() > 0);
+                if line == "\r\n" {
+                    break;
+                }
+                if let Some(value) = line.to_ascii_lowercase().strip_prefix("content-length:") {
+                    length = Some(value.trim().parse::<usize>().unwrap());
+                }
+            }
+            let length = length
+                .filter(|length| *length > 0 && *length < 65536)
+                .expect("bounded OTLP payload");
+            reader.read_exact(&mut vec![0; length]).unwrap();
+            std::thread::sleep(Duration::from_millis(3100));
+            let _ = stream
+                .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 0\r\nConnection: close\r\n\r\n");
+        });
+        let provider = SdkTracerProvider::builder()
+            .with_batch_exporter(SanitizedExporter(
+                trace_exporter(format!("http://{address}/v1/traces")).unwrap(),
+            ))
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
+        tracing::subscriber::with_default(subscriber, || {
+            drop(tracing::info_span!("delayed.collector"));
+        });
+        let result = provider.force_flush();
+        collector.join().unwrap();
+        result.expect("a slow collector must not lose a queued trace after three seconds");
+        provider.shutdown().unwrap();
+    }
 
     #[test]
     fn trace_exports_remove_dynamic_fields_and_unknown_rpc_paths() {
@@ -338,6 +441,11 @@ mod tests {
                 .unwrap();
             let span = RequestSpan.make_span(&request);
             span.in_scope(|| {
+                grpc_failure(
+                    tower_http::classify::GrpcFailureClass::Code(14.try_into().unwrap()),
+                    Duration::ZERO,
+                    &span,
+                );
                 let nested = tracing::info_span!("db.policy.read", db.system.name = "postgresql", object.ref = "PRIVATE_SENTINEL");
                 nested.in_scope(|| tracing::warn!(error = "PRIVATE_SENTINEL", sqlstate = "55P03", "database operation failed: PRIVATE_SENTINEL"));
                 Span::current().set_status(opentelemetry::trace::Status::error("PRIVATE_SENTINEL"));
@@ -346,6 +454,15 @@ mod tests {
         provider.force_flush().unwrap();
         let spans = exported.0.lock().unwrap();
         assert_eq!(spans.len(), 2);
+        assert!(
+            spans
+                .iter()
+                .flat_map(|span| &span.attributes)
+                .any(|attribute| {
+                    attribute.key.as_str() == "rpc.grpc.status_code"
+                        && attribute.value == opentelemetry::Value::I64(14)
+                })
+        );
         let data = format!("{spans:?}");
         assert!(
             !data.contains("PRIVATE_SENTINEL"),
@@ -358,13 +475,14 @@ mod tests {
     }
 
     #[test]
-    fn routine_warnings_do_not_emit_glitchtip_events() {
+    fn routine_warnings_and_rpc_rejections_do_not_emit_glitchtip_events() {
         use std::sync::atomic::{AtomicUsize, Ordering};
         struct Events(AtomicUsize);
         impl sentry::Transport for Events {
             fn send_envelope(&self, envelope: sentry::Envelope) {
                 for item in envelope.items() {
-                    if matches!(item, sentry::protocol::EnvelopeItem::Event(_)) {
+                    if let sentry::protocol::EnvelopeItem::Event(event) = item {
+                        assert!(!format!("{event:?}").contains("PRIVATE_SENTINEL"));
                         self.0.fetch_add(1, Ordering::SeqCst);
                     }
                 }
@@ -387,10 +505,30 @@ mod tests {
                 tracing::warn!("shutdown signal received");
                 tracing::info!("startup complete");
                 tracing::error!("application operation failed");
+                let mut expected = 1;
+                for code in 1..=16 {
+                    grpc_failure(
+                        tower_http::classify::GrpcFailureClass::Code(code.try_into().unwrap()),
+                        Duration::ZERO,
+                        &Span::none(),
+                    );
+                    expected += usize::from(matches!(code, 2 | 4 | 8 | 10 | 12 | 13 | 14 | 15));
+                    assert!(client.flush(Some(Duration::from_secs(3))));
+                    assert_eq!(
+                        events.0.load(Ordering::SeqCst),
+                        expected,
+                        "gRPC code {code}"
+                    );
+                }
+                grpc_failure(
+                    tower_http::classify::GrpcFailureClass::Error("PRIVATE_SENTINEL".into()),
+                    Duration::ZERO,
+                    &Span::none(),
+                );
             });
         });
         assert!(client.flush(Some(Duration::from_secs(3))));
-        assert_eq!(events.0.load(Ordering::SeqCst), 1);
+        assert_eq!(events.0.load(Ordering::SeqCst), 10);
     }
 
     #[test]

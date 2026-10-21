@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, afterEach, describe, expect, spyOn, test } from 'bun:test'
 import { createHash } from 'node:crypto'
 import * as Sentry from '@sentry/browser'
+import type { TengriAction } from '@/lib/tengri/types'
 
 import {
   beginTengriLifecycleTransition,
@@ -74,7 +75,9 @@ test('reports rejected snapshot and action fetches without reporting caller canc
   )
   try {
     await expect(getDesktopSnapshot()).rejects.toBe(failure)
-    await expect(runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/' })).rejects.toBe(failure)
+    await expect(
+      runTengriAction({ action: 'list-files', agentId: 'network-fixture', path: '/workspace' }),
+    ).rejects.toBe(failure)
     expect(capture).toHaveBeenCalledTimes(2)
     expect(String(capture.mock.calls)).not.toContain('PRIVATE_SENTINEL')
     const controller = new AbortController()
@@ -103,6 +106,8 @@ test('preserves HTTP status and recognized conversation errors without trusting 
     [404, { error: { internal: 'details' }, code: 'unknown' }, 'Tengri request failed with 404', undefined],
     [409, { error: 'File changed', code: 'file_conflict' }, 'File changed', 'file_conflict'],
     [429, { error: 'All slots occupied', code: 'capacity_full' }, 'All slots occupied', 'capacity_full'],
+    [502, { error: 'Invalid catalog', code: 'model_catalog_invalid' }, 'Invalid catalog', 'model_catalog_invalid'],
+    [503, { error: 'Unavailable', code: 'model_catalog_invalid' }, 'Unavailable', undefined],
     [
       412,
       { error: 'Model selection unavailable', code: 'model_selection_unavailable' },
@@ -164,6 +169,35 @@ test('reports a failed history record from an HTTP 200 stream with its response 
 })
 
 describe('Tengri guest operation coordination', () => {
+  for (const action of [
+    { action: 'codex-models', agentId: 'catalog-lifecycle' },
+    { action: 'resume-thread', agentId: 'history-lifecycle', threadId: 'thread-existing' },
+  ] satisfies TengriAction[]) {
+    test(`keeps lifecycle controls available during ${action.action} and cancels it on transition`, async () => {
+      const agentId = action.agentId
+      const started = Promise.withResolvers<void>()
+      globalThis.fetch = Object.assign(
+        async (_input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+          started.resolve()
+          await waitForAbort(init?.signal)
+          throw init?.signal?.reason
+        },
+        { preconnect: originalFetch.preconnect },
+      )
+      const pending = runTengriAction(action).catch((error: unknown) => error)
+      await started.promise
+      const blocked = getTengriGuestOperationSnapshot(agentId)
+      const releaseTransition = beginTengriLifecycleTransition(agentId)
+      try {
+        expect(await pending).toMatchObject({ name: 'AbortError' })
+        expect(blocked).toBe(false)
+        expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
+      } finally {
+        releaseTransition()
+      }
+    })
+  }
+
   test('blocks new guest requests and cancels in-flight work before a lifecycle transition', async () => {
     const agentId = 'agent-lifecycle'
     const snapshots: boolean[] = []
@@ -182,7 +216,9 @@ describe('Tengri guest operation coordination', () => {
     const unsubscribe = subscribeTengriGuestOperations(agentId, () => {
       snapshots.push(getTengriGuestOperationSnapshot(agentId))
     })
-    const pending = runTengriAction({ action: 'list-files', agentId, path: '/' }).catch((error: unknown) => error)
+    const pending = runTengriAction({ action: 'list-files', agentId, path: '/workspace' }).catch(
+      (error: unknown) => error,
+    )
     expect(getTengriGuestOperationSnapshot(agentId)).toBe(true)
 
     const releaseTransition = beginTengriLifecycleTransition(agentId)
@@ -192,9 +228,12 @@ describe('Tengri guest operation coordination', () => {
     expect(getTengriGuestOperationSnapshot(agentId)).toBe(false)
 
     const callsBeforeBlockedRequest = actions.length
-    const blocked = await runTengriAction({ action: 'list-files', agentId, path: '/' }).catch((error: unknown) => error)
+    const blocked = await runTengriAction({ action: 'list-files', agentId, path: '/workspace' }).catch(
+      (error: unknown) => error,
+    )
     expect(blocked).toBeInstanceOf(Error)
     expect((blocked as Error).message).toBe('Agent lifecycle transition is in progress')
+    expect(blocked).toMatchObject({ name: 'AbortError' })
     expect(actions).toHaveLength(callsBeforeBlockedRequest)
 
     expect(
@@ -211,7 +250,12 @@ describe('Tengri guest operation coordination', () => {
 
     releaseTransition()
     expect(
-      await runTengriAction<{ entries: never[] }>({ action: 'search-files', agentId, path: '/', query: 'readme' }),
+      await runTengriAction<{ entries: never[] }>({
+        action: 'search-files',
+        agentId,
+        path: '/workspace',
+        query: 'readme',
+      }),
     ).toEqual({ entries: [] })
     expect(snapshots).toEqual([true, false, true, false])
     unsubscribe()

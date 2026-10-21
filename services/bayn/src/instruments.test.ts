@@ -1,13 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import {
-  decodeInstrument,
-  InstrumentSymbolSchema,
-  instrumentOrderQuantity,
-  MarketKind,
-  validateInstrumentOrder,
-} from './instruments'
+import { decodeInstrument, InstrumentSymbolSchema, MarketKind, validateInstrumentOrder } from './instruments'
 
 test('the same instrument contract admits equities and all supported crypto pairs', () => {
   for (const symbol of ['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])
@@ -24,7 +18,6 @@ test('the same instrument contract admits equities and all supported crypto pair
     }),
   )
   expect(equity.market).toBe(MarketKind.Equity)
-  expect(instrumentOrderQuantity(equity, 1_900_000_000n)).toBe(1_000_000_000n)
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     const crypto = Result.getOrThrow(
       decodeInstrument({
@@ -37,7 +30,6 @@ test('the same instrument contract admits equities and all supported crypto pair
     )
     expect(crypto.market).toBe(MarketKind.Crypto)
     expect(crypto.minimumQuantityAtoms).toBe(12_150n)
-    expect(instrumentOrderQuantity(crypto, 12_151n)).toBe(12_151n)
   }
 })
 
@@ -87,9 +79,27 @@ test('the shared instrument guard enforces minimums, steps, prices and continuou
     Result.isFailure(validateInstrumentOrder(instrument, order, { ...terms, limitPriceAtoms: 100_000_000_011n })),
   ).toBe(true)
   expect(
-    Result.isSuccess(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'GTC' }, terms)),
+    Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'GTC' }, terms)),
   ).toBe(true)
   expect(
     Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET', timeInForce: 'DAY' }, terms)),
   ).toBe(true)
+})
+
+test('fractional equities use LIMIT/DAY while retaining the asset capability and price guards', () => {
+  const instrument = Result.getOrThrow(
+    decodeInstrument({
+      symbol: 'AAPL',
+      assetClass: 'us_equity',
+      minimumOrderSize: null,
+      quantityIncrement: null,
+      priceIncrement: null,
+    }),
+  )
+  const order = { symbol: 'AAPL', quantityAtoms: '500000000', orderType: 'LIMIT', timeInForce: 'DAY' }
+  const terms = { closeOnly: true, fractionable: true, limitPriceAtoms: 100000000000n }
+  expect(Result.isSuccess(validateInstrumentOrder(instrument, order, terms))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, order, { ...terms, fractionable: false }))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, { ...order, timeInForce: 'IOC' }, terms))).toBe(true)
+  expect(Result.isFailure(validateInstrumentOrder(instrument, { ...order, orderType: 'MARKET' }, terms))).toBe(true)
 })

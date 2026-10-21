@@ -73,7 +73,7 @@ async fn controller_metadata_roundtrip(
             default_image: format!("registry.example/nanoagent@sha256:{}", "b".repeat(64)),
             architecture: MicroVMArchitecture::Amd64,
             database: database.clone(),
-            auth: Authenticator::fixture(database, "https://proompteng.ai".into()),
+            auth: Authenticator::fixture("https://proompteng.ai".into()),
             public_url: "https://tengri.proompteng.ai".into(),
             preview_origin: PreviewOrigin::parse(
                 "https://tengri-{session}.proompteng.ai".into(),
@@ -115,6 +115,7 @@ async fn controller_metadata_roundtrip(
         ListAgentsRequest {},
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/ListAgents",
+        control.request_audience(),
     );
     let mut listing = tokio::spawn({
         let control = control.clone();
@@ -150,6 +151,7 @@ async fn controller_metadata_roundtrip(
         create.clone(),
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/CreateAgent",
+        control.request_audience(),
     );
     let mut creation = tokio::spawn({
         let control = control.clone();
@@ -179,6 +181,7 @@ async fn controller_metadata_roundtrip(
         create,
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/CreateAgent",
+        control.request_audience(),
     );
     assert_eq!(
         control.create_agent(expired).await.unwrap_err().code(),
@@ -191,6 +194,7 @@ async fn controller_metadata_roundtrip(
         WatchAgentRequest { id: id.clone() },
         &submission,
         "/proompteng.runtime.v1.MicroVMControlPlane/WatchAgent",
+        control.request_audience(),
     );
     let mut watching = tokio::spawn({
         let control = control.clone();
@@ -277,12 +281,9 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         }),
     )
     .await;
-    let mut principal = Principal {
-        owner_hash: human.clone(),
-        context: context.clone(),
-        recovery_generation: state.recovery_generation,
-        action: Action::WorkspaceCreate,
-    };
+    let mut principal = Principal::fixture(&human, "", Action::WorkspaceCreate);
+    principal.context = context.clone();
+    principal.recovery_generation = state.recovery_generation;
     let reserved = controller
         .reservation(&principal, &reservation_id)
         .await
@@ -424,10 +425,17 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
             .unwrap();
         assert_eq!(context.actor, parent.context.actor);
         assert!(first.valid_until_unix_ms <= context.deadline_unix_ms);
-        assert_ne!(
-            first.audit_receipt_id, second.audit_receipt_id,
-            "sub-operations require their own exact-action/target audit receipts"
-        );
+        if action == Action::TerminalObserve {
+            assert_eq!(
+                first.audit_receipt_id, second.audit_receipt_id,
+                "the same observation reuses its exact-action/target receipt with fresh Ofz checks"
+            );
+        } else {
+            assert_ne!(
+                first.audit_receipt_id, second.audit_receipt_id,
+                "control submissions retain distinct durable audit receipts"
+            );
+        }
     }
     let database = std::sync::Arc::new(crate::control::Database::shared_fixture().await);
     let tickets =

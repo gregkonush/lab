@@ -4,7 +4,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { runRidgeTrainingCommand } from '../ridge-training-command'
 import { utcInstantFromEpochMillis } from '../time'
 import { ControlStudyFailure } from './control-portfolio'
@@ -156,7 +156,7 @@ test('pinned calendar rejects an omitted middle training day and source reaching
   expect(
     Result.isFailure(
       prepareRidgeTraining(
-        { ...fixture.input, calendar, expectedCalendarHash: canonicalHashV1(calendar) },
+        { ...fixture.input, calendar, expectedCalendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
         fixture.receipt,
       ),
     ),

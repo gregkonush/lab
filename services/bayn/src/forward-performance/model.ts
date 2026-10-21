@@ -360,7 +360,9 @@ export interface ForwardPerformanceEvidenceInput {
     readonly expenseMicros: string
     readonly settled: boolean
   }[]
-  readonly brokerFees?: readonly (import('../broker/alpaca').FeeActivity & { readonly inventoryCostMicros?: string })[]
+  readonly brokerFees?: readonly (import('../broker/alpaca/model').FeeActivity & {
+    readonly inventoryCostMicros?: string
+  })[]
   readonly executionEvidence?: readonly ForwardPerformanceExecutionEvidence[]
   readonly unverifiedDecisionHashes?: readonly string[]
   readonly marketVolumeEvidence?: readonly ForwardPerformanceMarketVolumeEvidence[]

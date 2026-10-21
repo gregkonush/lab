@@ -51,7 +51,7 @@ test('audited checks can wait for commit while receipt renewals keep their short
           recoveryGeneration: BigInt(1),
         }),
       )
-    }, 2100)
+    }, 6100)
     timers.add(timer)
   }
   service.addService(

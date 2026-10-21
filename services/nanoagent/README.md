@@ -42,6 +42,10 @@ within one second. The shell and PTY survive in the snapshot; restore does not f
 Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
 a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
+The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
+backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
+failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -62,7 +66,13 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 5. API version 5
+requires canonical `/workspace` paths for file operations, file events, and terminal working directories. The BFF
+requires that version in the controller's existing authenticated audience response before signing a request. The signed
+target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
+directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
+are rejected. The request-signature contract remains version 4. Old guests fail the identity check before file
+operations and need a fenced cold replacement on their existing retained home. Guest control is
 gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
 HTTP discovery, negotiation, or fallback. Controller and guest artifacts must come from the same validated release.
 
@@ -106,6 +116,12 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
+requests. `ResolveCodexApproval.response_json` delivers explicit answers using the same generation-fenced reply path.
+The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
+replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
+Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.
+
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
 
@@ -269,6 +285,12 @@ the upstream `--disable-workspace-trust` switch, so opening folders does not pro
 tasks, debugging, or workspace extensions inside the guest.
 The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
 workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
+
+Guest initialization sets `fs.inotify.max_user_watches=524288` for large workspaces. Native KVM acceptance verifies
+the running guest's limit. It also assigns the local hostname `tengri` and its loopback host entry so guest `sudo`
+resolves its own hostname. These settings do not change the host or storage configuration.
+An already running retained guest needs the same setting applied with its existing guest administrator authority;
+ordinary image promotion preserves that guest's processes and kernel state.
 
 See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Sleep and resume retain the
 slot's image and live editor process. An image change requires the explicit fenced recovery procedure in

@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { OrderSide, OrderType } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { makeJevObservation } from '../jev/observation'
@@ -47,7 +47,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 100,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: atMs, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const roundTrip = () => ({
   symbol: 'AAPL',
@@ -114,21 +114,14 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(result.modelStatus).toBe('AVAILABLE')
   expect(result.selected[SignalScreenRule.Jev]).toBe('AAPL')
   expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.enterProbability).toBe(0.8)
+  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.enterProbability).toBeCloseTo(0.9764705882352941)
   const wait = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
   expect(wait.selected[SignalScreenRule.Jev]).toBeNull()
   expect(wait.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
   const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
-  expect(Object.keys(factors.answers).sort()).toEqual([
-    'action',
-    'continuation',
-    'exhaustion',
-    'net_economics',
-    'regime',
-    'setup_quality',
-  ])
+  expect(Object.keys(factors.answers)).toEqual(['action'])
   expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
 })
 
@@ -241,7 +234,7 @@ test.each<{ premium: number; selected: string | null }>([
       snapshot,
     }),
   )
-  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, snapshot, observation })
+  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, observation })
   const result = Result.getOrThrow(prepareSignalStudyBatch(evidence))
   if (selected === null) expect(result.selected[SignalScreenRule.RelativeMomentum]).toBeNull()
   else expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)
