@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { prepareAccounting } from '../accounting/domain'
+import { coinFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import type { AccountingTransaction } from '../accounting/schema'
 import { OrderSide } from '../execution/contracts'
@@ -150,6 +150,38 @@ const cashAccrual = (
     tigerbeetle_cluster_id: '2001',
     tigerbeetle_ledger: 7_001,
     posted: true,
+  }
+}
+
+const delayedCoinActivity = (sourceDate: '2026-09-18' | '2026-09-19'): ReturnType<typeof coinActivity> => {
+  const original = coinActivity()
+  const data: typeof original.data = {
+    ...original.data,
+    activityId: `synthetic-delayed-coin-fee-${sourceDate}`,
+    date: '2026-09-19',
+  }
+  return {
+    ...original,
+    data,
+    content_hash: success(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data })),
+    ledger_plan_hash: success(
+      hashLedgerPlanResult(coinFeeLedgerPlan(data.accountId, data.activityId, 'ETH/USD', '0', 7_001)),
+    ),
+    read_evidence: {
+      ...original.read_evidence,
+      sourceCreatedAt: `${sourceDate}T15:30:${sourceDate === '2026-09-18' ? '01' : '04'}.500000000Z`,
+      observedAt: '2026-09-20T08:00:00.000Z',
+    },
+  }
+}
+
+const laterAccountCut = (input: ForwardPerformanceEvidenceInput): ForwardPerformanceEvidenceInput => {
+  assert(input.reconciliation !== undefined)
+  const reconciledAt = '2026-09-20T09:00:00.000Z'
+  return {
+    ...input,
+    reconciliation: { ...input.reconciliation, reconciledAt },
+    accountPositionCounts: { postgres: 0, ledger: 0, exact: true, reconciledAt },
   }
 }
 
@@ -441,6 +473,167 @@ describe('position episodes', () => {
       expect(report.receipt.evidence.reasonCodes).not.toContain('LEDGER_MISMATCH')
       expect(report.receipt.evidence.reasonCodes.includes('BROKER_FEE_SETTLEMENT_PENDING')).toBe(!settled)
       expect(report.receipt.profitability).toBe('UNDETERMINED')
+    },
+  )
+
+  test('measures two source UTC cohorts whose settled coin receipts share a later posting date', () => {
+    const first = coinRoundTrip()
+    const second = coinRoundTrip(3, 'episode-account', 'f'.repeat(64), { sourceDate: '2026-09-19' })
+    const fills = [...first.fills, ...second.fills]
+    const accruals = [first.accrual, second.accrual].map((accrual) => ({
+      ...accrual,
+      matched_coin_quantity_atoms: '82625',
+    }))
+    const fees = [delayedCoinActivity('2026-09-18'), delayedCoinActivity('2026-09-19')]
+    const input = laterAccountCut(evidence(fills, fills, { accountFeeAccruals: accruals, accountBrokerFees: fees }))
+    const measured = success(measurePositionEpisodes(input))
+    expect(measured).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 2,
+      openCount: 0,
+      crossScopeCount: 0,
+    })
+    assert(measured.status === 'MEASURED')
+    expect(
+      measured.completed.map(({ openedAt, closedAt, holdingDurationMs }) => ({
+        openedAt,
+        closedAt,
+        holdingDurationMs,
+      })),
+    ).toEqual([
+      { openedAt: '2026-09-18T15:30:01.000Z', closedAt: '2026-09-18T15:30:03.000Z', holdingDurationMs: 2000 },
+      { openedAt: '2026-09-19T15:30:04.000Z', closedAt: '2026-09-19T15:30:06.000Z', holdingDurationMs: 2000 },
+    ])
+    expect(
+      success(
+        measurePositionEpisodes({
+          ...input,
+          accountTransactions: fills.toReversed(),
+          transactions: input.transactions.toReversed(),
+          accountFeeAccruals: accruals.toReversed(),
+          accountBrokerFees: fees.toReversed(),
+        }),
+      ),
+    ).toEqual(measured)
+
+    const report = success(makeForwardPerformanceReport({ ...input, transactions: [] }, []))
+    expect(report.positionEpisodes).toMatchObject({
+      status: 'MEASURED',
+      completedCount: 0,
+      openCount: 0,
+      crossScopeCount: 0,
+      completed: [],
+      bySymbol: [],
+    })
+    expect(report.receipt.profitability).toBe('UNDETERMINED')
+    expect(report.operatingCostCoverage).toBe('INCOMPLETE')
+  })
+
+  test('uses the source-trade cohort when a coin accrual is observed on the following UTC date', () => {
+    const { fills, accrual } = coinRoundTrip(0, 'episode-account', 'f'.repeat(64), {
+      sourceDate: '2026-09-18',
+      observedDate: '2026-09-19',
+    })
+    expect(accrual.data.date).toBe('2026-09-19')
+    expect(accrual.settlement_date).toBe('2026-09-18')
+    const fee = coinActivity()
+    const measured = success(
+      measurePositionEpisodes(
+        laterAccountCut(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [
+              { ...fee, read_evidence: { ...fee.read_evidence, observedAt: '2026-09-20T08:00:00.000Z' } },
+            ],
+          }),
+        ),
+      ),
+    )
+    expect(measured).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
+    assert(measured.status === 'MEASURED')
+    expect(measured.completed[0]).toMatchObject({
+      openedAt: '2026-09-18T15:30:01.000Z',
+      closedAt: '2026-09-19T15:30:03.000Z',
+      holdingDurationMs: 86_402_000,
+    })
+  })
+
+  test('retains posting-date settlement for legacy coin receipts without a source timestamp', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(fee.read_evidence.sourceCreatedAt).toBeUndefined()
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [fee],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'MEASURED', completedCount: 1, openCount: 0 })
+  })
+
+  test.each([
+    '2026-02-30T15:30:01.500000000Z',
+    '2026-09-18T25:30:01.500000000Z',
+    '2026-09-18T15:30:01.500Z',
+    '2026-09-18T16:00:00.000000001Z',
+  ] as const)('rejects invalid or future coin receipt provenance %s', (sourceCreatedAt) => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(
+      success(
+        measurePositionEpisodes(
+          evidence(fills, fills, {
+            accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+            accountBrokerFees: [{ ...fee, read_evidence: { ...fee.read_evidence, sourceCreatedAt } }],
+          }),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test('does not use matching posting dates to conceal a different source UTC cohort', () => {
+    const { fills, accrual } = coinRoundTrip()
+    const fee = coinActivity()
+    expect(
+      success(
+        measurePositionEpisodes(
+          laterAccountCut(
+            evidence(fills, fills, {
+              accountFeeAccruals: [{ ...accrual, matched_coin_quantity_atoms: '82625' }],
+              accountBrokerFees: [
+                {
+                  ...fee,
+                  read_evidence: {
+                    ...fee.read_evidence,
+                    observedAt: '2026-09-20T08:00:00.000Z',
+                    sourceCreatedAt: '2026-09-19T15:30:01.500000000Z',
+                  },
+                },
+              ],
+            }),
+          ),
+        ),
+      ),
+    ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
+  })
+
+  test.each(['2026-02-30', '2026-09-19'] as const)(
+    'rejects invalid or substituted source-trade settlement date %s',
+    (settlement_date) => {
+      const { fills, accrual } = coinRoundTrip()
+      expect(
+        success(
+          measurePositionEpisodes(
+            evidence(fills, fills, {
+              accountFeeAccruals: [{ ...accrual, settlement_date, matched_coin_quantity_atoms: '82625' }],
+              accountBrokerFees: [coinActivity()],
+            }),
+          ),
+        ),
+      ).toMatchObject({ status: 'UNDETERMINED', reason: PositionEpisodeReason.InvalidHistory })
     },
   )
 
