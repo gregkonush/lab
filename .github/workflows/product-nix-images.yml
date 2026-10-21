@@ -286,14 +286,13 @@ jobs:
 
   build-proompteng:
     needs: changes
-    if: needs.changes.outputs.proompteng == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.proompteng == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: proompteng
       package_attr: proompteng-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: ${{ vars.TENGRI_PREPARED_SLOT_CUTOVER_READY == 'true' }}
-      pr_number: ${{ github.event.pull_request.number && format('{0}-proompteng', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 
@@ -310,39 +309,36 @@ jobs:
     needs:
       - changes
       - verify-app-dependency-closure
-    if: needs.changes.outputs.app == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.app == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: app
       package_attr: app-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-app', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 
   build-synthesis:
     needs: changes
-    if: needs.changes.outputs.synthesis == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.synthesis == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: synthesis
       package_attr: synthesis-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-synthesis', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit
 
   build-docs:
     needs: changes
-    if: needs.changes.outputs.docs == 'true'
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && needs.changes.outputs.docs == 'true'
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
       image_name: docs
       package_attr: docs-image
       tag: sha-${{ github.sha }}
       publish_kargo_tag: true
-      pr_number: ${{ github.event.pull_request.number && format('{0}-docs', github.event.pull_request.number) || '' }}
       latest: true
     secrets: inherit

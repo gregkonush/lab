@@ -2,7 +2,7 @@
 
 Ofz owns the final Tengri policy schema, action catalog, typed authorization API and durable control state.
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
-The running cluster still uses the old contract until the reviewed, coordinated hard cutover.
+Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
 
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
@@ -45,7 +45,7 @@ an existing missing, null or different checksum is rejected and never filled fro
 `ofz migrate-runtime` initializes or advances `tengri_control` as `tengri_migrator`. It verifies the ordered installed
 SHA-256 checksums before applying any remaining packaged migrations and commits the schema and ledger in one
 transaction. It serializes concurrent attempts and rejects a different owner, database, missing ledger or changed
-checksum. The BFF, controller and supervisor require all three migrations through `0003_replay_slots.sql`; they cannot
+checksum. The BFF, controller and supervisor require all seven migrations through `0007_ephemeral_oauth.sql`; they cannot
 initialize their own schema. Promote Ofz and complete its migration hook before promoting those consumers.
 The API reads its database password, database CA and native key from mounted files. Database TLS verifies the configured
 DNS name. The API role cannot rewrite audit rows or command intent; the exporter can only read and acknowledge audit.
@@ -55,6 +55,18 @@ five milliseconds and uses one pooled connection and durable commit for the batc
 still commits before its caller receives success. Per-receipt savepoints isolate invalid sessions and SQL failures;
 a failed commit acknowledges none of the batch. Policy commands retain their own atomic intent and effects transactions.
 The 128-item queue bounds pending work and leaves the other SQL connections available for fresh authorization reads.
+The server and initial audited transports allow thirty seconds for durable admission. Clients issue 25-second request
+contexts, leaving five seconds of headroom below the server's unchanged thirty-second validation ceiling.
+Ofz still rechecks current authority after committing and returns a policy decision valid for at most two seconds; receipt revalidation remains
+bounded to two seconds. This processing budget does not extend the BFF's five-second signed assertion admission.
+Ofz, Tengri and the BFF export traces in the background with a ten-second network budget. Diagnostic flush failures
+retain their trace and event IDs for collector readback. An unsuccessful flush remains a failed verification.
+
+Repeated controller runtime-state reads and guest health probes may reference their original durable observation
+receipt. Ofz verifies its exact workload, actor, workspace, epoch, action, resource, target and recovery generation,
+including the eight-hour age limit, while still re-reading current authority and policy on every call. The receipt
+identifies a committed observation; it never replaces an authorization decision. Terminal cleanup cannot reuse an
+observation receipt and retains a new durable audit for each submission.
 
 Initial platform setup uses `ofz bootstrap /var/run/ofz/bootstrap/manifest.json`, followed by
 `ofz activate /var/run/ofz/bootstrap/manifest.json`. Both commands require the `ofz_migrator` schema owner in
@@ -146,6 +158,15 @@ hashes and database timestamps. Its immutable key includes the complete payload 
 after version-specific readback and COMPLIANCE retention verification. An uncertain upload reuses the stored version;
 late commits below the checkpoint remain discoverable through their unacknowledged outbox entries. Empty-loop
 heartbeats verify the existing independent object and bucket configuration. Storage errors never fabricate health.
+Idle polls continue verifying the archive every second, but refresh its durable heartbeat only when it reaches ten
+seconds old. New batches still acknowledge immediately. A verification failure immediately clears archive health;
+repeated failures do not rewrite an already invalid checkpoint. The sixty-second freshness and backlog gates remain
+unchanged.
+
+If a lower audit sequence commits during an upload, that batch remains acknowledged while the checkpoint waits for
+the lower sequence. The next poll exports the missing receipt before advancing the checkpoint. This normal commit
+race does not invalidate archive health or terminate the exporter. Missing outbox entries, failed uploads, invalid
+retention, and actual acknowledgement changes still fence access.
 
 Run `bash services/ofz/test-control.sh archive` for the real owner CLI, PostgreSQL and S3 qualification. It uses the
 production credential generator, writer policy and synchronized SQLite/object configuration. It proves initial
@@ -270,8 +291,10 @@ Ofz image-packaging and documentation changes do not rebuild native Tengri guest
 build script, migrations, policy schema, operation catalog, authorization protobuf, and KVM launcher changes retain the
 shared runtime and native KVM qualification. The paired guest build uses its existing registry cache when its inputs are unchanged.
 
-
-Production error reporting and trace propagation use the existing GlitchTip and Tempo services. See
+Production error reporting and trace propagation use the existing GlitchTip and Tempo services. RPC traces retain the
+numeric status code. Expected session expiry, denied requests and client validation failures remain traceable without
+creating server-error issues; transport, deadline, capacity and internal failures still emit GlitchTip events with a
+bounded `grpc_code` tag and a status-specific title. See
 [Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the privacy, network and rollout
 contract. `ofz telemetry-check` emits a synthetic error and trace using the deployed configuration without opening a
 database connection or changing authorization state. Confirm the returned IDs in both collectors.

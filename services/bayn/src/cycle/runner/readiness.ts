@@ -5,6 +5,7 @@ import { RequiredMarketFeatureSchema } from '../../market-data/features/contract
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
 export enum DecisionReadinessReason {
+  AccountProtection = 'ACCOUNT_PROTECTION',
   DecisionPending = 'DECISION_PENDING',
   InferenceUnavailable = 'INFERENCE_UNAVAILABLE',
   LookbackWarmup = 'LOOKBACK_WARMUP',
@@ -72,6 +73,12 @@ export const CycleWaitReasonSchema = Schema.Union([
     'ENTRY_INTENTS_SETTLED_UNTIL_CLOSE',
     'JEV_POSITION_AWAITING_RECONCILIATION',
     'JEV_POSITION_HELD',
+    'PROTECTION_RECOVERY_BACKOFF',
+    'PROTECTION_RECOVERY_ONLY',
+    'PROTECTION_AWAITING_RECONCILIATION',
+    'PROTECTION_CANCEL_PENDING',
+    'PROTECTION_AUTHORITY_UNAVAILABLE',
+    'PROTECTION_EXIT_COMMITTED',
     'POST_MUTATION_RECONCILIATION',
     'AWAITING_SUBMISSION_OPEN',
     'AWAITING_CLOSE_WINDOW',

@@ -100,7 +100,7 @@ func TestRPCUsesInstalledRecoveryGenerationBeforeMutation(t *testing.T) {
 	api := testAPIServer(t)
 	api.guestAuthorization.recoveryGeneration = 2
 	client := unsignedRPCTestClient(t, api)
-	request := &pb.FileWrite{Path: "/recovered", ExpectedRevision: "missing", Content: []byte("new generation")}
+	request := &pb.FileWrite{Path: "/workspace/recovered", ExpectedRevision: "missing", Content: []byte("new generation")}
 	oldContext, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WriteFile_FullMethodName, request, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -226,10 +226,10 @@ func TestRPCBootstrapTokenCannotReplaceSignedAuthorization(t *testing.T) {
 	if _, err := client.GetInfo(ctx, &pb.Empty{}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bootstrap token admitted an unsigned metadata request: %v", err)
 	}
-	if _, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/unsigned", Content: []byte("denied"), ExpectedRevision: "missing"}); status.Code(err) != codes.Unauthenticated {
+	if _, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/workspace/unsigned", Content: []byte("denied"), ExpectedRevision: "missing"}); status.Code(err) != codes.Unauthenticated {
 		t.Fatalf("bootstrap token admitted an unsigned mutation: %v", err)
 	}
-	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/"})
+	stream, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace"})
 	if err == nil {
 		_, err = stream.Recv()
 	}
@@ -244,7 +244,7 @@ func TestRPCBootstrapTokenCannotReplaceSignedAuthorization(t *testing.T) {
 func TestRPCRejectsSignedRequestsForDifferentBindingsBeforeMutation(t *testing.T) {
 	api := testAPIServer(t)
 	client := unsignedRPCTestClient(t, api)
-	request := &pb.FileWrite{Path: "/bound", ExpectedRevision: "missing", Content: []byte("authorized")}
+	request := &pb.FileWrite{Path: "/workspace/bound", ExpectedRevision: "missing", Content: []byte("authorized")}
 	for _, test := range []struct {
 		name   string
 		change func(*guestauth.Context)
@@ -256,7 +256,7 @@ func TestRPCRejectsSignedRequestsForDifferentBindingsBeforeMutation(t *testing.T
 		{"recovery", func(c *guestauth.Context) { c.RecoveryGeneration++ }},
 		{"action", func(c *guestauth.Context) { c.Action = guestauth.TerminalControl }},
 		{"method", func(c *guestauth.Context) { c.Method = pb.NanoagentService_CreateDirectory_FullMethodName }},
-		{"target", func(c *guestauth.Context) { c.Target = "/different" }},
+		{"target", func(c *guestauth.Context) { c.Target = "/workspace/different" }},
 		{"body", func(c *guestauth.Context) { c.BodySHA256 = strings.Repeat("0", 64) }},
 		{"expired", func(c *guestauth.Context) { c.IssuedAtUnixMS -= 10000; c.DeadlineUnixMS -= 10000 }},
 		{"retired protocol", func(c *guestauth.Context) { c.ProtocolVersion = 3 }},
@@ -322,7 +322,7 @@ func TestRPCRequiresExactlyOneProofAndClaimHeader(t *testing.T) {
 func TestRPCConcurrentReplayAdmitsExactlyOneMutation(t *testing.T) {
 	api := testAPIServer(t)
 	client := unsignedRPCTestClient(t, api)
-	request := &pb.FileWrite{Path: "/once", ExpectedRevision: "missing", Content: []byte("once")}
+	request := &pb.FileWrite{Path: "/workspace/once", ExpectedRevision: "missing", Content: []byte("once")}
 	ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WriteFile_FullMethodName, request, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -374,10 +374,35 @@ func TestRPCScopedContentCannotEnterUnboundedHandlers(t *testing.T) {
 	}
 }
 
+func TestRPCScopedCanonicalReadRetainsAuthorizationBoundary(t *testing.T) {
+	api := testAPIServer(t)
+	client := unsignedRPCTestClient(t, api)
+	request := &pb.Path{Path: "/workspace/lab/README.md"}
+	ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_ReadFile_FullMethodName, request, func(c *guestauth.Context) {
+		c.Actor = guestauth.Actor{Kind: "agent", Subject: "77777777-7777-4777-8777-777777777777", GrantID: "88888888-8888-4888-8888-888888888888"}
+		c.Observation = &guestauth.ObservationBudget{MaxBytes: 1024, MaxItems: 2}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = client.ReadFile(ctx, request)
+	if status.Code(err) != codes.PermissionDenied || status.Convert(err).Message() != "scoped content requires a bounded observer RPC" {
+		t.Fatalf("canonical proof did not reach the bounded-handler gate: %v", err)
+	}
+	ctx, err = signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_ReadFile_FullMethodName, request, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Path = "/lab/README.md"
+	if _, err := client.ReadFile(ctx, request); status.Code(err) != codes.Unauthenticated {
+		t.Fatalf("changed signed target admitted: %v", err)
+	}
+}
+
 func TestRPCStreamingOpeningMessageIsSignedAndSingleUse(t *testing.T) {
 	api := testAPIServer(t)
 	client := unsignedRPCTestClient(t, api)
-	request := &pb.FileWatch{Path: "/"}
+	request := &pb.FileWatch{Path: "/workspace"}
 	ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WatchFiles_FullMethodName, request, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -453,7 +478,7 @@ func TestGuestRootClaimPublicationAndRetirement(t *testing.T) {
 
 func TestGuestRPCRejectsNoncanonicalWireEncoding(t *testing.T) {
 	codec := guestRPCCodec{}
-	canonical, err := codec.Marshal(&pb.Path{Path: "/signed"})
+	canonical, err := codec.Marshal(&pb.Path{Path: "/workspace/signed"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -526,7 +551,7 @@ func TestRPCRechecksRuntimeBeforeReturningUnaryOrStreamData(t *testing.T) {
 			client := unsignedRPCTestClient(t, api)
 			var result error
 			if watch {
-				request := &pb.FileWatch{Path: "/"}
+				request := &pb.FileWatch{Path: "/workspace"}
 				ctx, err := signedFixtureRPCContext(rpcTestContext(t), pb.NanoagentService_WatchFiles_FullMethodName, request, nil)
 				if err != nil {
 					t.Fatal(err)

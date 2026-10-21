@@ -2,13 +2,13 @@ import { withProviderSessions } from '../testing/market-calendar-fixture'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { continuousExecutionPolicy, continuousMarketHours, tradingWindow } from '../market-hours'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeCycleExecutionPolicyFromModel } from './construction'
 import { unusedEntryExpiresAt } from './entry-admission'
 import { CycleState, CycleTerminalReason } from './model'
-import { selectCycleRecovery } from './recovery'
+import { selectCycleRecovery } from './runner/recovery-selection'
 import {
   canRearmUnusedCycle,
   makeIntradayCycleDraft,
@@ -34,7 +34,7 @@ const material = withProviderSessions({
   timeZone: 'UTC' as const,
   sessions: [session],
 })
-const calendar = { ...material, normalizedResponseHash: canonicalHashV1(material) }
+const calendar = { ...material, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 const at = '2026-10-14T17:18:26.335Z'
 const expiresAt = '2026-10-14T17:19:26.335Z'
 const active = {

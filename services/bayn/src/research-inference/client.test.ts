@@ -2,7 +2,14 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { inferResearch, makeResearchStreamDecoder } from './client'
-import { hashResearch, maximumResearchStreamBytes, ResearchOutcome, researchServingIdentity } from './contract'
+import {
+  decodeResearchRun,
+  HarnessPurpose,
+  hashResearch,
+  maximumResearchStreamBytes,
+  ResearchOutcome,
+  researchServingIdentity,
+} from './contract'
 import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
 
 const fixture = researchFixture()
@@ -15,6 +22,53 @@ const finalUsageFrame = `data: ${JSON.stringify({
   usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
 })}\n\n`
 describe('bounded native inference stream', () => {
+  test('treats quoted factor tags in a prompt proposal as text without selecting factors', () => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.PromptEdit,
+      }),
+    )
+    const text = '<harness>Return exact IDs within <alpha_list> tags.</harness><notes>Keep the output contract.</notes>'
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture(text)), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual([])
+    expect(decoder.snapshot().responseText).toBe(text)
+    const factor = makeResearchStreamDecoder(fixture)
+    Result.getOrThrow(factor.push(encode(streamFixture(text)), 10))
+    expect(Result.isFailure(factor.complete())).toBe(true)
+  })
+  test.each([
+    '',
+    '<harness></harness>',
+    '<harness>unfinished',
+    '<harness>a</harness><harness>b</harness>',
+    `<harness>${'a'.repeat(8001)}</harness>`,
+  ])('rejects malformed harness proposals %#', (text) => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.PromptEdit,
+      }),
+    )
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture(text)), 10))
+    expect(Result.isFailure(decoder.complete())).toBe(true)
+  })
+  test('retains a reflection with no factor-selection side effect', () => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.Reflection,
+      }),
+    )
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture('NO_ENTRY')), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual([])
+  })
   test('decodes pinned cumulative-usage SSE split at every byte with CRLF boundaries', () => {
     const decoder = makeResearchStreamDecoder(fixture)
     for (const byte of encode(streamFixture().replaceAll('\n', '\r\n')))

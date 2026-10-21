@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Exit, Layer, Logger, References, Tracer } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualPostgres from '../db/postgres-client'
@@ -16,6 +16,12 @@ import { BrokerEnvironment, BrokerProvider } from '../broker/identity'
 const mode = process.argv[2] ?? 'timeout'
 let attempts = 0
 let settlements = 0
+let mutationInvalidations = 0
+const interruptedCaptures: {
+  readonly accountId: unknown
+  readonly sourceRevision: unknown
+  readonly captureId: unknown
+}[] = []
 const spans: Tracer.NativeSpan[] = []
 const tracer = Tracer.make({
   span(options) {
@@ -37,25 +43,29 @@ let persistenceTelemetry: { loggerInherited: boolean; tracerInherited: boolean }
 let brokerTelemetry: { loggerInherited: boolean; tracerInherited: boolean } | undefined
 const releaseAcquisition = Promise.withResolvers<void>()
 const acquisitionFinished = Promise.withResolvers<void>()
-const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) => {
-  const query = strings.join('')
-  if (query.includes('RETURNING broker_observations.generation'))
-    return Clock.currentTimeMillis.pipe(
-      Effect.map((now) => [
-        {
-          status: 'RESERVED',
-          generation: 1,
-          startedAt: new Date(now).toISOString(),
-          nextPollNotBeforeMs: Number(values[3]),
-        },
-      ]),
-    )
-  if (query.includes('WITH failed AS')) {
-    settlements += 1
-    return mode === 'timeout' ? Effect.fail(new Error('injected completed persistence failure')) : Effect.succeed([])
-  }
-  return Effect.succeed([])
-}
+const sql = (strings: TemplateStringsArray, ...values: readonly unknown[]) =>
+  Effect.suspend<readonly unknown[], Error, never>(() => {
+    const query = strings.join('')
+    if (query.includes('RETURNING broker_observations.generation'))
+      return Clock.currentTimeMillis.pipe(
+        Effect.map((now) => [
+          {
+            status: 'RESERVED',
+            generation: 1,
+            startedAt: new Date(now).toISOString(),
+            nextPollNotBeforeMs: Number(values[3]),
+          },
+        ]),
+      )
+    if (query.includes('WITH failed AS')) {
+      settlements += 1
+      return mode === 'timeout' ? Effect.fail(new Error('injected completed persistence failure')) : Effect.succeed([])
+    }
+    if (query.includes('unfinished AS'))
+      interruptedCaptures.push({ accountId: values[0], sourceRevision: values[1], captureId: values[2] })
+    else if (query.includes('SET generation = generation + 1, available = false')) mutationInvalidations += 1
+    return Effect.succeed([])
+  })
 
 await mock.module('../restate/restate-telemetry', () => ({
   ...actualRestateTelemetry,
@@ -136,7 +146,7 @@ const result = await Effect.runPromise(
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },
-      } as unknown as ApplicationPlanFor<'AutonomousService'>)
+      } as unknown as ApplicationPlan)
       const signal = new AbortController().signal
       const poll = yield* Effect.exit(
         Effect.promise(() =>
@@ -152,6 +162,8 @@ const result = await Effect.runPromise(
         poll: Exit.isSuccess(poll) ? poll.value.poll : undefined,
         failed: Exit.isFailure(poll),
         settlements,
+        mutationInvalidations,
+        interruptedCaptures,
         attemptsAtReturn,
         attemptsAfterReturn: attempts,
         persistenceTelemetry,

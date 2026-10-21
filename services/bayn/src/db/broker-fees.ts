@@ -1,10 +1,10 @@
-import { FeeActivitySchema } from '../broker/fee-activity'
+import { ObservedFeeActivitySchema } from '../broker/fee-activity'
 import { acknowledgeFeePosting, FeePostingKind, readAcknowledgedFeePostings } from './fee-posting'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
 import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from '../accounting/domain'
-import type { FeeActivity } from '../broker/alpaca'
+import type { FeeActivity } from '../broker/alpaca/model'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { JournalService } from '../ledger'
@@ -75,13 +75,16 @@ const prepareCashMatchCorrections = (
       const source = observations.get(activityId)
       if (existing === undefined || source === undefined)
         return yield* invariant('fee correction requires the current provider observation and stored fee')
-      const fee = yield* fromResult(Schema.decodeUnknownResult(FeeActivitySchema, strictParseOptions)(source.value))
+      const { sourceCreatedAt, ...fee } = yield* fromResult(
+        Schema.decodeUnknownResult(ObservedFeeActivitySchema, strictParseOptions)(source.value),
+      )
       const readEvidence = yield* fromResult(
         Schema.decodeUnknownResult(FeeReadEvidenceSchema)({
           requestId: source.evidence.requestId,
           status: source.evidence.status,
           contentHash: source.evidence.contentHash,
           observedAt: source.evidence.observedAt,
+          ...(sourceCreatedAt === undefined ? {} : { sourceCreatedAt }),
         }),
       )
       const hash = yield* fromResult(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee }))
@@ -141,17 +144,19 @@ export const prepareFeeActivities = (
       [...observed].sort((a, b) => a.value.activityId.localeCompare(b.value.activityId)),
       (observation) =>
         Effect.gen(function* () {
+          const { sourceCreatedAt, ...fee } = yield* fromResult(
+            Schema.decodeUnknownResult(ObservedFeeActivitySchema, strictParseOptions)(observation.value),
+          )
           const readEvidence = yield* fromResult(
             Schema.decodeUnknownResult(FeeReadEvidenceSchema)({
               requestId: observation.evidence.requestId,
               status: observation.evidence.status,
               contentHash: observation.evidence.contentHash,
               observedAt: observation.evidence.observedAt,
+              ...(sourceCreatedAt === undefined ? {} : { sourceCreatedAt }),
             }),
           )
-          const fee = yield* fromResult(
-            Schema.decodeUnknownResult(FeeActivitySchema, strictParseOptions)(observation.value),
-          )
+          const sourceDate = sourceCreatedAt?.slice(0, 10) ?? fee.date
           if (
             fee.accountId !== accountId ||
             seen.has(fee.activityId) ||
@@ -161,6 +166,11 @@ export const prepareFeeActivities = (
           seen.add(fee.activityId)
           const contentHash = yield* fromResult(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee }))
           const existing = byId.get(fee.activityId)
+          if (
+            existing?.read_evidence.sourceCreatedAt !== undefined &&
+            existing.read_evidence.sourceCreatedAt !== sourceCreatedAt
+          )
+            return yield* invariant('broker fee source timestamp changed')
           const matches: {
             readonly accrualId: string
             readonly coinQuantityAtoms: string | null
@@ -177,7 +187,7 @@ export const prepareFeeActivities = (
               if (
                 accrual.data.kind !== 'COIN' ||
                 accrual.data.symbol !== coin.symbol ||
-                accrual.settlement_date !== fee.date
+                accrual.settlement_date !== sourceDate
               )
                 continue
               const available =
@@ -235,7 +245,7 @@ export const prepareFeeActivities = (
           if (fee.cryptoCashFee === true && existing === undefined && ledgerCashDelta < 0n) {
             let remaining = -ledgerCashDelta
             for (const accrual of accruals) {
-              if (accrual.data.kind !== 'CASH' || accrual.settlement_date !== fee.date) continue
+              if (accrual.data.kind !== 'CASH' || accrual.settlement_date !== sourceDate) continue
               const available =
                 BigInt(accrual.cash_debit_micros ?? '0') -
                 BigInt(accrual.matched_cash_micros) -

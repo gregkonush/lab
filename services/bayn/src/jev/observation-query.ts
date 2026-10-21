@@ -2,7 +2,7 @@ import { equityFeatureSegmentStartMs } from '../equity-hours'
 import { jevMarketForSymbol, jevBenchmarkSymbol } from './markets'
 import { exchangeSessions, isContinuousMarket, type MarketHours } from '../market-hours'
 
-import type { IntradaySnapshotQuery } from '../market-data'
+import type { IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { utcInstantFromEpochMillis } from '../time'
 import type { JevProtocol } from './protocol'
 
@@ -43,6 +43,12 @@ export const makeJevEntryQuery = (input: {
     universe: market.universe,
     symbols: [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort(),
     candidateSymbols: candidates,
+    ...('benchmarkEvidencePolicy' in market
+      ? {
+          benchmarkEvidencePolicy: market.benchmarkEvidencePolicy,
+          benchmarkSymbols: [...new Set(candidates.map(jevBenchmarkSymbol))].sort(),
+        }
+      : {}),
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),

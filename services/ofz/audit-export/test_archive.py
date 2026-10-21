@@ -159,7 +159,14 @@ class ArchivePolling(unittest.TestCase):
             );
             CREATE TABLE ofz.audit_outbox (
                 audit_sequence bigint PRIMARY KEY REFERENCES ofz.audit(sequence),
-                acknowledged_at_ms bigint
+                acknowledged_at_ms bigint,
+                archive_receipt text
+            );
+            CREATE FUNCTION ofz.now_ms() RETURNS bigint LANGUAGE sql AS
+                'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint';
+            CREATE TABLE ofz.archive_state (
+                acknowledged_sequence bigint NOT NULL,
+                acknowledged_at_ms bigint NOT NULL
             );
             CREATE INDEX audit_outbox_unacknowledged ON ofz.audit_outbox(audit_sequence)
                 WHERE acknowledged_at_ms IS NULL;
@@ -169,6 +176,7 @@ class ArchivePolling(unittest.TestCase):
                 FROM generate_series(1,10300) n;
             INSERT INTO ofz.audit_outbox
                 SELECT sequence,CASE WHEN sequence<=10000 THEN 1 END FROM ofz.audit;
+            INSERT INTO ofz.archive_state VALUES (10300,0);
         """)
         cls.database.execute("VACUUM ANALYZE ofz.audit")
         cls.database.execute("VACUUM ANALYZE ofz.audit_outbox")
@@ -186,6 +194,81 @@ class ArchivePolling(unittest.TestCase):
 
     def tearDown(self):
         self.database.execute("ROLLBACK")
+
+    def idle_exporter(self):
+        receipt = archive.Receipt(
+            f"batches/1-10300-{'0' * 64}.json",
+            "idle-heartbeat-sql-fixture",
+            "0" * 64,
+            (datetime.now(UTC) + timedelta(days=90)).isoformat(),
+        )
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=1,archive_receipt=%s",
+            (receipt.encode(),),
+        )
+
+        class VerifiedArchive(archive.Exporter):
+            verifications = 0
+
+            def verify_destination(self):
+                self.verifications += 1
+
+            def verify_object(self, stored):
+                self.verifications += 1
+                if stored != receipt:
+                    raise archive.ArchiveError("unexpected fixture receipt")
+
+        return VerifiedArchive(self.database, None)
+
+    def checkpoint_version(self):
+        return self.database.execute(
+            "SELECT ctid::text AS tuple,acknowledged_at_ms FROM ofz.archive_state"
+        ).fetchone()
+
+    def test_idle_poll_verifies_archive_without_rewriting_fresh_heartbeat(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+        initial = self.checkpoint_version()
+        self.assertGreater(initial["acknowledged_at_ms"], 0)
+        self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(self.checkpoint_version(), initial)
+        self.assertEqual(exporter.verifications, 4)
+
+        self.database.execute(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()-11000"
+        )
+        expired = self.checkpoint_version()
+        self.assertEqual(exporter.tick(), 0)
+        self.assertGreater(
+            self.checkpoint_version()["acknowledged_at_ms"],
+            expired["acknowledged_at_ms"],
+        )
+
+        self.database.execute(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()+11000"
+        )
+        future = self.checkpoint_version()
+        self.assertEqual(exporter.tick(), 0)
+        self.assertLess(
+            self.checkpoint_version()["acknowledged_at_ms"],
+            future["acknowledged_at_ms"],
+        )
+
+    def test_idle_archive_failure_invalidates_health_immediately_and_once(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+
+        def unavailable():
+            raise archive.ArchiveError("fixture archive unavailable")
+
+        exporter.verify_destination = unavailable
+        with self.assertRaises(archive.ArchiveError):
+            exporter.tick()
+        failed = self.checkpoint_version()
+        self.assertEqual(failed["acknowledged_at_ms"], 0)
+        with self.assertRaises(archive.ArchiveError):
+            exporter.tick()
+        self.assertEqual(self.checkpoint_version(), failed)
 
     def test_bounded_order_preserves_late_commits_and_missing_outboxes(self):
         self.database.execute("DELETE FROM ofz.audit_outbox WHERE audit_sequence=5")
@@ -690,6 +773,48 @@ class RealArchive(unittest.TestCase):
                 self.assertGreater(newer, older)
                 self.assertEqual(exporter.tick(), 1)
             self.assertEqual(exporter.tick(), 1)
+            self.assertEqual(exporter.tick(), 0)
+            self.assertEqual(
+                database.execute(
+                    "SELECT acknowledged_sequence FROM ofz.archive_state"
+                ).fetchone()["acknowledged_sequence"],
+                newer,
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) AS pending FROM ofz.audit_outbox WHERE acknowledged_at_ms IS NULL"
+                ).fetchone()["pending"],
+                0,
+            )
+
+            checkpoint = newer
+            delayed.execute("BEGIN")
+            older = append(delayed, "commit-during-independent-upload")
+            newer = append(connect("ofz_api"), "visible-before-upload")
+
+            class CommitDuringUpload(archive.Exporter):
+                def store(self, rows, now_ms):
+                    receipt = super().store(rows, now_ms)
+                    delayed.execute("COMMIT")
+                    return receipt
+
+            try:
+                self.assertEqual(CommitDuringUpload(caller, storage).tick(), 1)
+            finally:
+                delayed.rollback()
+            state = database.execute(
+                "SELECT acknowledged_sequence,acknowledged_at_ms FROM ofz.archive_state"
+            ).fetchone()
+            self.assertEqual(state["acknowledged_sequence"], checkpoint)
+            self.assertGreater(state["acknowledged_at_ms"], 0)
+            self.assertIsNone(
+                database.execute(
+                    "SELECT acknowledged_at_ms FROM ofz.audit_outbox WHERE audit_sequence=%s",
+                    (older,),
+                ).fetchone()["acknowledged_at_ms"]
+            )
+            self.assertTrue(cli("activate")["currentArchiveHealthy"])
+            self.assertEqual(exporter.tick(), 2)
             self.assertEqual(exporter.tick(), 0)
             self.assertEqual(
                 database.execute(

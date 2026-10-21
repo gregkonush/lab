@@ -3,13 +3,9 @@ import { Data, Effect, Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import type { OperationalError } from '../errors'
-import { priceNumberToMicros } from '../execution-model'
-import {
-  intradayAgeNanos,
-  millisecondsAsNanos,
-  type IntradayMarketDataService,
-  type IntradaySnapshotQuery,
-} from '../market-data'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { intradayAgeNanos, millisecondsAsNanos } from '../market-data/intraday/time'
+import { type IntradayMarketDataService, type IntradaySnapshotQuery } from '../market-data/intraday/model'
 import { strictParseOptions } from '../schemas'
 import { withObservedStage } from '../telemetry'
 import { ExecutionMarketDataBindingSchema, type ExecutionMarketDataBinding } from '../shadow-decision-contract'
@@ -49,7 +45,7 @@ export const executionMarketDataBinding = (
     decodeExecutionMarketDataBinding({
       ...material,
       schemaVersion:
-        schemaVersion === 'bayn.simulated-market-snapshot.v1'
+        schemaVersion === 'bayn.simulated-market-snapshot.v2'
           ? 'bayn.execution-market-data-binding.v4'
           : 'bayn.execution-market-data-binding.v3',
       snapshotSchemaVersion: schemaVersion,
@@ -121,24 +117,4 @@ export const adverseClosingQuotePrices = (
     }
   }
   return adverseQuotePrices(snapshot, symbols)
-}
-
-export const requireFreshIntradayPositionQuotes = (
-  snapshot: StrategyMarketSnapshot,
-  positions: readonly { readonly symbol: string; readonly quantityAtoms: string }[],
-): Result.Result<void, IntradayMarketDataFailure> => {
-  const maximumQuoteAge = millisecondsAsNanos(snapshot.manifest.maximumQuoteAgeMs)
-  const entryUniverse = new Set(snapshot.manifest.symbols)
-  for (const position of positions) {
-    if (BigInt(position.quantityAtoms) === 0n || !entryUniverse.has(position.symbol)) continue
-    const quote = snapshot.latestQuotes[position.symbol]
-    if (quote === undefined) {
-      return Result.fail(failure('entry-decision', `existing position ${position.symbol} has no verified quote`))
-    }
-    const quoteAge = intradayAgeNanos(snapshot.manifest.observedAt, quote.eventAt)
-    if (quoteAge < 0n || quoteAge > maximumQuoteAge) {
-      return Result.fail(failure('entry-decision', `existing position ${position.symbol} has no fresh quote`))
-    }
-  }
-  return Result.succeed(undefined)
 }

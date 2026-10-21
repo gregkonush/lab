@@ -12,7 +12,6 @@ use ofz::{
     transport,
 };
 use tokio::net::TcpListener;
-use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
@@ -75,15 +74,12 @@ async fn main() -> anyhow::Result<()> {
         contract_version = ofz::CONTRACT_VERSION,
         "Ofz authorization API listening"
     );
-    Server::builder()
+    transport::server()
         .layer(
             tower_http::trace::TraceLayer::new_for_grpc()
                 .make_span_with(ofz::telemetry::RequestSpan)
                 .on_failure(ofz::telemetry::grpc_failure),
         )
-        .load_shed(true)
-        .concurrency_limit_per_connection(32)
-        .timeout(std::time::Duration::from_secs(5))
         .add_service(
             AuthorizationServiceServer::new(Service::new(database, native, issuer))
                 .max_decoding_message_size(128 * 1024)

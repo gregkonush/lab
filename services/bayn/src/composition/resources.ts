@@ -17,26 +17,32 @@ import { NodeHttpClient, NodeServices } from '@effect/platform-node'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
 
-import type { ApplicationIdentity, ApplicationPlanFor } from '../app'
+import type { ApplicationIdentity, ApplicationPlan } from '../app'
 import { AlpacaBrokerResourcesLive } from '../broker/alpaca/composition'
 import { live as BrokerReadOnlyResourcesLive } from '../broker/alpaca/session'
-import type { LoadedRuntimeConfig } from '../config'
-import { CycleObservability, CycleObservabilityLive, CycleStoreLive, WriterFencedCycleStoreLive } from '../cycle/store'
+import type { LoadedRuntimeConfig } from '../config/model'
+import { CycleObservability, CycleObservabilityLive } from '../cycle/store/observability'
+import { WriterFencedCycleStoreLive } from '../cycle/store/postgres'
 import { ExecutionControllerStatusStoreLive } from '../db/execution-controller-status-postgres'
 import { ExecutionCycleClosureStoreLive as ExecutionCycleClosureStorePostgresLive } from '../db/execution-cycle-closure-postgres'
 import { PostgresClientLive, postgresHealthCheck } from '../db/postgres-client'
 import { PostgresMigrationsLive } from '../db/postgres-migrations'
 import { ExecutionStoreLive } from '../db/execution-store'
 import { PersistedCapitalGrantStoreLive } from '../db/persisted-capital-grant'
-import { BlockedCycleIntentStoreLive, IntentStoreLive } from '../execution/intents'
-import { MutationStoreLive } from '../execution/mutations'
+import { BlockedCycleIntentStoreLive } from '../execution/intents/blocked-cycle-postgres'
+import { IntentStoreLive } from '../execution/intents/postgres'
+import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { HttpServerLive } from '../http'
 import { Journal, JournalLive } from '../ledger'
-import { IntradayMarketData, type IntradayMarketDataService } from '../market-data'
+import { IntradayMarketData, type IntradayMarketDataService } from '../market-data/intraday/model'
 import { KafkaMarketProjection, KafkaMarketProjectionLive } from '../market-data/streaming/kafka'
+import { makeNativeArrivalStore } from '../db/native-arrival-postgres'
+import type { DatabaseError } from '../db/database-error'
+import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
+import { nativeArrivalCaptureId } from '../market-data/streaming/native-arrival'
 import { StreamingIntradayMarketDataLive } from '../market-data/streaming/service'
-import { operationalError } from '../errors'
+import { operationalError, type OperationalError } from '../errors'
 
 type PostgresResourceConfig = Pick<LoadedRuntimeConfig, 'operationTimeoutMs' | 'postgres'>
 
@@ -54,8 +60,6 @@ export const ExecutionControllerStatusResourceLive = (config: PostgresResourceCo
     Layer.provideMerge(ApplicationPlatformLive),
   )
 }
-
-export const CycleStoreResourceLive = CycleStoreLive
 
 export const WriterFencedCycleStoreResourceLive = WriterFencedCycleStoreLive
 
@@ -97,8 +101,11 @@ const workerStreamingUniverse = (plan: ApplicationIdentity): MarketSources => [
   },
 ]
 
-export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
-  plan.config.kafka === undefined
+export const WorkerMarketProjectionLive = (
+  plan: ApplicationIdentity,
+): Layer.Layer<KafkaMarketProjection, DatabaseError | OperationalError> => {
+  const kafka = plan.config.kafka
+  return kafka === undefined
     ? Layer.effect(
         KafkaMarketProjection,
         Effect.fail(
@@ -109,7 +116,36 @@ export const WorkerMarketProjectionLive = (plan: ApplicationIdentity) =>
           }),
         ),
       )
-    : KafkaMarketProjectionLive(plan.config.kafka, workerStreamingUniverse(plan))
+    : Layer.unwrap(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const store = makeNativeArrivalStore(sql)
+          return KafkaMarketProjectionLive(kafka, workerStreamingUniverse(plan), (bootstrap, sources) =>
+            Effect.gen(function* () {
+              const captureId = yield* Effect.fromResult(nativeArrivalCaptureId(plan.config.build, bootstrap, sources))
+              return yield* makeNativeArrivalJournal(
+                {
+                  schemaVersion: 'bayn.native-arrival-epoch.v1',
+                  captureId,
+                  build: plan.config.build,
+                  bootstrap,
+                  sources,
+                },
+                store,
+              )
+            }),
+          )
+        }),
+      ).pipe(
+        Layer.provide(
+          Layer.merge(
+            PostgresClientLive(plan.config, { maxConnections: 1, applicationName: 'bayn-native-arrival' }),
+            PostgresMigrationsLive(plan.config),
+          ),
+        ),
+        Layer.provide(NodeServices.layer),
+      )
+}
 
 const WorkerMarketDataLive = (
   plan: ApplicationIdentity,
@@ -137,19 +173,8 @@ const PostgresLive = (config: PostgresResourceConfig) => {
   return Layer.merge(client, migrations)
 }
 
-export const AutonomousApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
-  const postgres = PostgresLive(plan.config)
-  const journal = JournalResourceLive(plan.config)
-  return Layer.mergeAll(
-    WorkerMarketDataLive(plan, postgres),
-    postgres,
-    journal,
-    CycleObservabilityResourceLive.pipe(Layer.provide(postgres)),
-  ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(HttpApplicationPlatformLive(plan.config)))
-}
-
 /** Read-only resources for the public status service. Mutation stores and the transaction writer fence are absent. */
-export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlan) => {
   const postgres = PostgresClientResourceLive(plan.config)
   const controllerStatus = ExecutionControllerStatusStoreLive.pipe(Layer.provide(postgres))
   const cycleObservability = CycleObservabilityResourceLive.pipe(Layer.provide(postgres))
@@ -166,7 +191,7 @@ export const AutonomousStatusApplicationResourcesLive = (plan: ApplicationPlanFo
 }
 
 export const AutonomousWorkerApplicationResourcesLive = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
   prewarmedProjection?: Layer.Layer<KafkaMarketProjection>,
 ) => {
   const postgres = PostgresLive(plan.config)
@@ -179,7 +204,7 @@ export const AutonomousWorkerApplicationResourcesLive = (
   ).pipe(Layer.provideMerge(ValkeyCacheLive), Layer.provideMerge(ApplicationPlatformLive))
 }
 
-export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlanFor<'AutonomousService'>) => {
+export const AutonomousRuntimeResourcesLive = (plan: ApplicationPlan) => {
   const postgres = PostgresClientResourceLive(plan.config)
   const journal = JournalResourceLive(plan.config)
   const writerFence = WriterFenceResourceLive.pipe(Layer.provide(postgres))
@@ -234,7 +259,7 @@ export const applicationDependencies: Effect.Effect<
     readonly intradayMarketData: IntradayMarketDataService
     readonly journal: import('../ledger').JournalService
     readonly postgresql: ReturnType<typeof postgresHealthCheck>
-    readonly cycleObservability: import('../cycle/store').CycleObservabilityShape
+    readonly cycleObservability: import('../cycle/store/observability').CycleObservabilityShape
   },
   never,
   IntradayMarketData | Journal | PgClient.PgClient | CycleObservability

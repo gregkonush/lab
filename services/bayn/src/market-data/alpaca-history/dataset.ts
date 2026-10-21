@@ -78,7 +78,6 @@ export const HistoricalDatasetManifestSchema = Schema.Struct({
   recordCount: NonNegativeIntegerSchema,
   datasetId: Sha256Schema,
 })
-export type HistoricalDatasetManifest = typeof HistoricalDatasetManifestSchema.Type
 
 export const decodeHistoricalManifest = (text: string, expectedId: string) =>
   Result.gen(function* () {

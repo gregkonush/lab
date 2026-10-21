@@ -1,7 +1,7 @@
 import { Effect, Result } from 'effect'
 
 import type { AuthorityGenerationStoreShape } from './db/execution-store'
-import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents'
+import { BlockedCycleIntentStoreError, type BlockedCycleIntentStoreShape } from './execution/intents/blocked-cycle'
 import { Authority, KillState } from './execution/contracts'
 import { legacyObserveSuccessorGenerationSchemaVersion } from './execution/legacy-wire'
 import type { WriterFenceService } from './execution/writer-fence'

@@ -173,8 +173,6 @@ export const ExecutionModelV2Schema = ExecutionModelV2Base.check(Schema.makeFilt
 export const ExecutionModelV3Schema = ExecutionModelV3Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV4Schema = ExecutionModelV4Base.check(Schema.makeFilter(executionModelIssues))
 export const ExecutionModelV6Schema = ExecutionModelV6Base.check(Schema.makeFilter(executionModelIssues))
-export const DailyExecutionModelSchema = Schema.Union([ExecutionModelV2Schema, ExecutionModelV3Schema])
-export const SupportedExecutionModelSchema = DailyExecutionModelSchema
 export const CycleExecutionModelSchema = Schema.Union([
   ExecutionModelV2Schema,
   ExecutionModelV3Schema,
@@ -188,17 +186,12 @@ export const ExecutionModelSchema = Schema.Union([
   ExecutionModelV4Schema,
   ExecutionModelV6Schema,
 ])
-export type DailyExecutionModel = typeof DailyExecutionModelSchema.Type
-export type SupportedExecutionModel = typeof SupportedExecutionModelSchema.Type
 export type CycleExecutionModel = typeof CycleExecutionModelSchema.Type
 export type ExecutionModel = typeof ExecutionModelSchema.Type
 export type QuoteBoundExecutionModel = Extract<
   CycleExecutionModel,
   { readonly schemaVersion: 'bayn.execution-model.v4' | 'bayn.execution-model.v6' }
 >
-
-export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
-  model.schemaVersion === 'bayn.execution-model.v2' || model.schemaVersion === 'bayn.execution-model.v3'
 
 export const isQuoteBoundExecutionModel = (model: CycleExecutionModel): model is QuoteBoundExecutionModel =>
   model.schemaVersion === 'bayn.execution-model.v4' || model.schemaVersion === 'bayn.execution-model.v6'

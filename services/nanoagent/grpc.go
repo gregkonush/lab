@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = guestauth.ProtocolVersion
+const guestProtocolVersion = 5
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {
@@ -290,7 +289,16 @@ func (server *guestRPCServer) ResolveCodexApproval(ctx context.Context, req *pb.
 	if server.api.codex == nil {
 		return nil, status.Error(codes.Unavailable, "Codex app-server is disabled")
 	}
-	if err := server.api.codex.resolveApproval(ctx, req.ApprovalId, req.Decision); err != nil {
+	var resolveErr error
+	if len(req.ResponseJson) > 0 {
+		if req.Decision != "" {
+			return nil, status.Error(codes.InvalidArgument, "question responses cannot carry an approval decision")
+		}
+		resolveErr = server.api.codex.resolveInput(ctx, req.ApprovalId, req.ResponseJson)
+	} else {
+		resolveErr = server.api.codex.resolveApproval(ctx, req.ApprovalId, req.Decision)
+	}
+	if err := resolveErr; err != nil {
 		if ctx.Err() != nil {
 			return nil, status.FromContextError(ctx.Err()).Err()
 		}

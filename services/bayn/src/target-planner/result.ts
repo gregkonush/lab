@@ -1,6 +1,8 @@
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { instrumentMarket } from '../instruments'
 import { Result, Schema, pipe } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide } from '../execution/contracts'
 import { legacyReferenceTargetPlanSchemaVersion } from '../execution/legacy-wire'
 import { quantityScale } from '../quantity'
 import { canonicalHashV1Result } from '../hash'
@@ -158,12 +160,9 @@ const plannedIntentIssues = (
   if (result.status !== TargetPlanStatus.Planned) return []
   const issues: Schema.FilterIssue[] = []
   const firstIntent = result.intentTargets[0]
-  const supportedExecutionTerms = (
-    intent: ReferenceTargetIntent,
-    target: typeof PlannedTargetQuantitySchema.Type,
-  ): boolean => {
+  const supportedExecutionTerms = (intent: ReferenceTargetIntent): boolean => {
     if (result.schemaVersion === legacyReferenceTargetPlanSchemaVersion) {
-      return intent.orderType === OrderType.Market && intent.timeInForce === TimeInForce.Day
+      return intent.timeInForce === cashSpotLimitTimeInForce(instrumentMarket(intent.symbol))
     }
     const executionTerms = result.executionTerms
     if (
@@ -174,12 +173,7 @@ const plannedIntentIssues = (
     ) {
       return false
     }
-    if (executionTerms.orderType === OrderType.Limit) return true
-    return (
-      BigInt(target.targetQuantityAtoms) === 0n &&
-      ((intent.side === OrderSide.Sell && BigInt(target.currentQuantityAtoms) > 0n) ||
-        (intent.side === OrderSide.Buy && BigInt(target.currentQuantityAtoms) < 0n))
-    )
+    return true
   }
   for (const { delta, index, intent, target } of facts.deltas) {
     if (delta === 0n && intent !== undefined) {
@@ -194,7 +188,7 @@ const plannedIntentIssues = (
       intent !== undefined &&
       (intent.side !== (delta > 0n ? OrderSide.Buy : OrderSide.Sell) ||
         BigInt(intent.quantityAtoms) !== (delta < 0n ? -delta : delta) ||
-        !supportedExecutionTerms(intent, target))
+        !supportedExecutionTerms(intent))
     ) {
       issues.push({ path: ['intentTargets', index], issue: 'must exactly encode the target quantity delta' })
     }

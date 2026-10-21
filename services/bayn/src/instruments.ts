@@ -66,8 +66,13 @@ export const decodeInstrument = (input: {
     return { symbol: input.symbol, market, minimumQuantityAtoms, quantityIncrementAtoms, priceIncrementAtoms }
   })
 
-export const instrumentOrderQuantity = (instrument: Instrument, requested: bigint): bigint =>
-  (requested / instrument.quantityIncrementAtoms) * instrument.quantityIncrementAtoms
+export const instrumentQuantityTerms = (instrument: Instrument, fractionable: boolean) =>
+  instrument.market === MarketKind.Equity && fractionable
+    ? { minimumQuantityAtoms: 1n, quantityIncrementAtoms: 1n }
+    : {
+        minimumQuantityAtoms: instrument.minimumQuantityAtoms,
+        quantityIncrementAtoms: instrument.quantityIncrementAtoms,
+      }
 
 export const validateInstrumentOrder = (
   instrument: Instrument,
@@ -82,23 +87,16 @@ export const validateInstrumentOrder = (
   const invalid = (message: string) => Result.fail(new InstrumentError({ symbol: order.symbol, message }))
   if (instrument.symbol !== order.symbol) return invalid('broker instrument differs from the order symbol')
   const quantity = BigInt(order.quantityAtoms)
-  const increment =
-    instrument.market === MarketKind.Equity && order.orderType === 'MARKET' && terms.fractionable
-      ? 1n
-      : instrument.quantityIncrementAtoms
+  const quantityTerms = instrumentQuantityTerms(instrument, terms.fractionable)
+  const increment = quantityTerms.quantityIncrementAtoms
   if (
     quantity <= 0n ||
     quantity % increment !== 0n ||
-    (!terms.closeOnly &&
-      quantity <
-        (instrument.market === MarketKind.Equity && order.orderType === 'MARKET' && terms.fractionable
-          ? 1n
-          : instrument.minimumQuantityAtoms))
+    (!terms.closeOnly && quantity < quantityTerms.minimumQuantityAtoms)
   )
     return invalid('order quantity violates broker minimum or increment')
   const validOrder =
-    (order.orderType === 'LIMIT' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'IOC' : 'DAY')) ||
-    (order.orderType === 'MARKET' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'GTC' : 'DAY'))
+    order.orderType === 'LIMIT' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'IOC' : 'DAY')
   if (!validOrder) return invalid('order type and duration are unsupported for this instrument')
   if (
     order.orderType === 'LIMIT' &&

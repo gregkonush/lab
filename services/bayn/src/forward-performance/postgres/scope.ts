@@ -20,17 +20,21 @@ export type GenerationScopeTarget =
   | 'fill'
   | 'mutation'
 
-export const durableCycleGenerationBinding = (sql: PgClient.PgClient) => sql`
+export const durableCycleGenerationBinding = (
+  sql: PgClient.PgClient,
+  authorityGenerationHash: string | undefined,
+) => sql`
   EXISTS (
     SELECT 1
     FROM autonomous_cycle_shadow_decisions AS scoped_decision
     WHERE scoped_decision.cycle_id = cycle.cycle_id
       AND scoped_decision.decision_hash = cycle.decision_hash
-      AND scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'
+      AND scoped_decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
       AND scoped_decision.document ->> 'mode' = 'PAPER'
       AND scoped_decision.document #>> '{bindings,accountId}' = scope_generation.account_id
       AND scoped_decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id
-      AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' = scope_generation.generation_hash
+      AND scoped_decision.document #>> '{bindings,authorityGenerationHash}' =
+        ${authorityGenerationHash ?? sql`scope_generation.generation_hash`}
   )
   OR EXISTS (
     SELECT 1
@@ -61,7 +65,7 @@ export const generationScope = (
             = cycle.qualification_run_id
           AND cycle.account_id = scope_generation.account_id
           AND (
-            ${durableCycleGenerationBinding(sql)}
+            ${durableCycleGenerationBinding(sql, authorityGenerationHash)}
             OR (
               cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
               AND cycle.created_at >= scope_generation.activated_at
