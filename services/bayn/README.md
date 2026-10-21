@@ -45,6 +45,10 @@ abstention or a risk-approved order. Position management and reducing exits cont
 through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
 research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
 
+Both entry checks retain typed `accountProtectionReasons` in durable pass evidence and public status:
+`DAILY_LOSS_EXCEEDED`, `DRAWDOWN_EXCEEDED`, or both. Operators can identify the breached limit without parsing
+free-form messages. Historical observations without this optional field remain readable.
+
 After unfinished work is recovered or an expired unused lease is terminalized, an exact flat reconciliation
 preflight can hold entry admission before creating another cycle. The existing daily-loss and drawdown comparisons
 still permit equality. This cycle-free `ADMISSION_WAITING` result binds the authority generation and update,

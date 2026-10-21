@@ -6,6 +6,7 @@ import { ExecutionControllerOutcome } from './execution/controller-status'
 import { statusFacts } from './http'
 import { MarketFeatureDefinition } from './market-data/features/contract'
 import { initialState } from './runtime-state'
+import { Reason as RiskReason } from './risk'
 import { config, provenance } from './testing/runtime-fixtures'
 
 const observedAt = '2026-09-17T14:30:00.000Z'
@@ -104,6 +105,39 @@ test('status retains historical successful pass observations without adding a re
     autonomousCycleLoop: { lastPass },
     executionController: { status: { lastPass } },
   })
+})
+
+test('status exposes breached account limits in both projections and wait modes without publishing the message', () => {
+  const readiness = {
+    reason: DecisionReadinessReason.AccountProtection,
+    accountProtectionReasons: [RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded] as const,
+  }
+  const waits = [
+    { outcome: 'RECOVERED', recoveryAction: 'WAITING' },
+    {
+      outcome: 'ADMISSION_WAITING',
+      admissionProtection: {
+        authorityGenerationHash: 'a'.repeat(64),
+        authorityUpdatedAt: observedAt,
+        reconciliationId: 'b'.repeat(64),
+        tradingDate: '2026-09-17',
+        validUntil: '2026-09-17T14:31:00.000Z',
+      },
+    },
+  ] as const
+  for (const wait of waits) {
+    const projected = { result: 'SUCCESS', observedAt, ...wait, readiness } as const
+    const response = responseWithPass({
+      ...projected,
+      readiness: { ...readiness, message: 'private-account-identity exceeded account limits' },
+    })
+    expect(response).toMatchObject({
+      autonomousCycleLoop: { lastPass: projected },
+      executionController: { status: { lastPass: projected } },
+    })
+    expect(JSON.stringify(response)).not.toContain('private-account-identity')
+    expect(JSON.stringify(response)).not.toContain('"message"')
+  }
 })
 
 test('status returns null for a controller receipt without a retained pass', () => {

@@ -64,6 +64,7 @@ export const protectedAccountAdmission = (
     readiness: {
       reason: DecisionReadinessReason.AccountProtection,
       message: `Existing account limits block new entries: ${reasons.join(', ')}`,
+      accountProtectionReasons: reasons,
     },
     admissionProtection: {
       authorityGenerationHash,

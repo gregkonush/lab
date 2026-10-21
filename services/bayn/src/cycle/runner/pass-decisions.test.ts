@@ -5,6 +5,7 @@ import { candidateObservationFixture } from '../../testing/candidate-observation
 import { cyclePassLogFacts, retainAutonomousCyclePassObservation } from './pass-decisions'
 import { RetainedAutonomousCyclePassObservationSchema } from './pass-observation'
 import { DecisionReadinessReason } from './readiness'
+import { Reason as RiskReason } from '../../risk'
 import type { CyclePassObservation } from './model'
 
 test('retains readiness and holding reasons through the durable observation schema and log projection', () => {
@@ -54,6 +55,44 @@ test('still decodes a retained pass written before readiness details were availa
   expect(Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)(previous)).toEqual(previous)
 })
 
+test('durable account protection retains typed limit reasons and accepts older observations', () => {
+  const previous = {
+    result: 'SUCCESS',
+    outcome: 'RECOVERED',
+    recoveryAction: 'WAITING',
+    observedAt: '2026-09-04T14:30:02.000Z',
+    readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'Existing account limit' },
+  } as const
+  const decode = Schema.decodeUnknownSync(RetainedAutonomousCyclePassObservationSchema)
+  expect(decode(previous)).toEqual(previous)
+  const current = {
+    ...previous,
+    readiness: {
+      ...previous.readiness,
+      accountProtectionReasons: [RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded] as const,
+    },
+  }
+  expect(decode(current)).toEqual(current)
+  for (const accountProtectionReasons of [
+    [],
+    ['UNKNOWN'],
+    [RiskReason.DrawdownExceeded, RiskReason.DrawdownExceeded],
+  ]) {
+    expect(
+      Schema.is(RetainedAutonomousCyclePassObservationSchema)({
+        ...current,
+        readiness: { ...current.readiness, accountProtectionReasons },
+      }),
+    ).toBe(false)
+  }
+  expect(
+    Schema.is(RetainedAutonomousCyclePassObservationSchema)({
+      ...current,
+      readiness: { ...current.readiness, reason: DecisionReadinessReason.SnapshotStale },
+    }),
+  ).toBe(false)
+})
+
 test('rejects newly tagged waiting observations without exactly one reason', () => {
   const waiting = {
     result: 'SUCCESS',
@@ -94,7 +133,11 @@ test('retains a cycle-free admission wait with its exact evidence clock even whe
     result: {
       outcome: 'ADMISSION_WAITING',
       observedAt: '2026-09-04T14:30:02.000Z',
-      readiness: { reason: DecisionReadinessReason.AccountProtection, message: 'DRAWDOWN_EXCEEDED' },
+      readiness: {
+        reason: DecisionReadinessReason.AccountProtection,
+        message: 'DRAWDOWN_EXCEEDED',
+        accountProtectionReasons: [RiskReason.DrawdownExceeded],
+      },
       admissionProtection: {
         authorityGenerationHash: 'a'.repeat(64),
         authorityUpdatedAt: '2026-09-04T14:29:00.123456Z',

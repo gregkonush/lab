@@ -6754,6 +6754,7 @@ test.each([
         readiness: {
           reason: DecisionReadinessReason.AccountProtection,
           message: expect.stringContaining(entry.reason),
+          accountProtectionReasons: expect.arrayContaining([entry.reason]),
         },
       })
     expect(snapshots).toBe(0)
@@ -6839,6 +6840,7 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
           outcome: 'ADMISSION_WAITING',
           readiness: {
             reason: DecisionReadinessReason.AccountProtection,
+            accountProtectionReasons: [field === 'dayStartEquityMicros' ? 'DAILY_LOSS_EXCEEDED' : 'DRAWDOWN_EXCEEDED'],
             message: expect.stringContaining(
               field === 'dayStartEquityMicros' ? 'DAILY_LOSS_EXCEEDED' : 'DRAWDOWN_EXCEEDED',
             ),

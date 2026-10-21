@@ -737,7 +737,11 @@ export const readObserveDecisionFacts = <R>(
         const message = `Existing account limits block new entries: ${reasons.join(', ')}`
         return yield* new ObserveDecisionAwaitingSignal({
           message,
-          readiness: { reason: DecisionReadinessReason.AccountProtection, message },
+          readiness: {
+            reason: DecisionReadinessReason.AccountProtection,
+            message,
+            accountProtectionReasons: reasons,
+          },
           observedAt: evaluatedAt,
           submissionCutoffAt: input.cycle.window.submissionCutoffAt,
         })
