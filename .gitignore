@@ -284,6 +284,7 @@ services/dernier/config/master.key
 /packages/temporal-bun-sdk/native/temporal-bun-bridge/target/
 /services/tengri/target/
 /services/ofz/target/
+/services/relay/target/
 /packages/temporal-bun-sdk/vendor/
 
 # Temporal libraries cache and releases

@@ -207,6 +207,10 @@
               inherit pkgs lib repoRevision;
               repoRoot = ./.;
             };
+            "relay-image" = import ./nix/images/relay.nix {
+              inherit pkgs lib repoRevision;
+              repoRoot = ./.;
+            };
             "arc-runner-image" = import ./nix/images/arc-runner.nix {
               inherit pkgs lib ciToolchain;
             };

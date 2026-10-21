@@ -52,6 +52,7 @@ const formSchema = z
     fileRoots: z.string(),
     threadIds: z.string(),
     terminalIds: z.string(),
+    connectorOperations: z.string(),
     browserScreenshot: z.boolean(),
     viewerContent: z.boolean(),
     maxBytes: z.number().int().min(1).max(1_048_576),
@@ -75,6 +76,7 @@ const formSchema = z
         fileRoots: lines(value.fileRoots),
         threadIds: lines(value.threadIds),
         terminalIds: lines(value.terminalIds),
+        connectorOperations: lines(value.connectorOperations),
         browserScreenshot: value.browserScreenshot,
         maxBytes: value.maxBytes,
         maxItems: value.maxItems,
@@ -84,6 +86,12 @@ const formSchema = z
           context.addIssue({ code: 'custom', path: issue.path.slice(0, 1), message: issue.message })
     }
     if (value.action === 'grant') {
+      if (value.permissions.includes('connector') && !lines(value.connectorOperations).length)
+        context.addIssue({
+          code: 'custom',
+          path: ['connectorOperations'],
+          message: 'Choose at least one exact connector operation.',
+        })
       if (!workspaceUidSchema.safeParse(value.agentId).success)
         context.addIssue({ code: 'custom', path: ['agentId'], message: 'Enter the diagnostic agent UUID' })
       if (!/^[A-Za-z0-9_-]{43}$/.test(value.proofKeyThumbprint))
@@ -139,6 +147,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       fileRoots: '/workspace/project',
       threadIds: '',
       terminalIds: '',
+      connectorOperations: '',
       browserScreenshot: false,
       viewerContent: false,
       maxBytes: 65536,
@@ -233,6 +242,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
       fileRoots: lines(value.fileRoots),
       threadIds: lines(value.threadIds),
       terminalIds: lines(value.terminalIds),
+      connectorOperations: lines(value.connectorOperations),
       browserScreenshot: value.browserScreenshot,
       maxBytes: value.maxBytes,
       maxItems: value.maxItems,
@@ -454,6 +464,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                               { label: 'File roots', targets: entry.scope.fileRoots },
                               { label: 'Codex thread IDs', targets: entry.scope.threadIds },
                               { label: 'Terminal IDs', targets: entry.scope.terminalIds },
+                              { label: 'Connector operations', targets: entry.scope.connectorOperations },
                             ].map(({ label, targets }) => (
                               <div key={label}>
                                 <dt>{label}</dt>
@@ -625,6 +636,7 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
                       ['fileRoots', 'File roots under /workspace'],
                       ['threadIds', 'Codex thread IDs'],
                       ['terminalIds', 'Terminal IDs'],
+                      ['connectorOperations', 'Connector operation names'],
                     ] as const
                   ).map(([name, label]) => (
                     <div key={name} className="space-y-1 text-xs">

@@ -1,6 +1,6 @@
 'use client'
 
-import { Bot, CircleAlert, Cpu, LoaderCircle, LogOut, Moon, Settings, ShieldCheck, Trash2 } from 'lucide-react'
+import { Bot, CircleAlert, Cpu, LoaderCircle, LogOut, Moon, Plug, Settings, ShieldCheck, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
 import type { TengriAgent, TengriCodexAccount, TengriUser } from '@/lib/tengri/types'
@@ -9,6 +9,7 @@ import { runTengriAction } from './client'
 import { DesktopAppIcon } from './desktop-app-icon'
 import { PowerSettingsForm } from './power-settings-form'
 import { AccessPanel } from './access-panel'
+import { ConnectionsPanel } from './connections-panel'
 import { formatAgentDate, formatAgentResources, formatAgentUptime, shouldRefreshCodexAccount } from './settings-model'
 
 type BusyAction = 'delete' | 'sign-out' | 'sleep' | null
@@ -24,6 +25,7 @@ const settingsNavigation = [
   { id: 'runtime', label: 'Runtime', icon: Cpu, color: 'bg-[#59a48c]/20 text-[#9fe2c7]' },
   { id: 'lifecycle', label: 'Lifecycle', icon: ShieldCheck, color: 'bg-[#c69a5b]/20 text-[#e7c88e]' },
   { id: 'access', label: 'Access', icon: ShieldCheck, color: 'bg-zinc-700 text-zinc-200' },
+  { id: 'connections', label: 'Connections', icon: Plug, color: 'bg-zinc-700 text-zinc-200' },
 ] as const
 
 type SettingsSectionId = (typeof settingsNavigation)[number]['id']
@@ -66,6 +68,7 @@ export function SettingsApp({
     lifecycle: null,
     runtime: null,
     access: null,
+    connections: null,
   })
   const lifecycleBusy = busyAction !== null
 
@@ -211,7 +214,7 @@ export function SettingsApp({
         >
           System Settings
         </div>
-        <div className="min-h-0 flex-1 overflow-auto">
+        <div className="min-h-0 flex-1 overflow-auto [container-type:size]">
           <div className="mx-auto w-full max-w-[660px] space-y-5 px-6 py-7 @max-[640px]/settings:px-4 @max-[640px]/settings:py-5">
             <section
               ref={(element) => {
@@ -378,6 +381,18 @@ export function SettingsApp({
                 Access
               </h2>
               <AccessPanel workspaceUid={agent.uid} active={active && selectedSection === 'access'} />
+            </section>
+            <section
+              ref={(element) => {
+                sectionRefs.current.connections = element
+              }}
+              aria-labelledby={`${instanceId}-settings-connections`}
+              className="min-h-[calc(100cqh-2rem)] scroll-mt-5 space-y-3"
+            >
+              <h2 id={`${instanceId}-settings-connections`} className="text-sm font-medium text-zinc-200">
+                Connections
+              </h2>
+              <ConnectionsPanel workspaceUid={agent.uid} active={active && selectedSection === 'connections'} />
             </section>
           </div>
         </div>

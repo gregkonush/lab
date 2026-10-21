@@ -26,6 +26,8 @@ pub struct Prepared {
     pub(crate) changes: Vec<Update>,
     previous_owner: Option<String>,
     grant_hash: Option<Vec<u8>>,
+    #[serde(default)]
+    connector_runtime_epoch: Option<String>,
     recovery_generation: u64,
     action: i32,
     resource: Resource,
@@ -123,6 +125,22 @@ fn command_target(command: &Command) -> Result<(Action, Resource, bool), Status>
             return Err(Status::internal("grant command requires stored target"));
         }
         Command::SetTargetAccess(c) => (Action::TargetsManage, policy::platform(), !c.enabled),
+        Command::ConfigureConnector(c) => (
+            if c.create {
+                Action::ConnectorCreate
+            } else {
+                Action::ConnectorManage
+            },
+            if c.create {
+                policy::platform()
+            } else {
+                Resource {
+                    kind: ResourceKind::ConnectorConnection as i32,
+                    id: c.connection_id.clone(),
+                }
+            },
+            !c.enabled,
+        ),
         Command::SetQuota(_) => (Action::QuotasManage, policy::platform(), false),
         Command::BeginWorkspaceEnrollment(_) | Command::EnrollWorkspace(_) => {
             (Action::WorkspaceEnroll, policy::platform(), false)
@@ -326,6 +344,7 @@ pub(crate) async fn prepare(
         changes: vec![],
         previous_owner: None,
         grant_hash: None,
+        connector_runtime_epoch: None,
         recovery_generation: state.recovery_generation,
         action: action as i32,
         resource,
@@ -519,13 +538,24 @@ pub(crate) async fn prepare(
                 ));
             }
             decision::validate_scope(&c.actions, scope)?;
+            if c.actions.iter().any(|action| {
+                matches!(
+                    Action::try_from(*action),
+                    Ok(Action::ConnectorRead | Action::ConnectorInvoke)
+                )
+            }) {
+                let runtime=client.query_opt("SELECT runtime_epoch FROM ofz.workspaces WHERE uid=$1 AND state='active' AND running AND runtime_epoch IS NOT NULL", &[&parse_uuid(&c.workspace_uid)?]).await.map_err(sql_error)?.ok_or_else(||Status::failed_precondition("a running connector workspace is required"))?;
+                prepared.connector_runtime_epoch = Some(runtime.get::<_, Uuid>(0).to_string());
+            }
             let mut checks = vec![];
             for value in &c.actions {
                 let action = Action::try_from(*value)
                     .map_err(|_| Status::invalid_argument("unknown grant action"))?;
                 let kind = resource.validate_for(action)?;
-                if !action.permission()?.diagnostic {
-                    return Err(Status::permission_denied("delegation is observation only"));
+                if !action.permission()?.diagnostic && action != Action::ConnectorInvoke {
+                    return Err(Status::permission_denied(
+                        "only bounded observation and reviewed connector operations may be delegated",
+                    ));
                 }
                 if kind == "workspace" && resource.id != c.workspace_uid {
                     return Err(Status::permission_denied("grant workspace mismatch"));
@@ -598,6 +628,58 @@ pub(crate) async fn prepare(
                 &grant.agent_id,
             )));
         }
+        Command::ConfigureConnector(c) => {
+            parse_uuid(&c.connection_id)?;
+            let human = decision::human(context)?;
+            if c.create {
+                if !c.enabled {
+                    return Err(Status::invalid_argument("new connection must be enabled"));
+                }
+                if native
+                    .check(&[Check::new(
+                        "connector_connection",
+                        &c.connection_id,
+                        "platform",
+                        "platform",
+                        "lab",
+                    )])
+                    .await?
+                    .0
+                {
+                    return Err(Status::already_exists("connection UUID already registered"));
+                }
+                prepared.changes.extend([
+                    Update::touch(Relationship::new(
+                        "connector_connection",
+                        &c.connection_id,
+                        "platform",
+                        "platform",
+                        "lab",
+                    )),
+                    relation(
+                        "connector_connection",
+                        &c.connection_id,
+                        "owner",
+                        human,
+                        true,
+                    ),
+                ]);
+            }
+            prepared.changes.push(relation(
+                "connector_connection",
+                &c.connection_id,
+                "reader",
+                human,
+                c.enabled,
+            ));
+            prepared.changes.push(relation(
+                "connector_connection",
+                &c.connection_id,
+                "caller",
+                human,
+                c.enabled,
+            ));
+        }
         Command::SetTargetAccess(c) => {
             active_member(client, &c.human_id).await?;
             let target = c
@@ -612,6 +694,7 @@ pub(crate) async fn prepare(
                 Action::KubeLogsRead => "log_reader",
                 Action::KubeEventsRead => "event_reader",
                 Action::ConnectorRead => "reader",
+                Action::ConnectorInvoke => "caller",
                 _ => {
                     return Err(Status::invalid_argument(
                         "only reviewed diagnostic targets allowed",
@@ -1236,7 +1319,13 @@ pub(crate) async fn finalize(
                 .resource
                 .as_ref()
                 .ok_or_else(|| Status::internal("prepared grant resource missing"))?;
-            let scope = store::encode(&c.scope)?;
+            let mut stored_scope = c
+                .scope
+                .clone()
+                .ok_or_else(|| Status::internal("prepared grant scope missing"))?;
+            stored_scope.connector_runtime_epoch =
+                prepared.connector_runtime_epoch.clone().unwrap_or_default();
+            let scope = store::encode(&Some(stored_scope))?;
             let hash = prepared
                 .grant_hash
                 .as_ref()
@@ -1251,7 +1340,7 @@ pub(crate) async fn finalize(
             .await
             .map_err(sql_error)?;
         }
-        Command::SetTargetAccess(_) => {}
+        Command::SetTargetAccess(_) | Command::ConfigureConnector(_) => {}
         Command::SetQuota(c) => {
             tx.execute("INSERT INTO ofz.quotas(human_id,total_workspaces,active_workspaces,retained_bytes) VALUES($1,$2,$3,$4) ON CONFLICT(human_id) DO UPDATE SET total_workspaces=excluded.total_workspaces,active_workspaces=excluded.active_workspaces,retained_bytes=excluded.retained_bytes", &[&c.human_id,&(c.total_workspaces as i32),&(c.active_workspaces as i32),&(c.retained_bytes as i64)]).await.map_err(sql_error)?;
         }

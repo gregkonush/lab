@@ -13,6 +13,108 @@ const user = {
 const desktopOrigin =
   process.env.TENGRI_PLAYWRIGHT_BASE_URL ?? `http://127.0.0.1:${process.env.TENGRI_PLAYWRIGHT_PORT ?? '3000'}`
 
+test('connects an API account, scopes agent operations, and disconnects in compact Settings', async ({ page }) => {
+  await mockTengri(page)
+  const providers = [
+    {
+      id: 'api',
+      version: 'v1',
+      name: 'Example API',
+      authentication: 'bearer',
+      operations: [
+        { name: 'list', description: 'List project issues', readOnly: true, inputSchema: { type: 'object' } },
+      ],
+    },
+  ]
+  const connections: { id: string; providerId: string; name: string; status: string; version: number }[] = []
+  const bindings: { connectionId: string; operations: string[]; constraints: Record<string, unknown> }[] = []
+  const creates: { id: string; operationId: string }[] = []
+  let uncertain = true
+  await page.route('**/api/tengri/connectors', async (route) => {
+    const body = route.request().postDataJSON()
+    switch (body.action) {
+      case 'providers':
+        return route.fulfill({ json: { providers } })
+      case 'list':
+        return route.fulfill({ json: { connections, bindings } })
+      case 'create': {
+        creates.push({ id: body.id, operationId: body.operationId })
+        let connection = connections.find((connection) => connection.id === body.id)
+        if (!connection) {
+          connection = { id: body.id, providerId: body.provider, name: body.name, status: 'pending', version: 1 }
+          connections.push(connection)
+        }
+        if (uncertain) {
+          uncertain = false
+          return route.fulfill({ status: 503, json: { error: 'The connection could not be confirmed. Try again.' } })
+        }
+        return route.fulfill({ json: { connection } })
+      }
+      case 'connectToken': {
+        expect(body.token).toBe('private-fixture-token')
+        const connection = connections.find((connection) => connection.id === body.id)!
+        connection.status = 'connected'
+        connection.version += 1
+        return route.fulfill({ json: { connection } })
+      }
+      case 'bind': {
+        expect(body.workspace).toBe(readyAgent.uid)
+        bindings.splice(0, bindings.length, {
+          connectionId: body.id,
+          operations: body.operations,
+          constraints: body.constraints,
+        })
+        return route.fulfill({ json: { saved: true, expiresAt: new Date(Date.now() + 3_599_000).toISOString() } })
+      }
+      case 'disconnect': {
+        connections.find((connection) => connection.id === body.id)!.status = 'disconnected'
+        bindings.splice(0)
+        return route.fulfill({ json: { disconnected: true } })
+      }
+      default:
+        return route.fulfill({ status: 400, json: { error: 'Unsupported fixture action' } })
+    }
+  })
+  await page.goto('/')
+  await page.getByRole('navigation', { name: 'Dock' }).getByRole('button', { name: 'Open Settings' }).click()
+  const settings = page.getByRole('region', { name: 'Settings window' })
+  await settings.getByRole('button', { name: 'Connections', exact: true }).click()
+  const create = settings.getByRole('form', { name: 'Connect an account' })
+  await create.getByLabel('Service').selectOption('api')
+  await create.getByLabel('Account name').fill('Work account')
+  await create.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByRole('alert')).toContainText('could not be confirmed')
+  await create.getByRole('button', { name: 'Connect', exact: true }).click()
+  await expect(settings.getByText('Work account', { exact: true })).toBeVisible()
+  await expect
+    .poll(async () => {
+      const heading = await settings.getByRole('heading', { name: 'Connections', exact: true }).boundingBox()
+      const window = await settings.boundingBox()
+      return heading && window ? heading.y - window.y : Number.POSITIVE_INFINITY
+    })
+    .toBeLessThan(100)
+  expect(creates).toHaveLength(2)
+  expect(creates[1]).toEqual(creates[0])
+  expect(connections).toHaveLength(1)
+  const authorize = settings.getByRole('form', { name: 'Authorize Work account' })
+  await authorize.getByLabel('Provider credential').fill('private-fixture-token')
+  await authorize.getByRole('button', { name: 'Save', exact: true }).click()
+  const access = settings.getByRole('form', { name: 'Example API agent access' })
+  await access.getByLabel('List project issues').check()
+  await access.getByText('Limit resources', { exact: true }).click()
+  await access.getByLabel('Argument paths and allowed values', { exact: false }).fill('{"/repository":["my-project"]}')
+  await access.getByRole('button', { name: 'Save agent access', exact: true }).click()
+  await expect(settings.getByRole('status')).toContainText('Save again to renew it.')
+  expect(bindings[0]!.operations).toEqual(['list'])
+  expect(bindings[0]!.constraints).toEqual({ '/repository': ['my-project'] })
+  await expect(settings.getByText('private-fixture-token', { exact: true })).toHaveCount(0)
+  expect((await new AxeBuilder({ page }).include('[aria-label="Settings window"]').analyze()).violations).toEqual([])
+  await settings.screenshot({ path: 'test-results/relay-connections-settings.png' })
+  await settings.getByRole('button', { name: 'Disconnect', exact: true }).click()
+  await expect(settings.getByText('Example API · Disconnected', { exact: true })).toBeVisible()
+  await expect(settings.getByRole('form', { name: 'Example API agent access' })).toHaveCount(0)
+})
+
 const readyAgent = {
   id: 'microvm-ada',
   displayName: 'Tengri',

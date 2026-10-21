@@ -98,6 +98,8 @@ type codexSupervisor struct {
 	requestID       atomic.Uint64
 	writePermit     chan struct{}
 	loginMu         sync.Mutex
+	relayMu         sync.Mutex
+	relayRoot       string
 	responseTimeout time.Duration
 
 	mu              sync.Mutex
@@ -309,6 +311,9 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	}
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
+	}
+	if strings.HasPrefix(method, "relay/") {
+		return supervisor.relayCall(ctx, method, params)
 	}
 	return supervisor.request(ctx, method, params, true)
 }
@@ -1427,7 +1432,7 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "relay/identity", "relay/configure", "relay/remove":
 		return true
 	default:
 		return false

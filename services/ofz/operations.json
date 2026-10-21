@@ -1,5 +1,151 @@
 [
   {
+    "surface": "relay_command",
+    "operation": "StageGrant",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Owner and workspace authority checked before native grant creation; pending grants cannot dispatch"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "SetGrantStatus",
+    "action": "ACTION_GRANTS_MANAGE",
+    "dispatch": "Activation requires current connection and workspace grant authority; cancellation/revocation is owner-filtered and monotonic"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "AckCleanup",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "dispatch": "Owner-filtered monotonic acknowledgement after authenticated guest configuration removal"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "HEAD /livez",
+    "public": true,
+    "internal_only": true
+  },
+  {
+    "surface": "relay_http",
+    "operation": "HEAD /readyz",
+    "public": true,
+    "internal_only": true
+  },
+  {
+    "surface": "relay_http",
+    "operation": "POST /v1/request",
+    "action": "ACTION_CONNECTOR_EXECUTE",
+    "dispatch": "Exact BFF SPIFFE mTLS only; every typed command checks canonical human or proof-bound agent authority"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "GET /livez",
+    "public": true,
+    "internal_only": true
+  },
+  {
+    "surface": "relay_http",
+    "operation": "GET /readyz",
+    "public": true,
+    "internal_only": true
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Providers",
+    "action": "ACTION_PLATFORM_ADMIT"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "List",
+    "action": "ACTION_PLATFORM_ADMIT"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Create",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "ConnectToken",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "OAuthStart",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "OAuthFinish",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "ConnectClient",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Bind",
+    "action": "ACTION_GRANTS_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Disconnect",
+    "action": "ACTION_CONNECTOR_MANAGE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Invoke",
+    "action": "ACTION_CONNECTOR_INVOKE"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "AgentInvoke",
+    "action": "ACTION_CONNECTOR_EXECUTE"
+  },
+  {
+    "surface": "controller",
+    "operation": "ConnectorAgent",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/identity",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/configure",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/remove",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "ofz",
+    "operation": "CheckConnectorAgent",
+    "action": "ACTION_CONNECTOR_EXECUTE"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/connectors",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "dispatch": "Authenticated same-origin BFF; typed provider/list/create/auth/bind/disconnect/invoke commands are independently checked through canonical Ofz"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "GET /api/tengri/connectors/callback",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "dispatch": "Session-bound one-use state and PKCE; Relay derives the provider from the stored attempt"
+  },
+  {
+    "surface": "bff_http",
+    "operation": "POST /api/tengri/connectors/agent",
+    "action": "ACTION_CONNECTOR_READ",
+    "dispatch": "No cookie authority; exact request bytes, proof-bound grant credential, ES256 DPoP and shared replay protection are verified by canonical Ofz"
+  },
+  {
     "surface": "controller",
     "operation": "GetRequestAudience",
     "public": true,
