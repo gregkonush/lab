@@ -96,7 +96,7 @@ const EconomicFillSchema = Schema.Struct({
   }),
 })
 export const ReplayBrokerCheckpointSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v9'),
+  schemaVersion: Schema.Literal('bayn.simulated-broker-checkpoint.v10'),
   configurationHash: Sha256Schema,
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
@@ -465,7 +465,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
 export const makeReplayBrokerCheckpoint = (config: ReplayBrokerConfig, state: ReplayBrokerState, observedAt: string) =>
   Result.gen(function* () {
     const material = {
-      schemaVersion: 'bayn.simulated-broker-checkpoint.v9' as const,
+      schemaVersion: 'bayn.simulated-broker-checkpoint.v10' as const,
       configurationHash: yield* replayBrokerConfigurationHash(config),
       sourceManifestHash: config.sourceManifestHash,
       observedAt,

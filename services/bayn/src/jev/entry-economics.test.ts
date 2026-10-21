@@ -17,7 +17,7 @@ test('typed entry and protection choices support an entry without a confidence g
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(
     Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
-  ).toEqual({ action: 'choice', stop_loss: 'choice', take_profit: 'choice' })
+  ).toEqual({ action: 'choice' })
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
@@ -111,14 +111,14 @@ test('a cheaper refreshed crypto ask preserves the funded cap used by durable re
         ...input,
         plans: {
           'BTC/USD': {
-            schemaVersion: 'bayn.jev-funded-exit-plan.v2',
+            schemaVersion: 'bayn.jev-funded-exit-plan.v3',
             maximumQuantityAtoms: economics.maximumQuantityAtoms,
             acquisitionCostMicros: economics.acquisitionCostMicros,
             estimatedStopNetMicros: '1',
             estimatedTargetNetMicros: String(BigInt(economics.acquisitionCostMicros) + 1n),
             levels: {
-              schemaVersion: 'bayn.jev-strategy-exit-plan.v2',
-              rule: 'model-selected-observed-prices',
+              schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
+              rule: 'model-selected-complete-plan',
               symbol: 'BTC/USD',
               sourceStartAt: '2026-10-19T14:59:00.000Z',
               sourceEndAt: '2026-10-19T15:00:00.000Z',

@@ -40,8 +40,6 @@ def study():
         "maximumWallSeconds": 1800,
         "baseline": {
             "entry": "Assess entry evidence.",
-            "stopLoss": "Choose an observed invalidation price.",
-            "takeProfit": "Choose an observed profit price.",
         },
         "editor": {"policy": {"model": "editor-test"}, "costBasis": None},
         "tasks": [task("development", "1970-01-01T00:00:00.000Z")],
