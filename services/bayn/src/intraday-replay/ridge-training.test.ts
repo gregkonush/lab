@@ -142,6 +142,17 @@ test.each(['unresolved', 'excluded'] as const)(
 test('pinned calendar rejects an omitted middle training day and source reaching beyond the fit boundary', () => {
   const fixture = ridgeTrainingFixture()
   expect(Result.isSuccess(prepareRidgeTraining(fixture.input, fixture.receipt))).toBeTrue()
+  expect(
+    Result.isFailure(
+      prepareRidgeTraining(
+        {
+          ...fixture.input,
+          backtest: { ...fixture.input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        fixture.receipt,
+      ),
+    ),
+  ).toBeTrue()
   const calendar = fixture.input.calendar.map((day, index) => (index === 1 ? { ...day, date: '2026-09-01' } : day))
   const omitted = {
     ...fixture.input,

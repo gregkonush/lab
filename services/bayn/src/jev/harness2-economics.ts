@@ -60,7 +60,7 @@ const NativeEconomicReportSchema = Schema.Struct({
   maximumObservedDrawdownMicros: Schema.NullOr(UnsignedMicrosSchema),
   reconciledExecutionPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
   reconciledNetPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
-  dataCostMicros: UnsignedMicrosSchema,
+  dataCostMicros: Schema.NullOr(UnsignedMicrosSchema),
   brokerState: Schema.Struct({ ledger: ReplayBrokerCheckpointSchema.fields.state.fields.ledger }),
   sessions: Schema.Array(
     Schema.Struct({
@@ -69,7 +69,7 @@ const NativeEconomicReportSchema = Schema.Struct({
       issues: Schema.Array(Schema.Enum(BacktestIssue)),
       closingNetEquityMicros: SignedMicrosSchema,
       modelCosts: ReplayJevCostSummarySchema,
-      allocatedDataCostMicros: UnsignedMicrosSchema,
+      allocatedDataCostMicros: Schema.NullOr(UnsignedMicrosSchema),
       netEquityChangeMicros: Schema.NullOr(SignedMicrosSchema),
     }),
   ),
@@ -126,6 +126,13 @@ export const jevHarnessBacktestOutcome = (input: {
     const report = yield* Schema.decodeUnknownResult(NativeEconomicReportSchema)(raw)
     if (report.comparisonInputHash !== (yield* hash(report.comparisonInput)))
       return yield* invalid('Native normalized replay inputs do not reproduce their comparison identity')
+    const registeredDataCost = report.comparisonInput.allocatedDataCostPerSessionMicros
+    if (
+      report.sessions.some((session) => session.allocatedDataCostMicros !== registeredDataCost) ||
+      report.dataCostMicros !==
+        (registeredDataCost === null ? null : String(BigInt(registeredDataCost) * BigInt(report.sessions.length)))
+    )
+      return yield* invalid('Native data costs differ from the frozen allocation or its unknown coverage')
     if (
       report.jevInstructions.contentHash !== (yield* hash(instructions)) ||
       report.jevInstructions.contentHash !== (yield* hash(report.jevInstructions.document))
@@ -188,7 +195,8 @@ export const jevHarnessBacktestOutcome = (input: {
       report.completion === 'COMPLETE' &&
       (ledger.positions.length !== 0 ||
         report.reconciledNetPnlAfterCostsMicros === null ||
-        report.maximumObservedDrawdownMicros === null)
+        report.maximumObservedDrawdownMicros === null ||
+        report.dataCostMicros === null)
     )
       return yield* invalid('Complete native replay requires closed inventory, net costs and drawdown')
     const allocations = yield* Schema.decodeUnknownResult(
@@ -226,7 +234,7 @@ export const jevHarnessBacktestOutcome = (input: {
         return yield* invalid('Native session equity carry differs from its net outcome')
       previous = BigInt(session.closingNetEquityMicros)
       totalNet += delta
-      totalData += BigInt(session.allocatedDataCostMicros)
+      if (session.allocatedDataCostMicros !== null) totalData += BigInt(session.allocatedDataCostMicros)
       totalModel += BigInt(session.modelCosts.knownCostMicros)
       const complete =
         report.completion === 'COMPLETE' &&
@@ -234,6 +242,7 @@ export const jevHarnessBacktestOutcome = (input: {
         session.completion === 'COMPLETE' &&
         session.issues.length === 0 &&
         session.netEquityChangeMicros !== null &&
+        session.allocatedDataCostMicros !== null &&
         costs.unresolvedCallCount === 0 &&
         allocation.infrastructure !== null &&
         allocation.research !== null
@@ -250,7 +259,7 @@ export const jevHarnessBacktestOutcome = (input: {
     }
     if (
       callIndex !== report.inference.calls.length ||
-      totalData !== BigInt(report.dataCostMicros) ||
+      (report.dataCostMicros !== null && totalData !== BigInt(report.dataCostMicros)) ||
       totalModel !== BigInt(costs.knownCostMicros) ||
       (report.reconciledNetPnlAfterCostsMicros !== null &&
         (ledger.netRealizedPnlAfterCostsMicros === null ||

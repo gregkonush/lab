@@ -361,6 +361,35 @@ test('a native engine report without an identified executable cannot enter the e
   expect(Result.isFailure(project(reseal(raw)))).toBe(true)
 })
 
+test('unknown native data allocations remain unknown and cannot produce a complete net result', () => {
+  const original = nativeReportFixture()
+  const comparisonInput = { ...original.comparisonInput, allocatedDataCostPerSessionMicros: null }
+  const report = reseal({
+    ...original,
+    comparisonInput,
+    comparisonInputHash: hash(comparisonInput),
+    completion: 'INCOMPLETE',
+    issues: ['unresolved-data-cost'],
+    dataCostMicros: null,
+    reconciledNetPnlAfterCostsMicros: null,
+    maximumObservedDrawdownMicros: null,
+    sessions: original.sessions.map((session) => ({
+      ...session,
+      completion: 'INCOMPLETE',
+      issues: ['unresolved-data-cost'],
+      allocatedDataCostMicros: null,
+      netEquityChangeMicros: null,
+      closingNetEquityMicros: String(BigInt(session.closingNetEquityMicros) + 10n),
+    })),
+  })
+  const result = Result.getOrThrow(project(report))
+  expect(result.rows[0]?.complete).toBe(false)
+  expect(result.rows[0]?.netMicros).toBeNull()
+  expect(result.conservativeMaximumDrawdownMicros).toBeNull()
+  expect(Result.isFailure(project(reseal({ ...report, dataCostMicros: '0' })))).toBe(true)
+  expect(Result.isFailure(project(reseal({ ...report, completion: 'COMPLETE' })))).toBe(true)
+})
+
 test('fractional trading, broker assets, calendar and cadence changes cannot masquerade as instruction effects', () => {
   const baselineReport = nativeReportFixture()
   const repeated = nativeReportFixture(jevInstructions, 'b')

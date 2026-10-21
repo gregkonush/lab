@@ -166,6 +166,10 @@ database. It has no permission to produce native portfolio replays.
 Input `bayn.backtest.v5` binds `jevInstructionsHash` to the compiled document and `inference.maximumCalls` to the
 provider dispatch ceiling. All other inputs, capital, market sources, cadence, risk and execution assumptions stay
 fixed across arms. The provider uses the existing Jev credential and `BAYN_PUBLIC_INFORMATION_PROXY` adapter.
+Declare `allocatedDataCostPerSessionMicros: null` when the data allocation is unpriced. The native report retains
+null data expenses, marks every affected session incomplete, and withholds net results and qualified drawdown.
+It still records execution outcomes and equity after known costs. Missing expenses never become a zero allocation.
+Control comparisons and net-label training require priced data and reject this unknown allocation.
 Failed or interrupted dispatches consume their budget; exhausted slots cannot transmit. Report
 `bayn.backtest-report.v4` records the compiled instructions, provider dispatch inventory and native outcomes.
 The command retains its actual executable hash and writes full evidence privately; stdout contains a small summary.

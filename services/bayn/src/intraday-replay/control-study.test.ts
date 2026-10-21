@@ -29,6 +29,7 @@ import {
   controlStudyDefinition,
   runControlSession,
   runControlStudy,
+  prepareControlStudy,
   type ControlCapital,
   type ControlMarket,
 } from './control-study'
@@ -807,6 +808,21 @@ const frozenControlFixture = () => {
   const receipt = retainedReplayCaptureFixture(source)
   return { retained, source, input, receipt }
 }
+
+test('net control comparisons require a priced data allocation', () => {
+  const { input, receipt } = frozenControlFixture()
+  expect(
+    Result.isFailure(
+      prepareControlStudy(
+        {
+          ...input,
+          backtest: { ...input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        receipt,
+      ),
+    ),
+  ).toBe(true)
+})
 
 test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()

@@ -1596,7 +1596,10 @@ Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing 
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
-`allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
+`allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.
+An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
+becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
+assumptions changes the run identity.
 
 The provider uses an independent live clock. Replay retains original provider requests, responses and timestamps
 in `jev-calls.ndjson` before advancing market and database time. Concurrent calls share elapsed time. Native

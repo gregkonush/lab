@@ -71,6 +71,7 @@ export enum BacktestIssue {
   MissingDecisionData = 'missing-decision-data',
   UnresolvedModelCost = 'unresolved-model-cost',
   UnresolvedExecutionCost = 'unresolved-execution-cost',
+  UnresolvedDataCost = 'unresolved-data-cost',
 }
 
 export const assessBacktestSession = (input: {
@@ -117,7 +118,7 @@ export const BacktestInputSchema = Schema.Struct({
     costs: ReplayJevCostModelSchema,
     maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
   }),
-  allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
+  allocatedDataCostPerSessionMicros: Schema.NullOr(UnsignedMicrosSchema),
   replicate: StrictNonEmptyStringSchema,
   interval: Schema.Struct({ startAt: UtcInstantSchema, endAt: UtcInstantSchema }),
   source: BacktestSourceManifestSchema,
@@ -455,10 +456,11 @@ export const runBacktest = (
     let peakEquity = BigInt(prepared.input.openingCashMicros)
     let maximumObservedDrawdown = 0n
     let previousClosingEquity = peakEquity
-    let accruedDataCost = 0n
-    const markedNetEquity = (equityMicros: string) =>
+    let accruedKnownDataCost = 0n
+    const allocatedDataCost = prepared.input.allocatedDataCostPerSessionMicros
+    const equityAfterKnownCosts = (equityMicros: string) =>
       BigInt(equityMicros) -
-      accruedDataCost -
+      accruedKnownDataCost -
       BigInt(calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs).knownCostMicros)
     const observeEquity = (equity: bigint) => {
       if (equity > peakEquity) peakEquity = equity
@@ -472,7 +474,7 @@ export const runBacktest = (
         Effect.gen(function* () {
           let valuationFailureCount = 0
           const firstCallIndex = inferenceCalls.length
-          accruedDataCost += BigInt(prepared.input.allocatedDataCostPerSessionMicros)
+          if (allocatedDataCost !== null) accruedKnownDataCost += BigInt(allocatedDataCost)
           const schedule = yield* driveReplaySession(
             {
               ...runtime,
@@ -484,7 +486,7 @@ export const runBacktest = (
                     )
                     const usableValuation =
                       Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
-                    if (usableValuation) observeEquity(markedNetEquity(valued.success.account.value.equityMicros))
+                    if (usableValuation) observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
                     else valuationFailureCount++
                     yield* recordPass({
                       ...pass.observation,
@@ -508,7 +510,7 @@ export const runBacktest = (
           )
           nextPollAtMs = schedule.nextPollAtMs
           const closingEquity = yield* broker.valuationAt(session.closeAt)
-          const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
+          const closingNetEquity = equityAfterKnownCosts(closingEquity.equityMicros)
           if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
           else valuationFailureCount++
           const reconciliation = yield* timing.run(runtime.reconcile)
@@ -533,10 +535,11 @@ export const runBacktest = (
             remainingPositionCount: state.ledger.positions.length,
             remainingOpenOrderCount: closingEquity.openOrderCount,
           })
-          const issues =
-            modelCosts.unresolvedCallCount === 0
-              ? assessed.issues
-              : [...assessed.issues, BacktestIssue.UnresolvedModelCost]
+          const issues = [
+            ...assessed.issues,
+            ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
+            ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
+          ]
           return {
             completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
             issues,
@@ -557,13 +560,13 @@ export const runBacktest = (
     )
     const brokerState = yield* broker.snapshot
     const modelCosts = calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs)
-    const dataCostMicros = (
-      BigInt(prepared.input.allocatedDataCostPerSessionMicros) * BigInt(sessions.length)
-    ).toString()
+    const dataCostMicros =
+      allocatedDataCost === null ? null : (BigInt(allocatedDataCost) * BigInt(sessions.length)).toString()
     const executionPnl = brokerState.ledger.netRealizedPnlAfterCostsMicros
     const issues = [
       ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
       ...(executionPnl === null ? [BacktestIssue.UnresolvedExecutionCost] : []),
+      ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
     ]
     const complete = sessions.every((session) => session.completion === 'COMPLETE') && issues.length === 0
     // Consume and rehash any retained tail only after the final decision; it cannot affect execution inputs.
@@ -618,7 +621,7 @@ export const runBacktest = (
       executionEvidence: { orderCount: brokerState.orders.length, fillCount: brokerState.fills.length },
       reconciledExecutionPnlAfterCostsMicros: brokerState.ledger.netRealizedPnlAfterCostsMicros,
       reconciledNetPnlAfterCostsMicros:
-        complete && executionPnl !== null
+        complete && executionPnl !== null && dataCostMicros !== null
           ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
           : null,
       inference: {
