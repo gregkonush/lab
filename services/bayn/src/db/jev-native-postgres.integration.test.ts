@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
+import { afterAll, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import type { Statement } from 'effect/sql/Statement'
 import {
@@ -79,6 +79,8 @@ import { JevEvaluationStoreLive, makeJevEvaluationStore } from './jev-evaluation
 import { JevPositionStoreLive } from './jev-position-postgres'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+
+setDefaultTimeout(30_000)
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_jev_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
