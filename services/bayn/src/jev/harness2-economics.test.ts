@@ -1,0 +1,372 @@
+import { expect, test } from 'bun:test'
+import { NodeServices } from '@effect/platform-node'
+import { Effect, FileSystem, Result, Schema } from 'effect'
+import { IsoDateSchema } from '../schemas'
+import type { ReplayBrokerFill } from '../intraday-replay/broker'
+
+import { canonicalHashV1Result, sha256 } from '../hash'
+import { harness2Command } from '../harness2-command'
+import { jevModel } from './contract'
+import { calculateReplayJevCosts } from '../intraday-replay/jev-costs'
+import { applyReplayFill, createReplayLedger } from '../intraday-replay/ledger'
+import { retainedReplayFixture } from '../testing/retained-replay-fixture'
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { nativeJevFixture, nativeJevInference } from './native.test-support'
+import { makeJevTradingSignalRequest } from './trading-signals'
+import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
+import type { ReplayJevCall } from '../intraday-replay/jev-timing'
+import { jevInstructions } from './instructions'
+import { applyJevInstructions } from './harness2'
+import {
+  compareJevHarnessEconomics,
+  jevHarnessBacktestOutcome,
+  JevHarnessObservedNetEffect,
+  type JevHarnessBacktestOutcome,
+} from './harness2-economics'
+
+const candidateInstructions = { ...jevInstructions, entry: 'Evaluate the supplied evidence for a new long entry.' }
+const dates = Array.from({ length: 8 }, (_, i) =>
+  Schema.decodeUnknownSync(IsoDateSchema)(`2026-09-${String(i + 1).padStart(2, '0')}`),
+)
+const registration = () => ({
+  schemaVersion: 'bayn.jev-harness2-economic-registration.v1',
+  studyId: 'a'.repeat(64),
+  evaluatorSourceRevision: 'b'.repeat(40),
+  registeredAt: '2026-08-31T00:00:00.000Z',
+  baseline: jevInstructions,
+  candidate: candidateInstructions,
+  sessionDates: dates,
+  maximumDrawdownMicros: '1000000',
+})
+const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
+const outcome = (run: string, net: readonly (string | null)[], candidate = false): JevHarnessBacktestOutcome => ({
+  runId: run.repeat(64),
+  reportHash: run.repeat(64),
+  instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
+  contextHash: 'd'.repeat(64),
+  providerRequests: 8,
+  conservativeMaximumDrawdownMicros: '0',
+  rows: dates.map((sessionDate, i) => ({
+    sessionDate,
+    complete: net[i] != null,
+    netMicros: net[i] ?? null,
+    knownNativeNetMicros: net[i] ?? '0',
+    infrastructure: { costMicros: '0', evidenceHash: 'f'.repeat(64) },
+    research: { costMicros: '0', evidenceHash: 'f'.repeat(64) },
+  })),
+})
+const flat = (value: string) => dates.map(() => value)
+const compare = (next: readonly (string | null)[], baseline = flat('1000'), repeat = baseline) =>
+  Result.getOrThrow(
+    compareJevHarnessEconomics(registration(), {
+      baseline: outcome('a', baseline),
+      baselineRepeat: outcome('b', repeat),
+      candidate: outcome('c', next, true),
+    }),
+  )
+
+test('paired session net gain can be positive or negative without changing the opportunity count', () => {
+  const positive = compare(flat('1500'))
+  expect(positive.observedNetEffect).toBe(JevHarnessObservedNetEffect.Higher)
+  expect(positive.pairedNetDeltaMicros).toBe('4000')
+  expect(positive.economicImprovement).toBe('UNPROVEN')
+  expect(positive.qualification).toBe('UNQUALIFIED')
+  expect(positive.adoption).toBe('NOT_AUTHORIZED')
+  expect(compare(flat('500')).observedNetEffect).toBe(JevHarnessObservedNetEffect.Lower)
+  expect(compare(flat('1000')).observedNetEffect).toBe(JevHarnessObservedNetEffect.Unchanged)
+})
+
+test('a relative gain that still loses to cash remains unqualified', () => {
+  const report = compare(flat('-100'), flat('-1000'))
+  expect(report.pairedNetDeltaMicros).toBe('7200')
+  expect(report.observedNetEffect).toBe(JevHarnessObservedNetEffect.Higher)
+  expect(report.candidateNetMicros).toBe('-800')
+  expect(report.economicImprovement).toBe('UNPROVEN')
+})
+
+test('missing costs and outcomes remain missing rather than being dropped or counted as zero', () => {
+  const report = compare(['1500', null, ...flat('1500').slice(2)])
+  expect(report.registeredSessionCount).toBe(8)
+  expect(report.completePairedSessionCount).toBe(7)
+  expect(report.pairedNetDeltaMicros).toBeNull()
+  expect(report.observedNetEffect).toBe(JevHarnessObservedNetEffect.Inconclusive)
+  expect(report.reasons).toContain('INCOMPLETE_NATIVE_OUTCOMES_OR_COSTS')
+})
+
+test('unchanged-prompt variability can explain an apparent candidate gain', () => {
+  const report = compare(flat('1500'), flat('1000'), flat('2000'))
+  expect(report.pairedNetDeltaMicros).toBe('4000')
+  expect(report.unchangedPromptNetDeltaMicros).toBe('8000')
+  expect(report.economicImprovement).toBe('UNPROVEN')
+})
+
+test('late declared registration and drawdown prevent a complete descriptive result', () => {
+  const arms = {
+    baseline: outcome('a', flat('1000')),
+    baselineRepeat: outcome('b', flat('1000')),
+    candidate: outcome('c', flat('1500'), true),
+  }
+  expect(
+    Result.getOrThrow(compareJevHarnessEconomics({ ...registration(), registeredAt: '2026-09-01T00:00:00.000Z' }, arms))
+      .observedNetEffect,
+  ).toBe(JevHarnessObservedNetEffect.Inconclusive)
+  const report = Result.getOrThrow(
+    compareJevHarnessEconomics(registration(), {
+      ...arms,
+      candidate: { ...arms.candidate, conservativeMaximumDrawdownMicros: '1000001' },
+    }),
+  )
+  expect(report.observedNetEffect).toBe(JevHarnessObservedNetEffect.Inconclusive)
+})
+
+test('changed source, capital, assumptions, date coverage or reused runs fail comparison', () => {
+  const arms = {
+    baseline: outcome('a', flat('1000')),
+    baselineRepeat: outcome('b', flat('1000')),
+    candidate: outcome('c', flat('1500'), true),
+  }
+  for (const candidate of [
+    { ...arms.candidate, contextHash: 'e'.repeat(64) },
+    { ...arms.candidate, rows: arms.candidate.rows.slice(1) },
+    { ...arms.candidate, runId: arms.baseline.runId },
+    { ...arms.candidate, instructionsHash: arms.baseline.instructionsHash },
+  ])
+    expect(Result.isFailure(compareJevHarnessEconomics(registration(), { ...arms, candidate }))).toBe(true)
+})
+
+test('the unchanged live baseline is required and paired session values are retained', () => {
+  const arms = {
+    baseline: outcome('a', flat('1000')),
+    baselineRepeat: outcome('b', flat('1000')),
+    candidate: outcome('c', flat('1500'), true),
+  }
+  expect(
+    Result.isFailure(compareJevHarnessEconomics({ ...registration(), baseline: candidateInstructions }, arms)),
+  ).toBe(true)
+  const a = compare(['2000', '400', '1800', '900', '2100', '800', '1500', '1900'])
+  expect(a.pairedSessions[0]).toEqual({
+    sessionDate: dates[0],
+    baselineNetMicros: '1000',
+    baselineRepeatNetMicros: '1000',
+    candidateNetMicros: '2000',
+  })
+})
+
+const nativeReportFixture = (instructions = jevInstructions, run = 'a') => {
+  const captured = retainedReplayFixture()
+  const native = nativeJevFixture()
+  const original = Result.getOrThrow(makeJevTradingSignalRequest(native.observation.payload, 'AAPL'))
+  const prepared = Result.getOrThrow(applyJevInstructions(original.request, instructions))
+  const at = '2026-09-04T14:30:02.000Z'
+  const inference = nativeJevInference(prepared.request, at)
+  const call: ReplayJevCall = {
+    schemaVersion: 'bayn.replay-jev-call.v1',
+    request: prepared.request,
+    requestHash: prepared.requestHash,
+    simulatedStartedAt: at,
+    providerStartedAt: at,
+    providerCompletedAt: at,
+    outcome: { status: 'RECEIVED', inference },
+  }
+  let ledger = Result.getOrThrow(createReplayLedger<ReplayBrokerFill>('10000000000'))
+  for (const [side, priceMicros] of [
+    ['buy', '100000000'],
+    ['sell', '110000000'],
+  ] as const)
+    ledger = Result.getOrThrow(
+      applyReplayFill(
+        ledger,
+        {
+          symbol: 'AAPL',
+          executionIndex: side === 'buy' ? 0 : 1,
+          brokerOrderId: `fixture-${side}`,
+          clientOrderId: `fixture-${side}`,
+          quoteSource: {
+            topic: 'fixture',
+            partition: 0,
+            offset: side === 'buy' ? '0' : '1',
+            availableAtMs: Date.parse(at),
+          },
+          side,
+          observedAt: at,
+          quantityAtoms: '1000000000',
+          priceMicros,
+          notionalMicros: priceMicros,
+        },
+        '1000000000',
+        defaultJevProtocolDocument.executionModel,
+        1000000,
+      ),
+    )
+  const tariff = { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' }
+  const costs = calculateReplayJevCosts([call], tariff)
+  if (ledger.netRealizedPnlAfterCostsMicros === null) throw Error('Fixture must close')
+  const net = BigInt(ledger.netRealizedPnlAfterCostsMicros) - BigInt(costs.knownCostMicros) - 10n
+  const material = {
+    schemaVersion: 'bayn.backtest-report.v3',
+    evidenceMode: 'simulated-production-execution',
+    runId: run.repeat(64),
+    inference: {
+      definition: {
+        mode: 'measured-provider',
+        model: jevModel,
+        inputDefinition: defaultJevProtocolDocument.inputDefinition,
+        costs: tariff,
+      },
+      costs,
+      calls: [call],
+    },
+    completion: 'COMPLETE',
+    issues: [],
+    source: {
+      runId: run.repeat(64),
+      sourceManifestHash: hash(captured.manifest),
+      deliveryModel: captured.manifest.deliveryModel,
+      marketSources: captured.manifest.marketSources,
+    },
+    sourceReceiptHash: captured.capture.contentHash,
+    build: {
+      sourceRevision: 'b'.repeat(40),
+      imageRepository: 'registry.example/lab/bayn',
+      declaredImageDigest: 'sha256:' + 'c'.repeat(64),
+      imageDigestVerification: 'unverified-input',
+      strategyBehaviorHash: jevBehaviorHash,
+      strategyParameterHash: hash(defaultJevProtocolDocument),
+      sourceAndStrategyVerification: 'configured',
+    },
+    assumptions: {
+      instruments: replayTestInstruments,
+      latencyMs: 100,
+      slippageBps: 0,
+      availableLiquidityPpm: 1000000,
+      feeMultiplierPpm: 1000000,
+    },
+    sessionDates: ['2026-09-04'],
+    maximumObservedDrawdownMicros: '100',
+    reconciledExecutionPnlAfterCostsMicros: ledger.netRealizedPnlAfterCostsMicros,
+    reconciledNetPnlAfterCostsMicros: String(net),
+    dataCostMicros: '10',
+    brokerState: { ledger },
+    sessions: [
+      {
+        sessionDate: '2026-09-04',
+        completion: 'COMPLETE',
+        issues: [],
+        closingNetEquityMicros: String(10000000000n + net),
+        modelCosts: costs,
+        allocatedDataCostMicros: '10',
+        netEquityChangeMicros: String(net),
+      },
+    ],
+  }
+  return { ...material, reportHash: hash(material) }
+}
+const allocations = [
+  {
+    sessionDate: '2026-09-04',
+    infrastructure: { costMicros: '2', evidenceHash: 'e'.repeat(64) },
+    research: { costMicros: '3', evidenceHash: 'f'.repeat(64) },
+  },
+]
+const project = (report: unknown, operatingAllocations: unknown = allocations) =>
+  jevHarnessBacktestOutcome({ report, instructions: jevInstructions, operatingAllocations })
+const reseal = <R extends { readonly reportHash: string }>(report: R) => {
+  const { reportHash: _, ...material } = report
+  return { ...material, reportHash: hash(material) }
+}
+
+test('native fills and metered calls reproduce net returns with fees booked once and operating costs added', () => {
+  const report = nativeReportFixture()
+  const result = Result.getOrThrow(project(report))
+  expect(result.rows[0]?.netMicros).toBe(String(BigInt(report.reconciledNetPnlAfterCostsMicros) - 5n))
+  expect(result.conservativeMaximumDrawdownMicros).toBe('105')
+  expect(BigInt(report.brokerState.ledger.executionFeesMicros)).toBeGreaterThan(0n)
+  expect(result.providerRequests).toBe(1)
+  const next = reseal({ ...report, runId: 'b'.repeat(64), source: { ...report.source, runId: 'b'.repeat(64) } })
+  expect(Result.getOrThrow(project(next)).contextHash).toBe(result.contextHash)
+})
+
+test('changed native report bytes, cash, costs and response identities fail instead of scoring', () => {
+  const report = nativeReportFixture()
+  const changed = [
+    { ...report, reportHash: '0'.repeat(64) },
+    reseal({ ...report, build: { ...report.build, strategyParameterHash: '0'.repeat(64) } }),
+    reseal({ ...report, brokerState: { ledger: { ...report.brokerState.ledger, cashMicros: '10000000000' } } }),
+    reseal({
+      ...report,
+      inference: { ...report.inference, costs: { ...report.inference.costs, knownCostMicros: '0' } },
+    }),
+    reseal({ ...report, sessions: report.sessions.map((row) => ({ ...row, netEquityChangeMicros: '1' })) }),
+    reseal({
+      ...report,
+      sessions: report.sessions.map((row) => ({ ...row, modelCosts: { ...row.modelCosts, callCount: 0 } })),
+    }),
+  ]
+  for (const value of changed) expect(Result.isFailure(project(value))).toBe(true)
+  expect(
+    Result.isFailure(
+      jevHarnessBacktestOutcome({ report, instructions: candidateInstructions, operatingAllocations: allocations }),
+    ),
+  ).toBe(true)
+})
+
+test('unallocated native operating expenses and missing session rows cannot complete the result', () => {
+  const report = nativeReportFixture()
+  const unknown = Result.getOrThrow(
+    project(
+      report,
+      allocations.map((row) => ({ ...row, research: null })),
+    ),
+  )
+  expect(unknown.rows[0]?.netMicros).toBeNull()
+  expect(unknown.conservativeMaximumDrawdownMicros).toBeNull()
+  expect(Result.isFailure(project(report, []))).toBe(true)
+})
+
+test('comparison command reads digest-bound native files without provider or broker configuration', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem
+      const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-harness2-economics-' })
+      const artifact = (name: string, report: unknown) =>
+        Effect.gen(function* () {
+          const raw = JSON.stringify(report)
+          const path = `${directory}/${name}.json`
+          yield* fs.writeFileString(path, raw)
+          return { reportPath: path, reportSha256: sha256(raw), operatingAllocations: allocations }
+        })
+      const baseline = yield* artifact('baseline', nativeReportFixture())
+      const baselineRepeat = yield* artifact('repeat', nativeReportFixture(jevInstructions, 'b'))
+      const candidate = yield* artifact('candidate', nativeReportFixture(candidateInstructions, 'c'))
+      const manifest = {
+        schemaVersion: 'bayn.jev-harness2-economic-manifest.v1',
+        registration: { ...registration(), sessionDates: ['2026-09-04'] },
+        baseline,
+        baselineRepeat,
+        candidate,
+      }
+      const path = `${directory}/manifest.json`
+      const output = `${directory}/comparison.json`
+      yield* fs.writeFileString(path, JSON.stringify(manifest))
+      yield* harness2Command(['--compare', path, '--output', output])
+      const result = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(
+          Schema.Struct({
+            observedNetEffect: Schema.Enum(JevHarnessObservedNetEffect),
+            economicImprovement: Schema.Literal('UNPROVEN'),
+          }),
+        ),
+      )(yield* fs.readFileString(output))
+      expect(result.observedNetEffect).toBe(JevHarnessObservedNetEffect.Unchanged)
+      const before = yield* fs.readFileString(output)
+      expect((yield* harness2Command(['--compare', path, '--output', output]).pipe(Effect.result))._tag).toBe('Failure')
+      expect(yield* fs.readFileString(output)).toBe(before)
+      yield* fs.writeFileString(baseline.reportPath, '{}')
+      expect(
+        (yield* harness2Command(['--compare', path, '--output', `${directory}/tampered.json`]).pipe(Effect.result))
+          ._tag,
+      ).toBe('Failure')
+      expect(yield* fs.exists(`${directory}/tampered.json`)).toBe(false)
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+  )
+})

@@ -2,15 +2,21 @@ import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Clock, Config, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 
 import { embeddedBuildMetadata } from './build'
-import { canonicalHashV1Result } from './hash'
+import { canonicalHashV1Result, sha256 } from './hash'
 import { JevClient, JevClientLive } from './jev/client'
 import { JevContractError } from './jev/contract'
 import { JevHttpClientLive } from './jev/http'
 import { jevInstructions } from './jev/instructions'
 import { jevHarnessDecision, prepareJevHarnessProbe, verifyJevHarnessReceipt } from './jev/harness2'
+import {
+  compareJevHarnessEconomics,
+  jevHarnessBacktestOutcome,
+  JevHarnessEconomicComparisonManifestSchema,
+} from './jev/harness2-economics'
+import { strictParseOptions } from './schemas'
 
 export const harness2CommandUsage =
-  'Usage: bayn-harness2-probe --baseline | --validate <run.json> | --run <run.json> --output <new-receipt.json> | --verify <run.json> --receipt <receipt.json> | --help'
+  'Usage: bayn-harness2-probe --baseline | --validate <run.json> | --run <run.json> --output <new-receipt.json> | --verify <run.json> --receipt <receipt.json> | --compare <economic-manifest.json> --output <new-comparison.json> | --help'
 
 export const harness2Command = (args: readonly string[]) =>
   Effect.gen(function* () {
@@ -22,6 +28,56 @@ export const harness2Command = (args: readonly string[]) =>
       )
     if (args.length === 1 && args[0] === '--help') return yield* print(harness2CommandUsage)
     if (args.length === 1 && args[0] === '--baseline') return yield* print(jevInstructions)
+    if (args.length === 4 && args[0] === '--compare' && args[2] === '--output') {
+      const manifestPath = args[1]
+      const outputPath = args[3]
+      if (manifestPath === undefined || outputPath === undefined)
+        return yield* new JevContractError({ message: harness2CommandUsage })
+      const fs = yield* FileSystem.FileSystem
+      const readBounded = (file: string, maximumBytes: number) =>
+        Effect.gen(function* () {
+          if ((yield* fs.stat(file)).size > BigInt(maximumBytes))
+            return yield* new JevContractError({ message: 'Economic comparison input exceeds its byte limit' })
+          const raw = yield* fs.readFileString(file)
+          if (new TextEncoder().encode(raw).length > maximumBytes)
+            return yield* new JevContractError({ message: 'Economic comparison input exceeds its byte limit' })
+          return raw
+        })
+      const manifest = yield* Schema.decodeUnknownEffect(
+        Schema.fromJsonString(JevHarnessEconomicComparisonManifestSchema),
+        strictParseOptions,
+      )(yield* readBounded(manifestPath, 64 * 1024))
+      if (
+        embeddedBuildMetadata !== undefined &&
+        manifest.registration.evaluatorSourceRevision !== embeddedBuildMetadata.sourceRevision
+      )
+        return yield* new JevContractError({ message: 'Economic evaluator source differs from its installed image' })
+      const readArm = (artifact: typeof manifest.baseline, instructions: typeof manifest.registration.baseline) =>
+        Effect.gen(function* () {
+          const raw = yield* readBounded(artifact.reportPath, 16 * 1024 * 1024)
+          if (sha256(raw) !== artifact.reportSha256)
+            return yield* new JevContractError({ message: 'Native report file differs from the manifest digest' })
+          return yield* Effect.fromResult(
+            jevHarnessBacktestOutcome({
+              report: yield* Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown))(raw),
+              instructions,
+              operatingAllocations: artifact.operatingAllocations,
+            }),
+          )
+        })
+      const baseline = yield* readArm(manifest.baseline, manifest.registration.baseline)
+      const baselineRepeat = yield* readArm(manifest.baselineRepeat, manifest.registration.baseline)
+      const candidate = yield* readArm(manifest.candidate, manifest.registration.candidate)
+      const comparison = yield* Effect.fromResult(
+        compareJevHarnessEconomics(manifest.registration, { baseline, baselineRepeat, candidate }),
+      )
+      yield* fs.writeFileString(outputPath, JSON.stringify(comparison), { flag: 'wx', mode: 0o600 })
+      return yield* print({
+        comparisonHash: comparison.comparisonHash,
+        observedNetEffect: comparison.observedNetEffect,
+        economicImprovement: comparison.economicImprovement,
+      })
+    }
     const path = args[1]
     if (
       path === undefined ||

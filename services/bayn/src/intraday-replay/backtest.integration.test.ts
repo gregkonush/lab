@@ -18,6 +18,8 @@ import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
+import { jevHarnessBacktestOutcome } from '../jev/harness2-economics'
+import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
@@ -359,6 +361,20 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.completedAtMs)
           expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.nextPollAtMs)
         }
+        const economics = Result.getOrThrow(
+          jevHarnessBacktestOutcome({
+            report,
+            instructions: jevInstructions,
+            operatingAllocations: report.sessionDates.map((sessionDate) => ({
+              sessionDate,
+              infrastructure: { costMicros: '0', evidenceHash: report.reportHash },
+              research: { costMicros: '0', evidenceHash: report.reportHash },
+            })),
+          }),
+        )
+        expect(economics.reportHash).toBe(report.reportHash)
+        expect(economics.rows.map((row) => row.sessionDate)).toEqual(report.sessionDates)
+        expect(economics.providerRequests).toBe(0)
         expect(report.processedRecords).toBe(source.recordCount)
         expect(report.inference.calls).toEqual([])
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),

@@ -31,6 +31,22 @@ a different typed answer or corrected an observable procedural error. It cannot 
 unrealized market path by preferring the wording or plausibility of that answer. This is an inference about the
 Bayn adaptation, not a claim made by the Harness2 authors.
 
+There is a more fundamental fit question. Harness2 improves the execution process surrounding an agent: it can
+repair omitted verification, poor tool use or an inadequate work plan by inspecting reruns of the same task.
+Jev is a typed System One decision component. It selects supplied answers from application state; it is
+[not trained to generate text](https://docs.typesafe.ai/model-jaggedness/jev-1.13#generation). Bayn already owns
+its tools, arithmetic and execution process in code. Consequently, the useful editable surface here is narrower
+than the agent harness in the paper. An editor may improve literal question wording or remove contradictions;
+that does not supply missing information about future prices. Whether these changes improve financial prediction
+is a separate empirical hypothesis. The paper's task scores do not establish that hypothesis.
+
+The three current questions also measure different things: an entry action, a thesis-invalidating observed stop
+price, and an observed take-profit price supported by the supplied evidence. All are decisions under uncertainty.
+Neither syntactic validity nor agreement between an editor and Jev establishes their future correctness.
+The evaluator must distinguish question interpretation defects from a lack of predictive signal. If a numerical
+or deterministic control matches Jev after costs, prompt search may be optimizing a component with no demonstrated
+incremental value. That is a valid negative result and must remain an admissible end to the experiment.
+
 The code has the following concrete gaps:
 
 1. **No economic evaluator.** `compare_decisions` in `services/bayn/harness2/runner.py` compares funded selections,
@@ -63,6 +79,12 @@ The code has the following concrete gaps:
 7. **Three strings define a narrow experiment.** Editing only entry, stop-loss and take-profit instructions is a valid
    restricted hypothesis class. It cannot fix missing state, answer-option coverage or contradictory criteria.
    Widen the editable contract only when a measured failure requires it; extra knobs are not an improvement metric.
+8. **Full candidate replay needs an owning implementation.** `prepareBacktest` in
+   `services/bayn/src/intraday-replay/backtest.ts` binds the unchanged compiled strategy, while its request builders
+   and receipt decoders reconstruct compiled instructions. Its input has no candidate-instruction field. Rewriting
+   a request in an HTTP wrapper would break sealed request identity and would not update the strategy's validation
+   path. A candidate must be constructed and verified consistently throughout a research-only native execution,
+   with its executable and instruction bytes retained. A reader for economic reports does not supply that producer.
 
 Several engineering boundaries are correct and should be kept: source-controlled baseline instructions, pinned Jev
 identity, native request construction and exclusions, immutable observations and choices, shared funded selection,
@@ -127,6 +149,19 @@ TypeSafe's supervised feature-discovery approach and GEPA are useful comparison 
 another search library now would leave the same missing evaluator. First implement and verify the native economic
 evaluation boundary. Then compare the unchanged prompt, a fixed deliberate edit and Harness2 proposals at equal
 search budgets. Expand to alternative optimization methods only if that comparison justifies the added machinery.
+When development outcomes are available, an explicit-metric optimizer is a more direct match to the financial
+objective than judging behavioral contrast alone. That is an architectural inference, not a measured victory for
+GEPA or the TypeSafe cookbook. Keep Harness2's proposal mechanism as one testable candidate; require evidence for
+the extra search cost before expanding recursion or the experience library.
+
+The existing [frozen Jev acceptance protocol](jev-migration-acceptance-v2.json) and its
+`services/bayn/src/jev/acceptance.ts` implementation already define a separate numerical qualification question,
+including matched controls, execution stress and attempt-indexed comparison error. A narrow prompt comparison
+must not silently replace those controls or introduce a competing statistical pass rule. In particular, generating
+many resamples of a handful of sessions does not create more independent market evidence. Bootstrap validity
+depends on the dependence model and sample assumptions; see the
+[original stationary-bootstrap research](https://doi.org/10.1080/01621459.1994.10476870). A session-delta report
+can be useful descriptive evidence while the adequacy and qualification of the experiment remain unresolved.
 
 No real model-backed Jev improvement study has completed for this integration. The prepared nine-observation sample
 may be used for transport and decision-sensitivity checks, with its limitations explicit. It is rejected as an

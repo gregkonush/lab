@@ -5,7 +5,7 @@ Bayn uses [Google Research Harness2](https://github.com/google-research/harness2
 path. The former Alpha-R1 factor-selection adapter and its study format are removed.
 
 The [design audit](harness2-design-audit-2026-10-20.md) identifies an unfinished requirement: this runner compares
-native decisions but has no independent economic evaluator. It is a candidate-generation and decision-sensitivity
+native decisions but has no completed independent economic evaluation. It is a candidate-generation and decision-sensitivity
 instrument. The current Alpha-R1 editor role and nine-observation feasibility cohort do not qualify an improvement
 claim. Keep candidate adoption and rollout acceptance blocked on that evaluation boundary.
 
@@ -121,6 +121,44 @@ experiment. `costPicoUsd` is null when any call lacks a complete cost basis. Mis
 Every study remains `UNQUALIFIED`. Promotion requires an evidence-backed reviewed change to the compiled
 `jev/instructions.ts`, with the normal strategy/protocol identity migration and existing authority gates. The runner
 does not install candidates into the trading process.
+
+## Native economic report comparison
+
+The native command can compare reports from three independent full backtest runs: the unchanged baseline,
+an unchanged-prompt repeat, and the frozen candidate. It reads existing reports; it does not generate candidate
+backtests or obtain market coverage. The proposal runner does not yet orchestrate this boundary.
+
+```sh
+bayn-harness2-probe --compare /tmp/economic-manifest.json --output /tmp/new-comparison.json
+```
+
+The manifest uses `bayn.jev-harness2-economic-manifest.v1`. Its `registration` contains `studyId`,
+`evaluatorSourceRevision`, `registeredAt`, the `baseline` and `candidate` instruction documents, ordered
+`sessionDates`, and `maximumDrawdownMicros`, with registration schema
+`bayn.jev-harness2-economic-registration.v1`. Each of `baseline`, `baselineRepeat` and `candidate` contains a
+`reportPath`, its exact file `reportSha256`, and ordered `operatingAllocations`. Each allocation names its
+`sessionDate` and separate `infrastructure` and `research` entries: either null, or `{costMicros, evidenceHash}`.
+Unknown allocations remain null. A zero allocation requires evidence just as a nonzero allocation does.
+
+The command checks each complete original report hash before decoding its economic projection. It reproduces
+request and response identities, instruction identity, provider timing bounds, per-session inference inventories,
+declared-tariff expenses, cash, inventory, execution fees and net equity carry. Source, initial capital, strategy,
+execution assumptions, tariff and dates must match across distinct runs. Reports are read sequentially, with a
+64 KiB manifest limit and a 16 MiB limit for each report. Larger native outputs require a deliberate streaming
+consumer; they cannot be truncated to fit. Outputs use exclusive creation and private file permissions.
+
+The resulting `observedNetEffect` describes higher, lower or unchanged native replay net totals. It retains every
+paired session and the unchanged-prompt repeat delta. Missing outcomes or allocations make the comparison
+inconclusive. Operating allocations are additional to native execution, inference and data costs. The reported
+drawdown bound adds their entire nonnegative total to native drawdown, which is conservative when their precise
+intraday booking path is unavailable. Hashes detect altered bytes; they do not authenticate a producer or prove
+the source/accounting graph. Declared registration time also requires independent immutable evidence.
+
+The command needs no provider, broker or database configuration. It always reports `economicImprovement: UNPROVEN`,
+`qualification: UNQUALIFIED` and `adoption: NOT_AUTHORIZED`. It defines no new statistical acceptance rule. The
+[frozen acceptance protocol](jev-migration-acceptance-v2.json) remains a separate numerical gate at its specified
+scope. A model-backed experiment still needs candidate production, independent source coverage, full controls,
+untouched sessions, cost evidence and prospective confirmation before an improvement claim.
 
 ## Validation and rollout
 
