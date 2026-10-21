@@ -84,7 +84,11 @@ integration('research attempt durability with real PostgreSQL', () => {
         const runner = yield* makeResearchRunner(makeResearchStore(sql), 'http://fixture.invalid')
         const result = yield* runner.run(retainedEditor).pipe(Effect.result)
         expect(Result.isFailure(result)).toBe(true)
-        if (Result.isFailure(result)) expect(result.failure.message).toContain('Retired research registrations')
+        if (Result.isFailure(result)) {
+          expect(result.failure._tag).toBe('ResearchError')
+          if (result.failure._tag === 'ResearchError')
+            expect(result.failure.message).toContain('Retired research registrations')
+        }
         expect(calls).toBe(0)
       }).pipe(Effect.provideService(HttpClient.HttpClient, http)),
     )
