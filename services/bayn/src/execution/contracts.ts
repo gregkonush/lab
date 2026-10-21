@@ -23,11 +23,9 @@ import {
   legacyAuthorityGenerationV3SchemaVersion,
   legacyAuthorityProofBindingSchemaVersion,
   legacyAuthorityStateSchemaVersion,
-  legacyBrokerErrorSchemaVersion,
   legacyBrokerEventSchemaVersion,
   legacyFillSchemaVersion,
   legacyOrderV2SchemaVersion,
-  legacyRateLimitSchemaVersion,
   legacyReconciliationSchemaVersion,
   legacyResearchGrantProofSchemaVersion,
   legacyRiskDecisionSchemaVersion,
@@ -321,32 +319,6 @@ export const FillSchema = Schema.Struct({
 })
 export type Fill = typeof FillSchema.Type
 
-export const BrokerErrorSchema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyBrokerErrorSchemaVersion),
-  requestId: NonEmptyString,
-  code: NonEmptyString,
-  message: NonEmptyString,
-  retryable: Schema.Boolean,
-  mutationOutcome: Schema.Enum(MutationOutcome),
-  observedAt: UtcInstant,
-})
-
-const RateLimitBase = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyRateLimitSchemaVersion),
-  limit: Sequence,
-  remaining: Sequence,
-  resetsAt: UtcInstant,
-  observedAt: UtcInstant,
-})
-
-export const RateLimitSchema = RateLimitBase.check(
-  Schema.makeFilter((rateLimit: typeof RateLimitBase.Type) =>
-    BigInt(rateLimit.remaining) <= BigInt(rateLimit.limit)
-      ? []
-      : [{ path: ['remaining'], issue: 'must not exceed limit' }],
-  ),
-)
-
 const SourceFields = {
   schemaVersion: Schema.Literal(legacyBrokerEventSchemaVersion),
   eventId: Sha256,
@@ -364,8 +336,6 @@ const BrokerEventBase = Schema.TaggedUnion({
   Position: { ...SourceFields, position: PositionSchema },
   Order: { ...SourceFields, order: OrderSchema },
   Fill: { ...SourceFields, sourceTimestamp: UtcOrderTimestamp, fill: FillSchema },
-  Error: { ...SourceFields, error: BrokerErrorSchema },
-  RateLimit: { ...SourceFields, rateLimit: RateLimitSchema },
 })
 
 const brokerEventAccountId = (event: typeof BrokerEventBase.Type): string => {
@@ -378,9 +348,6 @@ const brokerEventAccountId = (event: typeof BrokerEventBase.Type): string => {
       return event.order.accountId
     case 'Fill':
       return event.fill.accountId
-    case 'Error':
-    case 'RateLimit':
-      return event.accountId
   }
 }
 
@@ -394,10 +361,6 @@ const brokerEventPayloadTime = (event: typeof BrokerEventBase.Type): string => {
       return event.order.observedAt
     case 'Fill':
       return event.fill.occurredAt
-    case 'Error':
-      return event.error.observedAt
-    case 'RateLimit':
-      return event.rateLimit.observedAt
   }
 }
 

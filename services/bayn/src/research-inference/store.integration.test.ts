@@ -1,4 +1,4 @@
-import jevEditorMigration from '../../migrations/0134_jev_editor_identity'
+import jevEditorMigration from '../../migrations/0135_jev_editor_identity'
 import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
