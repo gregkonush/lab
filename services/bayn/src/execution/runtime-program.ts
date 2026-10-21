@@ -1,12 +1,12 @@
 import { Effect, Result } from 'effect'
 
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
-import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
 import { unknownOutcome } from '../broker/alpaca-mutations/model'
 import type { PersistedCapitalGrantStoreShape } from '../db/persisted-capital-grant'
 import { canonicalHashV1Result } from '../hash'
 import type { Policy } from '../risk'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { cancel, dryRunSubmit, recover, submit } from './coordinator'
 import { selectStoredIntent, validateStartedSubmitRiskDecision } from './coordinator-decisions'
 import type { Intent } from './contracts'
@@ -17,8 +17,8 @@ import {
   type GrantedCapitalAuthority,
   type MutationExecutionAuthority,
 } from './authority'
-import { IntentStore, type IntentStoreService, type StoredIntent } from './intents'
-import { MutationStore, type MutationStoreShape } from './mutations'
+import { IntentStore, type IntentStoreService, type StoredIntent } from './intents/domain'
+import { MutationStore, type MutationStoreShape } from './mutations/model'
 import {
   makeAuthorityGuardedBrokerMutation,
   constrainExecutionCapitalLimits,

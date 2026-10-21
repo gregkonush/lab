@@ -51,7 +51,7 @@ estimate Bayn's alpha, real delay cost, capacity or statistical significance.
 ## Freeze three entry arms before collecting outcomes
 
 All three use the same immutable pre-model candidate set, model-feature cutoff, initial budget, mechanical
-50 bp stop, 15-minute maximum hold, five-minute close window, routing assumptions and fee/capacity model.
+50 bp price stop, 100 bp estimated execution-net profit target, 15-minute maximum hold, five-minute close window, routing assumptions and fee/capacity model.
 Use exact benchmark-relative momentum with the existing symbol tie-break; do not tune a new numeric filter.
 
 1. **Immediate momentum:** choose the deterministic top candidate at its first verified feasible decision time.

@@ -8,7 +8,7 @@ import { Effect, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1 } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { makeStrategyProtocolHashResult } from '../contracts'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
 import { makeIntradayCycleDraft } from '../cycle/runner/calendar-decisions'
@@ -31,7 +31,7 @@ import {
   intradaySnapshotReferencePricesSchemaVersion,
   TargetPlanStatus,
   type QuoteBoundTargetPlannerInput,
-} from '../target-planner'
+} from '../target-planner/index'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-support'
 import { makeJevObservation } from './observation'

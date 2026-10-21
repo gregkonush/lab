@@ -82,11 +82,13 @@ export const prepareFeeAccrual = (input: unknown, ledger: number) =>
       const minimum = prices.reduce((a, b) => (a < b ? a : b))
       const maximum = prices.reduce((a, b) => (a > b ? a : b))
       const rounding = BigInt(data.sourceTrades.length + 1)
-      if (
-        expense + rounding < (quantity * minimum) / 1_000_000_000_000n ||
-        expense > (quantity * maximum + 999_999_999_999n) / 1_000_000_000_000n + rounding
-      )
-        return yield* invalid('Observed coin cost debit does not agree with the source buy prices')
+      const projectedQuantity = BigInt(data.projectedQuantityAtoms)
+      const hasPriorInventory = projectedQuantity > bought
+      const divisor = hasPriorInventory ? projectedQuantity : 1_000_000_000_000n
+      const minimumCost = quantity * (hasPriorInventory ? BigInt(data.projectedCostMicros) : minimum)
+      const maximumCost = quantity * (hasPriorInventory ? BigInt(data.projectedCostMicros) : maximum)
+      if (expense + rounding < minimumCost / divisor || expense > (maximumCost + divisor - 1n) / divisor + rounding)
+        return yield* invalid('Observed coin cost debit does not agree with the source inventory basis')
       coinQuantityAtoms = quantity.toString()
     } else {
       if (BigInt(data.projectedCashMicros) < 0n || BigInt(data.observedCashMicros) < 0n)

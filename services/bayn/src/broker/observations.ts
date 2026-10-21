@@ -33,7 +33,7 @@ import {
   type Position as AlpacaPosition,
   type ReadEvidence,
   type ReadResult,
-} from './alpaca'
+} from './alpaca/model'
 import { Pipeable } from '../pipeable'
 
 const CommonEventInput = {

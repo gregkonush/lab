@@ -1,16 +1,11 @@
 import { executionCloseRecoveryExpiry } from '../market-hours'
 import type { ReconciliationRuntime } from './model'
 import { Effect, Option, Result } from 'effect'
-import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle'
-import {
-  runAutonomousCyclePass,
-  CycleRunnerError,
-  selectCyclePassContinuation,
-  type CyclePassProgress,
-  type CycleRunContext,
-  type CycleRunResult,
-} from '../cycle/runner'
-import { CycleStore } from '../cycle/store'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../cycle/model'
+import { runAutonomousCyclePass } from '../cycle/runner/program'
+import { CycleRunnerError, type CycleRunContext, type CycleRunResult } from '../cycle/runner/model'
+import { selectCyclePassContinuation, type CyclePassProgress } from '../cycle/runner/pass-continuation'
+import { CycleStore } from '../cycle/store/model'
 import { hasExpiredUnusedEntryAdmission } from '../cycle/entry-admission'
 import { cycleDecisionStoreEvidence } from '../cycle/store/decision-contract'
 import {
@@ -20,12 +15,13 @@ import {
 } from '../db/execution-cycle-closure'
 import { AuthorityRestrictionStore } from '../db/execution-store'
 import { WriterFence } from '../execution/writer-fence'
-import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca'
-import { MutationOperation } from '../broker/alpaca-mutations'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
 import { recover as recoverMutation } from '../execution/coordinator'
 import { BrokerAccess } from '../execution/authority'
-import { IntentStore, type BlockedCycleIntentStoreShape } from '../execution/intents'
-import { MutationStore } from '../execution/mutations'
+import { IntentStore } from '../execution/intents/domain'
+import { type BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'
+import { MutationStore } from '../execution/mutations/model'
 import { OperationalError, operationalError } from '../errors'
 import {
   decideExecutionMandateCycleTerminalization,
@@ -38,7 +34,7 @@ import { type ReconciliationPassResult } from '../reconciler'
 import { type Policy } from '../risk'
 import type { CycleDecisionDocument, ExecutionDecisionDocument } from '../shadow-decision-contract'
 import { currentUtcInstant } from '../time'
-import { TargetPlanReason, TargetPlanStatus } from '../target-planner'
+import { TargetPlanReason, TargetPlanStatus } from '../target-planner/index'
 import { strategyDefinition } from '../strategy'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import { evaluateJevPositionManagement } from '../jev/runtime'
@@ -90,6 +86,7 @@ import {
   resolveExecutionCycleCloseWindow,
   type ExecutionCycleCloseWindow,
 } from './execution-window'
+import { protectedAccountAdmission } from './account-admission'
 
 type RecoveredExecutionContext = {
   readonly preparation: ObserveStartupPreparation
@@ -477,7 +474,7 @@ export const ensureExecutionCycleClosure = <R>({
     if (
       observedAt < closeWindow.startAt &&
       exitTarget === undefined &&
-      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v1'
+      existing?.document.strategyDecision?.schemaVersion !== 'bayn.jev-exit-target.v2'
     )
       return { _tag: 'Wait', observedAt, waitReason: 'AWAITING_CLOSE_WINDOW' } as const
     const entryDecisionHash = cycle.bindings.decisionHash
@@ -598,7 +595,7 @@ export const ensureExecutionCycleClosure = <R>({
       initialReconciliation: residualReconciliation,
       closeExpiresAt: closeWindow.expiresAt,
       replanGenerationHash: active.contentHash,
-      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1'
+      ...(existing.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v2'
         ? { exitTarget: existing.document.strategyDecision }
         : {}),
     }).pipe(
@@ -820,7 +817,7 @@ const executeBoundExecutionCycle = (
         : yield* readExecutionCycleClosure(cycle.identity.cycleId, input.executionCycleClosureStore)
     const closeDue =
       observedAt >= closeWindow.startAt ||
-      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v1'
+      committedClosure?.document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v2'
     const closeOnlyContainmentReason =
       document.targetPlan.status === TargetPlanStatus.Blocked &&
       (document.targetPlan.reason === TargetPlanReason.ShortPositionNotAllowed ||
@@ -1309,6 +1306,7 @@ export const runRecoveryFirstCyclePass = (
   context: CycleRunContext<ObserveDecisionRuntime>,
   reconciliation: ExecutionReconciliation,
   capability: ExecutionCapability,
+  preflight?: ReconciliationPassResult,
 ): Effect.Effect<RecoveryFirstCyclePassResult, CycleRunnerError, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     let cycle = yield* readUnfinishedMutationCycle(context)
@@ -1328,6 +1326,15 @@ export const runRecoveryFirstCyclePass = (
           return yield* terminalizeUnboundMutationCycle(cycle, terminalReason, observedAt)
       }
       if (capability._tag !== 'Mutation') return { outcome: 'WINDOW_CLOSED' as const, observedAt }
+      if (cycle === undefined) {
+        const protectedAdmission = protectedAccountAdmission(
+          preflight,
+          policy,
+          input.authorityGenerationHash,
+          observedAt,
+        )
+        if (protectedAdmission !== undefined) return protectedAdmission
+      }
       const result = yield* runAutonomousCyclePass(context, cycle)
       const continuation = selectCyclePassContinuation(result)
       if (continuation._tag === 'RETURN') return result

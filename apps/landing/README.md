@@ -3,7 +3,9 @@
 This app expects the shared Convex backend in `packages/backend`.
 
 Deployment: changes under `apps/landing/**` (or `packages/design/**`) merged to `main` trigger the main-branch image
-build. Kargo discovers the immutable image, creates Freight, and automatically promotes the `proompteng` Stage; Kargo
+build. The web image participates in the coordinated Ofz → Tengri → Proompteng release: matching source revisions
+and schemas must pass all image and runtime qualification gates before promotion. A successful web build alone
+does not establish deployment. Kargo discovers the immutable image set, creates Freight, and promotes the `proompteng` Stage; Kargo
 writes the exact source commit, digest, and build/provenance metadata to `kargo/proompteng` without a pull request, and
 Argo tracks that branch through sync/health. No Image Updater, SHA manifest bump, release branch, or deployment PR is
 required. See [`docs/release-automation.md`](../../docs/release-automation.md) for the common delivery contract and
@@ -275,6 +277,7 @@ PNG, JPEG and WebP images inline; generated-image tool outputs with saved worksp
 Local image links can open image file tabs. Retained image reads use the authenticated,
 owner-authorized file contract, validate raster signatures and size, and disable caching. Missing images show an
 unavailable placeholder. Arbitrary remote Markdown images remain disabled.
+Command output stays plain text: Markdown image examples in printed source or logs do not trigger image reads.
 
 Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.

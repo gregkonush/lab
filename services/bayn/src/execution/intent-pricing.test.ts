@@ -1,10 +1,10 @@
 import { instrumentMarket } from '../instruments'
-import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations/decisions'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { defaultExecutionModel } from '../execution-model'
+import { defaultExecutionModel } from '../strategy/execution-model/model'
 import { simulateIntradayReplayExecution } from '../intraday-replay/execution-core'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { OrderSide, OrderType, TimeInForce } from './contracts'

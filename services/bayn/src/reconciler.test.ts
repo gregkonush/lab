@@ -17,14 +17,13 @@ import {
   SortDirection,
   TradeActivityType,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
   type Account as BrokerAccount,
   type BrokerReadShape,
   type FillActivity,
   type Order as BrokerOrder,
   type ReadEvidence,
-} from './broker/alpaca'
+} from './broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './broker/alpaca/failures'
 import { unusedAssetBySymbol, unusedMarketCalendar } from './broker/alpaca-test-support'
 import { canonicalHashV1 } from './hash'
 import { ReconciliationStatus, type AccountingReceipt, type Valuation } from './execution/contracts'
@@ -44,7 +43,7 @@ import {
 import type { BrokerSnapshot, ReconciliationWriteResult } from './db/reconciliation'
 import { WriterFence, type WriterFenceService } from './execution/writer-fence'
 import { ReconciliationClock, ReconciliationError, runOnce } from './reconciler'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { decideContainment } from './simulation-reconciliation/broker-containment'
 import {
   decideFillPage,

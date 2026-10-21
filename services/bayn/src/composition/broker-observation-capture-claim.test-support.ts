@@ -5,7 +5,7 @@ import { PgClient } from '@effect/sql-pg'
 import { Clock, Effect, Layer, Logger, References } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualPostgres from '../db/postgres-client'
 
@@ -88,7 +88,7 @@ const result = await Effect.runPromise(
           alpaca: { expectedAccountId: 'test-account' },
           build: { sourceRevision: 'b'.repeat(40) },
         },
-      } as unknown as ApplicationPlanFor<'AutonomousService'>
+      } as unknown as ApplicationPlan
       const { runtime } = yield* acquireBrokerObservationRuntime(plan)
       const signal = new AbortController().signal
       const reservation = {

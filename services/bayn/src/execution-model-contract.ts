@@ -197,8 +197,5 @@ export type QuoteBoundExecutionModel = Extract<
   { readonly schemaVersion: 'bayn.execution-model.v4' | 'bayn.execution-model.v6' }
 >
 
-export const isSupportedExecutionModel = (model: ExecutionModel): model is SupportedExecutionModel =>
-  model.schemaVersion === 'bayn.execution-model.v2' || model.schemaVersion === 'bayn.execution-model.v3'
-
 export const isQuoteBoundExecutionModel = (model: CycleExecutionModel): model is QuoteBoundExecutionModel =>
   model.schemaVersion === 'bayn.execution-model.v4' || model.schemaVersion === 'bayn.execution-model.v6'

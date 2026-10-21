@@ -5,10 +5,11 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { BrokerObservations } from './broker/alpaca/observed-snapshot'
 import { AlpacaBrokerResourcesLive } from './broker/alpaca/composition'
-import { BrokerProvider, BrokerSession, decodeBrokerConnection, type BrokerConnection } from './broker/alpaca'
+import { BrokerProvider, decodeBrokerConnection, type BrokerConnection } from './broker/connection'
+import { BrokerSession } from './broker/alpaca/session'
 import { AlpacaHttpClient } from './broker/alpaca/http'
 import { BrokerEnvironment } from './broker/identity'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { Journal, JournalLive, type TigerBeetleClient } from './ledger'
 import { config as fixtureConfig } from './testing/runtime-fixtures'
 import {
