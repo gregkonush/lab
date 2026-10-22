@@ -103,7 +103,6 @@ export const reconciliationForPreparation = <R>(
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
   readAuthority: Effect.Effect<AuthorityState, ReconciliationPassError, R>,
   maximumAgeMs: number,
-  pricingMaximumAgeMs = maximumAgeMs,
 ) =>
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
@@ -137,27 +136,18 @@ export const reconciliationForPreparation = <R>(
           const cached = yield* Ref.get(previous)
           const authority = yield* readAuthority
           const now = yield* Clock.currentTimeMillis
-          const reusableUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
           const freshUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, pricingMaximumAgeMs)
-          if (
-            cached !== undefined &&
-            reusableUntil !== undefined &&
-            freshUntil !== undefined &&
-            now < reusableUntil &&
-            now + minimumRemainingMs < freshUntil
-          )
+            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
+          if (cached !== undefined && freshUntil !== undefined && now + minimumRemainingMs < freshUntil)
             return { reconciliation: cached, freshUntil }
           const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis
-          // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
           const refreshedUntil = reconciliationReusableUntil(
             reconciliation,
             refreshedAuthority,
             refreshedAt,
-            pricingMaximumAgeMs,
+            maximumAgeMs,
           )
           return {
             reconciliation,
@@ -567,7 +557,6 @@ const makeRecoveryFirstCycleDriverEffect = (
           preflight,
           reconcile,
           authorityStore.readAuthorityState,
-          Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
           policy.maxBrokerStateAgeMs,
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {

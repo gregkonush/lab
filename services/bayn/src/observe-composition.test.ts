@@ -857,8 +857,8 @@ test.each([19_999, 20_000, 29_999])('pricing reserves quote headroom when cached
   )
 })
 
-test.each([20_000, 25_000, 29_999])(
-  'pricing reuses broker-valid facts %sms into the reconciliation cadence',
+test.each([20_000, 25_000, 29_999, 30_000, 35_000])(
+  'pricing and follow-up reads reuse broker-valid facts %sms old within one preparation',
   async (ageMs) => {
     let refreshes = 0
     await Effect.runPromise(
@@ -875,7 +875,6 @@ test.each([20_000, 25_000, 29_999])(
             return reconciliationResultAt(yield* currentUtcInstant)
           }),
           Effect.succeed(initial.riskContext.authority),
-          30_000,
           300_000,
         )
         const priced = yield* cache.readForPricing(10_000)
@@ -883,7 +882,10 @@ test.each([20_000, 25_000, 29_999])(
         expect(priced.freshUntil).toBe(now - ageMs + 300_000)
         expect(yield* Clock.currentTimeMillis).toBe(now)
         expect(refreshes).toBe(0)
-        yield* TestClock.adjust(30_000 - ageMs)
+        yield* TestClock.adjust(30_000)
+        yield* cache.read
+        expect(refreshes).toBe(0)
+        yield* TestClock.setTime(now - ageMs + 300_000)
         yield* cache.read
         expect(refreshes).toBe(1)
       }).pipe(Effect.provide(TestClock.layer())),
@@ -4676,7 +4678,6 @@ describe('OBSERVE runtime composition', () => {
             if (authority === null) throw new Error('fixture authority missing')
             return authority
           }),
-          30_000,
           policy.maxBrokerStateAgeMs,
         )
         const document = yield* buildMutationShadowCycleDecision({
@@ -4746,14 +4747,14 @@ describe('OBSERVE runtime composition', () => {
   }
 
   test('Jev pricing follows committed refresh and uses current risk with immutable model evidence', async () => {
-    const result = await buildEntryWithHeadroom()
+    const result = await buildEntryWithHeadroom({ brokerMaximumAgeMs: 40_000 })
     if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
     const document = result.exit.value
     expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed', 'pricing'])
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
-    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v5')
-    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
+    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v6')
+    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('expected Jev entry')
     expect(
       Result.getOrThrow(canonicalHashV1Result(document.strategyDecision.evidence.observation.portfolio.brokerState)),
     ).toBe(Result.getOrThrow(canonicalHashV1Result(result.initial.brokerState)))
@@ -4835,24 +4836,48 @@ describe('OBSERVE runtime composition', () => {
     },
   )
 
-  test('Jev binds timely inference without an unnecessary slow reconciliation refresh', async () => {
+  test.each([22_000, 27_000, 35_000])(
+    'Jev binds timely inference with broker-valid facts %ims old without a slow reconciliation refresh',
+    async (initialAgeMs) => {
+      const result = await buildEntryWithHeadroom({
+        initialAgeMs,
+        inferenceMs: 3_000,
+        refreshMs: 9_642,
+        brokerMaximumAgeMs: 300_000,
+      })
+      if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
+      expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+      expect(result.refreshes).toBe(0)
+      const decision = result.exit.value.strategyDecision
+      if (decision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('expected Jev entry')
+      expect(decision.selectedSymbols).toEqual(['NVDA'])
+      expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
+    },
+  )
+
+  test('Jev abstention does not refresh broker-valid facts after the reconciliation cadence expires', async () => {
     const result = await buildEntryWithHeadroom({
-      initialAgeMs: 22_000,
+      entryAction: 'wait',
+      initialAgeMs: 35_000,
       inferenceMs: 3_000,
       refreshMs: 9_642,
       brokerMaximumAgeMs: 300_000,
+      decisionFinalizationHeadroomMs: 60_000,
     })
     if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
-    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+    expect(result.exit.value.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+    expect(result.exit.value.orderedIntentIds).toEqual([])
+    expect(result.events).toEqual(['signal', 'inference-committed'])
     expect(result.refreshes).toBe(0)
-    const decision = result.exit.value.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
-    expect(decision.selectedSymbols).toEqual(['NVDA'])
-    expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
   })
 
   test.each([
-    { name: 'refresh exhausts the existing model deadline', inferenceMs: 7_000, refreshMs: 3_000 },
+    {
+      name: 'refresh exhausts the existing model deadline',
+      inferenceMs: 7_000,
+      refreshMs: 3_000,
+      brokerMaximumAgeMs: 40_000,
+    },
     {
       name: 'refresh commit consumes the remaining broker-risk headroom',
       refreshedAgeMs: 19_000,
@@ -4893,6 +4918,7 @@ describe('OBSERVE runtime composition', () => {
     'Jev rejects refreshed %s facts before selecting a quote',
     async (change) => {
       const result = await buildEntryWithHeadroom({
+        brokerMaximumAgeMs: 40_000,
         transform: (facts) => {
           if (change === 'holding')
             return reconciliationResultAt(facts.brokerState.account.observedAt, 0, 0, [
@@ -5030,7 +5056,7 @@ describe('OBSERVE runtime composition', () => {
         decisionMarketData: { symbols: equityMarketProfile.universe },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v5', selectedSymbols: ['NVDA'] },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v6', selectedSymbols: ['NVDA'] },
       targetPlan: { status: TargetPlanStatus.Planned },
     })
     expect(fixture.document.orderedIntentIds).toHaveLength(1)
@@ -7249,7 +7275,7 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const decision = fixture.document.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('Entry fixture required')
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Entry fixture required')
     const levels = decision.exitPolicy.plans[fixture.intent.symbol]?.levels
     if (levels === undefined) throw new Error('Bound strategy prices required')
     const intent = await Effect.runPromise(

@@ -6,7 +6,7 @@ use tonic::{Request, Status, metadata::MetadataValue, transport::Channel};
 use super::*;
 
 #[cfg(test)]
-pub(super) mod test_server;
+pub(crate) mod test_server;
 #[cfg(test)]
 mod tests;
 

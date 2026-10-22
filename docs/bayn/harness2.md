@@ -16,7 +16,8 @@ response validation, proxy and ten-second request timeout. Probes reconstruct st
 an original native Bayn observation. The baseline instructions must match the compiled live instructions exactly.
 
 Harness2 edits only `instructions.json`, containing one `entry` string of at most 2,000
-characters. This is the complete-plan question instruction used by `trade-plan-choices.ts`.
+characters. This is the conditional complete-plan question instruction used by `trade-plan-choices.ts`.
+The independent current-setup question remains source controlled and cannot be replaced by an editor's plan instruction.
 The editor sees a bounded summary with original request hashes, relative returns, break-even economics, candidate
 and benchmark returns, price ranges, quotes, and selected answers. Unrepresented fields never establish missing
 facts. Each signal group remains represented for the full candidate universe.
@@ -28,7 +29,11 @@ into the same funded selections and protection-plan rejections used by the live 
 The pinned Qwen3-8B general instruction endpoint serves as the generative editor and reflection writer. It does not execute probes,
 select factors or make trading decisions. Editor calls retain signed native registrations, original SSE bytes,
 serving identity, usage and expense evidence through the existing Restate workflow. The worker accepts only the
-`bayn.jev-harness2-editor.v2` contract. Historical Alpha-R1 editor and factor registrations remain immutable accounting evidence; their
+`bayn.jev-harness2-editor.v3` contract. Prompt edits use vLLM's JSON Schema response format, derived from
+`JevInstructionsSchema` with extra properties forbidden. The provider returns only the complete `{"entry":"..."}`
+document. The native stream decoder and Python adapter both reject wrappers, XML tags, notes, missing fields and
+invalid instruction strings. Reflection keeps its separate evidence format. Retired v2 requests remain readable
+for receipt and expense verification, but cannot be submitted or dispatched. Historical Alpha-R1 editor and factor registrations remain immutable accounting evidence; their
 formats cannot be submitted for new inference through the command or deployed worker.
 
 The active trading exit path enforces the protection terms selected before entry. This experiment does not optimize
@@ -107,6 +112,12 @@ Retain inconclusive attempts; a new experiment requires a new explicit registrat
 The report separates engine completion, changed native decisions and economic improvement. It compares baseline and
 candidate funded selections, quantities, protection plans and rejection reasons on the same hidden observations.
 A probability change that leaves the native selection and plan unchanged does not count as a changed decision.
+
+Before reflection, the adapter hashes the selected instruction document and every compared candidate against the
+baseline. If all instruction documents match, it records `instruction-comparison.json`, skips the generative
+reflection call and returns `NO_ENTRY`. Provider output differences under unchanged instructions cannot create a
+successful-edit lesson in the upstream library. A rejected candidate with changed instructions remains available
+for reflection even when the selected document is the baseline.
 
 `NO_OBSERVED_CHANGE` means every paired validation probe completed and produced the same native decision.
 `INCONCLUSIVE` includes changed decisions without independent outcome evidence, incomplete calls or missing pairs.
