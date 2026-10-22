@@ -33,11 +33,11 @@ func TestCodexActivityTracksAllThreadsWithoutSubscribers(t *testing.T) {
 	if !supervisor.activitySnapshot().Working {
 		t.Fatal("active turns must inhibit sleep without a subscriber")
 	}
-	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"turn-a"}}`)
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"turn-a","status":"completed"}}`)
 	if !supervisor.activitySnapshot().Working {
 		t.Fatal("another thread is still working")
 	}
-	workEvent(t, supervisor, "turn/completed", `{"threadId":"b","turn":{"id":"turn-b"}}`)
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"b","turn":{"id":"turn-b","status":"completed"}}`)
 	after := supervisor.activitySnapshot()
 	if after.Working || after.IdleForMs > 1000 {
 		t.Fatalf("completion must start a fresh idle interval: %+v", after)
@@ -57,7 +57,10 @@ func TestCodexActivityPendingStartSurvivesDisconnectedCaller(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
-	go func() { _, err := supervisor.call(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`)); done <- err }()
+	go func() {
+		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
+		done <- err
+	}()
 	request := readCodexWireRequest(t, writer)
 	if !supervisor.activitySnapshot().Working {
 		t.Fatal("pending start must inhibit sleep")
@@ -74,7 +77,7 @@ func TestCodexActivityPendingStartSurvivesDisconnectedCaller(t *testing.T) {
 	if !supervisor.activitySnapshot().Working {
 		t.Fatal("the accepted turn is still working")
 	}
-	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"one"}}`)
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"one","status":"completed"}}`)
 	if supervisor.activitySnapshot().Working {
 		t.Fatal("finished turn is idle")
 	}
@@ -84,7 +87,7 @@ func TestCodexActivityFailedStartAndLateCompletion(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(`{"threadId":"a"}`))
+		_, err := supervisor.request(context.Background(), "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
 		done <- err
 	}()
 	request := readCodexWireRequest(t, writer)
@@ -96,7 +99,7 @@ func TestCodexActivityFailedStartAndLateCompletion(t *testing.T) {
 		t.Fatal("rejected starts do not leave permanent inhibition")
 	}
 	workEvent(t, supervisor, "turn/started", `{"threadId":"a","turn":{"id":"new"}}`)
-	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"old"}}`)
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"old","status":"completed"}}`)
 	if !supervisor.activitySnapshot().Working {
 		t.Fatal("late completion cannot clear a newer turn")
 	}
@@ -147,7 +150,10 @@ func TestCodexActivityCancelledBeforeWriteDoesNotRemainBusy(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	done := make(chan error, 1)
-	go func() { _, err := supervisor.call(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`)); done <- err }()
+	go func() {
+		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
+		done <- err
+	}()
 	deadline := time.Now().Add(time.Second)
 	for !supervisor.activitySnapshot().Working {
 		if time.Now().After(deadline) {
@@ -164,5 +170,33 @@ func TestCodexActivityCancelledBeforeWriteDoesNotRemainBusy(t *testing.T) {
 	}
 	if len(writer.messages) != 0 {
 		t.Fatal("request should never have reached the app-server")
+	}
+}
+
+func TestCodexActivityTracksDurableDispatchAndTerminalReceipt(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(`{"threadId":"a","clientUserMessageId":"11111111-1111-4111-8111-111111111111"}`))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	if !supervisor.activitySnapshot().Working {
+		t.Fatal("durable dispatch must inhibit sleep while awaiting acceptance")
+	}
+	workEvent(t, supervisor, "turn/started", `{"threadId":"a","turn":{"id":"one"}}`)
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"turn":{"id":"one"}}`)})
+	if err := <-done; err != nil {
+		t.Fatalf("durable dispatch: %v", err)
+	}
+	if !supervisor.activitySnapshot().Working {
+		t.Fatal("accepted durable turn is still working")
+	}
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"one","status":"completed"}}`)
+	if supervisor.terminalStatus("a", "one", supervisor.generation.id) != "completed" {
+		t.Fatal("terminal receipt must survive the merge")
+	}
+	if supervisor.activitySnapshot().Working {
+		t.Fatal("durably completed turn should start the idle interval")
 	}
 }

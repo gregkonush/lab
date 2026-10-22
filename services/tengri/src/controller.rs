@@ -304,6 +304,19 @@ pub async fn converge(
                     "policyVersion": authority.policy_version, "ownerHash": authority.owner_id},
         });
         if desired == MicroVMDesiredState::Running
+            && (microvm.spec.desired_state != MicroVMDesiredState::Running
+                || microvm.spec.runtime_epoch != authority.runtime_epoch)
+            && microvm
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::activity::ACTIVE_RUN_ANNOTATION))
+                .is_some_and(|value| crate::activity::is_idle_sleep_claim(value))
+        {
+            patch["metadata"]["annotations"][crate::activity::ACTIVE_RUN_ANNOTATION] =
+                serde_json::Value::Null;
+        }
+        if desired == MicroVMDesiredState::Running
             && (microvm.spec.desired_state != desired
                 || microvm.spec.runtime_epoch != authority.runtime_epoch)
         {
@@ -336,6 +349,16 @@ pub async fn converge(
     )?;
     let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
+    // A persisted reservation must survive controller replacement even after
+    // the runtime has started saving. New reservations require a fresh guest
+    // idle check and use resourceVersion to exclude concurrent durable run pins.
+    if crate::activity::has_idle_sleep_claim(&microvm)
+        && microvm.spec.desired_state != MicroVMDesiredState::Sleeping
+    {
+        leadership.fence()?;
+        authorization.stop_runtime(&microvm).await?;
+        return api.get(&microvm.name_any()).await.map_err(Into::into);
+    }
     let status = supervisor.status().await?;
     ensure!(
         matches!(status.state, SlotState::Vacant { .. })
@@ -345,10 +368,9 @@ pub async fn converge(
                 .is_some_and(|claim| claim.allocation() == allocation),
         "slot owner or epoch changed"
     );
-    let now = Utc::now();
     if microvm.spec.desired_state == MicroVMDesiredState::Running
         && status.state.serves(&claim_for(&microvm)?)
-        && idle_deadline_passed(&microvm, now)
+        && idle_deadline_passed(&microvm, Utc::now())
         && match agent_work.permits_sleep(&microvm).await {
             Ok(permitted) => permitted,
             Err(error) => {
@@ -357,7 +379,6 @@ pub async fn converge(
             }
         }
     {
-        // Check fresh authenticated activity and ownership after the guest probe.
         let current = api.get(&microvm.name_any()).await?;
         if current.resource_version() != microvm.resource_version()
             || !idle_deadline_passed(&current, Utc::now())
@@ -365,7 +386,10 @@ pub async fn converge(
             return Ok(current);
         }
         leadership.fence()?;
-        authorization.stop_runtime(&current).await?;
+        let claimed =
+            crate::activity::claim_idle_sleep(client.clone(), namespace, &current).await?;
+        leadership.fence()?;
+        authorization.stop_runtime(&claimed).await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);
     }
     let state = match microvm.spec.desired_state {
@@ -1971,6 +1995,59 @@ mod tests {
             .unwrap();
         assert!(result.metadata.deletion_timestamp.is_some());
         assert!(result.spec.slot.is_none());
+        assert!(pending.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn idle_sleep_reservation_survives_reconciliation_without_reprobing_or_restoring() {
+        use axum::{Router, routing::post};
+        let mut microvm = agent();
+        microvm.status = Some(MicroVMStatus {
+            pod_uid: Some("original-pod".into()),
+            ..Default::default()
+        });
+        microvm.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        microvm.metadata.annotations.get_or_insert_default().insert(
+            crate::activity::ACTIVE_RUN_ANNOTATION.into(),
+            format!("idle-sleep/{}", microvm.spec.runtime_epoch),
+        );
+        let claim = claim_for(&microvm).unwrap();
+        // Only fencing is reachable. Once sleep has been reserved, replacement
+        // controllers must finish it without requiring status, restore or guest RPCs.
+        let router =
+            Router::new().route("/slot/fence", post(|| async { axum::http::StatusCode::OK }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move { axum::serve(listener, router).await.unwrap() });
+        let lease = json!({"apiVersion":"coordination.k8s.io/v1","kind":"Lease",
+            "metadata":{"name":"slot-test","annotations":{POD_UID_ANNOTATION:"original-pod",HOME_UID_ANNOTATION:"original-pvc",HOME_NAME_ANNOTATION:"original-home"}},
+            "spec":{"holderIdentity":serde_json::to_string(&claim.allocation()).unwrap()}});
+        let (client, pending) = mock(vec![
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                lease.clone(),
+            ),
+            get(
+                "/apis/coordination.k8s.io/v1/namespaces/tengri/leases/slot-test",
+                lease,
+            ),
+            get(
+                "/api/v1/namespaces/tengri/pods/slot-test",
+                json!({"apiVersion":"v1","kind":"Pod","metadata":{"name":"slot-test","uid":"original-pod"},"status":{"podIP":"127.0.0.1"}}),
+            ),
+            get(
+                "/apis/runtime.proompteng.ai/v1alpha1/namespaces/tengri/microvms/agent-test",
+                json!(microvm),
+            ),
+        ]);
+        let mut context = context(client);
+        context.identity = WorkloadIdentity::Fixture(port);
+        context.authorization = crate::authz::WorkspaceAuthorization::ControlledFixture(Arc::new(
+            std::sync::atomic::AtomicU8::new(6),
+        ));
+        let result = converge(&context, &microvm, context.leader().unwrap()).await;
+        server.abort();
+        assert!(crate::activity::has_idle_sleep_claim(&result.unwrap()));
         assert!(pending.lock().unwrap().is_empty());
     }
 

@@ -121,7 +121,9 @@ delivered event streams without duplication. Device login and thread state persi
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
 Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
-requests. `ResolveCodexApproval.response_json` delivers explicit answers using the same generation-fenced reply path.
+requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
+generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive
+an approval card after process replacement.
 The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
 replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
 Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.

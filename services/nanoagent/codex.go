@@ -4,12 +4,15 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -50,6 +53,7 @@ func (err *codexUnsentRequestError) Unwrap() error { return err.error }
 type codexPendingResult struct {
 	result        json.RawMessage
 	err           json.RawMessage
+	localErr      error
 	eventSequence uint64
 }
 
@@ -80,6 +84,7 @@ type codexSubscription struct {
 }
 
 type codexApproval struct {
+	raw         json.RawMessage
 	inputParams json.RawMessage
 	generation  *codexProcessGeneration
 	method      string
@@ -90,6 +95,7 @@ type codexApproval struct {
 }
 
 type codexProcessGeneration struct {
+	id      string
 	ready   chan struct{}
 	failure error
 }
@@ -102,6 +108,7 @@ type codexSupervisor struct {
 	requestID       atomic.Uint64
 	writePermit     chan struct{}
 	loginMu         sync.Mutex
+	operationMu     sync.Mutex
 	responseTimeout time.Duration
 
 	mu              sync.Mutex
@@ -148,7 +155,19 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 }
 
 func newCodexProcessGeneration() *codexProcessGeneration {
-	return &codexProcessGeneration{ready: make(chan struct{})}
+	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{})}
+}
+
+func randBytes() []byte {
+	value := make([]byte, 16)
+	if _, err := rand.Read(value); err != nil {
+		panic("create Codex process identity: " + err.Error())
+	}
+	return value
+}
+
+func approvalKey(generation *codexProcessGeneration, id json.RawMessage) string {
+	return generation.id + ":" + normalizeRequestID(id)
 }
 
 func (supervisor *codexSupervisor) start() {
@@ -296,9 +315,9 @@ func (supervisor *codexSupervisor) close() {
 	}
 	supervisor.approvals = make(map[string]codexApproval)
 	supervisor.mu.Unlock()
-	shutdownError, _ := json.Marshal(map[string]string{"message": "Codex app-server is shutting down"})
+	shutdownError := errors.New("Codex app-server is shutting down")
 	for _, response := range pending {
-		response <- codexPendingResult{err: shutdownError}
+		response <- codexPendingResult{localErr: shutdownError}
 	}
 	if command != nil && command.Process != nil {
 		killProcessGroup(command)
@@ -320,6 +339,61 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	}
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
+	}
+	if method == "tengri/pending" {
+		return supervisor.pendingApprovals(params)
+	}
+	if method == "tengri/operation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+			Turn   string `json:"turnId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		op, err := readCodexOperation(filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json"))
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errors.New("operation receipt is unavailable")
+		}
+		supervisor.mu.Lock()
+		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
+		supervisor.mu.Unlock()
+		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
+		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
+		return codexCallResult{result: raw}, err
+	}
+	if method == "tengri/reconcileOperation" {
+		var input struct {
+			ID     string `json:"operationId"`
+			Thread string `json:"threadId"`
+		}
+		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
+			return codexCallResult{}, errors.New("invalid operation identity")
+		}
+		supervisor.operationMu.Lock()
+		defer supervisor.operationMu.Unlock()
+		path := filepath.Join(supervisor.cwd, ".tengri", "codex-operations", input.ID+".json")
+		op, err := readCodexOperation(path)
+		if err != nil || op.Thread != input.Thread {
+			return codexCallResult{}, errCodexOperationUnknown
+		}
+		if op.State != "completed" {
+			op, err = supervisor.reconcileOperation(ctx, op)
+			if err != nil {
+				return codexCallResult{}, err
+			}
+			if err := writeCodexOperation(path, op); err != nil {
+				return codexCallResult{}, errCodexOperationUnknown
+			}
+		}
+		if len(op.Error) != 0 {
+			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
+		}
+		return codexCallResult{result: op.Result}, nil
+	}
+	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
+		return supervisor.operation(ctx, method, params)
 	}
 	return supervisor.request(ctx, method, params, true)
 }
@@ -462,6 +536,9 @@ func (supervisor *codexSupervisor) request(
 		supervisor.removePending(key)
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
+		if result.localErr != nil {
+			return codexCallResult{}, result.localErr
+		}
 		if len(result.err) > 0 && string(result.err) != "null" {
 			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
 		}
@@ -594,6 +671,11 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	if message.Method == "turn/completed" {
+		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
+			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
+		}
+	}
 	supervisor.observeWork(generation, message)
 	if message.Method == "serverRequest/resolved" {
 		var params struct {
@@ -601,11 +683,18 @@ func (supervisor *codexSupervisor) handleServerMessage(
 		}
 		if json.Unmarshal(message.Params, &params) == nil && len(params.RequestID) > 0 {
 			supervisor.mu.Lock()
-			id := normalizeRequestID(params.RequestID)
+			id := approvalKey(generation, params.RequestID)
 			if approval, found := supervisor.approvals[id]; found && approval.generation == generation {
 				delete(supervisor.approvals, id)
 			}
 			supervisor.mu.Unlock()
+			var event map[string]any
+			if json.Unmarshal(raw, &event) == nil {
+				if params, ok := event["params"].(map[string]any); ok {
+					params["requestId"] = id
+					raw, _ = json.Marshal(event)
+				}
+			}
 		}
 	}
 	if message.Method == "account/login/completed" {
@@ -628,7 +717,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	}
 	approvalID := ""
 	if len(message.ID) > 0 {
-		approvalID = normalizeRequestID(message.ID)
+		approvalID = approvalKey(generation, message.ID)
 		switch message.Method {
 		case "currentTime/read":
 			_ = supervisor.respondRawForGenerationWithin(
@@ -754,7 +843,41 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	supervisor.mu.Lock()
+	if approval, found := supervisor.approvals[approvalID]; found && approval.generation == generation {
+		approval.raw = append(json.RawMessage(nil), raw...)
+		supervisor.approvals[approvalID] = approval
+	}
+	supervisor.mu.Unlock()
 	supervisor.publish(message.Method, approvalID, json.RawMessage(raw))
+}
+
+func (supervisor *codexSupervisor) pendingApprovals(params json.RawMessage) (codexCallResult, error) {
+	var input struct {
+		Thread string `json:"threadId"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Thread == "" {
+		return codexCallResult{}, errors.New("threadId is required")
+	}
+	supervisor.mu.Lock()
+	defer supervisor.mu.Unlock()
+	result := make([]map[string]any, 0)
+	for id, approval := range supervisor.approvals {
+		var message struct {
+			Params struct {
+				Thread string `json:"threadId"`
+			} `json:"params"`
+		}
+		if approval.generation == supervisor.generation && json.Unmarshal(approval.raw, &message) == nil && message.Params.Thread == input.Thread {
+			result = append(result, map[string]any{"approvalId": id, "raw": approval.raw})
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i]["approvalId"].(string) < result[j]["approvalId"].(string) })
+	raw, err := json.Marshal(result)
+	if len(result) > 32 || len(raw) > 512<<10 {
+		return codexCallResult{}, errors.New("pending approvals exceed the durable snapshot limit")
+	}
+	return codexCallResult{result: raw}, err
 }
 
 func (supervisor *codexSupervisor) isCurrentGeneration(generation *codexProcessGeneration) bool {
@@ -1385,9 +1508,8 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	supervisor.loginOperation = nil
 	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
-	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
-		channel <- codexPendingResult{err: encoded}
+		channel <- codexPendingResult{localErr: err}
 	}
 }
 
@@ -1459,7 +1581,7 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval":
 		return true
 	default:
 		return false

@@ -4,7 +4,7 @@ The signed guest request protocol is implemented by the Rust `guest_authorizatio
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
 signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
-cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
+cover both languages and all 18 RPC classifications against the Ofz operation catalog. Regenerate them with
 `node services/tengri/fixtures/generate-ofz-guest-request-v4.mjs` from the repository root.
 
 Ofz checks the complete observation policy before the controller signs the exact request. Scoped proofs carry only
@@ -23,11 +23,13 @@ observed 20.9-second commit tail without changing request lifetimes or synchrono
 ownership expires after 60 seconds; SQL acquisition polling and durable acquisition can add failover time. A known
 ownership loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
-Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Ticket writes use eight connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
 verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
-Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
-in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+Two controller replicas and one rolling-update surge need at most 30 connections. Run workers share one connection
+for SQL coordination and schema checks, with no ticket-write pool. Eight simultaneous worker Pods, including retained
+versions and registration overlap, keep the controller role within its existing 42-connection limit. Six supervisors
+need 24 connections in total. Retain the Ofz managed-role limits and 220-connection server budget;
 reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
@@ -516,8 +518,86 @@ starting or steering a turn, preventing silent image loss during a mismatched re
 under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
 fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
 conversation references remain valid.
-If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
-Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
+Attachments use SHA-256 content paths. A create-only conflict is reused only after reading and verifying the exact
+content revision. Failed batches preserve staged content, because a path may already belong to an accepted run or
+conversation. Attachment and native operation receipts remain with the retained workspace until owner deletion.
+
+## Durable Codex runs
+
+Guest API 6 requires canonical UUID operation identities for every submission and control. `SendCodexInput` returns a
+durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
+returns its current state. The public controller stages content-addressed image references and acknowledges a run
+after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
+endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
+
+`TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
+private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
+control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
+before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
+a newly signed attempt can use the same operation UUID. Accepted workflows use private Restate calls and the workspace
+records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
+guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
+admission or transcript does not grant execution authority.
+
+Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
+transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
+receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
+notifications are fsynced under their accepting generation, thread and turn before publication, so confirmed failure
+and interruption survive process replacement without trusting a reconstructed interrupted history.
+
+Committed receipts return the original result across retries
+and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
+`clientId` to a single turn. Zero or ambiguous matches keep the operation uncertain and block a fresh submission;
+they never resend the model request. Observation uses bounded metadata pages and the accepting Codex process identity.
+An unfinished turn from a dead process requires reconciliation. Pending approval snapshots and exact submitted
+controls live in Restate. One workflow per control ID records the exact pending approval scope before delivering
+the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
+Native approval IDs additionally bind a random process identity, thread, and turn.
+
+Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
+admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
+that context. The run polls this short object call and retains sole ownership of native interruption and completion.
+It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
+Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
+an exact terminal turn. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
+of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
+runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
+displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
+MicroVM annotation before dispatch. Idle sleep must claim that same field with a UID/resource-version CAS before
+requesting an Ofz stop, so an old idle decision cannot sleep a concurrent admission. Automatic idle sleep respects
+the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority. Terminal cleanup removes only the matching pin
+using MicroVM UID and resource-version preconditions.
+
+Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
+terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
+Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
+Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
+content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
+conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
+before another effect. These rules do not make arbitrary shell, browser, or external service effects transactional.
+
+GitOps registers immutable worker versions through `RestateDeployment` in sync wave 1, after wave 0 has applied
+the release ConfigMap, network policies, quota, and controller. Admission fails closed until registration succeeds. Existing versions must drain, including
+their retained invocations, before deletion; `revisionHistoryLimit` is a rollback setting, not permission to destroy
+pinned work. The namespace budget allows eight worker Pods across active, retained, and overlapping versions. A full
+budget blocks another rollout until versions drain. Never force-delete a worker with pending work to make capacity.
+The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks evidence and delivery gates.
+
+Run the native correlation and interruption contract with an isolated pinned binary:
+
+```sh
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.159.2 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+```
+
+The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's
+account. Run the real Restate process-replacement fixture with Docker available:
+
+```sh
+cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
+```
+
+This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping;
+running-command recovery and authenticated deployment acceptance remain separate evidence boundaries.
 
 ## Error reporting and request traces
 
