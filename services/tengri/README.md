@@ -408,7 +408,11 @@ See [implementation status](../../docs/tengri/ofz-implementation-status.md) for 
 
 System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The default is 60 minutes, values through 1440
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
-starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
+starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
+Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
+no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
+unavailable, restarting or older guests without work metadata defer automatic sleep. Manual sleep remains explicit.
+Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
 exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. The owner authorized deleting the existing

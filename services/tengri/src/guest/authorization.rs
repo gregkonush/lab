@@ -36,6 +36,7 @@ enum AuthorityDatabase {
 
 #[derive(Clone)]
 enum Source {
+    Probe,
     User(Arc<WorkspaceAccess>),
     Cleanup {
         terminal_id: String,
@@ -81,6 +82,13 @@ impl GuestAuthority {
         GuestAuthorization {
             authority: self.clone(),
             source: Source::User(Arc::new(access)),
+        }
+    }
+
+    pub(crate) fn probe(&self) -> GuestAuthorization {
+        GuestAuthorization {
+            authority: self.clone(),
+            source: Source::Probe,
         }
     }
 
@@ -244,6 +252,27 @@ impl GuestRequestIssuer {
                     purpose: MaintenancePurpose::Probe,
                 };
             }
+            Source::Probe => {
+                if !probe {
+                    return Err(Status::permission_denied(
+                        "probe cannot authorize guest content",
+                    ));
+                }
+                decision = self
+                    .authority
+                    .authorization
+                    .guest_maintenance(
+                        &self.claim.microvm_uid,
+                        &self.claim.runtime_epoch,
+                        authz::GuestMaintenancePurpose::Probe,
+                        "",
+                    )
+                    .await?;
+                actor = GuestActor::Workload {
+                    subject: ofz::CONTROLLER_ID.into(),
+                    purpose: MaintenancePurpose::Probe,
+                };
+            }
             Source::Cleanup { terminal_id } => {
                 let purpose = if probe {
                     authz::GuestMaintenancePurpose::Probe
@@ -338,6 +367,17 @@ impl GuestRequestIssuer {
         }
         match &self.source {
             Source::User(access) => access.require().await,
+            Source::Probe => self
+                .authority
+                .authorization
+                .guest_maintenance(
+                    &self.claim.microvm_uid,
+                    &self.claim.runtime_epoch,
+                    authz::GuestMaintenancePurpose::Probe,
+                    "",
+                )
+                .await
+                .map(|_| ()),
             Source::Cleanup { terminal_id } => self
                 .authority
                 .authorization

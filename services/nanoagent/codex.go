@@ -46,6 +46,10 @@ type codexRPCMessage struct {
 	Error  json.RawMessage `json:"error,omitempty"`
 }
 
+type codexUnsentRequestError struct{ error }
+
+func (err *codexUnsentRequestError) Unwrap() error { return err.error }
+
 type codexPendingResult struct {
 	result        json.RawMessage
 	err           json.RawMessage
@@ -111,6 +115,10 @@ type codexSupervisor struct {
 	command         *exec.Cmd
 	stdin           io.WriteCloser
 	generation      *codexProcessGeneration
+	workRequests    map[string]struct{}
+	activeTurns     map[string]string
+	workChangedAt   time.Time
+	workUnknown     bool
 	pending         map[string]chan codexPendingResult
 	approvals       map[string]codexApproval
 	activeLoginID   string
@@ -134,6 +142,9 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 		writePermit:     make(chan struct{}, 1),
 		responseTimeout: codexResponseWriteTimeout,
 		generation:      newCodexProcessGeneration(),
+		workRequests:    make(map[string]struct{}),
+		activeTurns:     make(map[string]string),
+		workChangedAt:   time.Now(),
 		pending:         make(map[string]chan codexPendingResult),
 		approvals:       make(map[string]codexApproval),
 		subscriptions:   make(map[uint64]codexSubscription),
@@ -494,21 +505,30 @@ func (supervisor *codexSupervisor) request(
 		supervisor.mu.Unlock()
 		return codexCallResult{}, errors.New("Codex app-server restarted before the request could be sent")
 	}
+	if method == "turn/start" || method == "turn/steer" {
+		supervisor.workRequests[key] = struct{}{}
+		supervisor.workChangedAt = time.Now()
+	}
 	supervisor.pending[key] = response
 	stdin := supervisor.stdin
 	supervisor.mu.Unlock()
 	if stdin == nil {
-		supervisor.removePending(key)
+		supervisor.removeUnsentRequest(key)
 		return codexCallResult{}, errors.New("Codex app-server is unavailable")
 	}
 	message, err := json.Marshal(map[string]any{"id": id, "method": method, "params": json.RawMessage(params)})
 	if err != nil {
-		supervisor.removePending(key)
+		supervisor.removeUnsentRequest(key)
 		return codexCallResult{}, err
 	}
 	err = supervisor.writeToProcess(ctx, generation, stdin, append(message, '\n'))
 	if err != nil {
-		supervisor.removePending(key)
+		var unsent *codexUnsentRequestError
+		if errors.As(err, &unsent) {
+			supervisor.removeUnsentRequest(key)
+		} else {
+			supervisor.removePending(key)
+		}
 		return codexCallResult{}, err
 	}
 	select {
@@ -568,6 +588,7 @@ func (supervisor *codexSupervisor) readMessagesWithLimit(
 	for {
 		line, size, oversized, readErr := readBoundedCodexLine(buffered, lineLimit)
 		if oversized {
+			supervisor.markWorkUnknown(generation)
 			supervisor.publish("tengri/eventOmitted", "", codexOversizedProtocolMessage(size))
 		} else if len(bytes.TrimSpace(line)) > 0 {
 			var message codexRPCMessage
@@ -577,6 +598,8 @@ func (supervisor *codexSupervisor) readMessagesWithLimit(
 				} else if message.Method != "" {
 					supervisor.handleServerMessage(generation, message, line)
 				}
+			} else {
+				supervisor.markWorkUnknown(generation)
 			}
 		}
 		if readErr != nil {
@@ -627,6 +650,10 @@ func codexOversizedProtocolMessage(size int) json.RawMessage {
 func (supervisor *codexSupervisor) resolveResponse(message codexRPCMessage) {
 	key := normalizeRequestID(message.ID)
 	supervisor.mu.Lock()
+	if _, working := supervisor.workRequests[key]; working {
+		delete(supervisor.workRequests, key)
+		supervisor.workChangedAt = time.Now()
+	}
 	pending := supervisor.pending[key]
 	delete(supervisor.pending, key)
 	eventSequence := supervisor.sequence
@@ -649,6 +676,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
 		}
 	}
+	supervisor.observeWork(generation, message)
 	if message.Method == "serverRequest/resolved" {
 		var params struct {
 			RequestID json.RawMessage `json:"requestId"`
@@ -1246,9 +1274,9 @@ func (supervisor *codexSupervisor) writeToProcess(
 ) error {
 	select {
 	case <-ctx.Done():
-		return ctx.Err()
+		return &codexUnsentRequestError{ctx.Err()}
 	case <-supervisor.shutdown:
-		return errors.New("Codex app-server is shutting down")
+		return &codexUnsentRequestError{errors.New("Codex app-server is shutting down")}
 	case <-supervisor.writePermit:
 	}
 
@@ -1472,6 +1500,10 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	pending := supervisor.pending
 	supervisor.pending = make(map[string]chan codexPendingResult)
 	supervisor.approvals = make(map[string]codexApproval)
+	supervisor.workRequests = make(map[string]struct{})
+	supervisor.activeTurns = make(map[string]string)
+	supervisor.workChangedAt = time.Now()
+	supervisor.workUnknown = false
 	supervisor.clearLoginLocked()
 	supervisor.loginOperation = nil
 	supervisor.loginCompleted = nil

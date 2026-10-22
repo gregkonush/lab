@@ -184,8 +184,12 @@ expose Add passkey, obtain fresh verification with the existing credential, and 
 Preserve the original USB credential, GitHub subject, broker links, RP ID, and WebAuthn verification policy. The owner
 completes passkey creation and saving in 1Password; real provider enrollment and subsequent sign-in remain required.
 
-The combined source passes 421 unit tests, 174 desktop browser tests with two environment skips, TypeScript checking,
-formatting, lint, and authorization inventory. The real
+The combined source includes the merged chat and active-work changes from PRs #15236 and #15238. It passes 430 unit
+tests, 209 Rust tests with 45 environment-dependent tests ignored, three CRD tests, 11 authorization tests, Clippy,
+Go race/vet, TypeScript checking, formatting, lint, and authorization inventory. The browser run passed 174 cases with
+two environment skips; its sole failing case used stale Darwin snapshots for the already-merged tool-label changes.
+Both snapshots were visually inspected and regenerated, and the complete case then passed without snapshot updates.
+Final Linux browser acceptance remains required. The real
 Keycloak 26.7.4/browser/Ofz fixture passes 165 assertions, including second-credential enrollment, preservation of the
 original USB credential, fresh sign-in after removing the fixture USB authenticator, cancellation preservation, and
 same-identity readback. The authenticator is virtual; this does not prove physical 1Password behavior.
@@ -199,3 +203,7 @@ requires a new matching source cohort; do not relabel these images as another so
 The browser now shows an authenticated Tengri workspace with another Codex turn working. Reconcile and finish that
 legacy work before fencing its writer. Preserve the original home during enrollment and complete authenticated
 Restate acceptance after the final paired release. The release hold remains closed throughout preparation.
+
+The merged active-work change has an unresolved P1 review finding in PR #15238: a new control can race with the
+automatic-sleep reservation after the idle probe. Require the reviewed follow-up fix in the final production source;
+do not open the release hold merely because the passkey PR's checks pass.
