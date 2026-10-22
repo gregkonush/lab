@@ -119,11 +119,11 @@ jobs:
       lint-command: bunx oxfmt --check services/bayn argocd/applications/bayn argocd/applications/torghut/clickhouse/bayn-sealed-secret.yaml argocd/applications/torghut/clickhouse/clickhouse-cluster.yaml
       oxlint-command: bun run --cwd services/bayn lint:oxlint
       oxlint-type-command: bun run --cwd services/bayn lint:oxlint:type
-      test-command: bun run --cwd services/bayn tsc && bun run --cwd services/bayn test && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts && bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
+      test-command: bun run --cwd services/bayn tsc && bun test packages/scripts/src/bayn packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts && bash packages/scripts/src/bayn/verify-egress-proxy-restart.sh
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 
-  harness2:
+  gepa:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
@@ -133,48 +133,48 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r services/bayn/harness2/requirements.txt
-      - run: python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
+      - run: python -m pip install -r services/bayn/gepa/requirements.txt
+      - run: python -m unittest discover -s services/bayn/gepa -p 'test_*.py' -v
 
-  effect-runtime-compatibility:
+  unit-tests:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.2
-      - name: Install focused dependencies
-        run: >-
-          bun install --frozen-lockfile --ignore-scripts
-          --filter @proompteng/source
-          --filter @proompteng/bayn
-      - name: Verify Effect runtime compatibility cohort
-        run: bun run --cwd services/bayn test:effect-runtime
-
-  broker-sandbox-contract:
-    needs: changes
-    if: needs.changes.outputs.bayn == 'true'
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v5
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v5
         with:
-          bun-version: 1.4.2
+          node-version: 24.11.1
       - name: Install focused dependencies
         run: >-
           bun install --frozen-lockfile --ignore-scripts
           --filter @proompteng/source
           --filter @proompteng/bayn
-      - name: Verify OBSERVE sandbox contract without broker I/O
+      - name: Verify isolated unit shard without broker credentials
+        working-directory: services/bayn
         run: >-
           env -u BAYN_ALPACA_ACCOUNT_ID
           -u BAYN_ALPACA_KEY_ID
           -u BAYN_ALPACA_SECRET_KEY
-          bun run --cwd services/bayn test:broker-sandbox
+          bun test --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
+          --timings=tools/ci-unit-timings.json --update-timings
+          --reporter=junit --reporter-outfile=unit-results.xml
+      - name: Retain test durations and results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: bayn-unit-${{ matrix.shard }}
+          path: |
+            services/bayn/unit-results.xml
+            services/bayn/tools/ci-unit-timings.json
 
   market-data-replay:
     needs: changes
@@ -201,7 +201,11 @@ jobs:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     services:
       postgres:
         image: postgres:18-alpine
@@ -216,6 +220,27 @@ jobs:
           --health-interval 1s
           --health-timeout 5s
           --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
+      - name: Verify isolated PostgreSQL persistence shard
+        run: bun run --cwd services/bayn test:postgres ${{ matrix.shard }}/4
+
+  archive-integration:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
       clickhouse:
         image: altinity/clickhouse-server:25.3.6.10034.altinitystable
         env:
@@ -228,7 +253,6 @@ jobs:
           --health-timeout 5s
           --health-retries 30
     env:
-      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
       BAYN_TEST_CLICKHOUSE_URL: http://127.0.0.1:8123
     steps:
       - uses: actions/checkout@v5
@@ -283,8 +307,42 @@ jobs:
           cat technical-analysis-flink/build/test-results/test/TEST-*CryptoMarketFeatureClickhouseIntegrationTest.xml
       - name: Verify Bayn reads the actual JDBC archive fixture
         run: bun test services/bayn/src/market-data/archive-jdbc-readback.integration.test.ts
-      - name: Verify complete Bayn PostgreSQL persistence workflows
-        run: bun run --cwd services/bayn test:postgres
+      - name: Verify historical storage and shared feature export
+        env:
+          BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar
+        run: bun test services/bayn/src/market-data/alpaca-history/history.integration.test.ts
+
+  ledger-integration:
+    needs: changes
+    if: needs.changes.outputs.bayn == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:18-alpine
+        env:
+          POSTGRES_USER: bayn
+          POSTGRES_PASSWORD: bayn
+          POSTGRES_DB: bayn_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U bayn -d bayn_test"
+          --health-interval 1s
+          --health-timeout 5s
+          --health-retries 30
+    env:
+      BAYN_TEST_POSTGRES_URL: postgresql://bayn:bayn@127.0.0.1:5432/bayn_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.2
+      - name: Install focused dependencies
+        run: >-
+          bun install --frozen-lockfile --ignore-scripts
+          --filter @proompteng/source
+          --filter @proompteng/bayn
       - name: Start isolated TigerBeetle for durable replay acceptance
         run: |
           set -euo pipefail
@@ -313,10 +371,6 @@ jobs:
       - name: Stop isolated replay TigerBeetle
         if: always()
         run: docker rm -f bayn-replay-tigerbeetle || true
-      - name: Verify historical storage and shared feature export
-        env:
-          BAYN_TEST_DORVUD_JAR: ${{ github.workspace }}/services/dorvud/technical-analysis-flink/build/libs/technical-analysis-flink-all.jar
-        run: bun test services/bayn/src/market-data/alpaca-history/history.integration.test.ts
 
   dependency-input-invariant:
     needs: changes
@@ -361,9 +415,10 @@ jobs:
     needs:
       - changes
       - pr-checks
-      - harness2
-      - effect-runtime-compatibility
-      - broker-sandbox-contract
+      - gepa
+      - unit-tests
+      - archive-integration
+      - ledger-integration
       - postgres-integration
       - market-data-replay
       - dependency-input-invariant
@@ -376,9 +431,10 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
-          HARNESS2_RESULT: ${{ needs.harness2.result }}
-          EFFECT_RESULT: ${{ needs.effect-runtime-compatibility.result }}
-          BROKER_RESULT: ${{ needs.broker-sandbox-contract.result }}
+          GEPA_RESULT: ${{ needs.gepa.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          ARCHIVE_RESULT: ${{ needs.archive-integration.result }}
+          LEDGER_RESULT: ${{ needs.ledger-integration.result }}
           POSTGRES_RESULT: ${{ needs.postgres-integration.result }}
           MARKET_DATA_REPLAY_RESULT: ${{ needs.market-data-replay.result }}
           DEPENDENCY_INPUT_RESULT: ${{ needs.dependency-input-invariant.result }}
@@ -395,9 +451,10 @@ jobs:
           fi
           for result_name in \
             PR_CHECKS_RESULT \
-            HARNESS2_RESULT \
-            EFFECT_RESULT \
-            BROKER_RESULT \
+            GEPA_RESULT \
+            UNIT_RESULT \
+            ARCHIVE_RESULT \
+            LEDGER_RESULT \
             POSTGRES_RESULT \
             MARKET_DATA_REPLAY_RESULT \
             DEPENDENCY_INPUT_RESULT; do
@@ -411,4 +468,4 @@ jobs:
             echo "IMAGE_RESULT must be success for image-affecting changes, got ${IMAGE_RESULT}" >&2
             exit 1
           fi
-          echo 'All applicable Bayn unit, type, Effect, PostgreSQL, dependency-boundary, and multi-architecture image checks passed.'
+          echo 'All applicable Bayn unit, type, archive, PostgreSQL, ledger, replay, dependency-boundary, and multi-architecture image checks passed.'

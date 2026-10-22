@@ -281,10 +281,10 @@ func TestEveryDeclaredGuestRPCRequiresAnExplicitAction(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	if len(descriptor.Methods)+len(descriptor.Streams) != 19 {
+	if len(descriptor.Methods)+len(descriptor.Streams) != 18 {
 		t.Fatal("unexpected guest RPC inventory")
 	}
-	if len(v.RPCActions) != 19 {
+	if len(v.RPCActions) != 18 {
 		t.Fatal("unexpected authorization catalog inventory")
 	}
 	for operation, expected := range v.RPCActions {

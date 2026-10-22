@@ -146,7 +146,7 @@ describe('Jev trading signal input', () => {
     expect(state.candidate.eligible).toBeUndefined()
     expect(state.candidate.rank).toBeUndefined()
     expect(state.news).toBeUndefined()
-    expect(Object.keys(request.request.questions)).toEqual(['action'])
+    expect(Object.keys(request.request.questions)).toEqual(['action', 'setup'])
     expect(request.request.questions['action']?.type).toBe('choice')
     expect(state.task.horizonMinutes).toBe(15)
     expect(state.relativeSignals.lookbackMinutes).toBeGreaterThan(0)

@@ -305,7 +305,11 @@ export const makeAccountingInterpreter = (
             yield* sql`SELECT pg_advisory_xact_lock(hashtextextended(${`${first.broker}:${first.accountId}`}, 0))`
             const sourceIds = [...new Set(inputs.map((input) => input.sourceEventId))]
             const rows = yield* sql<Record<string, unknown>>`
-              WITH ranked AS (
+              WITH inventory_debits AS MATERIALIZED (
+                SELECT account_id, symbol, quantity_atoms, cost_basis_micros, effective_at, posted
+                FROM broker_inventory_debits
+                WHERE account_id = ${first.accountId} AND posted
+              ), ranked AS (
                 SELECT
                   transaction.schema_version, transaction.transaction_id, transaction.broker_event_id,
                   transaction.intent_id, transaction.account_id, transaction.symbol, transaction.side,
@@ -324,14 +328,14 @@ export const makeAccountingInterpreter = (
                     PARTITION BY transaction.account_id, transaction.symbol
                     ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM broker_inventory_debits AS fee
+                  ), 0) - COALESCE((SELECT sum(fee.quantity_atoms) FROM inventory_debits AS fee
                     WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
                       AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_quantity_atoms,
                   (COALESCE(sum(transaction.cost_basis_delta_micros) OVER (
                     PARTITION BY transaction.account_id, transaction.symbol
                     ORDER BY historical_fill.source_timestamp COLLATE "C", historical_fill.fill_id COLLATE "C"
                     ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING
-                  ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM broker_inventory_debits AS fee
+                  ), 0) - COALESCE((SELECT sum(fee.cost_basis_micros) FROM inventory_debits AS fee
                     WHERE fee.account_id = transaction.account_id AND fee.symbol = transaction.symbol
                       AND fee.posted AND fee.effective_at <= transaction.occurred_at), 0))::text AS prior_cost_micros
                 FROM accounting_transactions AS transaction
