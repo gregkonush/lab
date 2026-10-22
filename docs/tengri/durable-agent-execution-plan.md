@@ -1,6 +1,6 @@
 # Tengri durable agent execution
 
-Status: Main migration merged; image qualification and retained-home cutover pending. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
+Status: Restate migration merged and images qualified; Settings passkey enrollment and retained-home cutover pending. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
 
 The scope is the execution gaps identified in [the research](durable-agent-execution-research.md). It includes lost
 submission responses, interrupted Codex processes, pending controls, workspace concurrency, active-run sleep,
@@ -171,7 +171,39 @@ after it. The complete local browser suite passes 172 tests with two environment
 TypeScript checking, formatting, and lint pass.
 
 The release hold remains closed. Qualify a complete four-image cohort from the final reviewed source against the
-unchanged native gates before enrolling the retained home. Owner passkey sign-in is still pending, so authenticated
-legacy-work reconciliation and product acceptance remain unverified. Complete safe quiescence and fencing, enroll
+unchanged native gates before enrolling the retained home. At this readback, owner passkey sign-in was pending;
+authenticated legacy-work reconciliation and product acceptance remained unverified. Complete safe quiescence and fencing, enroll
 the exact qualified API 6 guest digest without replacing the home, release through Kargo and Argo, and exercise
 disconnect/recovery, approval, cancellation, worker replacement, and the active-run sleep fence before closing the goal.
+
+## Settings passkey enrollment
+
+The user additionally requested a new 1Password passkey and a Settings entry for enrollment. Continue the existing
+[PR #15215](https://github.com/proompteng/lab/pull/15215) against the current Restate source. Settings → Access must
+expose Add passkey, obtain fresh verification with the existing credential, and offer phone/password-manager enrollment.
+Preserve the original USB credential, GitHub subject, broker links, RP ID, and WebAuthn verification policy. The owner
+completes passkey creation and saving in 1Password; real provider enrollment and subsequent sign-in remain required.
+
+The combined source includes the merged chat and active-work changes from PRs #15236 and #15238. It passes 430 unit
+tests, 209 Rust tests with 45 environment-dependent tests ignored, three CRD tests, 11 authorization tests, Clippy,
+Go race/vet, TypeScript checking, formatting, lint, and authorization inventory. The browser run passed 174 cases with
+two environment skips; its sole failing case used stale Darwin snapshots for the already-merged tool-label changes.
+Both snapshots were visually inspected and regenerated, and the complete case then passed without snapshot updates.
+Final Linux browser acceptance remains required. The real
+Keycloak 26.7.4/browser/Ofz fixture passes 165 assertions, including second-credential enrollment, preservation of the
+original USB credential, fresh sign-in after removing the fixture USB authenticator, cancellation preservation, and
+same-identity readback. The authenticator is virtual; this does not prove physical 1Password behavior.
+
+PR #15244 merged as `7d6e3ad6f05148337b40c14c764bb63dc6a597ee`. Its four immutable images passed both
+architectures and source/schema/platform verification, with the release aliases withheld. Native smoke resumes were
+569.39 / 583.51 / 511.68 ms on AMD64 and 667.03 / 673.06 / 715.72 ms on ARM64, within the unchanged 1,000 ms gate.
+These successful samples do not establish a root-cause fix for the prior cold-resume failures. The passkey change
+requires a new matching source cohort; do not relabel these images as another source.
+
+The browser now shows an authenticated Tengri workspace with another Codex turn working. Reconcile and finish that
+legacy work before fencing its writer. Preserve the original home during enrollment and complete authenticated
+Restate acceptance after the final paired release. The release hold remains closed throughout preparation.
+
+The merged active-work change has an unresolved P1 review finding in PR #15238: a new control can race with the
+automatic-sleep reservation after the idle probe. Require the reviewed follow-up fix in the final production source;
+do not open the release hold merely because the passkey PR's checks pass.

@@ -37,7 +37,7 @@ class ServingContractTest(unittest.TestCase):
         self.assertEqual(args.api_server_count, 1)
         self.assertTrue(args.enable_chunked_prefill)
         self.assertEqual(args.max_num_seqs, 1)
-        self.assertEqual(args.max_model_len, 16384)
+        self.assertEqual(args.max_model_len, 32768)
         self.assertEqual(args.override_generation_config["max_new_tokens"], 4096)
         self.assertEqual(args.middleware, ["admission.AdmissionMiddleware"])
         self.assertIsNone(args.collect_detailed_traces)
