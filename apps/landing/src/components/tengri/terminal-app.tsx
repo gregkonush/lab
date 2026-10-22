@@ -1,5 +1,7 @@
 'use client'
 
+import { reportBrowserFailure } from '@/lib/observability/client'
+
 import '@xterm/xterm/css/xterm.css'
 
 import type { SearchAddon } from '@xterm/addon-search'
@@ -8,6 +10,7 @@ import { AlertTriangle, ChevronDown, ChevronUp, LoaderCircle, RotateCw, Search, 
 import { useEffect, useRef, useState } from 'react'
 
 import type { TengriTerminalSession, TengriTerminalTicket } from '@/lib/tengri/types'
+import { TENGRI_UNARY_TIMEOUT_MS } from '@/lib/tengri/limits'
 
 import { runTengriAction } from './client'
 import styles from './terminal-app.module.css'
@@ -102,7 +105,7 @@ export function TerminalApp({
     const controller = new AbortController()
     const disposables: Array<{ dispose(): void }> = []
     const terminalAddons: ITerminalAddon[] = []
-    const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(30_000)])
+    const requestSignal = () => AbortSignal.any([controller.signal, AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS)])
     const setInputEnabled = (enabled: boolean) => {
       const terminal = terminalRef.current
       if (terminal) terminal.options.disableStdin = !enabled
@@ -318,11 +321,11 @@ export function TerminalApp({
             agentId,
             creationId,
             // Nanoagent confines `/` to the guest's physical `/workspace`; callers never address the guest rootfs.
-            cwd: '/',
+            cwd: '/workspace',
             columns,
             rows,
           },
-          { signal: AbortSignal.timeout(130_000) },
+          { signal: AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS) },
         )
         creationPromise = pending
         try {
@@ -380,7 +383,7 @@ export function TerminalApp({
       try {
         const sessions = await runTengriAction<TengriTerminalSession[]>(
           { action: 'list-terminals', agentId },
-          AbortSignal.timeout(30_000),
+          AbortSignal.timeout(TENGRI_UNARY_TIMEOUT_MS),
         )
         const created = sessions.find((candidate) => candidate.creationId === creationId)
         if (!created) return
@@ -495,6 +498,7 @@ export function TerminalApp({
             } else if (control.type === 'pong') {
               markAlive()
             } else if (control.type === 'error') {
+              reportBrowserFailure('terminal.control')
               const message = control.message || 'Terminal reported an error'
               updateConnection({ phase: 'error', message, action: 'reconnect' })
               terminal.write(`\r\n\x1b[31m${message}\x1b[0m\r\n`)
@@ -533,6 +537,7 @@ export function TerminalApp({
         nextSocket.addEventListener('error', () => {
           if (disposed || socket !== nextSocket) return
           setInputEnabled(false)
+          reportBrowserFailure('terminal.websocket')
           updateConnection({ phase: 'error', message: 'Terminal connection failed', action: 'reconnect' })
           nextSocket.close()
         })

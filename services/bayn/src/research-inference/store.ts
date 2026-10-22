@@ -10,7 +10,7 @@ import type { TigerBeetleRequestClient } from '../tigerbeetle-client'
 import {
   decodeResearchRun,
   hashResearch,
-  parseResearchFactors,
+  parseResearchOutput,
   ResearchError,
   ResearchReceiptSchema,
   researchRequest,
@@ -57,13 +57,10 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
         receipt.startedAtMs < Date.parse(run.featureCutoff) ||
         receipt.completedAtMs >= Date.parse(run.deadlineAt) ||
         receipt.usage === null ||
-        receipt.usage.total_tokens !== receipt.usage.prompt_tokens + receipt.usage.completion_tokens ||
-        receipt.factors.length === 0 ||
-        receipt.factors.length > run.policy.maximumFactors ||
-        receipt.factors.some((factor) => !run.context.factors.some((candidate) => candidate.id === factor)))
+        receipt.usage.total_tokens !== receipt.usage.prompt_tokens + receipt.usage.completion_tokens)
     )
       return yield* Result.fail(
-        new ResearchError({ message: 'Complete research receipt lacks valid timing, factor or usage evidence' }),
+        new ResearchError({ message: 'Complete research receipt lacks valid timing, serving or usage evidence' }),
       )
     if (Buffer.from(receipt.responseBase64, 'base64').length > maximumResearchStreamBytes)
       return yield* Result.fail(new ResearchError({ message: 'Research response bytes exceed the serving bound' }))
@@ -82,7 +79,7 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
     }
     if (
       receipt.outcome === 'COMPLETE' &&
-      JSON.stringify(receipt.factors) !== JSON.stringify(yield* parseResearchFactors(run, receipt.responseText))
+      JSON.stringify(receipt.factors) !== JSON.stringify(yield* parseResearchOutput(run, receipt.responseText))
     )
       return yield* Result.fail(
         new ResearchError({ message: 'Research receipt factors differ from its retained response' }),

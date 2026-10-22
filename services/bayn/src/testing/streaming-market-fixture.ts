@@ -6,11 +6,11 @@ import type { StreamingVerifiedMarketSnapshot, StreamingFeatureReceipt } from '.
 import { equityMarketProfile } from '../jev/markets'
 
 import { Effect, Result } from 'effect'
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { StreamingVerifiedSnapshotReference } from '../market-data/streaming/reference'
 import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   featureBarContentHash,
   decodeRollingMarketFeature,
@@ -57,10 +57,13 @@ const assertEquityFixture: (snapshot: StreamingVerifiedMarketSnapshot) => assert
 const rawPricingRequest: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-09-04',
   calendar: Result.getOrThrow(
-    normalizeMarketCalendarResult([{ date: '2026-09-04', open: '09:30', close: '16:00' }], {
-      start: '2026-09-04',
-      end: '2026-09-04',
-    }),
+    normalizeMarketCalendarResult(
+      [{ session_open: '0930', session_close: '1600', date: '2026-09-04', open: '09:30', close: '16:00' }],
+      {
+        start: '2026-09-04',
+        end: '2026-09-04',
+      },
+    ),
   ),
   rangeStartAt: '2026-09-04T14:29:00.000Z',
   rangeEndAt: '2026-09-04T14:30:00.000Z',
@@ -135,10 +138,11 @@ export const streamingFixtureFromRaw = (
   let offset = 0
   for (const symbol of request.purpose === undefined ? (request.symbols ?? []) : []) {
     const bars = raw.bars.filter((bar) => bar.symbol === symbol)
-    if (bars.length !== 30) continue
+    if (bars.length === 0 || !bars.some((bar) => Date.parse(bar.eventAt) === Date.parse(request.rangeEndAt) - 60_000))
+      continue
     const material = {
       schemaVersion: MarketFeatureContract.V1,
-      definitionId: MarketFeatureDefinition.RollingPrice30m,
+      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
       definitionHash: equityMarketProfile.streamingInput.requiredDefinitionHash,
       provider: 'alpaca',
       feed: 'iex',
@@ -147,7 +151,7 @@ export const streamingFixtureFromRaw = (
       universeSymbolHash: equityMarketProfile.universeSymbolHash,
       symbol,
       sessionDate: request.sessionDate,
-      sessionPolicy: MarketFeatureSessionPolicy.RegularNewYork,
+      sessionPolicy: MarketFeatureSessionPolicy.IexClockSegments,
       windowStartMs: Date.parse(request.rangeStartAt),
       windowEndMs: Date.parse(request.rangeEndAt),
       inputs: bars.map((bar) => ({
@@ -178,7 +182,7 @@ export const streamingFixtureFromRaw = (
     const feature = Result.getOrThrow(
       decodeRollingMarketFeature({
         material,
-        featureId: canonicalHashV1(material),
+        featureId: Result.getOrThrow(canonicalHashV1Result(material)),
         computedAtMs: observed,
         producerRevision: 'fixture',
       }),

@@ -7,8 +7,8 @@ import {
 } from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
-import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
-import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
+import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca/model'
+import { intradayDecisionDelaySeconds } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -19,8 +19,6 @@ import {
 import {
   CycleState,
   CycleTerminalReason,
-  intradayCycleEntryAttemptOrdinal,
-  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
@@ -119,9 +117,7 @@ export const selectIntradayExecutionSession = (
     const openAtMillis = Date.parse(session.openAt)
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
     const hasExecutableWindow =
-      openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, intradayLookbackMinutes * 60_000) +
-        intradayDecisionDelaySeconds * 1_000 <
+      openAtMillis + Math.max(executionPolicy.warmupAfterOpenMs, 60_000) + intradayDecisionDelaySeconds * 1_000 <
       cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
@@ -130,7 +126,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum' | 'jev'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -177,7 +173,6 @@ export const nextIntradayEntryAttemptOrdinal = (
   recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
-    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
     (cycle.state !== CycleState.Completed &&
       cycle.state !== CycleState.NoTrade &&
       !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
@@ -213,7 +208,6 @@ export const canRearmUnusedCycle = (
   observedAt: string,
 ): boolean => {
   if (
-    !isIntradayAutonomousCycle(cycle) ||
     cycle.state !== CycleState.Blocked ||
     cycle.bindings.snapshotId !== undefined ||
     cycle.bindings.decisionHash !== undefined ||
@@ -249,7 +243,7 @@ export const canRearmUnusedCycle = (
       ? { schemaVersion: cycle.window.executionCalendarSchemaVersion, source: cycle.window.executionCalendarSource }
       : observation,
     originalSession,
-    intradayCycleEntryAttemptOrdinal(cycle.identity),
+    cycle.identity.entryAttemptOrdinal,
   )
   if (Result.isFailure(originalDraft)) return false
   return (

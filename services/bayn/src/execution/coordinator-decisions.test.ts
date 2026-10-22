@@ -2,12 +2,8 @@ import { describe, expect, test } from 'bun:test'
 
 import { Option, Result } from 'effect'
 
-import {
-  MutationOperation,
-  cancelRequestHash,
-  orderRequestBody,
-  type MutationEvidence,
-} from '../broker/alpaca-mutations'
+import { MutationOperation, type MutationEvidence } from '../broker/alpaca-mutations/model'
+import { orderRequestBody, prepareCancel } from '../broker/alpaca-mutations/decisions'
 import {
   AssetClass,
   OrderClass,
@@ -16,8 +12,8 @@ import {
   OrderType as BrokerOrderType,
   TimeInForce as BrokerTimeInForce,
   type Order,
-} from '../broker/alpaca'
-import { canonicalHashV1 } from '../hash'
+} from '../broker/alpaca/model'
+import { canonicalHashV1Result } from '../hash'
 import {
   IntentState,
   OrderSide,
@@ -29,6 +25,7 @@ import {
   type RiskDecision,
 } from './contracts'
 import {
+  cancellationIdentity,
   decideRecoverySuccess,
   decideSubmitSuccess,
   encodeOrder,
@@ -45,8 +42,9 @@ import {
 } from './coordinator-decisions'
 
 const encodedRequest = (value: Intent) => Result.getOrThrow(orderRequestBody(value))
-import type { StoredIntent } from './intents'
-import { MutationEventType, mutationIdResult, type MutationEvent } from './mutations'
+import type { StoredIntent } from './intents/domain'
+import { MutationEventType, type MutationEvent } from './mutations/model'
+import { mutationIdResult } from './mutations/decisions'
 
 const intentId = 'a'.repeat(64)
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
@@ -54,7 +52,7 @@ const brokerOrderId = '61e69015-8549-4bfd-b9c3-01e75843f47d'
 const decisionId = 'b'.repeat(64)
 
 const intent: Intent = {
-  schemaVersion: 'bayn.paper-intent.v3',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId,
   authorityGenerationHash: 'f'.repeat(64),
   riskDecisionId: decisionId,
@@ -66,10 +64,11 @@ const intent: Intent = {
   clientOrderId: `b1_${'A'.repeat(43)}`,
   symbol: 'AMD',
   side: OrderSide.Buy,
-  orderType: OrderType.Market,
+  orderType: OrderType.Limit,
   timeInForce: TimeInForce.Day,
   quantityAtoms: '1250000000',
   notionalLimitMicros: '200000000',
+  limitPriceMicros: '160000000',
   state: IntentState.Approved,
   createdAt: '2026-07-25T00:00:00.000Z',
 }
@@ -113,18 +112,20 @@ const order = (overrides: Partial<Order> = {}): Order => ({
   quantityAtoms: intent.quantityAtoms,
   filledQuantityAtoms: '0',
   orderClass: OrderClass.Simple,
-  orderType: BrokerOrderType.Market,
+  orderType: BrokerOrderType.Limit,
+  limitPriceMicros: intent.limitPriceMicros,
   side: BrokerSide.Buy,
   timeInForce: BrokerTimeInForce.Day,
   status: OrderStatus.Accepted,
-  extendedHours: false,
+  extendedHours: true,
   observedAt: evidence.observedAt,
   ...overrides,
 })
 
 const roundedNotionalIntent: Intent = {
   ...intent,
-  notionalLimitMicros: '200009999',
+  limitPriceMicros: '160010000',
+  notionalLimitMicros: '200012500',
 }
 
 const mutation = (
@@ -134,8 +135,8 @@ const mutation = (
 ): MutationEvent => {
   const requestHash =
     operation === MutationOperation.Submit
-      ? canonicalHashV1(encodedRequest(stateIntent))
-      : cancelRequestHash(brokerOrderId)
+      ? Result.getOrThrow(canonicalHashV1Result(encodedRequest(stateIntent)))
+      : Result.getOrThrow(prepareCancel(brokerOrderId)).requestHash
   return {
     schemaVersion: 'bayn.paper-mutation-event.v1',
     eventId: '3'.repeat(64),
@@ -152,6 +153,14 @@ const mutation = (
 }
 
 describe('execution coordinator decisions', () => {
+  test.each(['not-an-order-id', '\ud800'])('rejects malformed cancellation order ID %j as a typed failure', (id) => {
+    const event = { ...mutation(MutationOperation.Submit, MutationEventType.SubmitAccepted), brokerOrderId: id }
+    expect(Option.getOrUndefined(Result.getFailure(cancellationIdentity(event)))).toMatchObject({
+      _tag: 'OrderCanonicalizationFailed',
+      operation: MutationOperation.Cancel,
+    })
+  })
+
   test('builds the dry-run request only from a currently approved durable decision', () => {
     const active = makeDryRunSubmit(stored(), Date.parse('2026-07-25T00:04:59.999Z'))
     const expired = makeDryRunSubmit(stored(), Date.parse(riskDecision.expiresAt))
@@ -160,7 +169,7 @@ describe('execution coordinator decisions', () => {
       schemaVersion: 'bayn.paper-submit-dry-run.v1',
       intentId,
       clientOrderId: intent.clientOrderId,
-      requestHash: canonicalHashV1(encodedRequest(intent)),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(encodedRequest(intent))),
       request: encodedRequest(intent),
     })
     expect(Option.getOrUndefined(Result.getFailure(expired))).toMatchObject({
@@ -248,7 +257,7 @@ describe('execution coordinator decisions', () => {
     }
     const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(retiredRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(retiredRequest)),
     }
     expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
@@ -256,8 +265,10 @@ describe('execution coordinator decisions', () => {
   test('matches the exact BUY quantity and rejects a notional confirmation', () => {
     const request = encodedRequest(roundedNotionalIntent)
     expect(request).toMatchObject({ qty: '1.25' })
-    expect(exactOrder(roundedNotionalIntent, request, order())).toBe(true)
-    const { quantityAtoms: _quantity, ...base } = order()
+    expect(
+      exactOrder(roundedNotionalIntent, request, order({ limitPriceMicros: roundedNotionalIntent.limitPriceMicros })),
+    ).toBe(true)
+    const { quantityAtoms: _quantity, ...base } = order({ limitPriceMicros: roundedNotionalIntent.limitPriceMicros })
     expect(exactOrder(roundedNotionalIntent, request, { ...base, notionalMicros: '200000000' })).toBe(false)
   })
 
@@ -267,7 +278,7 @@ describe('execution coordinator decisions', () => {
     const retiredRequest = { ...base, notional: '200.009999' }
     const event = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(retiredRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(retiredRequest)),
     }
     expect(Result.isFailure(validateRecovery(unknownIntent, event, undefined))).toBe(true)
   })
@@ -277,7 +288,7 @@ describe('execution coordinator decisions', () => {
     const closeOnlyRequest = Result.getOrThrow(orderRequestBody(unknownIntent))
     const interrupted = {
       ...mutation(MutationOperation.Submit, MutationEventType.SubmitUnknown, unknownIntent),
-      requestHash: canonicalHashV1(closeOnlyRequest),
+      requestHash: Result.getOrThrow(canonicalHashV1Result(closeOnlyRequest)),
     }
     const { notionalMicros: _notionalMicros, ...acceptedOrder } = order()
     const acceptedCover = { ...acceptedOrder, quantityAtoms: unknownIntent.quantityAtoms }

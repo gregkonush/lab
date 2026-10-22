@@ -3,7 +3,7 @@ import { expect, test } from 'bun:test'
 import type { RetainedAutonomousCyclePassObservation } from './cycle/runner/pass-observation'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { ExecutionControllerOutcome } from './execution/controller-status'
-import { statusResponseDecision } from './http'
+import { statusFacts } from './http'
 import { MarketFeatureDefinition } from './market-data/features/contract'
 import { initialState } from './runtime-state'
 import { config, provenance } from './testing/runtime-fixtures'
@@ -11,7 +11,7 @@ import { config, provenance } from './testing/runtime-fixtures'
 const observedAt = '2026-09-17T14:30:00.000Z'
 
 const responseWithPass = (lastPass: RetainedAutonomousCyclePassObservation | undefined) =>
-  statusResponseDecision(
+  statusFacts(
     {
       ...initialState({}),
       autonomousCycleLoop: {
@@ -56,9 +56,8 @@ test('status identifies an ordinary holding wait in both pass projections', () =
     observedAt,
   } as const
   expect(responseWithPass(lastPass)).toMatchObject({
-    _tag: 'Json',
-    status: 200,
-    body: { autonomousCycleLoop: { lastPass }, executionController: { status: { lastPass } } },
+    autonomousCycleLoop: { lastPass },
+    executionController: { status: { lastPass } },
   })
 })
 
@@ -69,7 +68,7 @@ test('status exposes missing feature evidence without publishing free-form readi
     eventAt: observedAt,
     availableAt: '2026-09-17T14:31:00.000Z',
     requiredFeature: {
-      definitionId: MarketFeatureDefinition.RollingPrice30m,
+      definitionId: MarketFeatureDefinition.ObservedPriceWindow,
       definitionHash: 'b'.repeat(64),
       windowStartAt: '2026-09-17T14:00:00.000Z',
       windowEndAt: observedAt,
@@ -92,8 +91,8 @@ test('status exposes missing feature evidence without publishing free-form readi
     readiness: { ...readiness, message: 'private-account-identity in a diagnostic message' },
   })
   expect(response).toMatchObject({
-    _tag: 'Json',
-    body: { autonomousCycleLoop: { lastPass: projected }, executionController: { status: { lastPass: projected } } },
+    autonomousCycleLoop: { lastPass: projected },
+    executionController: { status: { lastPass: projected } },
   })
   expect(JSON.stringify(response)).not.toContain('private-account-identity')
   expect(JSON.stringify(response)).not.toContain('"message"')
@@ -102,13 +101,15 @@ test('status exposes missing feature evidence without publishing free-form readi
 test('status retains historical successful pass observations without adding a reason', () => {
   const lastPass = { result: 'SUCCESS', outcome: 'RECOVERED', observedAt } as const
   expect(responseWithPass(lastPass)).toMatchObject({
-    body: { autonomousCycleLoop: { lastPass }, executionController: { status: { lastPass } } },
+    autonomousCycleLoop: { lastPass },
+    executionController: { status: { lastPass } },
   })
 })
 
 test('status returns null for a controller receipt without a retained pass', () => {
   expect(responseWithPass(undefined)).toMatchObject({
-    body: { autonomousCycleLoop: { lastPass: null }, executionController: { status: { lastPass: null } } },
+    autonomousCycleLoop: { lastPass: null },
+    executionController: { status: { lastPass: null } },
   })
 })
 
@@ -117,7 +118,8 @@ test('status classifies failures in both pass projections without exposing their
   const projected = { ...pass, reasonCode: 'AUTONOMOUS_CYCLE_PASS_FAILED' }
   const response = responseWithPass({ ...pass, message: 'private-account-identity in a failure' })
   expect(response).toMatchObject({
-    body: { autonomousCycleLoop: { lastPass: projected }, executionController: { status: { lastPass: projected } } },
+    autonomousCycleLoop: { lastPass: projected },
+    executionController: { status: { lastPass: projected } },
   })
   expect(JSON.stringify(response)).not.toContain('private-account-identity')
 })

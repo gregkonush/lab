@@ -1,6 +1,6 @@
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
-import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
+import { NodeRuntime, NodeServices } from '@effect/platform-node'
 import {
   Cause,
   Clock,
@@ -21,24 +21,28 @@ import { TestClock } from 'effect/testing'
 import { PostgresClientLive } from './db/postgres-client'
 import { WriterFenceLive } from './execution/writer-fence'
 import { JournalLive } from './ledger'
-import { IntentStoreLive, BlockedCycleIntentStoreLive } from './execution/intents'
-import { MutationStoreLive } from './execution/mutations'
+import { IntentStoreLive } from './execution/intents/postgres'
+import { BlockedCycleIntentStoreLive } from './execution/intents/blocked-cycle-postgres'
+import { MutationStoreLive } from './execution/mutations/program'
 import { ExecutionCycleClosureStoreLive } from './db/execution-cycle-closure-postgres'
 import { PersistedCapitalGrantStoreLive } from './db/persisted-capital-grant'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from './hash'
 import { operationalError } from './errors'
 import { prepareBacktest, runBacktest, type ReplayDatabaseConfig } from './intraday-replay/backtest'
 import { JevClientLive } from './jev/client'
+import { JevHttpClientLive } from './jev/http'
+import { jevInstructions } from './jev/instructions'
 import { ReplayBrokerFailure } from './intraday-replay/broker'
 
 const usage =
-  'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --help'
+  'Usage: bayn-backtest --input <backtest.json> --arrivals <source.ndjson.gz> --source-receipt <receipt.json> --source-receipt-sha256 <trusted-hash> --output <new-directory> | --instructions | --help'
 class BacktestCommandFailure extends Data.TaggedError('BacktestCommandFailure')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
 export const parseBacktestArgs = (args: readonly string[]) => {
   if (args.length === 1 && args[0] === '--help') return { _tag: 'Help' } as const
+  if (args.length === 1 && args[0] === '--instructions') return { _tag: 'Instructions' } as const
   if (
     args.length === 10 &&
     args[0] === '--input' &&
@@ -94,6 +98,13 @@ const main = Effect.scoped(
   Effect.gen(function* () {
     const args = parseBacktestArgs(process.argv.slice(2))
     if (args._tag === 'Help') return yield* print(usage)
+    if (args._tag === 'Instructions')
+      return yield* print(
+        JSON.stringify({
+          document: jevInstructions,
+          contentHash: yield* Effect.fromResult(canonicalHashV1Result(jevInstructions)),
+        }),
+      )
     if (args._tag === 'Invalid') return yield* new BacktestCommandFailure({ message: usage })
     const fs = yield* FileSystem.FileSystem
     const path = yield* Path.Path
@@ -105,6 +116,7 @@ const main = Effect.scoped(
     )
     const prepared = yield* Effect.fromResult(prepareBacktest(parsed, sourceReceipt))
     const jevKey = yield* Config.Redacted('BAYN_JEV_API_KEY')
+    const proxy = yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY')
     const databaseInput = yield* Config.all({
       postgresUrl: Config.Redacted('BAYN_BACKTEST_POSTGRES_URL'),
       tigerBeetleAddress: Config.String('BAYN_BACKTEST_TIGERBEETLE_ADDRESS'),
@@ -172,9 +184,7 @@ const main = Effect.scoped(
         Layer.mergeAll(
           stores,
           TestClock.layer(),
-          JevClientLive(jevKey, prepared.protocol.inferenceValidityMs).pipe(
-            Layer.provide(NodeHttpClient.layerNodeHttp),
-          ),
+          JevClientLive(jevKey, prepared.protocol.inferenceValidityMs).pipe(Layer.provide(JevHttpClientLive(proxy))),
         ),
       ),
       Effect.provideService(OperationDeadlineClock, deadlineClock),
@@ -197,6 +207,7 @@ const main = Effect.scoped(
     const { reportHash: _reportHash, ...reportBody } = report
     const material = {
       ...reportBody,
+      executableSha256: sha256(yield* fs.readFile(yield* path.fromFileUrl(new URL(import.meta.url)))),
       passLog: { file: 'passes.ndjson', sha256: sha256(passText), records: report.schedule.passCount },
     }
     const output = yield* Effect.fromResult(
@@ -206,7 +217,15 @@ const main = Effect.scoped(
       }),
     )
     yield* fs.writeFileString(path.join(args.outputPath, 'report.json'), `${output}\n`, { flag: 'wx' })
-    yield* print(output)
+    yield* print(
+      JSON.stringify({
+        runId: report.runId,
+        completion: report.completion,
+        instructionsHash: report.jevInstructions.contentHash,
+        providerDispatchCount: report.inference.providerDispatchCount,
+        reportPath: path.join(args.outputPath, 'report.json'),
+      }),
+    )
   }),
 )
 if (import.meta.main)

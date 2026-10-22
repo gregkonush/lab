@@ -12,20 +12,17 @@ use ofz::{
     transport,
 };
 use tokio::net::TcpListener;
-use tonic::transport::Server;
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     rustls::crypto::aws_lc_rs::default_provider()
         .install_default()
         .map_err(|_| anyhow::anyhow!("TLS crypto provider already installed"))?;
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
-        )
-        .init();
+    let _telemetry = ofz::telemetry::init("ofz")?;
+    if env::args().nth(1).as_deref() == Some("telemetry-check") {
+        println!("{}", _telemetry.verify()?);
+        return Ok(());
+    }
     let database = Database::from_environment().await?;
     match env::args().nth(1).as_deref() {
         Some("migrate") => {
@@ -77,10 +74,12 @@ async fn main() -> anyhow::Result<()> {
         contract_version = ofz::CONTRACT_VERSION,
         "Ofz authorization API listening"
     );
-    Server::builder()
-        .load_shed(true)
-        .concurrency_limit_per_connection(32)
-        .timeout(std::time::Duration::from_secs(5))
+    transport::server()
+        .layer(
+            tower_http::trace::TraceLayer::new_for_grpc()
+                .make_span_with(ofz::telemetry::RequestSpan)
+                .on_failure(ofz::telemetry::grpc_failure),
+        )
         .add_service(
             AuthorizationServiceServer::new(Service::new(database, native, issuer))
                 .max_decoding_message_size(128 * 1024)

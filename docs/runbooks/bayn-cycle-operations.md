@@ -16,6 +16,21 @@ Bayn remains fail-closed. A healthy pod, a clear alert, or a terminal cycle does
    ownership, not session readiness. `RECOVERY_ONLY`, `BLOCKED`, `INPUT_UNAVAILABLE`, `EVALUATION_UNAVAILABLE` and
    `DECISION_LAGGING` require investigation; ordinary `ABSTAINING` does not imply a system failure.
 
+## Native PAPER restoration
+
+The account controller owns routine restoration under the existing approved mandate. Compatible Kargo releases retain
+the request through build lineage. A runtime failure does not require a new request, manifest edits, a manual kill clear
+or a broker test order. Repair the reported dependency or evidence failure, then verify the native recovery result.
+
+Recovery first settles terminal intents and requires fresh exact, flat broker and accounting reconciliation. An already
+settled account can roll through clear OBSERVE and revalidate its PAPER mandate without running another close-only cycle.
+An unresolved order, position or mutation stays under the existing close-only recovery owner. Operator holds and account
+protection cannot be cleared by this path. Strategy identity changes still require an approved matching mandate.
+
+Check the deployed revision and the controller's `RECOVERED` pass, then verify `capitalActivation`, effective authority,
+the active kill state and current reconciliation in `GET /v1/status`. Confirm an actual usable decision or an explicit
+waiting reason in the native pass. A restored authority alone does not prove a decision, order or fill.
+
 ## Trace one lifecycle pass
 
 1. Query Tempo for `resource.service.name = "restate"`, `"bayn-execution-controller"`, and `"bayn"` over the same
@@ -69,6 +84,21 @@ risk reduction, immutable evidence reproduction and document hashing for entry a
 profile. These stages reuse the existing aggregate profile and slow/failure diagnostics; they add no source,
 database or model requests and no healthy completion log.
 
+Pricing reuses a same-pass exact reconciliation while its refresh cadence remains open and its broker-risk
+freshness bound covers the execution quote's lifetime. The cadence determines when to refresh on the next read;
+it does not shorten the risk policy's validity deadline. Requiring the entire quote lifetime inside the cadence
+can trigger a slow database refresh after timely inference and expire an otherwise usable model decision.
+Current authority generation/version, accounting and unresolved-mutation checks still govern reuse.
+
+A position basis discrepancy first requires the exact broker response and accounted fills. Rounded-average
+reporting must reproduce both provider fields from native quantity and cost; do not clear a kill state with a broad
+cash or position tolerance. Current positions require cost basis and reject the retired cost-less encoding.
+
+An equity outage may outlast IEX data hours. Close recovery uses a maximum three-minute lease bounded by the
+verified provider session, fresh exact reconciliation and the existing forced-close LIMIT/DAY flow. It cannot
+open positions or renew unresolved broker orders. A closed broker session leaves recovery pending until a verified
+session permits the close.
+
 A rejected decision emits `Bayn decision evidence rejected` with schema
 `bayn.decision-evidence-rejection.v1`, a `mismatch` code and the cycle, snapshot and reconciliation hashes.
 `RECONCILIATION` means its exact durable identity, account, state hash, status or time cutoff did not match;
@@ -91,8 +121,12 @@ no-trade records remain readable for investigation; reading one grants no permis
 {namespace="bayn", pod=~"bayn-execution-controller-.*"} |= "bayn.decision-evidence-rejection.v1"
 ```
 
-1. Separate `bayn.execution.bounded-pass` and `bayn.execution.cycle-pass` from the root advance. They retain the
-   deadline and cycle scopes without repeating the root span name.
+1. `bayn.execution.generation-pass` measures the outer authority/settlement deadline, while
+   `bayn.execution.bounded-pass` measures the inner serialized cycle deadline. `bayn.execution.cycle-pass` excludes
+   the cycle permit wait. Each scope records once when entered; an authority hold records no inner cycle sample.
+   They are nested inclusive durations, not additive work or independent controller ticks. Before this separation,
+   the generation and cycle deadlines both recorded `bounded-pass`, inflating its operation count and mixing their
+   latency distributions. Compare source revisions separately. Deadline logs identify the scope with `stage`.
 2. Inspect `bayn.execution.submit` with `bayn.operation=entry` or `close`. Slow and failed submission logs include
    `intentId` and `closeOnly`. Use the durable intent/mutation history to bind its request and order afterward.
    Keep the identifiers in log payloads and persisted evidence, not Prometheus or Loki labels.
@@ -182,6 +216,10 @@ Confirm the current Restate registration's label selector before comparing worke
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create
   a replacement scheduler or bypass the PostgreSQL writer fence.
+  Native recovery retries retain their durable attempt budget and retry every thirty seconds. A newly deployed
+  source rotates the controller epoch through the existing activation hook. Do not carry an old multi-hour
+  recovery timer into the new epoch.
+
 - `BaynExecutionWindowUnready`: inspect the current ACTIVE cycle, its immutable `submissionOpenAt`, and
   `executionSession.condition`. From ten minutes before submission opens until its cutoff, readiness
   requires the realized capital activation, durable execution authority with clear kill state, exact reconciliation

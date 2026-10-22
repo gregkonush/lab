@@ -51,6 +51,8 @@ const selectRows = (sql: PgClient.PgClient, predicate: Fragment) => sql`
     intent.time_in_force,
     intent.quantity_atoms::text,
     intent.notional_limit_micros::text,
+    intent.limit_price_micros::text,
+    intent.protection,
     intent.replan_generation_hash,
     intent.state,
     intent.terminal_outcome,
@@ -303,6 +305,8 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       time_in_force,
       quantity_atoms,
       notional_limit_micros,
+      limit_price_micros,
+      protection,
       replan_generation_hash,
       state,
       created_at,
@@ -323,6 +327,8 @@ const insertIntent = (sql: PgClient.PgClient, intent: Intent) =>
       ${intent.timeInForce},
       ${intent.quantityAtoms},
       ${intent.notionalLimitMicros},
+      ${intent.limitPriceMicros},
+      ${intent.protection === undefined ? null : JSON.stringify(intent.protection)}::jsonb,
       ${intent.replanGenerationHash ?? null},
       ${intent.state},
       ${intent.createdAt},
@@ -497,6 +503,35 @@ const makeStore = Effect.gen(function* () {
         ),
       ),
     read: (intentId) => runRead(readById(sql, 'read', intentId)),
+    protectionForCycle: (cycleId) =>
+      runRead(
+        selectRows(sql, sql`intent.cycle_id = ${cycleId} AND intent.protection IS NOT NULL`).pipe(
+          Effect.flatMap((rows) => decodeStoredEffect('read', rows)),
+        ),
+      ),
+    beginProtectionCancel: (intentId, brokerOrderId, observedAt) =>
+      runCommit(
+        fence.transaction(
+          Effect.gen(function* () {
+            const rows = yield* sql`
+        INSERT INTO native_protection_cancel_commands (intent_id, account_id, broker_order_id, requested_at)
+        SELECT i.intent_id, i.account_id, latest.broker_order_id, ${observedAt}::timestamptz
+        FROM intents i JOIN LATERAL (
+          SELECT o.broker_order_id, o.side, o.status, o.parent_broker_order_id, e.observed_at
+          FROM orders o JOIN broker_events e USING (event_id)
+          WHERE o.intent_id = i.intent_id AND o.broker_order_id = ${brokerOrderId}
+          ORDER BY e.source_sequence DESC LIMIT 1
+        ) latest ON true
+        WHERE i.intent_id = ${intentId} AND i.protection IS NOT NULL AND latest.side = 'SELL'
+          AND latest.status IN ('NEW','PENDING','PARTIALLY_FILLED')
+          AND NOT EXISTS (SELECT 1 FROM native_protection_cancel_commands c WHERE c.broker_order_id = latest.broker_order_id
+            AND (c.requested_at > ${observedAt}::timestamptz - interval '5 seconds' OR c.requested_at > latest.observed_at))
+        RETURNING broker_order_id
+      `
+            return rows.length === 1
+          }),
+        ),
+      ),
   } satisfies IntentStoreService
 })
 

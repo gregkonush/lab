@@ -93,6 +93,8 @@ const compareObservedOrder = (
         intent.submittedQuantityAtoms ?? absent,
         intent.submittedNotionalMicros ?? absent,
         intent.submittedLimitPriceMicros ?? absent,
+        intent.submittedStopPriceMicros ?? absent,
+        intent.parentBrokerOrderId ?? absent,
       ].join(':')
       const observedOrder = [
         order.brokerOrderId,
@@ -103,6 +105,8 @@ const compareObservedOrder = (
         order.quantityAtoms ?? absent,
         order.notionalMicros ?? absent,
         order.limitPriceMicros ?? absent,
+        order.stopPriceMicros ?? absent,
+        order.parentBrokerOrderId ?? absent,
       ].join(':')
       return pipe(
         Result.all({

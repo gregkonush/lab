@@ -4,11 +4,19 @@ use axum::{
     http::{Method, Request},
 };
 use http_body_util::{BodyExt, StreamBody};
+use hyper::body::Body as _;
 use prost::Message;
 use sha2::{Digest, Sha256};
-use tengri::guest_authorization::{
-    GuestAction, GuestBinding, GuestContext, GuestProof, GuestVerifier, request_action, rpc_action,
+use std::{
+    collections::HashMap,
+    sync::{Arc, OnceLock},
+    time::Duration,
 };
+use tengri::guest_authorization::{
+    GuestAction, GuestBinding, GuestContext, GuestProof, GuestVerifier, MAX_ADMISSION_MS,
+    request_action, rpc_action,
+};
+use tracing::Instrument;
 
 use super::Claim;
 use crate::{
@@ -18,6 +26,72 @@ use crate::{
 
 const MAX_OPENING_BYTES: usize = 10 << 20;
 const MAX_PREVIEW_BYTES: usize = 32 << 20;
+const MAX_BUFFERED_OPENING_BYTES: usize = 2 * MAX_PREVIEW_BYTES;
+const MAX_ADMITTING_REQUESTS: usize = 32;
+const REPLAY_BUCKETS: usize = 64;
+const REPLAY_BUCKET_LIMIT: usize = 128;
+const MAX_DEADLINE_AHEAD_MS: u64 = MAX_ADMISSION_MS + 1000;
+pub(crate) const REPLAY_STARTUP_FENCE_MS: u64 = MAX_DEADLINE_AHEAD_MS + 2000;
+
+struct ReplayGuard {
+    ready_at: tokio::time::Instant,
+    buckets: [tokio::sync::Mutex<HashMap<[u8; 32], tokio::time::Instant>>; REPLAY_BUCKETS],
+}
+
+impl ReplayGuard {
+    fn new(ready_at: tokio::time::Instant) -> Self {
+        Self {
+            ready_at,
+            buckets: std::array::from_fn(|_| tokio::sync::Mutex::new(HashMap::new())),
+        }
+    }
+
+    fn process() -> Arc<Self> {
+        static REPLAY: OnceLock<Arc<ReplayGuard>> = OnceLock::new();
+        REPLAY
+            .get_or_init(|| {
+                Arc::new(Self::new(
+                    tokio::time::Instant::now() + Duration::from_millis(REPLAY_STARTUP_FENCE_MS),
+                ))
+            })
+            .clone()
+    }
+
+    async fn consume(&self, nonce: [u8; 32], deadline: u64) -> Result<(), tonic::Status> {
+        let mut bucket = self.buckets[nonce[0] as usize % REPLAY_BUCKETS]
+            .lock()
+            .await;
+        let now = crate::ofz::now_ms()
+            .map_err(|_| tonic::Status::unavailable("guest replay clock unavailable"))?;
+        let monotonic_now = tokio::time::Instant::now();
+        if monotonic_now < self.ready_at {
+            return Err(tonic::Status::unavailable(
+                "guest replay startup fence is active",
+            ));
+        }
+        if deadline <= now || deadline > now.saturating_add(MAX_DEADLINE_AHEAD_MS) {
+            return Err(tonic::Status::unauthenticated(
+                "guest request deadline expired or invalid",
+            ));
+        }
+        bucket.retain(|_, expires| *expires > monotonic_now);
+        if bucket.contains_key(&nonce) {
+            return Err(tonic::Status::unauthenticated(
+                "guest request nonce was already consumed",
+            ));
+        }
+        if bucket.len() >= REPLAY_BUCKET_LIMIT {
+            return Err(tonic::Status::resource_exhausted(
+                "guest replay capacity exhausted",
+            ));
+        }
+        bucket.insert(
+            nonce,
+            monotonic_now + Duration::from_millis(MAX_DEADLINE_AHEAD_MS),
+        );
+        Ok(())
+    }
+}
 
 #[derive(Clone)]
 pub(super) struct GuestAdmission {
@@ -25,6 +99,8 @@ pub(super) struct GuestAdmission {
     pod_uid: String,
     recovery_generation: u64,
     capacity: std::sync::Arc<tokio::sync::Semaphore>,
+    requests: std::sync::Arc<tokio::sync::Semaphore>,
+    replay: Arc<ReplayGuard>,
 }
 
 pub(super) struct Opening {
@@ -40,6 +116,20 @@ impl GuestAdmission {
         pod_uid: String,
         recovery_generation: u64,
     ) -> anyhow::Result<Self> {
+        Self::with_replay(
+            verifier,
+            pod_uid,
+            recovery_generation,
+            ReplayGuard::process(),
+        )
+    }
+
+    fn with_replay(
+        verifier: GuestVerifier,
+        pod_uid: String,
+        recovery_generation: u64,
+        replay: Arc<ReplayGuard>,
+    ) -> anyhow::Result<Self> {
         ensure!(
             crate::ofz::canonical_uuid(&pod_uid) && recovery_generation > 0,
             "guest admission requires an installed pod UID and recovery generation"
@@ -48,7 +138,25 @@ impl GuestAdmission {
             verifier,
             pod_uid,
             recovery_generation,
-            capacity: std::sync::Arc::new(tokio::sync::Semaphore::new(2)),
+            capacity: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_BUFFERED_OPENING_BYTES)),
+            requests: std::sync::Arc::new(tokio::sync::Semaphore::new(MAX_ADMITTING_REQUESTS)),
+            replay,
+        })
+    }
+
+    pub(super) async fn wait_ready(&self) {
+        tokio::time::sleep_until(self.replay.ready_at).await;
+    }
+
+    pub(super) fn is_ready(&self) -> bool {
+        tokio::time::Instant::now() >= self.replay.ready_at
+    }
+
+    pub(super) fn reserve_request(
+        &self,
+    ) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
+        self.requests.clone().try_acquire_owned().map_err(|_| {
+            tonic::Status::resource_exhausted("guest admission request capacity exhausted")
         })
     }
 
@@ -106,16 +214,17 @@ impl GuestAdmission {
         let (parts, source) = request.into_parts();
         let (body, forwarded) =
             tokio::time::timeout(std::time::Duration::from_millis(remaining), async {
-                let permit = self
-                    .capacity
-                    .clone()
-                    .acquire_owned()
-                    .await
-                    .context("guest admission closed")?;
                 let (body, forwarded) = if grpc {
-                    opening_body(source, permit).await?
+                    opening_body(source, self.capacity.clone()).await?
                 } else {
-                    let body = axum::body::to_bytes(source, MAX_PREVIEW_BYTES)
+                    let limit = source
+                        .size_hint()
+                        .upper()
+                        .unwrap_or(MAX_PREVIEW_BYTES as u64)
+                        .min(MAX_PREVIEW_BYTES as u64) as usize;
+                    let permit = reserve_bytes(&self.capacity, limit)?;
+                    let body = axum::body::to_bytes(source, limit)
+                        .instrument(tracing::info_span!("guest.admission.body"))
                         .await
                         .context("preview request body exceeds its limit")?;
                     let body = retained_opening(body, permit);
@@ -183,29 +292,37 @@ impl GuestAdmission {
     ) -> Result<(), tonic::Status> {
         self.require_binding(opening, claim, fence)
             .map_err(|_| tonic::Status::permission_denied("invalid signed guest admission"))?;
+        database
+            .verify_guest_deadline(opening.context.deadline_unix_ms)
+            .await?;
         let nonce_hash = Sha256::digest(
             [
                 b"tengri-supervisor-guest-v4\0".as_slice(),
+                self.pod_uid.as_bytes(),
                 opening.context.nonce.as_bytes(),
             ]
             .concat(),
         );
-        database
-            .consume_nonce(&nonce_hash, opening.context.deadline_unix_ms as i64)
+        self.replay
+            .consume(nonce_hash.into(), opening.context.deadline_unix_ms)
             .await
     }
 
     #[cfg(test)]
     pub(super) fn fixture() -> Self {
+        static REPLAY: OnceLock<Arc<ReplayGuard>> = OnceLock::new();
         let signer =
             tengri::guest_authorization::GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(
                 |i| i as u8,
             ))
             .unwrap();
-        Self::new(
+        Self::with_replay(
             GuestVerifier::from_bytes(signer.public_key()).unwrap(),
             "33333333-3333-4333-8333-333333333333".into(),
             1,
+            REPLAY
+                .get_or_init(|| Arc::new(ReplayGuard::new(tokio::time::Instant::now())))
+                .clone(),
         )
         .unwrap()
     }
@@ -222,19 +339,36 @@ impl AsRef<[u8]> for BufferedOpening {
     }
 }
 
-fn retained_opening(bytes: Bytes, permit: tokio::sync::OwnedSemaphorePermit) -> Bytes {
+fn retained_opening(bytes: Bytes, mut reservation: tokio::sync::OwnedSemaphorePermit) -> Bytes {
+    let permit = reservation
+        .split(bytes.len())
+        .expect("opening fits its reserved byte limit");
+    drop(reservation);
     Bytes::from_owner(BufferedOpening {
         bytes,
         _permit: permit,
     })
 }
 
+#[tracing::instrument(name = "guest.admission.capacity", skip_all)]
+fn reserve_bytes(
+    capacity: &std::sync::Arc<tokio::sync::Semaphore>,
+    bytes: usize,
+) -> Result<tokio::sync::OwnedSemaphorePermit, tonic::Status> {
+    capacity
+        .clone()
+        .try_acquire_many_owned(bytes as u32)
+        .map_err(|_| tonic::Status::resource_exhausted("guest admission buffer capacity exhausted"))
+}
+
+#[tracing::instrument(name = "guest.admission.body", skip_all)]
 async fn opening_body(
     mut source: Body,
-    permit: tokio::sync::OwnedSemaphorePermit,
+    capacity: std::sync::Arc<tokio::sync::Semaphore>,
 ) -> anyhow::Result<(Bytes, Body)> {
     let mut prefix = Vec::with_capacity(5);
     let mut expected = None;
+    let mut permit = None;
     let remainder;
     loop {
         let frame = source
@@ -253,6 +387,7 @@ async fn opening_body(
                     "guest RPC opening message exceeds its limit"
                 );
                 expected = Some(length + 5);
+                permit = Some(reserve_bytes(&capacity, length + 5)?);
             }
             if expected == Some(prefix.len()) || chunk.is_empty() {
                 break;
@@ -267,7 +402,10 @@ async fn opening_body(
             break;
         }
     }
-    let prefix = retained_opening(Bytes::from(prefix), permit);
+    let prefix = retained_opening(
+        Bytes::from(prefix),
+        permit.expect("complete opening is reserved"),
+    );
     let opening = prefix.slice(5..);
     let frames = async_stream::stream! {
         yield Ok::<_, axum::Error>(hyper::body::Frame::data(prefix));
@@ -318,10 +456,6 @@ fn request_target(method: &str, body: &[u8]) -> anyhow::Result<String> {
         }
         "CodexCall" => {
             canonical::<proto::CodexRequest>(body)?;
-            String::new()
-        }
-        "ResolveCodexApproval" => {
-            canonical::<proto::CodexApproval>(body)?;
             String::new()
         }
         "WatchCodexEvents" => {
@@ -617,6 +751,184 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn buffered_small_requests_do_not_exhaust_opening_admission() {
+        let admission = GuestAdmission::fixture();
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let mut buffered = Vec::new();
+        for _ in 0..2 {
+            let (opening, mut forwarded) = admission
+                .opening(signed(READ, "/workspace/a", &body))
+                .await
+                .unwrap();
+            admission
+                .require_binding(&opening, &claim(), fence())
+                .unwrap();
+            drop(opening);
+            buffered.push(
+                forwarded
+                    .body_mut()
+                    .frame()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_data()
+                    .unwrap(),
+            );
+        }
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("small buffered frames blocked a new signed request")
+        .unwrap();
+    }
+
+    #[test]
+    fn tiny_requests_remain_count_bounded_and_release_capacity() {
+        let admission = GuestAdmission::fixture();
+        let mut requests: Vec<_> = (0..MAX_ADMITTING_REQUESTS)
+            .map(|_| admission.reserve_request().unwrap())
+            .collect();
+        assert_eq!(
+            admission.reserve_request().unwrap_err().code(),
+            tonic::Code::ResourceExhausted
+        );
+        requests.pop();
+        let next = admission.reserve_request().unwrap();
+        drop(requests);
+        drop(next);
+        assert_eq!(
+            admission.requests.available_permits(),
+            MAX_ADMITTING_REQUESTS
+        );
+    }
+
+    #[tokio::test]
+    async fn rpc_reserves_its_actual_opening_size() {
+        let admission = GuestAdmission::fixture();
+        let retained = admission
+            .capacity
+            .clone()
+            .acquire_many_owned((MAX_BUFFERED_OPENING_BYTES - 64) as u32)
+            .await
+            .unwrap();
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let (opening, forwarded) = admission
+            .opening(signed(READ, "/workspace/a", &body))
+            .await
+            .unwrap();
+        assert_eq!(admission.capacity.available_permits(), 64 - body.len() - 5);
+        drop(opening);
+        drop(forwarded);
+        assert_eq!(admission.capacity.available_permits(), 64);
+        drop(retained);
+    }
+
+    #[tokio::test]
+    async fn oversized_reservations_do_not_block_smaller_requests_that_fit() {
+        let admission = GuestAdmission::fixture();
+        let retained = admission
+            .capacity
+            .clone()
+            .acquire_many_owned(50 << 20)
+            .await
+            .unwrap();
+        let upload = tokio::spawn({
+            let admission = admission.clone();
+            async move {
+                admission
+                    .opening(signed(
+                        "HTTP POST",
+                        "/v1/preview/43210/submit",
+                        &vec![b'x'; MAX_PREVIEW_BYTES],
+                    ))
+                    .await
+            }
+        });
+        tokio::task::yield_now().await;
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let smaller = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await;
+        drop(retained);
+        let error = upload
+            .await
+            .unwrap()
+            .err()
+            .expect("oversized reservation should fail promptly");
+        assert_eq!(
+            error.downcast_ref::<tonic::Status>().unwrap().code(),
+            tonic::Code::ResourceExhausted
+        );
+        smaller
+            .expect("a queued preview blocked an RPC despite sufficient free bytes")
+            .unwrap();
+    }
+
+    #[tokio::test]
+    async fn buffered_preview_uploads_remain_bounded_until_storage_is_released() {
+        let admission = GuestAdmission::fixture();
+        let body = vec![b'x'; MAX_PREVIEW_BYTES];
+        let mut buffered = Vec::new();
+        for _ in 0..2 {
+            let (opening, mut forwarded) = admission
+                .opening(signed("HTTP POST", "/v1/preview/43210/submit", &body))
+                .await
+                .unwrap();
+            admission
+                .require_binding(&opening, &claim(), fence())
+                .unwrap();
+            drop(opening);
+            buffered.push(
+                forwarded
+                    .body_mut()
+                    .frame()
+                    .await
+                    .unwrap()
+                    .unwrap()
+                    .into_data()
+                    .unwrap(),
+            );
+        }
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let error = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("exhausted capacity must fail promptly")
+        .err()
+        .expect("retained uploads must enforce the total buffered byte limit");
+        assert_eq!(
+            error.downcast_ref::<tonic::Status>().unwrap().code(),
+            tonic::Code::ResourceExhausted
+        );
+        buffered.pop();
+        tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.opening(signed(READ, "/workspace/a", &body)),
+        )
+        .await
+        .expect("released upload storage did not restore admission capacity")
+        .unwrap();
+    }
+
+    #[tokio::test]
     async fn supervisor_preserves_fragmented_opening_and_following_messages() {
         let admission = GuestAdmission::fixture();
         let body = proto::Path {
@@ -631,7 +943,7 @@ mod tests {
             .collect();
         let (opening, forwarded) = opening_body(
             Body::new(StreamBody::new(futures::stream::iter(frames))),
-            admission.capacity.clone().acquire_owned().await.unwrap(),
+            admission.capacity.clone(),
         )
         .await
         .unwrap();
@@ -643,22 +955,236 @@ mod tests {
             vec![0, 0, 0, 0, 1],
         ] {
             assert!(
-                opening_body(
-                    Body::from(invalid),
-                    admission.capacity.clone().acquire_owned().await.unwrap(),
-                )
-                .await
-                .is_err()
+                opening_body(Body::from(invalid), admission.capacity.clone(),)
+                    .await
+                    .is_err()
             );
         }
         assert!(
-            opening_body(
-                Body::empty(),
-                admission.capacity.clone().acquire_owned().await.unwrap(),
+            opening_body(Body::empty(), admission.capacity.clone(),)
+                .await
+                .is_err()
+        );
+    }
+
+    #[tokio::test]
+    async fn concurrent_replays_have_exactly_one_consumer() {
+        let replay = Arc::new(ReplayGuard::new(tokio::time::Instant::now()));
+        let deadline = crate::ofz::now_ms().unwrap() + MAX_ADMISSION_MS;
+        let mut consumers = tokio::task::JoinSet::new();
+        for _ in 0..64 {
+            let replay = replay.clone();
+            consumers.spawn(async move { replay.consume([9; 32], deadline).await });
+        }
+        let mut accepted = 0;
+        while let Some(result) = consumers.join_next().await {
+            match result.unwrap() {
+                Ok(()) => accepted += 1,
+                Err(error) => assert_eq!(error.code(), tonic::Code::Unauthenticated),
+            }
+        }
+        assert_eq!(accepted, 1);
+    }
+
+    #[tokio::test]
+    async fn replay_rejects_invalid_deadlines_and_bounds_live_state() {
+        let replay = ReplayGuard::new(tokio::time::Instant::now());
+        let now = crate::ofz::now_ms().unwrap();
+        for deadline in [now - 1, now + MAX_DEADLINE_AHEAD_MS + 1000] {
+            assert_eq!(
+                replay.consume([0; 32], deadline).await.unwrap_err().code(),
+                tonic::Code::Unauthenticated
+            );
+        }
+        for n in 0..REPLAY_BUCKET_LIMIT {
+            let mut nonce = [0; 32];
+            nonce[1] = n as u8;
+            replay.consume(nonce, now + MAX_ADMISSION_MS).await.unwrap();
+        }
+        let mut extra = [0; 32];
+        extra[1] = REPLAY_BUCKET_LIMIT as u8;
+        assert_eq!(
+            replay
+                .consume(extra, now + MAX_ADMISSION_MS)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::ResourceExhausted
+        );
+        assert_eq!(
+            replay
+                .consume([0; 32], now + MAX_ADMISSION_MS)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        let mut other = [0; 32];
+        other[0] = 1;
+        replay.consume(other, now + MAX_ADMISSION_MS).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn replay_reclaims_expired_capacity_without_removing_live_nonces() {
+        let replay = ReplayGuard::new(tokio::time::Instant::now());
+        let expired = tokio::time::Instant::now() - Duration::from_secs(1);
+        {
+            let mut bucket = replay.buckets[0].lock().await;
+            for n in 0..REPLAY_BUCKET_LIMIT {
+                let mut nonce = [0; 32];
+                nonce[1] = n as u8;
+                bucket.insert(nonce, expired);
+            }
+        }
+        let deadline = crate::ofz::now_ms().unwrap() + MAX_ADMISSION_MS;
+        replay.consume([0; 32], deadline).await.unwrap();
+        assert_eq!(replay.buckets[0].lock().await.len(), 1);
+        assert_eq!(
+            replay.consume([0; 32], deadline).await.unwrap_err().code(),
+            tonic::Code::Unauthenticated
+        );
+    }
+
+    #[tokio::test]
+    async fn restarting_process_cannot_reuse_a_previously_consumed_proof() {
+        let deadline = crate::ofz::now_ms().unwrap() + MAX_ADMISSION_MS;
+        ReplayGuard::new(tokio::time::Instant::now())
+            .consume([7; 32], deadline)
+            .await
+            .unwrap();
+        let output = tokio::time::timeout(
+            Duration::from_secs(15),
+            tokio::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--ignored",
+                    "--exact",
+                    "slot::admission::tests::replay_restart_child",
+                    "--nocapture",
+                ])
+                .env("TENGRI_REPLAY_TEST_DEADLINE", deadline.to_string())
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("restart fence did not finish")
+        .unwrap();
+        assert!(
+            output.status.success(),
+            "restart proof failed: {} {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "spawned by restarting_process_cannot_reuse_a_previously_consumed_proof"]
+    async fn replay_restart_child() {
+        let deadline = std::env::var("TENGRI_REPLAY_TEST_DEADLINE")
+            .unwrap()
+            .parse()
+            .unwrap();
+        let mut admission = GuestAdmission::fixture();
+        admission.replay = ReplayGuard::process();
+        assert!(!admission.is_ready());
+        assert_eq!(
+            admission
+                .replay
+                .consume([7; 32], deadline)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unavailable
+        );
+        admission.wait_ready().await;
+        assert!(admission.is_ready());
+        assert_eq!(
+            admission
+                .replay
+                .consume([7; 32], deadline)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+        let fresh = crate::ofz::now_ms().unwrap() + MAX_ADMISSION_MS;
+        admission.replay.consume([8; 32], fresh).await.unwrap();
+        assert_eq!(
+            admission
+                .replay
+                .consume([8; 32], fresh)
+                .await
+                .unwrap_err()
+                .code(),
+            tonic::Code::Unauthenticated
+        );
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_supervisor_deadline_uses_database_clock() {
+        let database = Database::shared_fixture().await;
+        let client = database.connection().await.unwrap();
+        let now: i64 = client
+            .query_one("SELECT tengri.now_ms()", &[])
+            .await
+            .unwrap()
+            .get(0);
+        for deadline in [now as u64 - 1, now as u64 + 60_000, u64::MAX] {
+            assert_eq!(
+                database
+                    .verify_guest_deadline(deadline)
+                    .await
+                    .unwrap_err()
+                    .code(),
+                tonic::Code::Unauthenticated
+            );
+        }
+        database
+            .verify_guest_deadline(now as u64 + MAX_ADMISSION_MS)
+            .await
+            .unwrap();
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_supervisor_admission_does_not_wait_for_replay_writes() {
+        let database = Database::shared_fixture().await;
+        let mut blocker = database.connection().await.unwrap();
+        let transaction = blocker.transaction().await.unwrap();
+        let admission = GuestAdmission::fixture();
+        let body = proto::Path {
+            path: "/workspace/a".into(),
+        }
+        .encode_to_vec();
+        let (opening, _) = admission
+            .opening(signed(READ, "/workspace/a", &body))
+            .await
+            .unwrap();
+        let nonce_hash = Sha256::digest(
+            [
+                b"tengri-supervisor-guest-v4\0".as_slice(),
+                admission.pod_uid.as_bytes(),
+                opening.context.nonce.as_bytes(),
+            ]
+            .concat(),
+        )
+        .to_vec();
+        transaction
+            .query_one(
+                "SELECT tengri.consume_nonce($1,$2)",
+                &[&nonce_hash, &(opening.context.deadline_unix_ms as i64)],
             )
             .await
-            .is_err()
-        );
+            .unwrap();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_millis(250),
+            admission.consume(&opening, &claim(), fence(), &database),
+        )
+        .await;
+        transaction.rollback().await.unwrap();
+        result
+            .expect("pod-bound admission waited for shared replay writes")
+            .unwrap();
     }
 
     #[tokio::test]

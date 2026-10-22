@@ -122,6 +122,7 @@ export function clearDeletedDesktopState(agentId: string) {
   try {
     for (const key of [
       `tengri-thread:${agentId}`,
+      `tengri-approval-mode:${agentId}`,
       `tengri-conversations:${agentId}`,
       `tengri:spotlight:${agentId}:recents`,
     ]) {

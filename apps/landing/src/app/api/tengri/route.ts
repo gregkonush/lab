@@ -1,5 +1,7 @@
 import { isTengriAuthConfigured } from '@/lib/tengri/auth'
+import { observeRequest } from '@/lib/observability/server'
 import {
+  answerCodexQuestions,
   createAgent,
   createCodexThread,
   createDirectory,
@@ -8,6 +10,8 @@ import {
   deleteFile,
   getCodexAccount,
   getCodexLogin,
+  getCodexRun,
+  getActiveCodexRun,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
@@ -50,6 +54,10 @@ import type { TengriDesktopSnapshot } from '@/lib/tengri/types'
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri.snapshot', () => getSnapshot(request))
+}
+
+async function getSnapshot(request: Request) {
   try {
     requireSameOriginGet(request)
     const authConfigured = isTengriAuthConfigured()
@@ -76,6 +84,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  return observeRequest(request, 'tengri.action', () => runAction(request))
+}
+
+async function runAction(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)
@@ -152,11 +164,11 @@ export async function POST(request: Request) {
         )
         break
       case 'terminate-terminal':
-        await terminateTerminal(identity, action.agentId, action.terminalId)
+        await terminateTerminal(identity, action.agentId, action.terminalId, request.signal)
         result = null
         break
       case 'terminal-ticket':
-        result = await issueTerminalTicket(identity, action.agentId, action.terminalId)
+        result = await issueTerminalTicket(identity, action.agentId, action.terminalId, request.signal)
         break
       case 'codex-account':
         result = await getCodexAccount(identity, action.agentId, request.signal)
@@ -168,7 +180,13 @@ export async function POST(request: Request) {
         result = await startCodexLogin(identity, action.agentId)
         break
       case 'codex-models':
-        result = await listCodexModels(identity, action.agentId, action.cursor)
+        result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
+        break
+      case 'active-codex-run':
+        result = await getActiveCodexRun(identity, action.agentId)
+        break
+      case 'codex-run':
+        result = await getCodexRun(identity, action.agentId, action.runId)
         break
       case 'create-thread':
         result = await createCodexThread(identity, action.agentId, {
@@ -192,6 +210,7 @@ export async function POST(request: Request) {
           identity,
           action.agentId,
           action.threadId,
+          action.operationId,
           action.text,
           {
             model: action.model,
@@ -206,26 +225,46 @@ export async function POST(request: Request) {
           action.agentId,
           action.threadId,
           action.turnId,
+          action.operationId,
+          action.runId,
           action.text,
           action.images,
         )
         break
       case 'interrupt-turn':
-        await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
+        await interruptCodexTurn(identity, action.agentId, action.runId, action.operationId)
+        result = null
+        break
+      case 'answer-questions':
+        await answerCodexQuestions(
+          identity,
+          action.agentId,
+          action.approvalId,
+          action.runId,
+          action.operationId,
+          action.response,
+        )
         result = null
         break
       case 'resolve-approval':
-        await resolveCodexApproval(identity, action.agentId, action.approvalId, action.decision)
+        await resolveCodexApproval(
+          identity,
+          action.agentId,
+          action.approvalId,
+          action.runId,
+          action.operationId,
+          action.decision,
+        )
         result = null
         break
       case 'preview-session':
         result = await issuePreviewSession(identity, action.agentId, action.port, action.path, action.fragment)
         break
       case 'editor-session':
-        result = await issueEditorSession(identity, action.agentId, action.windowId)
+        result = await issueEditorSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'browser-session':
-        result = await issueBrowserSession(identity, action.agentId)
+        result = await issueBrowserSession(identity, action.agentId, action.windowId, action.renewal, request.signal)
         break
       case 'revoke-editor-sessions':
         await revokeDesktopPreviews(identity)

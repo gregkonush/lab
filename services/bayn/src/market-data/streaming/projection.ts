@@ -1,9 +1,13 @@
 import { MarketKind } from '../../instruments'
-import { decodeCryptoMarketFeature, isCryptoMarketFeature } from '../features/crypto-contract'
-import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
+import {
+  cryptoFeatureDefinitionMaterial,
+  decodeCryptoMarketFeature,
+  isCryptoMarketFeature,
+} from '../features/crypto-contract'
+import type { NativeMarketFeature } from '../features/native-feature'
 import { sameBarMarketValues } from '../intraday/bar-publication'
 import { createHash } from 'node:crypto'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
 import type { RawMarketEvent } from './raw-events'
 import type { TechnicalMarketFeature } from '../features/technical-contract'
 import { incorporateTechnicalRecord, type TechnicalInputRejection } from './technical-projection'
@@ -13,6 +17,7 @@ import type { IntradayBar, IntradayQuote, IntradayTrade } from '../intraday/mode
 import {
   decodeRollingMarketFeature,
   MarketFeatureFailure,
+  MarketFeatureDefinition,
   marketFeatureClockSkewAllowanceMs,
 } from '../features/contract'
 import {
@@ -23,11 +28,21 @@ import {
   type StreamingUniverse,
 } from './raw-events'
 
+const decodeFeatureIdentity = Schema.decodeUnknownResult(
+  Schema.Struct({ material: Schema.Struct({ definitionId: Schema.NonEmptyString }) }),
+)
+
 export interface ObservedMarketValue<A> {
   readonly value: A
   readonly availableAtMs: number
   readonly sequence: number
   readonly recordHash: string
+}
+export interface ObservedQuoteSource {
+  readonly topic: string
+  readonly partition: number
+  readonly offset: string
+  readonly availableAtMs: number
 }
 export interface ObservedBar extends ObservedMarketValue<IntradayBar> {
   readonly firstPublication?: ObservedMarketValue<IntradayBar>
@@ -189,17 +204,21 @@ const incorporateDecodedRecord = (
     offsets: new Map(previous.offsets).set(key, record.offset),
   }
   if (record.topic === universe.topics.features) {
-    const parsed = Result.try({
+    const document = Result.try({
       try: (): unknown => JSON.parse(record.value),
       catch: () => new MarketFeatureFailure({ reason: 'schema', message: 'feature is not JSON' }),
-    }).pipe(
-      Result.flatMap(
-        (value): Result.Result<NativeMarketFeature, MarketFeatureFailure> =>
-          marketSourceKind(universe) === MarketKind.Crypto
-            ? decodeCryptoMarketFeature(value)
-            : decodeRollingMarketFeature(value),
-      ),
-    )
+    })
+    if (Result.isFailure(document)) return reject(state, record, availableAtMs, document.failure.reason)
+    const identity = decodeFeatureIdentity(document.success)
+    if (Result.isFailure(identity)) return reject(state, record, availableAtMs, 'schema')
+    const crypto = marketSourceKind(universe) === MarketKind.Crypto
+    const requiredDefinition = crypto ? cryptoFeatureDefinitionMaterial[0] : MarketFeatureDefinition.ObservedPriceWindow
+    // Shared retained topics may contain other feature definitions. They provide no
+    // input or authority for this strategy; the selected definition is decoded strictly.
+    if (identity.success.material.definitionId !== requiredDefinition) return state
+    const parsed: Result.Result<NativeMarketFeature, MarketFeatureFailure> = crypto
+      ? decodeCryptoMarketFeature(document.success)
+      : decodeRollingMarketFeature(document.success)
     if (Result.isFailure(parsed)) return reject(state, record, availableAtMs, parsed.failure.reason)
     const feature = parsed.success
     const material = feature.material
@@ -400,16 +419,24 @@ export const incorporateRecordedMarketValue = (
   )
 }
 
-export interface StreamingSymbolInputs {
-  readonly bars: readonly IntradayBar[]
-  readonly quote: IntradayQuote
-  readonly trade: IntradayTrade
-  readonly feature: ObservedFeature
-}
-
 /** Choose the winning revision that had arrived at the observation, preserving earlier cuts across corrections. */
-export const observedQuoteAt = (state: StreamingProjection, symbol: string, observedAtMs: number) =>
-  state.quoteHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
+export const observedQuoteAt = (
+  state: Pick<StreamingProjection, 'quoteHistory'>,
+  symbol: string,
+  observedAtMs: number,
+  source: ObservedQuoteSource | null = null,
+) =>
+  state.quoteHistory
+    .get(symbol)
+    ?.findLast(
+      (entry) =>
+        entry.availableAtMs <= observedAtMs &&
+        (source === null ||
+          (entry.availableAtMs === source.availableAtMs &&
+            entry.value.sourceTopic === source.topic &&
+            entry.value.sourcePartition === source.partition &&
+            entry.value.sourceOffset === source.offset)),
+    )
 
 export const observedBarsAt = (
   state: StreamingProjection,
@@ -427,61 +454,3 @@ export const observedBarsAt = (
   }
   return [...selected.values()].toSorted((a, b) => compareIntradayInstants(a.value.eventAt, b.value.eventAt))
 }
-
-export const selectStreamingSymbolInputs = (
-  state: StreamingProjection,
-  symbol: string,
-  windowStartMs: number,
-  windowEndMs: number,
-  observedAtMs: number,
-): Result.Result<StreamingSymbolInputs, MarketFeatureFailure> =>
-  Result.gen(function* () {
-    const fail = (message: string) => Result.fail(new MarketFeatureFailure({ reason: 'input', message }))
-    const bars = observedBarsAt(
-      state,
-      symbol,
-      BigInt(windowStartMs) * 1_000_000n,
-      BigInt(windowEndMs) * 1_000_000n,
-      observedAtMs,
-    ).map((entry) => entry.value)
-    if (observedAtMs < state.minimumObservationMs) return yield* fail('observation precedes retained arrival history')
-    if (discardedRejectionsOverlap(state, windowStartMs))
-      return yield* fail('requested window precedes retained rejection history')
-    const quote = observedQuoteAt(state, symbol, observedAtMs)
-    const trade = state.tradeHistory.get(symbol)?.findLast((entry) => entry.availableAtMs <= observedAtMs)
-    if (
-      quote === undefined ||
-      trade === undefined ||
-      quote.availableAtMs > observedAtMs ||
-      trade.availableAtMs > observedAtMs
-    )
-      return yield* fail('current raw quote or trade is unavailable')
-    const coordinates = [...bars, quote.value, trade.value].map((row) =>
-      topicPartitionKey(row.sourceTopic, row.sourcePartition),
-    )
-    if (
-      coordinates.some((coordinate) => {
-        return (state.rejections.get(coordinate) ?? []).some(
-          (rejection) => rejection.availableAtMs >= windowStartMs && rejection.availableAtMs <= observedAtMs,
-        )
-      })
-    )
-      return yield* fail('input partition has rejected records in the observation window')
-    for (const feature of state.features.get(symbol) ?? []) {
-      if (
-        feature.availableAtMs > observedAtMs ||
-        rollingWindowStartMs(feature.value) !== windowStartMs ||
-        feature.value.material.windowEndMs !== windowEndMs
-      )
-        continue
-      if (
-        (state.rejections.get(topicPartitionKey(feature.topic, feature.partition)) ?? []).some(
-          (rejection) => rejection.availableAtMs >= windowStartMs && rejection.availableAtMs <= observedAtMs,
-        )
-      )
-        return yield* fail('feature partition has rejected records in the observation window')
-      if (yield* nativeFeatureMatchesBars(feature.value, bars))
-        return { bars, quote: quote.value, trade: trade.value, feature }
-    }
-    return yield* fail('matching rolling feature is unavailable')
-  })

@@ -212,6 +212,12 @@ test.each(['invalid-response', 'defect', 'interruption'])(
     const result = JSON.parse(line.slice('BROKER_POLL_RESULT='.length))
     expect(result.attemptsAtReturn).toBe(1)
     expect(result.attemptsAfterReturn).toBe(1)
+    expect(result.mutationInvalidations).toBe(0)
+    expect(result.interruptedCaptures).toEqual(
+      mode === 'interruption'
+        ? [{ accountId: 'test-account', sourceRevision: 'b'.repeat(40), captureId: 'test-capture' }]
+        : [],
+    )
     if (mode === 'invalid-response') {
       expect(result.failed).toBe(false)
       expect(result.poll._tag).toBe('Unavailable')

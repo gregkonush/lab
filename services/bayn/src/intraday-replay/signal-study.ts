@@ -1,3 +1,7 @@
+import { jevEntryProbability } from '../jev/trade-plan-choices'
+import { momentumControlCandidates } from './momentum-control'
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { quantityFromNumber } from '../quantity'
@@ -6,7 +10,7 @@ import { jevMarketForSymbol, jevMarketForFeed, jevBenchmarkSymbol } from '../jev
 import { observationSession, isContinuousMarket } from '../market-hours'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
@@ -21,16 +25,12 @@ import {
 import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
-import {
-  jevMomentumEntryCandidates,
-  jevSignalFor,
-  reproduceJevTradingSignalBatchEvidence,
-} from '../jev/trading-signals'
+import { jevBenchmarkSignalFor, jevSignalFor, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
 import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
-import { calculateSessionFees } from '../execution-model'
+import { calculateSessionFees } from '../strategy/execution-model/fees'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from '../time'
@@ -59,7 +59,7 @@ export const signalStudyDefinition = {
     DETERMINISTIC_BREAKOUT:
       'Apply the retained momentum thresholds to every available candidate, ranked by exact benchmark-relative return then symbol.',
     RELATIVE_MOMENTUM:
-      'Strictly positive exact 30-minute return and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
+      'Strictly positive exact return from the common observed reference and benchmark-relative return, native Jev spread limit and positive displayed sizes; rank by exact relative return then symbol.',
   },
   breakoutThresholds: {
     lookbackReturnBps: defaultIntradayMomentumProtocolDocument.minimumLookbackReturnBps,
@@ -126,7 +126,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
     for (const candidate of plan.candidates) {
       if (candidate.status === 'EXCLUDED') continue
       const { prices: values } = yield* jevSignalFor(snapshot, candidate.symbol)
-      const { prices: benchmark } = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
+      const { prices: benchmark } = yield* jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
       const quote = snapshot.latestQuotes[candidate.symbol]
       if (quote === undefined) return yield* Result.fail(new SignalStudyFailure({ message: 'Missing candidate quote' }))
       const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(values, candidate.symbol, benchmark)
@@ -153,7 +153,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        enterProbability: answer?.type === 'choice' ? (answer.probabilities['enter'] ?? null) : null,
+        enterProbability: answer?.type === 'choice' ? jevEntryProbability(answer.probabilities) : null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -178,8 +178,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]:
-          (yield* jevMomentumEntryCandidates(snapshot, observation.protocol))[0]?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]: (yield* momentumControlCandidates(snapshot))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }
@@ -223,8 +222,7 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'action' && answer.probabilities['enter'] !== undefined)
-            factors.push(['enterProbability', bin(answer.probabilities['enter'])])
+          if (name === 'action') factors.push(['enterProbability', bin(jevEntryProbability(answer.probabilities))])
         }
       }
     for (const [dimension, value] of [
@@ -266,7 +264,7 @@ export const summarizeSignalFactorOutcomes = (
 }
 
 export const studyOrder = (input: {
-  readonly orderType: OrderType.Limit | OrderType.Market
+  readonly orderType: OrderType.Limit
   readonly symbol: string
   readonly side: OrderSide
   readonly quantityAtoms: bigint
@@ -305,15 +303,9 @@ export const studyOrder = (input: {
       symbol: input.symbol,
       side: input.side,
       orderType: input.orderType,
-      timeInForce:
-        input.orderType === OrderType.Limit
-          ? TimeInForce.ImmediateOrCancel
-          : jevMarketForSymbol(input.symbol).market === 'CRYPTO'
-            ? TimeInForce.GoodUntilCanceled
-            : TimeInForce.Day,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: price,
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
@@ -322,7 +314,7 @@ export const studyOrder = (input: {
       order: {
         side: input.side,
         quantityAtoms: input.quantityAtoms,
-        limitPriceMicros: input.orderType === OrderType.Market ? null : terms.expectedExecutionPriceMicros,
+        limitPriceMicros: terms.expectedExecutionPriceMicros,
       },
       quote: {
         priceMicros: yield* priceNumberToMicros(
@@ -337,10 +329,8 @@ export const studyOrder = (input: {
       executionModel: input.protocol.executionModel,
       assumptions: input.assumptions,
     })
-    if (Result.isFailure(simulated) && simulated.failure.reason === 'insufficient-market-close-liquidity')
-      return { status: 'UNRESOLVED' as const, reason: simulated.failure.reason }
     const outcome = yield* simulated
-    if (outcome.status === 'canceled') return { status: 'CANCELED' as const, reason: outcome.reason }
+    if (outcome.status === 'unfilled') return { status: 'CANCELED' as const, reason: outcome.reason }
     return {
       status: 'FILLED' as const,
       fill: {
@@ -370,10 +360,9 @@ export const studyEntryQuantity = (input: {
       symbol: input.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* priceNumberToMicros(input.referencePrice, 'study.reference', 'UP'),
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
@@ -497,7 +486,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       if (ids.has(batch.plan.batchId)) return yield* new SignalStudyFailure({ message: 'Duplicate retained batch' })
       ids.add(batch.plan.batchId)
       if (
-        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v1' ||
+        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v2' ||
         manifest.streaming.runId !== input.runId ||
         manifest.streaming.sourceManifestHash !== sourceHash
       )

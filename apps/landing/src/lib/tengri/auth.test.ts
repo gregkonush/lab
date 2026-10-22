@@ -1,7 +1,8 @@
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, mock, test } from 'bun:test'
+import { afterAll, beforeAll, describe, expect, mock, spyOn, test } from 'bun:test'
+import * as Sentry from '@sentry/node'
 
 void mock.module('server-only', () => ({}))
 const { getTengriIdentity, handleTengriAuth } = await import('./auth')
@@ -30,6 +31,30 @@ afterAll(() => {
 })
 
 describe('Ofz-backed browser authentication boundary', () => {
+  test('reports a caught authentication outage while preserving its 503 response', async () => {
+    const capture = spyOn(Sentry, 'captureException').mockReturnValue('fixture-event')
+    process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = path.join(directory, 'missing-secret')
+    try {
+      const response = await handleTengriAuth(
+        new Request('https://proompteng.ai/api/auth/login', {
+          method: 'POST',
+          headers: { host: 'proompteng.ai', origin: 'https://proompteng.ai', 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      expect(response.status).toBe(503)
+      expect(capture).toHaveBeenCalledTimes(1)
+      expect(capture.mock.calls[0]?.[0]).toMatchObject({ code: 'ENOENT' })
+      const body = await response.text()
+      expect(JSON.parse(body)).toEqual({
+        error: 'Sign-in is unavailable. Try again shortly.',
+        auditReceiptId: '',
+      })
+      expect(body).not.toContain('missing-secret')
+    } finally {
+      process.env.TENGRI_OIDC_CLIENT_SECRET_FILE = settings.TENGRI_OIDC_CLIENT_SECRET_FILE
+      capture.mockRestore()
+    }
+  })
   test('absent, malformed, duplicate and legacy cookies never authenticate', async () => {
     for (const value of [
       '',
@@ -40,17 +65,20 @@ describe('Ofz-backed browser authentication boundary', () => {
       expect(await getTengriIdentity(new Headers({ cookie: value }))).toBeNull()
     }
   })
-  test('cross-origin login is denied before issuing OAuth state', async () => {
-    const response = await handleTengriAuth(
-      new Request('https://proompteng.ai/api/auth/login', {
-        method: 'POST',
-        headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
-      }),
-    )
-    expect(response.status).toBe(403)
-    expect(response.headers.getSetCookie()).toEqual([])
-    expect(await response.text()).not.toContain('fixture-oidc-client-secret')
-  })
+  test.each(['login', 'step-up', 'add-passkey'])(
+    'cross-origin %s is denied before issuing OAuth state',
+    async (action) => {
+      const response = await handleTengriAuth(
+        new Request(`https://proompteng.ai/api/auth/${action}`, {
+          method: 'POST',
+          headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
+        }),
+      )
+      expect(response.status).toBe(403)
+      expect(response.headers.getSetCookie()).toEqual([])
+      expect(await response.text()).not.toContain('fixture-oidc-client-secret')
+    },
+  )
   test('callback requires a full random state and code', async () => {
     const response = await handleTengriAuth(
       new Request('https://proompteng.ai/api/auth/callback?state=guess&code=code', {

@@ -17,7 +17,7 @@ import {
   type Order as AlpacaOrder,
   type Position as AlpacaPosition,
   type ReadEvidence,
-} from './alpaca'
+} from './alpaca/model'
 import { AccountStatus, OrderSide, OrderStatus, OrderType } from '../execution/contracts'
 import {
   accountObservation,
@@ -132,6 +132,7 @@ describe('paper broker observations', () => {
         side: PositionSide.Long,
         quantityAtoms: '1000000000',
         averageEntryPriceMicros: '100000000',
+        costBasisMicros: '100000000',
         marketPriceMicros: '110000000',
         marketValueMicros: '110000000',
         unrealizedPnlMicros: '10000000',
@@ -146,6 +147,7 @@ describe('paper broker observations', () => {
         side: PositionSide.Short,
         quantityAtoms: '-2000000000',
         averageEntryPriceMicros: '150000000',
+        costBasisMicros: '-300000000',
         marketPriceMicros: '140000000',
         marketValueMicros: '-280000000',
         unrealizedPnlMicros: '20000000',
@@ -193,6 +195,7 @@ describe('paper broker observations', () => {
           side: PositionSide.Long,
           quantityAtoms: '1000000000',
           averageEntryPriceMicros: '100000000',
+          costBasisMicros: '100000000',
           marketPriceMicros: '100000000',
           marketValueMicros: '100000000',
           unrealizedPnlMicros: '0',
@@ -207,6 +210,7 @@ describe('paper broker observations', () => {
           side: PositionSide.Long,
           quantityAtoms: '1000000000',
           averageEntryPriceMicros: '100000000',
+          costBasisMicros: '100000000',
           marketPriceMicros: '100000000',
           marketValueMicros: '100000000',
           unrealizedPnlMicros: '0',
@@ -336,3 +340,28 @@ describe('paper broker observations', () => {
     })
   })
 })
+
+test.each([AlpacaTimeInForce.Day, AlpacaTimeInForce.GoodUntilCanceled])(
+  'reconciles legal extended stock LIMIT orders without discarding broker evidence: %s',
+  (timeInForce) => {
+    expect(
+      orderObservation(
+        { ...order, orderType: AlpacaOrderType.Limit, timeInForce, extendedHours: true, limitPriceMicros: '100000000' },
+        evidence,
+      )._tag,
+    ).toBe('Success')
+    expect(
+      orderObservation(
+        {
+          ...order,
+          symbol: 'BTC/USD',
+          assetClass: AssetClass.Crypto,
+          orderType: AlpacaOrderType.Limit,
+          timeInForce,
+          extendedHours: true,
+        },
+        evidence,
+      )._tag,
+    ).toBe('Failure')
+  },
+)

@@ -3,9 +3,12 @@ import { describe, expect, test } from 'bun:test'
 import { DateTime, Result } from 'effect'
 
 import { prepareAccounting } from '../accounting/domain'
-import { MutationOperation, orderRequestBody } from '../broker/alpaca-mutations'
-import { MutationEventType } from '../execution/mutations'
-import { canonicalHashV1 } from '../hash'
+import { prepareCashSettlement } from '../accounting/cash-settlement'
+import { planAccountingReceipt } from '../db/execution-store/decisions'
+import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { MutationEventType } from '../execution/mutations/model'
+import { canonicalHashV1Result } from '../hash'
 import {
   AccountStatus,
   Authority,
@@ -55,7 +58,7 @@ const failureOf = <A>(result: Result.Result<A, ReconciliationAlgebraFailure>): R
   return result.failure
 }
 
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const accountId = 'paper-account'
 const openingObservedAt = '2026-07-22T15:29:59.000Z'
 const observedAt = '2026-07-22T15:30:00.000Z'
@@ -97,7 +100,7 @@ const receiptMaterial = {
 const receipt: AccountingReceipt = {
   ...receiptMaterial,
   receiptId: hash('receipt-1'),
-  contentHash: canonicalHashV1(receiptMaterial),
+  contentHash: Result.getOrThrow(canonicalHashV1Result(receiptMaterial)),
   recordedAt: observedAt,
 }
 
@@ -115,7 +118,8 @@ const account: AccountSnapshot = {
 const fillPriceMicros = (BigInt(fill.priceAtoms) / 1000n).toString()
 
 const position: Position = {
-  schemaVersion: 'bayn.paper-position.v1',
+  schemaVersion: 'bayn.position.v2',
+  costBasisMicros: ((BigInt(fill.quantityAtoms) * BigInt(fillPriceMicros)) / 1_000_000_000n).toString(),
   accountId,
   symbol: fill.symbol,
   quantityAtoms: fill.quantityAtoms,
@@ -134,8 +138,9 @@ const order: Order = {
   ...(fill.intentId === undefined ? {} : { intentId: fill.intentId }),
   symbol: fill.symbol,
   side: fill.side,
-  orderType: OrderType.Market,
-  timeInForce: TimeInForce.Day,
+  orderType: OrderType.Limit,
+  limitPriceMicros: fillPriceMicros,
+  timeInForce: TimeInForce.Day as const,
   quantityAtoms: fill.quantityAtoms,
   filledQuantityAtoms: fill.quantityAtoms,
   status: OrderStatus.Filled,
@@ -145,30 +150,35 @@ const order: Order = {
 const requestIntent = {
   clientOrderId: fill.clientOrderId,
   notionalLimitMicros: fillPriceMicros,
-  orderType: OrderType.Market,
+  limitPriceMicros: fillPriceMicros,
+  orderType: OrderType.Limit,
   quantityAtoms: fill.quantityAtoms,
   side: fill.side,
   symbol: fill.symbol,
-  timeInForce: TimeInForce.Day,
+  timeInForce: TimeInForce.Day as const,
 } as const
 
-const currentSubmitRequestHash = canonicalHashV1(Result.getOrThrow(orderRequestBody(requestIntent)))
-const historicalGtcSubmitRequestHash = canonicalHashV1({
-  symbol: requestIntent.symbol,
-  qty: '1',
-  type: 'market',
-  side: 'buy',
-  time_in_force: 'gtc',
-  client_order_id: requestIntent.clientOrderId,
-  extended_hours: false,
-})
+const currentSubmitRequestHash = Result.getOrThrow(
+  canonicalHashV1Result(Result.getOrThrow(orderRequestBody(requestIntent))),
+)
+const historicalGtcSubmitRequestHash = Result.getOrThrow(
+  canonicalHashV1Result({
+    symbol: requestIntent.symbol,
+    qty: '1',
+    type: 'market',
+    side: 'buy',
+    time_in_force: 'gtc',
+    client_order_id: requestIntent.clientOrderId,
+    extended_hours: false,
+  }),
+)
 
 const intentRow = {
   intent_id: fill.intentId ?? hash('missing-intent'),
   client_order_id: fill.clientOrderId,
   symbol: fill.symbol,
   side: fill.side,
-  order_type: OrderType.Market,
+  order_type: OrderType.Limit,
   time_in_force: order.timeInForce,
   quantity_atoms: fill.quantityAtoms,
   notional_limit_micros: fillPriceMicros,
@@ -207,6 +217,8 @@ const comparisonInput = (status: AccountStatus = AccountStatus.Active): Paramete
     ledgerExact: true,
     brokerFeeAccruals: [],
     cashReportingOffsetMicros: '0',
+    cashSettlementDeltaMicros: '0',
+    brokerCashSettlements: [],
     brokerFeeCashDeltaMicros: '0',
     snapshot: {
       cashReportingQuantumMicros: '1',
@@ -255,6 +267,107 @@ const emptyRiskRow = (): RiskContextRow => ({
 })
 
 describe('PostgreSQL reconciliation algebra', () => {
+  test('posted per-fill cash rounding restores exact cash while an unexplained cent still blocks', () => {
+    const input = comparisonInput()
+    const preciseFill = { ...fill, symbol: 'BTC/USD', priceAtoms: '100004900000' }
+    const precise = Result.getOrThrow(
+      prepareAccounting(
+        hash('precise-crypto-fill'),
+        preciseFill,
+        { quantityAtoms: '0', costMicros: '0' },
+        tigerBeetle.ledger,
+      ),
+    )
+    const preciseReceipt = {
+      ...Result.getOrThrow(planAccountingReceipt(precise, tigerBeetle.clusterId.toString(), tigerBeetle.ledger)),
+      recordedAt: observedAt,
+    }
+    const settlement = Result.getOrThrow(
+      prepareCashSettlement(
+        {
+          schemaVersion: 'bayn.broker-cash-settlement.v1',
+          accountId,
+          transactionId: precise.transaction.transactionId,
+          transactionContentHash: precise.transaction.contentHash,
+          brokerEventId: precise.transaction.brokerEventId,
+          cashDeltaMicros: precise.transaction.cashDeltaMicros,
+          cashReportingQuantumMicros: '10000',
+          precisionAccountEventId: hash('cash-precision'),
+          observedAt,
+          occurredAt: observedAt,
+        },
+        tigerBeetle.ledger,
+      ),
+    )
+    const cash = (
+      BigInt(input.openingCash.cash_micros) +
+      BigInt(precise.transaction.cashDeltaMicros) +
+      BigInt(settlement.roundingDeltaMicros)
+    ).toString()
+    const precisePosition = {
+      ...position,
+      symbol: preciseFill.symbol,
+      costBasisMicros: precise.transaction.costBasisMicros,
+      averageEntryPriceMicros: '100004900',
+      marketPriceMicros: '100004900',
+      marketValueMicros: '100004900',
+    }
+    const snapshot = {
+      ...input.snapshot,
+      positions: [precisePosition],
+      fills: [preciseFill],
+      orders: [],
+      account: {
+        ...input.snapshot.account,
+        cashMicros: cash,
+        equityMicros: (BigInt(cash) + BigInt(precisePosition.marketValueMicros)).toString(),
+      },
+      valuation: {
+        ...input.snapshot.valuation,
+        cashMicros: cash,
+        longMarketValueMicros: precisePosition.marketValueMicros,
+        equityMicros: (BigInt(cash) + BigInt(precisePosition.marketValueMicros)).toString(),
+      },
+    }
+    const preciseInput = {
+      ...input,
+      snapshot,
+      intents: [],
+      transactions: [precise.transaction],
+      receipts: [preciseReceipt],
+      projectedPositions: [
+        {
+          symbol: preciseFill.symbol,
+          quantityAtoms: preciseFill.quantityAtoms,
+          costBasisMicros: precise.transaction.costBasisMicros,
+        },
+      ],
+    }
+    const missing = successOf(compareOpeningCash(preciseInput))
+    expect(missing.comparison.metrics.cashDifferenceMicros).toBe(settlement.roundingDeltaMicros)
+    const fixedInput = {
+      ...preciseInput,
+      cashSettlementDeltaMicros: settlement.roundingDeltaMicros,
+      brokerCashSettlements: [settlement.data],
+    }
+    const fixed = successOf(compareOpeningCash(fixedInput))
+    expect(fixed.comparison.discrepancies).toEqual([])
+    expect(fixed.accountingHash).not.toBe(missing.accountingHash)
+    const extraCent = (BigInt(cash) + 10000n).toString()
+    const unexplained = successOf(
+      compareOpeningCash({
+        ...fixedInput,
+        snapshot: {
+          ...snapshot,
+          account: { ...snapshot.account, cashMicros: extraCent },
+          valuation: { ...snapshot.valuation, cashMicros: extraCent },
+        },
+      }),
+    )
+    expect(unexplained.comparison.metrics.cashDifferenceMicros).toBe('10000')
+    expect(unexplained.comparison.discrepancies.some((discrepancy) => discrepancy.kind === 'CASH')).toBe(true)
+  })
+
   test('includes separate broker fee activities in exact cash and the accounting identity', () => {
     const input = comparisonInput()
     const cash = (BigInt(input.snapshot.account.cashMicros) - 230000n).toString()
@@ -307,11 +420,12 @@ describe('PostgreSQL reconciliation algebra', () => {
   })
 
   test('projects only the hash-bound recorded submit body without guessing a wire format', () => {
-    const market = Result.getOrThrow(orderRequestBody(requestIntent))
-    const limit = { ...market, type: 'limit', time_in_force: 'ioc', limit_price: '100' }
+    const limit = Result.getOrThrow(orderRequestBody(requestIntent))
+    const { limit_price: _limitPrice, ...terms } = limit
+    const market = { ...terms, type: 'market', extended_hours: false }
     const recorded = [market, limit].map((body) => ({
       ...intentRow,
-      submit_request_hash: canonicalHashV1(body),
+      submit_request_hash: Result.getOrThrow(canonicalHashV1Result(body)),
       submit_request_body: body,
     }))
     const projection = successOf(projectIntentExpectations(recorded))
@@ -364,7 +478,9 @@ describe('PostgreSQL reconciliation algebra', () => {
     expect(verification.plans).toEqual([prepared.ledger])
     expect(verification.exactReceipts.get(prepared.transaction.brokerEventId)).toBe(true)
     expect(canonicalAccountingReceiptMaterial(receipt)).toEqual(receiptMaterial)
-    expect(canonicalHashV1(canonicalAccountingReceiptMaterial(receipt))).toBe(receipt.contentHash)
+    expect(Result.getOrThrow(canonicalHashV1Result(canonicalAccountingReceiptMaterial(receipt)))).toBe(
+      receipt.contentHash,
+    )
 
     const inexact = successOf(
       verifyAccountingReceipts([prepared.transaction], [{ ...receipt, contentHash: hash('wrong-receipt-content') }], {
@@ -434,18 +550,22 @@ describe('PostgreSQL reconciliation algebra', () => {
     const result = makeComparison()
 
     expect(result.accountingHash).toBe(
-      canonicalHashV1({
-        schemaVersion: 'bayn.accounting-state.v3',
-        cashReportingQuantumMicros: '1',
-        accountId,
-        openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
-        transactions: [prepared.transaction],
-        receipts: [receipt],
-        ledgerExact: true,
-        brokerFeeAccruals: [],
-        cashReportingOffsetMicros: '0',
-        brokerFeeCashDeltaMicros: '0',
-      }),
+      Result.getOrThrow(
+        canonicalHashV1Result({
+          schemaVersion: 'bayn.accounting-state.v4',
+          cashReportingQuantumMicros: '1',
+          accountId,
+          openingCash: { cash_micros: '1000000000', observed_at: openingObservedAt },
+          transactions: [prepared.transaction],
+          receipts: [receipt],
+          ledgerExact: true,
+          brokerFeeAccruals: [],
+          cashReportingOffsetMicros: '0',
+          cashSettlementDeltaMicros: '0',
+          brokerCashSettlements: [],
+          brokerFeeCashDeltaMicros: '0',
+        }),
+      ),
     )
     expect(result.comparison.discrepancies).toEqual([])
     expect(result.comparison.metrics).toMatchObject({
@@ -470,6 +590,8 @@ describe('PostgreSQL reconciliation algebra', () => {
           durableFills: [],
           projectedPositions: [],
           cashReportingOffsetMicros: offset,
+          cashSettlementDeltaMicros: '0',
+          brokerCashSettlements: [],
           snapshot: {
             ...input.snapshot,
             cashReportingQuantumMicros: '10000',
@@ -551,6 +673,8 @@ describe('PostgreSQL reconciliation algebra', () => {
         ledgerExact: true,
         brokerFeeAccruals: [],
         cashReportingOffsetMicros: '0',
+        cashSettlementDeltaMicros: '0',
+        brokerCashSettlements: [],
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',
@@ -592,6 +716,8 @@ describe('PostgreSQL reconciliation algebra', () => {
         ledgerExact: true,
         brokerFeeAccruals: [],
         cashReportingOffsetMicros: '0',
+        cashSettlementDeltaMicros: '0',
+        brokerCashSettlements: [],
         brokerFeeCashDeltaMicros: '0',
         snapshot: {
           cashReportingQuantumMicros: '1',

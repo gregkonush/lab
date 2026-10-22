@@ -99,7 +99,7 @@ impl WorkspaceAuthorization {
         epoch: &str,
         target: &str,
     ) -> Result<WorkspaceAccess, Status> {
-        let mut context = principal.context.clone();
+        let mut context = principal.policy_context()?;
         if context.workspace_uid.is_empty() && principal.action == Action::WorkspaceMetadataRead {
             context.workspace_uid = uid.into();
         }
@@ -151,6 +151,24 @@ impl WorkspaceAuthorization {
             Self::Ofz(client) => client.reservation(principal, id).await,
             #[cfg(test)]
             _ => Err(Status::unavailable("reservation fixture must provide Ofz")),
+        }
+    }
+
+    pub(crate) async fn removal_complete(&self, uid: &str) -> Result<bool, Status> {
+        match self {
+            Self::Ofz(client) => {
+                let state = match client.workspace_state(uid).await {
+                    Ok(state) => state,
+                    Err(error) if error.code() == tonic::Code::NotFound => return Ok(false),
+                    Err(error) => return Err(error),
+                };
+                Ok(state.workspace_uid == uid
+                    && state.state == "removed"
+                    && !state.running
+                    && !state.runtime_allowed)
+            }
+            #[cfg(test)]
+            _ => Ok(false),
         }
     }
 
@@ -453,7 +471,7 @@ impl WorkspaceAccess {
         }
         // A compound controller operation does not confer authority for its guest sub-operations.
         let mut context = self.context.clone();
-        context.deadline_unix_ms = parent.valid_until_unix_ms;
+        context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
         let operation = Self {
             context: context.clone(),
             action,
@@ -462,7 +480,13 @@ impl WorkspaceAccess {
             ..self.clone()
         };
         let mut decision = operation.decision().await?;
+        let parent = self.decision().await?;
         decision.valid_until_unix_ms = decision.valid_until_unix_ms.min(parent.valid_until_unix_ms);
+        if decision.valid_until_unix_ms <= ofz::now_ms()? {
+            return Err(Status::deadline_exceeded(
+                "compound guest authorization expired",
+            ));
+        }
         Ok((context, decision))
     }
 
@@ -485,12 +509,19 @@ impl WorkspaceAccess {
             WorkspaceAuthorization::Ofz(client) => {
                 let mut receipt = self.receipt.lock().await;
                 let mut context = self.context.clone();
-                let decision_deadline = ofz::now_ms()? + 2000;
-                context.deadline_unix_ms = if receipt.is_empty() {
-                    self.context.deadline_unix_ms.min(decision_deadline)
-                } else {
-                    decision_deadline
-                };
+                let now = ofz::now_ms()?;
+                if receipt.is_empty() && context.deadline_unix_ms <= now {
+                    return Err(Status::deadline_exceeded(
+                        "workspace authorization submission expired",
+                    ));
+                }
+                let decision_deadline = now
+                    + if receipt.is_empty() {
+                        ofz::AUDITED_REQUEST_BUDGET_MS
+                    } else {
+                        2000
+                    };
+                context.deadline_unix_ms = decision_deadline;
                 let decision = client
                     .check(
                         context.clone(),
@@ -576,6 +607,33 @@ impl WorkspaceAccess {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn guest_suboperations_refresh_parent_after_their_audit() {
+        let uid = "11111111-1111-4111-8111-111111111111";
+        let principal = Principal::fixture(&"a".repeat(64), uid, Action::TerminalControl);
+        let epoch = principal.context.runtime_epoch.clone();
+        let barrier = Arc::new(tokio::sync::Barrier::new(2));
+        let access = WorkspaceAuthorization::SynchronizedFixture(barrier.clone())
+            .access(&principal, uid, &epoch, "terminal-parent")
+            .unwrap();
+        let mut operation = tokio::spawn(async move {
+            access
+                .guest_decision(Action::TerminalObserve, "", uid, &epoch)
+                .await
+        });
+        barrier.wait().await;
+        tokio::task::yield_now().await;
+        sleep(Duration::from_millis(2100)).await;
+        barrier.wait().await;
+        let result = tokio::select! {
+            result = &mut operation => result.unwrap(),
+            _ = barrier.wait() => operation.await.unwrap(),
+        };
+        let (context, decision) = result.unwrap();
+        assert!(decision.valid_until_unix_ms > ofz::now_ms().unwrap());
+        assert!(decision.valid_until_unix_ms <= context.deadline_unix_ms);
+    }
 
     #[tokio::test]
     async fn guest_suboperations_require_both_parent_and_exact_operation_permissions() {

@@ -4,7 +4,7 @@ import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { runRidgeTrainingCommand } from '../ridge-training-command'
 import { utcInstantFromEpochMillis } from '../time'
 import { ControlStudyFailure } from './control-portfolio'
@@ -142,6 +142,17 @@ test.each(['unresolved', 'excluded'] as const)(
 test('pinned calendar rejects an omitted middle training day and source reaching beyond the fit boundary', () => {
   const fixture = ridgeTrainingFixture()
   expect(Result.isSuccess(prepareRidgeTraining(fixture.input, fixture.receipt))).toBeTrue()
+  expect(
+    Result.isFailure(
+      prepareRidgeTraining(
+        {
+          ...fixture.input,
+          backtest: { ...fixture.input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        fixture.receipt,
+      ),
+    ),
+  ).toBeTrue()
   const calendar = fixture.input.calendar.map((day, index) => (index === 1 ? { ...day, date: '2026-09-01' } : day))
   const omitted = {
     ...fixture.input,
@@ -156,7 +167,7 @@ test('pinned calendar rejects an omitted middle training day and source reaching
   expect(
     Result.isFailure(
       prepareRidgeTraining(
-        { ...fixture.input, calendar, expectedCalendarHash: canonicalHashV1(calendar) },
+        { ...fixture.input, calendar, expectedCalendarHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
         fixture.receipt,
       ),
     ),

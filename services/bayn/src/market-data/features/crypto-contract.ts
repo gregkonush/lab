@@ -15,7 +15,7 @@ export const cryptoUniverse = Object.freeze({
 })
 
 export const cryptoFeatureDefinitionMaterial = [
-  'dorvud.crypto-continuous-1m.v1',
+  'dorvud.crypto-continuous-1m.v2',
   'continuous;PT1M;no-calendar-reset;no-synthetic-bars',
   'canonical-correction-history:61-bars;older-corrections:reject',
   'EMA:12,26;alpha:2/(n+1);seed:first-observed-close;ready:12,26',
@@ -24,8 +24,8 @@ export const cryptoFeatureDefinitionMaterial = [
   'Bollinger:20;population-standard-deviation;2-sigma',
   'weighted-close-and-source-VWAP:5m,30m;zero-volume:unavailable',
   'volatility:60-log-returns;population-standard-deviation;not-annualized',
-  'gap:reset-recursive-seed-and-warmup;rolling:contiguous-tail',
-  'rolling-OHLC-volume:30-bars;exact-decimal-strings',
+  'gap:reset-recursive-indicator-seed-and-warmup;price-window:observed-minutes',
+  'rolling-OHLC-volume:PT30M-maximum-context;gaps-unfilled;exact-decimal-strings',
   'technical:binary64;price-micros;RSI-percentage-point-micros;volatility-ratio-ppm',
   'bar-winner:ingestion-nanos,partition,offset;raw-content:native-json-v1',
   `history:sha256-chain-of-canonical-source-inputs;cross-host-clock-skew-ms:${marketFeatureClockSkewAllowanceMs}`,
@@ -58,8 +58,8 @@ const CryptoTechnicalValues = Schema.Struct({
 })
 export const CryptoMarketFeatureSchema = Schema.Struct({
   material: Schema.Struct({
-    schemaVersion: Schema.Literal('dorvud.crypto-market-feature.v1'),
-    definitionId: Schema.Literal('dorvud.crypto-continuous-1m.v1'),
+    schemaVersion: Schema.Literal('dorvud.crypto-market-feature.v2'),
+    definitionId: Schema.Literal('dorvud.crypto-continuous-1m.v2'),
     definitionHash: Sha256Schema,
     provider: Schema.Literal('alpaca'),
     location: Schema.Literal('us'),
@@ -71,10 +71,7 @@ export const CryptoMarketFeatureSchema = Schema.Struct({
     historyPrefixHash: Sha256Schema,
     historyHash: Sha256Schema,
     inputs: Schema.Array(MarketFeatureInputSchema).check(Schema.isMinLength(1), Schema.isMaxLength(61)),
-    rolling30m: Schema.Struct({
-      status: Schema.Literals([TechnicalReadiness.Ready, TechnicalReadiness.Warming, TechnicalReadiness.Gap]),
-      values: Schema.NullOr(RollingValues),
-    }),
+    priceWindow: RollingValues,
     technical: CryptoTechnicalValues,
   }),
   featureId: Sha256Schema,
@@ -84,7 +81,7 @@ export const CryptoMarketFeatureSchema = Schema.Struct({
 export type CryptoMarketFeature = typeof CryptoMarketFeatureSchema.Type
 export const isCryptoMarketFeature = (
   feature: RollingMarketFeature | TechnicalMarketFeature | CryptoMarketFeature,
-): feature is CryptoMarketFeature => feature.material.schemaVersion === 'dorvud.crypto-market-feature.v1'
+): feature is CryptoMarketFeature => feature.material.schemaVersion === 'dorvud.crypto-market-feature.v2'
 
 const fail = (message: string) => Result.fail(new MarketFeatureFailure({ reason: 'input', message }))
 
@@ -149,11 +146,8 @@ export const decodeCryptoMarketFeature = (input: unknown): Result.Result<CryptoM
       history !== material.historyHash
     )
       return yield* fail('crypto feature input extent or history chain differs')
-    const rolling = material.rolling30m
-    if ((rolling.status === TechnicalReadiness.Ready) !== (rolling.values !== null))
-      return yield* fail('crypto rolling readiness and values disagree')
-    if (rolling.values !== null) {
-      const values = rolling.values
+    {
+      const values = material.priceWindow
       if (
         ![values.referencePrice, values.rangeHighPrice, values.rangeLowPrice, values.lastClosePrice].every(
           (value) => Number(value) > 0 && Number.isFinite(Number(value)),
@@ -161,13 +155,9 @@ export const decodeCryptoMarketFeature = (input: unknown): Result.Result<CryptoM
         Number(values.rangeHighPrice) <
           Math.max(Number(values.referencePrice), Number(values.lastClosePrice), Number(values.rangeLowPrice)) ||
         Number(values.rangeLowPrice) > Math.min(Number(values.referencePrice), Number(values.lastClosePrice)) ||
-        !Number.isFinite(Number(values.totalVolume)) ||
-        material.inputs.length < 30 ||
-        material.inputs
-          .slice(-30)
-          .some((reference, index) => BigInt(reference.eventTimeNanos) !== end - BigInt(30 - index) * minute)
+        !Number.isFinite(Number(values.totalVolume))
       )
-        return yield* fail('crypto rolling values or contiguous coverage are invalid')
+        return yield* fail('crypto observed price-window values are invalid')
     }
     for (const [name, scalar] of Object.entries(material.technical)) {
       if ((scalar.status === TechnicalReadiness.Ready) !== (scalar.value !== null))

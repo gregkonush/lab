@@ -2,6 +2,7 @@ import type { TengriAction, TengriDesktopSnapshot, TengriErrorCode } from '@/lib
 import { readCodexHistory } from '@/lib/tengri/codex-history'
 import { tengriCreateAgentSchema } from '@/lib/tengri/schemas'
 import { z } from 'zod'
+import { reportBrowserFailure } from '@/lib/observability/client'
 
 export class TengriRequestError extends Error {
   readonly status: number
@@ -16,7 +17,13 @@ export class TengriRequestError extends Error {
 }
 
 export async function getDesktopSnapshot(signal?: AbortSignal): Promise<TengriDesktopSnapshot> {
-  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal })
+  const response = await fetch('/api/tengri', { cache: 'no-store', credentials: 'same-origin', signal }).catch(
+    (error: unknown) => {
+      if (!signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+        reportBrowserFailure('tengri.snapshot')
+      throw error
+    },
+  )
   return decodeResponse<TengriDesktopSnapshot>(response)
 }
 
@@ -27,7 +34,7 @@ type TengriActionOptions = {
 }
 
 type GuestOperationScope = {
-  active: Set<AbortController>
+  active: Map<AbortController, { blocksLifecycle: boolean }>
   lifecycleBlocks: number
   listeners: Set<() => void>
 }
@@ -44,7 +51,10 @@ export function subscribeTengriGuestOperations(agentId: string, listener: () => 
 }
 
 export function getTengriGuestOperationSnapshot(agentId: string) {
-  return (guestOperationScopes.get(agentId)?.active.size ?? 0) > 0
+  for (const request of guestOperationScopes.get(agentId)?.active.values() ?? []) {
+    if (request.blocksLifecycle) return true
+  }
+  return false
 }
 
 export function hasActiveTengriGuestOperations(agentId: string) {
@@ -54,7 +64,7 @@ export function hasActiveTengriGuestOperations(agentId: string) {
 export function beginTengriLifecycleTransition(agentId: string) {
   const scope = guestOperationScope(agentId)
   scope.lifecycleBlocks += 1
-  for (const controller of scope.active) {
+  for (const controller of scope.active.keys()) {
     controller.abort(new DOMException('Agent lifecycle transition is in progress', 'AbortError'))
   }
 
@@ -77,12 +87,18 @@ export async function runTengriAction<Result>(
 
   options?.signal?.throwIfAborted()
   const scope = guestOperationScope(guestAgentId)
-  if (scope.lifecycleBlocks > 0) throw new Error('Agent lifecycle transition is in progress')
+  if (scope.lifecycleBlocks > 0) throw new DOMException('Agent lifecycle transition is in progress', 'AbortError')
 
   const controller = new AbortController()
   const abortFromCaller = () => controller.abort(options?.signal?.reason)
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
-  scope.active.add(controller)
+  scope.active.set(controller, {
+    blocksLifecycle:
+      action.action !== 'codex-models' &&
+      action.action !== 'resume-thread' &&
+      action.action !== 'active-codex-run' &&
+      action.action !== 'codex-run',
+  })
   notifyGuestOperationListeners(scope)
   try {
     return await postTengriAction<Result>(action, { ...options, signal: controller.signal })
@@ -108,12 +124,17 @@ async function postTengriAction<Result>(
     headers: { 'Content-Type': 'application/json' },
     keepalive: options?.keepalive,
     signal: options?.signal,
+  }).catch((error: unknown) => {
+    if (!options?.signal?.aborted && !(error instanceof DOMException && error.name === 'AbortError'))
+      reportBrowserFailure('tengri.request')
+    throw error
   })
   if (action.action === 'resume-thread' && response.ok) {
     return (await readCodexHistory(response, action.threadId, options?.signal, (record) =>
       requestFailure(
         record,
         typeof record.status === 'number' && record.status >= 400 && record.status <= 599 ? record.status : 503,
+        response.headers.get('x-trace-id'),
       ),
     )) as Result
   }
@@ -229,7 +250,7 @@ function guestActionAgentId(action: TengriAction) {
 function guestOperationScope(agentId: string) {
   const existing = guestOperationScopes.get(agentId)
   if (existing) return existing
-  const scope: GuestOperationScope = { active: new Set(), lifecycleBlocks: 0, listeners: new Set() }
+  const scope: GuestOperationScope = { active: new Map(), lifecycleBlocks: 0, listeners: new Set() }
   guestOperationScopes.set(agentId, scope)
   return scope
 }
@@ -247,13 +268,14 @@ function deleteUnusedGuestOperationScope(agentId: string, scope: GuestOperationS
 async function decodeResponse<Result>(response: Response): Promise<Result> {
   const payload: unknown = await response.json().catch(() => null)
   if (!response.ok) {
-    throw requestFailure(payload, response.status)
+    throw requestFailure(payload, response.status, response.headers.get('x-trace-id'))
   }
   if (!payload) throw new Error('Tengri returned an empty response')
   return payload as Result
 }
 
-function requestFailure(payload: unknown, status: number) {
+function requestFailure(payload: unknown, status: number, traceId?: string | null) {
+  if (status >= 500) reportBrowserFailure('tengri.request', status, traceId)
   const record = typeof payload === 'object' && payload !== null ? payload : {}
   const message = 'error' in record && typeof record.error === 'string' ? record.error : ''
   const code =
@@ -261,6 +283,9 @@ function requestFailure(payload: unknown, status: number) {
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
+      (status === 409 && record.code === 'control_not_dispatched') ||
+      (status === 502 && record.code === 'model_catalog_invalid') ||
+      (status === 502 && record.code === 'conversation_history_invalid') ||
       (status === 429 && record.code === 'capacity_full'))
       ? record.code
       : undefined

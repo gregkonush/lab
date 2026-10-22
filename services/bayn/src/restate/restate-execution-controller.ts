@@ -3,7 +3,7 @@ import { timingSafeEqual } from 'node:crypto'
 import * as restate from '@restatedev/restate-sdk'
 import { Clock, Result, Schema } from 'effect'
 
-import { maximumConsistencyDelayMs } from '../execution/mutations'
+import { maximumConsistencyDelayMs } from '../execution/mutations/model'
 import {
   completeExecutionControllerTick,
   decodeExecutionAdvanceStepResult,
@@ -21,7 +21,6 @@ import {
   executionControllerSuccessorPassCompleted,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerActivation,
-  type ExecutionControllerBinding,
   type ExecutionDeploymentActivation,
   type ExecutionControllerDeactivation,
   type ExecutionControllerState,
@@ -70,19 +69,12 @@ export const executionControllerCommandRetryPolicy = {
 } as const satisfies restate.RetryPolicy
 export const executionControllerInitialTickDelayMs = 0
 export const executionControllerRecoveryTickDelayMs = 30_000
-export const executionControllerRecoveryMaximumDelayMs = 24 * 60 * 60_000
-export const executionControllerRecoveryDelayMs = (recoveryWindow: number): number =>
-  Math.min(
-    executionControllerRecoveryTickDelayMs * 4 ** Math.max(0, recoveryWindow - 1),
-    executionControllerRecoveryMaximumDelayMs,
-  )
 export const executionControllerDeploymentCompletionPollIntervalMs = 5_000
 
 export interface ExecutionControllerConfig {
   readonly controllerKey: string
   readonly operationTimeoutMs: number
   readonly planHash: string
-  readonly previousBinding?: ExecutionControllerBinding
   readonly sourceRevision: string
 }
 
@@ -245,20 +237,11 @@ const verifyDeploymentBinding = (
   key: string,
   request: ExecutionDeploymentActivation,
 ): void => {
-  const requestPrevious = request.previousBinding
-  const previousMatches =
-    requestPrevious === undefined && config.previousBinding === undefined
-      ? true
-      : requestPrevious !== undefined &&
-        config.previousBinding !== undefined &&
-        requestPrevious.planHash === config.previousBinding.planHash &&
-        requestPrevious.sourceRevision === config.previousBinding.sourceRevision
   if (
     key !== config.controllerKey ||
     request.controllerKey !== config.controllerKey ||
     request.planHash !== config.planHash ||
-    request.sourceRevision !== config.sourceRevision ||
-    !previousMatches
+    request.sourceRevision !== config.sourceRevision
   ) {
     throw terminal('execution controller deployment activation does not match this immutable deployment')
   }
@@ -269,37 +252,18 @@ const verifyDeactivationBinding = (
   key: string,
   request: ExecutionControllerDeactivation,
 ): void => {
-  const matches = (binding: ExecutionControllerBinding): boolean =>
-    request.planHash === binding.planHash && request.sourceRevision === binding.sourceRevision
-  if (
-    key !== config.controllerKey ||
-    request.controllerKey !== config.controllerKey ||
-    (!matches(config) && (config.previousBinding === undefined || !matches(config.previousBinding)))
-  ) {
+  if (key !== config.controllerKey || request.controllerKey !== config.controllerKey) {
     throw terminal('execution controller deactivation does not match this immutable deployment')
   }
 }
 
-const verifyTickBinding = (
-  config: ExecutionControllerConfig,
-  key: string,
-  state: ExecutionControllerState | null,
-): void => {
-  const matchesPrevious =
-    state !== null &&
-    config.previousBinding !== undefined &&
-    state.planHash === config.previousBinding.planHash &&
-    state.sourceRevision === config.previousBinding.sourceRevision
-  if (key !== config.controllerKey || (state !== null && !matchesPrevious && state.planHash !== config.planHash)) {
+const verifyTickKey = (config: ExecutionControllerConfig, key: string): void => {
+  if (key !== config.controllerKey)
     throw terminal('execution controller durable state does not match this immutable deployment')
-  }
 }
 
-const isPreviousBinding = (config: ExecutionControllerConfig, state: ExecutionControllerState | null): boolean =>
-  state !== null &&
-  config.previousBinding !== undefined &&
-  state.planHash === config.previousBinding.planHash &&
-  state.sourceRevision === config.previousBinding.sourceRevision
+const ownsControllerState = (config: ExecutionControllerConfig, state: ExecutionControllerState): boolean =>
+  state.planHash === config.planHash && state.sourceRevision === config.sourceRevision
 
 const activationTokenPattern = /^[A-Za-z0-9_-]{43,128}$/
 const authorizationPrefix = 'Bearer '
@@ -432,14 +396,10 @@ export const executionControllerDeploymentRotationBoundMs = (operationTimeoutMs:
 
 export const executionControllerDeploymentHandlerTimeouts = (
   operationTimeoutMs: number,
-  rotatesPreviousBinding: boolean,
-): { readonly inactivityTimeout: number; readonly abortTimeout: number } =>
-  rotatesPreviousBinding
-    ? {
-        inactivityTimeout: executionControllerDeploymentRotationBoundMs(operationTimeoutMs),
-        abortTimeout: executionControllerFinalizationHeadroomMs,
-      }
-    : executionControllerHandlerTimeouts(operationTimeoutMs)
+): { readonly inactivityTimeout: number; readonly abortTimeout: number } => ({
+  inactivityTimeout: executionControllerDeploymentRotationBoundMs(operationTimeoutMs),
+  abortTimeout: executionControllerFinalizationHeadroomMs,
+})
 
 export const executionControllerDeploymentCompletionMaximumAttempts = (operationTimeoutMs: number): number =>
   Math.floor(
@@ -523,7 +483,7 @@ export const makeBaynExecutionController = (
             'execution controller tick failed validation',
           )
           const state = await readState(ctx)
-          verifyTickBinding(config, ctx.key, state)
+          verifyTickKey(config, ctx.key)
           if (tick.sourceCatchUpRevision !== undefined && tick.sourceCatchUpRevision !== config.sourceRevision) {
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller quiesced a foreign source catch-up', {
               controllerKey: ctx.key,
@@ -534,14 +494,19 @@ export const makeBaynExecutionController = (
             })
             return
           }
-          if (isPreviousBinding(config, state)) {
-            await writeRuntimeLog(runtime, 'info', 'Bayn execution controller quiesced a previous-binding tick', {
-              controllerKey: ctx.key,
-              epoch: tick.epoch,
-              invocationId: ctx.request().id,
-              sequence: tick.sequence,
-              sourceRevision: config.sourceRevision,
-            })
+          if (state !== null && !ownsControllerState(config, state)) {
+            await writeRuntimeLog(
+              runtime,
+              'info',
+              'Bayn execution controller quiesced a foreign binding pending activation',
+              {
+                controllerKey: ctx.key,
+                epoch: tick.epoch,
+                invocationId: ctx.request().id,
+                sequence: tick.sequence,
+                sourceRevision: config.sourceRevision,
+              },
+            )
             return
           }
           const issuedAt = tick.issuedAt ?? (await ctx.date.toJSON())
@@ -570,10 +535,7 @@ export const makeBaynExecutionController = (
             const failure = executionAdvanceFailureDiagnostic(cause)
 
             const replacementFirstPass =
-              config.previousBinding !== undefined &&
-              state !== null &&
-              state.lastCompletion === undefined &&
-              state.nextSequence === state.initialSequence
+              state !== null && state.lastCompletion === undefined && state.nextSequence === state.initialSequence
             const maximumAttempts = executionControllerAdvanceMaximumAttempts(replacementFirstPass)
             if (attempt + 1 < maximumAttempts && state !== null) {
               const nextAttempt = attempt + 1
@@ -644,7 +606,7 @@ export const makeBaynExecutionController = (
             }
             const nextRecoveryWindow = currentRecoveryWindow + 1
             const retryWindowHash = sha256(`${ctx.request().id}:${nextRecoveryWindow}`)
-            const recoveryDelayMs = executionControllerRecoveryDelayMs(nextRecoveryWindow)
+            const recoveryDelayMs = executionControllerRecoveryTickDelayMs
             scheduleTick(ctx, state, recoveryDelayMs, 0, issuedAt, undefined, retryWindowHash, nextRecoveryWindow)
             await writeRuntimeLog(runtime, 'warning', 'Bayn execution controller scheduled a recovery window', {
               controllerKey: ctx.key,
@@ -671,20 +633,24 @@ export const makeBaynExecutionController = (
           // Transport timing must use a live clock: a journaled sample can precede a crash before the send is recorded.
           // SDK 1.16.5 converts delay to live invoke_time; core 7.0.2 excludes that field from send replay equality.
           // The persisted successor and its idempotency key are unchanged; this clock never authorizes execution.
-          const scheduleAt =
-            result.outcome.nextWakeAt === undefined ? undefined : transportClock.currentTimeMillisUnsafe()
+          // Ordinary polling waits retain the same due-time contract; projection and journaling must consume their
+          // delay budget too, rather than starting a fresh wait after the persisted deadline has already passed.
+          const scheduleAt = transportClock.currentTimeMillisUnsafe()
           const completionDelay =
-            completed.nextDueAt === undefined || scheduleAt === undefined
+            completed.nextDueAt === undefined
               ? result.outcome.nextDelayMs
               : Math.min(result.outcome.nextDelayMs, Math.max(1, Date.parse(completed.nextDueAt) - scheduleAt))
           scheduleTick(ctx, completed, completionDelay, 0, undefined, undefined, undefined, undefined)
           await writeRuntimeLog(runtime, 'info', 'Bayn execution controller tick completed', {
+            completionToScheduleMs: scheduleAt - Date.parse(result.completedAt),
             controllerKey: ctx.key,
             epoch: completed.epoch,
             invocationId: ctx.request().id,
             nextSequence: completed.nextSequence,
             outcome: result.outcome._tag,
             receiptHash: result.outcome.receiptHash,
+            requestedNextDelayMs: result.outcome.nextDelayMs,
+            scheduledNextDelayMs: completionDelay,
             sourceRevision: completed.sourceRevision,
           })
         },
@@ -718,6 +684,18 @@ export const makeBaynExecutionController = (
         },
       ),
 
+      prepareActivation: restate.handlers.object.exclusive(
+        { ingressPrivate: true },
+        async (ctx: restate.ObjectContext<ControllerObjectState>, candidate: unknown) => {
+          const request = decodeOrTerminal(
+            decodeExecutionDeploymentActivation(candidate),
+            'execution controller deployment activation failed validation',
+          )
+          verifyDeploymentBinding(config, ctx.key, request)
+          return readState(ctx)
+        },
+      ),
+
       status: restate.handlers.object.shared(
         { ingressPrivate: true },
         async (ctx: restate.ObjectSharedContext<ControllerObjectState>, _candidate: unknown) => readState(ctx),
@@ -729,10 +707,7 @@ export const makeBaynExecutionController = (
           idempotencyRetention: executionControllerActivationRetentionMs,
           journalRetention: 0,
           retryPolicy: executionControllerCommandRetryPolicy,
-          ...executionControllerDeploymentHandlerTimeouts(
-            config.operationTimeoutMs,
-            config.previousBinding !== undefined,
-          ),
+          ...executionControllerDeploymentHandlerTimeouts(config.operationTimeoutMs),
         },
         async (
           ctx: restate.ObjectSharedContext<ControllerObjectState>,
@@ -745,7 +720,8 @@ export const makeBaynExecutionController = (
           verifyDeploymentBinding(config, ctx.key, request)
           authorizeDeployment(config.activationAuthorizationHash, ctx.request().headers.get('authorization'))
           const client = ctx.objectClient(controller, ctx.key)
-          const state = await client.status(undefined)
+          // Fence a pinned coordinator against the latest immutable target before reading its predecessor.
+          const state = await client.prepareActivation(request)
           const decision = decisionOrTerminal(decideExecutionDeploymentActivation(state, request))
           let activationState = decision._tag === 'Activate' ? decision.state : undefined
           if (decision._tag === 'Rotate') {
