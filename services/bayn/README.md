@@ -1883,44 +1883,17 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Jev instruction research
 
-The [Harness2 adapter](../../docs/bayn/harness2.md) refines the same Jev complete-plan entry
-question instruction used by the trading runtime. Native probes reproduce retained observations and use Bayn's
-funded entry-selection code. A separate generative editor proposes instructions; it cannot change market evidence,
-answer choices or execution controls. Frozen candidates are compared with the baseline on later observations hidden
-from the editor. The old Alpha-R1 factor-selection adapter is removed. Research output does not grant trading
-authority or establish economic improvement.
+The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same conditional complete-plan instruction
+consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
+runner and active factor/editor contracts are removed. Jev remains the typed System One model; the pinned Qwen3-8B
+endpoint only edits the question document through the signed research workflow.
 
-`BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
-The [runtime contract](../../docs/bayn/harness2.md) describes frozen development context, decoding policy,
-original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
-The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-jev-instruction-research) defines the approved restricted
-database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
-
-The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
-nondecreasing completion counts within the approved budget, and one final usage summary after normal generation
-finish. Intermediate counts never substitute for that final summary or complete stream termination.
-The request remains limited to 256 KiB. The raw response allows 2 MiB so per-token cumulative-usage frames fit the
-4,096-token ceiling. The receipt's base64 limit derives from that raw bound, and the operator limits the serialized
-receipt to 5 MiB, including base64 and JSON text escaping. Byte limits never replace token, deadline or termination checks.
-The failed-attempt alert uses the exported OTLP counter `bayn_research_attempts` without an added `_total` suffix.
-The worker alert checks the native Restate ReplicaSets' desired replicas. Metrics include the worker instance ID,
-matching trace identity and keeping cumulative series separate during revision overlap.
-
-The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
-Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
-Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact
-run identity; only its approval proof is submitted, and the key is never logged or journaled in Restate.
-
-```sh
-bayn-research --validate run.json
-RESTATE_INGRESS_ORIGIN=http://restate.restate.svc.cluster.local:8080 \
-  bayn-research --run run.json --output new-receipt.json
-```
-
-A completed proposal, token usage and known editor allocation remain UNQUALIFIED. The original full-session capture,
-Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
-measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
-the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+Research variants change one validated data module and retain exact source, dependency, request/response, cost and
+execution evidence. The runner reserves paid calls before dispatch, rejects ambiguous retries, keeps evaluation
+feedback out of proposals and retains an unchanged-question repeat. Existing numerical controls provide a separate
+common mechanical-exit comparison. Unknown costs remain explicit; all outputs are unqualified and grant no capital authority.
+Use the runbook for existing-data manifests, isolated local accounting targets, compiler source mounts and receipts.
 
 ### Independent public information jobs
 

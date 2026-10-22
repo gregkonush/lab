@@ -83,7 +83,7 @@ fallback. Use the native execution engine to verify those behaviors.
 
 ## Frozen residual-shock falsification candidate
 
-Input `bayn.control-study-input.v8` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
+Input `bayn.control-study-input.v9` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
 `falsificationCandidate`. It requires deterministic entry, mechanical management, `repeatedTargetWeightPpm: 200000`,
 a declared `turnoverPolicy`, and native 30,000 ms polling. Freeze timing, execution and data-cost scenarios before
 any outcome. It cannot be combined with the Jev entry or Ridge experiments.
@@ -269,7 +269,8 @@ claim that controls made Jev calls or executed the production interpreter.
 
 ```json
 {
-  "schemaVersion": "bayn.control-study-input.v8",
+  "schemaVersion": "bayn.control-study-input.v9",
+  "costObjective": "ALL_COSTS",
   "entry": "DETERMINISTIC",
   "turnoverPolicy": "ENTRY_AND_EXPECTED_EXIT",
   "management": "MECHANICAL",
