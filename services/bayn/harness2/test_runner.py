@@ -399,6 +399,49 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(run_study(data, root, storage, cli, lambda: 1001), result)
             self.assertEqual(len(cli.requests), 10)
 
+    def test_unchanged_instructions_cannot_teach_a_successful_edit(self):
+        class UnchangedEditorCLI(NativeCLI):
+            def __call__(self, kind, args, timeout):
+                super().__call__(kind, args, timeout)
+                if args[0] != "--run" or kind != "editor":
+                    return
+                output = Path(args[3])
+                receipt = json.loads(output.read_bytes())
+                run = json.loads(Path(args[1]).read_bytes())
+                receipt["responseText"] = (
+                    "<harness>" + json.dumps(study()["baseline"]) + "</harness>"
+                    "<notes>The revised instruction makes the horizon explicit.</notes>"
+                    if run["purpose"] == "prompt-edit"
+                    else "<edits>component: entry\nchange: No change\n"
+                    "observed: wait became avoid\nverdict: helped</edits>"
+                    "<experience>cue: An unchanged instruction\n"
+                    "lesson: Keep the successful edit\n"
+                    "evidence: wait became avoid\nconfidence: medium</experience>"
+                )
+                output.write_bytes(encode(receipt))
+
+        data = validate_study(study())
+        storage, cli = MemoryStorage(), UnchangedEditorCLI()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = run_study(data, root, storage, cli, lambda: 1000)
+            self.assertEqual(result["outcome"], "COMPLETE")
+            self.assertEqual(
+                storage.values["frozen-candidate.json"]["instructions"],
+                data["baseline"],
+            )
+            self.assertFalse(
+                list((root / identity(data) / "library").rglob("EXPERIENCE.md"))
+            )
+            editors = [run for kind, run in cli.requests if kind == "editor"]
+            self.assertEqual(len(editors), 3)
+            self.assertTrue(all(run["purpose"] == "prompt-edit" for run in editors))
+            audits = list((root / identity(data)).rglob("instruction-comparison.json"))
+            self.assertEqual(len(audits), 1)
+            self.assertEqual(
+                json.loads(audits[0].read_bytes())["change"], "NO_INSTRUCTION_CHANGE"
+            )
+
     def test_ambiguous_jev_probe_is_never_retransmitted(self):
         storage, cli = MemoryStorage(), NativeCLI(fail_probe=True)
         with tempfile.TemporaryDirectory() as directory:
