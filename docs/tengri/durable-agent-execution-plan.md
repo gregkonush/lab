@@ -122,7 +122,7 @@ held-request interruption, and the terminal notification receipt. Ambiguous brow
 settings and operation UUID, with an explicit notice if the selection changed. The first Linux desktop workflow,
 including real Chromium/CUA/VS Code acceptance, passed at `e831184c33`; the final source must pass the same gate.
 
-Cancellation retains the latest signed Stop in the existing workspace object. A new login can supply fresh authority
+Cancellation retains the latest authenticated Stop in the existing workspace object. A new login can supply fresh authority
 after a long explicit sleep; an older delayed Stop cannot replace that context. Only the run workflow interrupts and
 observes the exact turn. The real Restate fixture verifies two distinct session contexts, stale delivery ordering and
 retention of the newer context across worker SIGKILL/restart. Slow read-only reconciliation continues periodically
@@ -142,7 +142,14 @@ fresh cancellation authority; ambiguous failures retain the identity. Both regre
 205-test Rust suite and the real Restate worker SIGKILL fixture.
 
 The final review also requires a durable Stop check between preparation and native dispatch. The real Restate fixture
-records Stop at that boundary and exercises the production dispatch gate. Workspace claims authenticate once at
-creation and retain their exact signed binding in the workspace object. Stop reads and release compare the stored
+records Stop at that boundary and exercises the production dispatch gate. Workspace claims retain the exact
+authenticated run binding in the workspace object. Stop reads and release compare the stored
 claim after HMAC rotation; a changed claim remains denied. The fixture rotates the mounted key and replaces the
 worker before checking retained Stop authority and releasing the original claim.
+
+Signed run and control attempts enter through retryable shared handlers on the existing workspace object. Signature
+verification completes before creating either private workflow. A queued attempt that encounters key rotation fails
+without consuming its run or control UUID; a freshly signed retry can recover the same logical operation. Accepted
+workflow and claim calls do not revalidate an old envelope against a newly projected key. The real fixture queues old
+signed attempts with both worker versions stopped, rotates their mounted key, restarts the workers, and verifies
+freshly signed retries under the original operation UUIDs.

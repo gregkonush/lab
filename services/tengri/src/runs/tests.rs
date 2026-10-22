@@ -177,8 +177,8 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
 struct StopAuthorityProofInput {
     claim: Claim,
     prepared: Admission,
-    old: Envelope,
-    fresh: Envelope,
+    old: Control,
+    fresh: Control,
 }
 
 struct StopAuthorityProof {
@@ -266,9 +266,7 @@ async fn fixture_worker() {
         .bind(TengriAgentRun {
             service: service.clone(),
         })
-        .bind(TengriRunControl {
-            service: service.clone(),
-        })
+        .bind(TengriRunControl)
         .bind(TengriWorkspaceRuns {
             service: service.clone(),
         })
@@ -353,16 +351,10 @@ fn engine_port(engine: &Engine, port: &str) -> u16 {
 
 async fn admission(service: &ControlPlane, input: Input) -> Envelope {
     let principal = principal();
-    let mut claim = Claim {
+    let claim = Claim {
         workspace_uid: principal.context.workspace_uid.clone(),
         run_id: input.id.clone(),
-        signature: String::new(),
     };
-    claim.signature = service
-        .auth
-        .seal_run("workspace", claim.payload().as_bytes())
-        .await
-        .unwrap();
     seal(
         service,
         "admission",
@@ -445,17 +437,15 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let mut service = fixture();
     service.auth =
         crate::auth::Authenticator::new(&key_file, "https://proompteng.ai".into()).unwrap();
+    let workspace = TengriWorkspaceRunsIngressClient::from_client(
+        ingress.clone(),
+        principal().context.workspace_uid,
+    );
     let proof_run = Uuid::new_v4().to_string();
-    let mut proof_claim = Claim {
+    let proof_claim = Claim {
         workspace_uid: Uuid::new_v4().to_string(),
         run_id: proof_run.clone(),
-        signature: String::new(),
     };
-    proof_claim.signature = service
-        .auth
-        .seal_run("workspace", proof_claim.payload().as_bytes())
-        .await
-        .unwrap();
     let mut old_stop = Control {
         id: Uuid::new_v4().to_string(),
         run_id: proof_run,
@@ -489,8 +479,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
                 principal: fresh_stop.principal.clone(),
                 claim: proof_claim.clone(),
             },
-            old: seal(&service, "control", &old_stop).await.unwrap(),
-            fresh: seal(&service, "control", &fresh_stop).await.unwrap(),
+            old: old_stop.clone(),
+            fresh: fresh_stop.clone(),
         }))
         .send()
         .await
@@ -511,10 +501,18 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     );
     let input = input();
     let client = TengriAgentRunIngressClient::from_client(ingress.clone(), input.id.clone());
-    client
-        .run(Json(admission(&service, input.clone()).await))
-        .send()
+    let envelope = admission(&service, input.clone()).await;
+    let typed: Admission = open(&service, "admission", &envelope).await.unwrap();
+    assert!(
+        client.run(Json(typed)).send().await.is_err(),
+        "the durable run can only be created through authenticated admission"
+    );
+    workspace
+        .admit(Json(envelope))
+        .call()
         .await
+        .unwrap()
+        .into_body()
         .unwrap();
     let owner = principal().owner_hash;
     loop {
@@ -540,6 +538,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let stale_client =
         TengriRunControlIngressClient::from_client(ingress.clone(), stale_steer.id.clone());
     let error = match control_receipt(
+        &workspace,
         &stale_client,
         seal(&service, "control", &stale_steer).await.unwrap(),
     )
@@ -561,8 +560,6 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         digest: None,
         expires_at_ms: crate::ofz::now_ms().unwrap() + 2000,
     };
-    let workspace =
-        TengriWorkspaceRunsIngressClient::from_client(ingress.clone(), query.workspace_uid.clone());
     let active = workspace
         .active(Json(seal(&service, "active-query", &query).await.unwrap()))
         .call()
@@ -575,7 +572,6 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let claim = Claim {
         workspace_uid: query.workspace_uid,
         run_id: input.id.clone(),
-        signature: String::new(),
     };
     assert!(
         workspace.claim(Json(claim)).call().await.is_err(),
@@ -584,17 +580,19 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let next_port = socket.local_addr().unwrap().port();
     drop(socket);
-    let next_version = worker(next_port, &key_file);
+    let mut next_version = worker(next_port, &key_file);
     let next_deployment = register(&http, &admin, next_port, deadline).await;
     assert_ne!(
         original_deployment, next_deployment,
         "version registration must retain the original pinned endpoint"
     );
     // Repeated input is the same workflow, and a changed payload is rejected by readback.
-    client
-        .run(Json(admission(&service, input.clone()).await))
-        .send()
+    workspace
+        .admit(Json(admission(&service, input.clone()).await))
+        .call()
         .await
+        .unwrap()
+        .into_body()
         .unwrap();
     let mut changed = input.clone();
     changed.text.push('!');
@@ -619,10 +617,12 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let mut other = input.clone();
     other.id = Uuid::new_v4().to_string();
     let other_client = TengriAgentRunIngressClient::from_client(ingress.clone(), other.id.clone());
-    other_client
-        .run(Json(admission(&service, other.clone()).await))
-        .send()
+    workspace
+        .admit(Json(admission(&service, other.clone()).await))
+        .call()
         .await
+        .unwrap()
+        .into_body()
         .unwrap();
     loop {
         if let Ok(snapshot) = status(&other_client, &service, &other, &owner).await
@@ -636,23 +636,52 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let mut queued_input = input.clone();
+    queued_input.id = Uuid::new_v4().to_string();
+    let queued_envelope = admission(&service, queued_input.clone()).await;
+    let queued_stop = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: principal(),
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    let queued_control_envelope = seal(&service, "control", &queued_stop).await.unwrap();
     process.0.kill().unwrap();
     process.0.wait().unwrap();
+    next_version.0.kill().unwrap();
+    next_version.0.wait().unwrap();
+    let queued_admission = workspace
+        .admit(Json(queued_envelope.clone()))
+        .send()
+        .await
+        .unwrap()
+        .invocation_handle();
+    let queued_control = workspace
+        .admit_control(Json(queued_control_envelope))
+        .send()
+        .await
+        .unwrap()
+        .invocation_handle();
+    let queued_admission = tokio::spawn(async move { queued_admission.attach().await });
+    let queued_control = tokio::spawn(async move { queued_control.attach().await });
     std::fs::write(&key_file, "69".repeat(32)).unwrap();
     assert!(
         service
             .auth
             .verify_run(
-                "workspace",
-                proof_claim.payload().as_bytes(),
-                &proof_claim.signature
+                "admission",
+                queued_envelope.payload.as_bytes(),
+                &queued_envelope.signature
             )
             .await
             .is_err(),
-        "the mounted key must actually rotate before claim readback"
+        "the mounted key must actually rotate before admission readback"
     );
     // These are independent OS processes. Listener cancellation alone would leave HTTP/2 tasks alive.
     process = worker(port, &key_file);
+    next_version = worker(next_port, &key_file);
     let latest = proof_client
         .inspect(Json(proof_claim.clone()))
         .call()
@@ -671,7 +700,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         fresh_stop.principal.context.session_id
     );
     let mut changed_claim = proof_claim.clone();
-    changed_claim.signature = "00".repeat(32);
+    changed_claim.run_id = Uuid::new_v4().to_string();
     assert_eq!(
         proof_client
             .inspect(Json(changed_claim))
@@ -706,20 +735,42 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
             .status(),
         403
     );
-    let stop = Control {
-        id: Uuid::new_v4().to_string(),
-        run_id: input.id.clone(),
-        agent_id: input.agent_id.clone(),
-        principal: principal(),
-        method: "turn/interrupt".into(),
-        params: serde_json::json!({}),
-    };
+    assert_eq!(
+        queued_admission
+            .await
+            .unwrap()
+            .err()
+            .unwrap()
+            .response()
+            .unwrap()
+            .status(),
+        503
+    );
+    assert_eq!(
+        queued_control
+            .await
+            .unwrap()
+            .err()
+            .unwrap()
+            .response()
+            .unwrap()
+            .status(),
+        503
+    );
+    let stop = queued_stop;
     let stop_client = TengriRunControlIngressClient::from_client(ingress.clone(), stop.id.clone());
+    assert!(
+        stop_client.run(Json(stop.clone())).send().await.is_err(),
+        "the durable control can only be created through authenticated admission"
+    );
     let envelope = seal(&service, "control", &stop).await.unwrap();
-    let receipt = control_receipt(&stop_client, envelope).await.unwrap();
+    let receipt = control_receipt(&workspace, &stop_client, envelope)
+        .await
+        .unwrap();
     assert_eq!(receipt.digest, control_digest(&stop).unwrap());
     assert!(receipt.result.delivered);
     let repeated = control_receipt(
+        &workspace,
         &stop_client,
         seal(&service, "control", &stop).await.unwrap(),
     )
@@ -729,6 +780,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let mut changed_stop = stop.clone();
     changed_stop.method = "turn/steer".into();
     let duplicate = control_receipt(
+        &workspace,
         &stop_client,
         seal(&service, "control", &changed_stop).await.unwrap(),
     )
@@ -748,6 +800,27 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         assert!(
             tokio::time::Instant::now() < deadline,
             "durable Stop did not settle after worker replacement"
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    workspace
+        .admit(Json(admission(&service, queued_input.clone()).await))
+        .call()
+        .await
+        .unwrap()
+        .into_body()
+        .unwrap();
+    let queued_client =
+        TengriAgentRunIngressClient::from_client(ingress.clone(), queued_input.id.clone());
+    loop {
+        if let Ok(snapshot) = status(&queued_client, &service, &queued_input, &owner).await
+            && matches!(snapshot.state, State::WaitingForGuest { .. })
+        {
+            break;
+        }
+        assert!(
+            tokio::time::Instant::now() < deadline,
+            "a freshly signed retry must recover the same queued run UUID"
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }

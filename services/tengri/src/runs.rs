@@ -48,7 +48,6 @@ struct Admission {
 struct Claim {
     workspace_uid: String,
     run_id: String,
-    signature: String,
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -56,12 +55,6 @@ struct Claim {
 struct StopQuery {
     claim: Claim,
     known_id: String,
-}
-
-impl Claim {
-    fn payload(&self) -> String {
-        format!("{}\n{}", self.workspace_uid, self.run_id)
-    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -236,15 +229,10 @@ pub(crate) async fn submit(
     input: Input,
 ) -> Result<Snapshot, Status> {
     let workspace_uid = principal.context.workspace_uid.clone();
-    let mut claim = Claim {
-        workspace_uid,
+    let claim = Claim {
+        workspace_uid: workspace_uid.clone(),
         run_id: input.id.clone(),
-        signature: String::new(),
     };
-    claim.signature = service
-        .auth
-        .seal_run("workspace", claim.payload().as_bytes())
-        .await?;
     let digest = input_digest(&input)?;
     let admission = Admission {
         input: input.clone(),
@@ -253,21 +241,15 @@ pub(crate) async fn submit(
         claim,
     };
     let envelope = seal(service, "admission", &admission).await?;
-    let client = TengriAgentRunIngressClient::from_client(ingress()?, input.id.clone());
-    let sent = tokio::time::timeout(Duration::from_secs(10), client.run(Json(envelope)).send())
+    let client = TengriWorkspaceRunsIngressClient::from_client(ingress()?, workspace_uid);
+    tokio::time::timeout(Duration::from_secs(10), client.admit(Json(envelope)).call())
         .await
         .map_err(|_| {
             Status::unavailable("durable run acceptance timed out; retry the same operation")
-        })?;
-    if let Err(error) = sent
-        && error
-            .response()
-            .is_none_or(|response| response.status().as_u16() != 409)
-    {
-        return Err(Status::unavailable(
-            "durable run acceptance unavailable; retry the same operation",
-        ));
-    }
+        })?
+        .map_err(client_error)?
+        .into_body()
+        .map_err(client_error)?;
     for _ in 0..20 {
         match read(service, &principal, &input.id, Some(digest.clone())).await {
             Ok(snapshot) => return Ok(snapshot),
@@ -335,11 +317,19 @@ pub(crate) async fn control(
 ) -> Result<ControlResult, Status> {
     let digest = control_digest(&control)?;
     let envelope = seal(service, "control", &control).await?;
-    let client = TengriRunControlIngressClient::from_client(ingress()?, control.id.clone());
-    let receipt = tokio::time::timeout(Duration::from_secs(20), control_receipt(&client, envelope))
-        .await
-        .map_err(|_| Status::unavailable("control accepted; retry the same operation"))?
-        .map_err(client_error)?;
+    let connection = ingress()?;
+    let workspace = TengriWorkspaceRunsIngressClient::from_client(
+        connection.clone(),
+        control.principal.context.workspace_uid.clone(),
+    );
+    let client = TengriRunControlIngressClient::from_client(connection, control.id.clone());
+    let receipt = tokio::time::timeout(
+        Duration::from_secs(20),
+        control_receipt(&workspace, &client, envelope),
+    )
+    .await
+    .map_err(|_| Status::unavailable("control accepted; retry the same operation"))?
+    .map_err(client_error)?;
     if receipt.digest != digest {
         return Err(Status::already_exists(
             "control ID already has different input",
@@ -355,16 +345,15 @@ pub(crate) async fn control(
 }
 
 async fn control_receipt(
+    workspace: &TengriWorkspaceRunsIngressClient<reqwest::Client>,
     client: &TengriRunControlIngressClient<reqwest::Client>,
     envelope: Envelope,
 ) -> Result<ControlReceipt, restate_sdk::ingress::ClientError> {
-    if let Err(error) = client.run(Json(envelope)).send().await
-        && error
-            .response()
-            .is_none_or(|response| response.status().as_u16() != 409)
-    {
-        return Err(error);
-    }
+    workspace
+        .admit_control(Json(envelope))
+        .call()
+        .await?
+        .into_body()?;
     Ok(client
         .handle()
         .await?
@@ -374,37 +363,25 @@ async fn control_receipt(
         .into_inner())
 }
 
-struct TengriRunControl {
-    service: Arc<ControlPlane>,
-}
+struct TengriRunControl;
 
 #[workflow(workflow_completion_retention = "7 days")]
 impl TengriRunControl {
-    #[handler]
+    #[handler(ingress_private = true)]
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        envelope: Json<Envelope>,
+        control: Json<Control>,
     ) -> HandlerResult<Json<ControlReceipt>> {
         let id = ctx.key().to_owned();
-        let control: Control = ctx
-            .run(|| async {
-                let control: Control = open(&self.service, "control", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if control.id != id || Uuid::parse_str(&id).is_err() {
-                    return Err(
-                        TerminalError::new_with_code(400, "invalid control identity").into(),
-                    );
-                }
-                Ok(Json(control))
-            })
-            .await?
-            .into_inner();
+        let control = control.into_inner();
+        if control.id != id || Uuid::parse_str(&id).is_err() {
+            return Err(TerminalError::new_with_code(400, "invalid control identity").into());
+        }
         let digest = control_digest(&control).map_err(terminal)?;
         let result = ctx
             .workflow_client::<TengriAgentRunClient>(&control.run_id)
-            .control(envelope)
+            .control(Json(control))
             .call()
             .await?
             .into_inner();
@@ -430,28 +407,17 @@ pub(crate) struct TengriAgentRun {
 
 #[workflow(workflow_completion_retention = "7 days")]
 impl TengriAgentRun {
-    #[handler]
+    #[handler(ingress_private = true)]
     async fn run(
         &self,
         ctx: WorkflowContext<'_>,
-        envelope: Json<Envelope>,
+        admission: Json<Admission>,
     ) -> HandlerResult<Json<State>> {
         let run_id = ctx.key().to_owned();
-        let admission: Admission = ctx
-            .run(|| async {
-                let admission: Admission = open(&self.service, "admission", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if admission.input.id != run_id
-                    || Uuid::parse_str(&run_id).is_err()
-                    || input_digest(&admission.input).map_err(terminal)? != admission.digest
-                {
-                    return Err(TerminalError::new_with_code(400, "invalid run identity").into());
-                }
-                Ok(Json(admission))
-            })
-            .await?
-            .into_inner();
+        let admission = admission.into_inner();
+        if admission.input.id != run_id || admission.claim.run_id != run_id {
+            return Err(TerminalError::new_with_code(400, "invalid run identity").into());
+        }
         let mut snapshot = Snapshot {
             run_id: admission.input.id.clone(),
             agent_id: admission.input.agent_id.clone(),
@@ -653,27 +619,13 @@ impl TengriAgentRun {
     async fn control(
         &self,
         ctx: SharedWorkflowContext<'_>,
-        envelope: Json<Envelope>,
+        control: Json<Control>,
     ) -> HandlerResult<Json<ControlResult>> {
         let run_id = ctx.key().to_owned();
-        let mut control: Control = ctx
-            .run(|| async {
-                let value: Control = open(&self.service, "control", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if value.run_id != run_id
-                    || Uuid::parse_str(&value.id).is_err()
-                    || !matches!(
-                        value.method.as_str(),
-                        "turn/steer" | "turn/interrupt" | "tengri/resolveApproval"
-                    )
-                {
-                    return Err(TerminalError::new_with_code(400, "invalid run control").into());
-                }
-                Ok(Json(value))
-            })
-            .await?
-            .into_inner();
+        let mut control = control.into_inner();
+        if control.run_id != run_id {
+            return Err(TerminalError::new_with_code(400, "invalid run control").into());
+        }
         let snapshot = ctx
             .get::<Json<Snapshot>>("snapshot")
             .await?
@@ -688,7 +640,7 @@ impl TengriAgentRun {
         if control.method == "turn/interrupt" {
             if !snapshot.state.terminal() {
                 ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
-                    .store_stop(envelope)
+                    .store_stop(Json(control))
                     .call()
                     .await?;
             }
@@ -903,6 +855,72 @@ struct TengriWorkspaceRuns {
 
 #[object]
 impl TengriWorkspaceRuns {
+    #[handler(journal_retention = "1 minute", idempotency_retention = "0s")]
+    async fn admit(
+        &self,
+        ctx: SharedObjectContext<'_>,
+        envelope: Json<Envelope>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let admission: Admission = ctx
+            .run(|| async {
+                let admission: Admission = open(&self.service, "admission", &envelope.0)
+                    .await
+                    .map_err(admission_error)?;
+                if admission.claim.workspace_uid != workspace_uid
+                    || admission.principal.context.workspace_uid != workspace_uid
+                    || admission.claim.run_id != admission.input.id
+                    || Uuid::parse_str(&admission.input.id).is_err()
+                    || input_digest(&admission.input).map_err(terminal)? != admission.digest
+                {
+                    return Err(TerminalError::new_with_code(400, "invalid run identity").into());
+                }
+                Ok(Json(admission))
+            })
+            .await?
+            .into_inner();
+        let run_id = admission.input.id.clone();
+        ctx.workflow_client::<TengriAgentRunClient>(&run_id)
+            .run(Json(admission))
+            .send()
+            .await?;
+        Ok(())
+    }
+
+    #[handler(journal_retention = "1 minute", idempotency_retention = "0s")]
+    async fn admit_control(
+        &self,
+        ctx: SharedObjectContext<'_>,
+        envelope: Json<Envelope>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let control: Control = ctx
+            .run(|| async {
+                let control: Control = open(&self.service, "control", &envelope.0)
+                    .await
+                    .map_err(admission_error)?;
+                if control.principal.context.workspace_uid != workspace_uid
+                    || Uuid::parse_str(&control.id).is_err()
+                    || Uuid::parse_str(&control.run_id).is_err()
+                    || !matches!(
+                        control.method.as_str(),
+                        "turn/steer" | "turn/interrupt" | "tengri/resolveApproval"
+                    )
+                {
+                    return Err(TerminalError::new_with_code(400, "invalid run control").into());
+                }
+                Ok(Json(control))
+            })
+            .await?
+            .into_inner();
+        let control_id = control.id.clone();
+        ctx.workflow_client::<TengriRunControlClient>(&control_id)
+            .run(Json(control))
+            .send()
+            .await?;
+        Ok(())
+    }
+
     #[handler(journal_retention = "0s", idempotency_retention = "0s")]
     async fn active(
         &self,
@@ -932,24 +950,15 @@ impl TengriWorkspaceRuns {
     async fn store_stop(
         &self,
         ctx: ObjectContext<'_>,
-        envelope: Json<Envelope>,
+        control: Json<Control>,
     ) -> HandlerResult<()> {
         let workspace_uid = ctx.key().to_owned();
-        let control: Control = ctx
-            .run(|| async {
-                let control: Control = open(&self.service, "control", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if control.principal.context.workspace_uid != workspace_uid
-                    || control.method != "turn/interrupt"
-                    || Uuid::parse_str(&control.id).is_err()
-                {
-                    return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
-                }
-                Ok(Json(control))
-            })
-            .await?
-            .into_inner();
+        let control = control.into_inner();
+        if control.principal.context.workspace_uid != workspace_uid
+            || control.method != "turn/interrupt"
+        {
+            return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+        }
         if ctx
             .get::<Json<Claim>>("active")
             .await?
@@ -1006,7 +1015,9 @@ impl TengriWorkspaceRuns {
                 TerminalError::new_with_code(409, "workspace already has an active run").into(),
             );
         }
-        self.verify_claim(&ctx, &claim.0).await?;
+        if claim.0.workspace_uid != ctx.key() || Uuid::parse_str(&claim.0.run_id).is_err() {
+            return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
+        }
         ctx.clear("stop");
         ctx.set("active", claim);
         Ok(())
@@ -1025,25 +1036,6 @@ impl TengriWorkspaceRuns {
             ctx.clear("active");
             ctx.clear("stop");
         }
-        Ok(())
-    }
-}
-
-impl TengriWorkspaceRuns {
-    async fn verify_claim(&self, ctx: &ObjectContext<'_>, claim: &Claim) -> HandlerResult<()> {
-        let workspace_uid = ctx.key().to_owned();
-        ctx.run(|| async {
-            if claim.workspace_uid != workspace_uid {
-                return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
-            }
-            self.service
-                .auth
-                .verify_run("workspace", claim.payload().as_bytes(), &claim.signature)
-                .await
-                .map_err(terminal)?;
-            Ok(())
-        })
-        .await?;
         Ok(())
     }
 }
@@ -1515,6 +1507,17 @@ fn observed_turn(value: &serde_json::Value, turn_id: &str) -> State {
     }
 }
 
+fn admission_error(status: Status) -> TerminalError {
+    if status.code() == tonic::Code::Unauthenticated {
+        TerminalError::new_with_code(
+            503,
+            "durable admission key changed; retry the same operation",
+        )
+    } else {
+        terminal(status)
+    }
+}
+
 fn terminal(status: Status) -> TerminalError {
     let code = match status.code() {
         tonic::Code::InvalidArgument => 400,
@@ -1543,11 +1546,7 @@ pub(crate) async fn serve(service: ControlPlane) -> anyhow::Result<()> {
             ),
         )
         .bind(
-            TengriRunControl {
-                service: service.clone(),
-            }
-            .into_service_definition()
-            .options(
+            TengriRunControl.into_service_definition().options(
                 restate_sdk::endpoint::ServiceOptions::default()
                     .journal_retention(Duration::from_secs(7 * 24 * 60 * 60))
                     .idempotency_retention(Duration::from_secs(7 * 24 * 60 * 60)),

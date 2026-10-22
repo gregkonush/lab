@@ -528,9 +528,10 @@ endpoint separately from elected controller reconciliation. There is no direct p
 
 `TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
 private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
-query, and workspace claims have distinct signing domains. The workspace authenticates a new claim once and records
-the exact claim; subsequent private Stop reads and release compare that recorded binding, so rotating the mounted HMAC
-key does not strand accepted work. A changed payload under an existing run ID fails. Each
+control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
+before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
+a newly signed attempt can use the same operation UUID. Accepted workflows use private Restate calls and the workspace
+records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
@@ -549,7 +550,7 @@ controls live in Restate. One workflow per control ID records the exact pending 
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
 
-Stop is a durable request. The workspace object retains the latest signed Stop authority, ordered by the original
+Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
 admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
@@ -565,6 +566,7 @@ using MicroVM UID and resource-version preconditions.
 
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
 terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
+Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
 Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
