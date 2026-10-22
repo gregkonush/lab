@@ -175,6 +175,247 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn cached_controls_cannot_race_an_idle_sleep_reservation() {
+        use crate::{
+            activity::ACTIVE_RUN_ANNOTATION, auth::Principal, authz::WorkspaceAuthorization, ofz,
+        };
+        use std::sync::atomic::AtomicU8;
+
+        let calls = Arc::new(AtomicUsize::new(0));
+        let seen = calls.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(|_| {
+                Ok(proto::GuestInfo {
+                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
+                })
+            })),
+            codex_call: Some(Arc::new(move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(proto::CodexResult {
+                    result_json: b"{}".to_vec(),
+                    event_sequence: 1,
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let mut agent = agent();
+        agent.metadata.resource_version = Some("11".into());
+        let current = Arc::new(std::sync::Mutex::new(agent.clone()));
+        let state = current.clone();
+        // 1: a reservation wins the admission CAS; 2: Kubernetes is unavailable.
+        let mode = Arc::new(AtomicU8::new(0));
+        let admission_mode = mode.clone();
+        let patches = Arc::new(AtomicUsize::new(0));
+        let writes = patches.clone();
+        let service = tower::service_fn(move |request: http::Request<KubeBody>| {
+            let state = state.clone();
+            let mode = admission_mode.clone();
+            let writes = writes.clone();
+            async move {
+                let mut status = http::StatusCode::OK;
+                let body = if request.uri().path().ends_with("/secrets/slot-a-bootstrap") {
+                    json!({"apiVersion":"v1","kind":"Secret","immutable":true,"data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+                } else {
+                    assert!(request.uri().path().ends_with("/microvms/agent-a"));
+                    if mode.load(Ordering::SeqCst) == 2 {
+                        status = http::StatusCode::SERVICE_UNAVAILABLE;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"ServiceUnavailable","message":"API unavailable","code":503})
+                    } else if request.method() == http::Method::PATCH {
+                        let bytes = request.into_body().collect_bytes().await.unwrap();
+                        let patch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                        let mut agent = state.lock().unwrap();
+                        assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                        assert!(
+                            patch["metadata"]["annotations"]
+                                [crate::activity::LAST_ACTIVITY_ANNOTATION]
+                                .is_string()
+                        );
+                        if patch["metadata"]["resourceVersion"] != agent.resource_version().unwrap()
+                        {
+                            status = http::StatusCode::CONFLICT;
+                            json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"activity changed concurrently","code":409})
+                        } else if mode.swap(0, Ordering::SeqCst) == 1 {
+                            let sleep_claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                            agent
+                                .metadata
+                                .annotations
+                                .get_or_insert_default()
+                                .insert(ACTIVE_RUN_ANNOTATION.into(), sleep_claim);
+                            status = http::StatusCode::CONFLICT;
+                            json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"sleep reservation won","code":409})
+                        } else {
+                            writes.fetch_add(1, Ordering::SeqCst);
+                            agent.metadata.annotations.get_or_insert_default().insert(
+                                crate::activity::LAST_ACTIVITY_ANNOTATION.into(),
+                                patch["metadata"]["annotations"]
+                                    [crate::activity::LAST_ACTIVITY_ANNOTATION]
+                                    .as_str()
+                                    .unwrap()
+                                    .into(),
+                            );
+                            let version =
+                                agent.resource_version().unwrap().parse::<u64>().unwrap() + 1;
+                            agent.metadata.resource_version = Some(version.to_string());
+                            json!(*agent)
+                        }
+                    } else {
+                        assert_eq!(request.method(), http::Method::GET);
+                        let snapshot = json!(*state.lock().unwrap());
+                        // Model overlapping reads during a browser's module fan-out.
+                        tokio::task::yield_now().await;
+                        snapshot
+                    }
+                };
+                Ok::<_, std::convert::Infallible>(
+                    http::Response::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        let port = server
+            .guest
+            .base_url()
+            .strip_prefix("http://")
+            .unwrap()
+            .parse::<SocketAddr>()
+            .unwrap()
+            .port();
+        let pool = GuestPool::new(
+            Client::new(service, "tengri"),
+            "tengri",
+            WorkloadIdentity::Fixture(port),
+        );
+        let authorization = WorkspaceAuthorization::Fixture;
+        let mut principal = Principal::fixture(
+            &"a".repeat(64),
+            &agent.uid().unwrap(),
+            ofz::proto::Action::CodexControl,
+        );
+        principal.context.runtime_epoch = agent.spec.runtime_epoch.clone();
+        let access = authorization.agent_access(&principal, &agent, "").unwrap();
+        let guest = pool
+            .for_microvm(
+                &agent,
+                super::super::authorization::GuestAuthority::fixture().user(access),
+            )
+            .await
+            .unwrap();
+        guest
+            .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        mode.store(1, Ordering::SeqCst);
+        assert!(
+            guest
+                .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                .await
+                .is_err(),
+            "a sleep reservation winning the CAS must prevent dispatch through a cached guest"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        assert_eq!(patches.load(Ordering::SeqCst), 1);
+        assert!(
+            guest
+                .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                .await
+                .is_err(),
+            "persisted reservations must block subsequent controls"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        current
+            .lock()
+            .unwrap()
+            .metadata
+            .annotations
+            .as_mut()
+            .unwrap()
+            .remove(ACTIVE_RUN_ANNOTATION);
+        mode.store(2, Ordering::SeqCst);
+        assert!(
+            guest
+                .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                .await
+                .is_err(),
+            "an unavailable activity admission must not dispatch guest effects"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        mode.store(0, Ordering::SeqCst);
+        guest
+            .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 2);
+        assert_eq!(patches.load(Ordering::SeqCst), 2);
+
+        // Durable run pins remain valid controls; they are not sleep claims.
+        current
+            .lock()
+            .unwrap()
+            .metadata
+            .annotations
+            .as_mut()
+            .unwrap()
+            .insert(
+                ACTIVE_RUN_ANNOTATION.into(),
+                "22222222-2222-4222-8222-222222222222".into(),
+            );
+        guest
+            .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+            .await
+            .unwrap();
+        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        *current.lock().unwrap() = agent.clone();
+        let controls = (0..64).map(|_| async {
+            // Each HTTP module request obtains a fresh authorized client from the pool.
+            let guest = pool
+                .for_microvm(
+                    &agent,
+                    super::super::authorization::GuestAuthority::fixture()
+                        .user(authorization.agent_access(&principal, &agent, "").unwrap()),
+                )
+                .await
+                .unwrap();
+            guest
+                .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                .await
+        });
+        let outcomes = futures::future::join_all(controls).await;
+        assert!(
+            outcomes.iter().all(Result::is_ok),
+            "concurrent controls must not exhaust admission retries: {outcomes:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 67);
+        for changed in ["uid", "epoch", "sleeping"] {
+            {
+                let mut value = current.lock().unwrap();
+                *value = agent.clone();
+                match changed {
+                    "uid" => value.metadata.uid = Some("replaced-workspace".into()),
+                    "epoch" => value.spec.runtime_epoch = "replaced-runtime".into(),
+                    _ => value.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping,
+                }
+            }
+            assert!(
+                guest
+                    .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                    .await
+                    .is_err(),
+                "a cached client must not dispatch to a changed or sleeping runtime: {changed}"
+            );
+        }
+        assert_eq!(calls.load(Ordering::SeqCst), 67);
+    }
+
+    #[tokio::test]
     #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
     async fn runtime_shared_state_terminal_controller_signs_exact_suboperations() {
         use crate::{
@@ -336,7 +577,8 @@ mod tests {
             ..Default::default()
         })
         .await;
-        let agent = agent();
+        let mut agent = agent();
+        agent.metadata.resource_version = Some("11".into());
         let response_agent = agent.clone();
         let service = tower::service_fn(move |request: http::Request<KubeBody>| {
             let body = if request.uri().path().contains("/secrets/") {
@@ -701,13 +943,16 @@ pub struct GuestPool {
     namespace: Arc<str>,
     identity: WorkloadIdentity,
     bindings: Arc<Mutex<Vec<Binding>>>,
+    activity: crate::activity::ActivityTracker,
 }
 
 impl GuestPool {
     pub fn new(client: Client, namespace: impl Into<Arc<str>>, identity: WorkloadIdentity) -> Self {
+        let namespace = namespace.into();
         Self {
+            activity: crate::activity::ActivityTracker::new(client.clone(), namespace.to_string()),
             client,
-            namespace: namespace.into(),
+            namespace,
             identity,
             bindings: Default::default(),
         }
@@ -736,7 +981,10 @@ impl GuestPool {
         authorization: GuestAuthorization,
     ) -> Result<GuestClient, GuestError> {
         let target = GuestTarget::from_microvm(microvm, &self.identity)?;
-        let issuer = authorization.bind(microvm).map_err(super::rpc::rpc_error)?;
+        let issuer = authorization
+            .bind(microvm)
+            .map_err(super::rpc::rpc_error)?
+            .with_activity(self.activity.clone());
         let certificate = self.identity.certificate_revision()?;
         let now = Instant::now();
         let guest = {

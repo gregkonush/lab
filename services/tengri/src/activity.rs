@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
 
@@ -99,6 +99,7 @@ pub struct ActivityTracker {
     client: Client,
     namespace: Arc<str>,
     last_write: Arc<Mutex<HashMap<String, Instant>>>,
+    admissions: Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
 }
 
 impl ActivityTracker {
@@ -107,7 +108,79 @@ impl ActivityTracker {
             client,
             namespace: namespace.into(),
             last_write: Arc::new(Mutex::new(HashMap::new())),
+            admissions: Default::default(),
         }
+    }
+
+    // Control admission and idle sleep contend on the same resource version.
+    // Record activity before issuing guest authority, including on cached clients.
+    pub(crate) async fn admit_control(
+        &self,
+        claim: &crate::slot::Claim,
+    ) -> Result<DateTime<Utc>, tonic::Status> {
+        // Browser module loads and other parallel controls must not exhaust the
+        // CAS retries by racing each other. Serialize only this workspace's
+        // admission, retaining no idle lock entries or authority between calls.
+        let admission = {
+            let mut admissions = self.admissions.lock().map_err(|_| {
+                tonic::Status::unavailable("workspace control admission unavailable")
+            })?;
+            admissions.retain(|_, lock| lock.strong_count() > 0);
+            let lock = admissions
+                .get(&claim.microvm_uid)
+                .and_then(Weak::upgrade)
+                .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
+            admissions.insert(claim.microvm_uid.clone(), Arc::downgrade(&lock));
+            lock
+        };
+        let _admission = admission.lock().await;
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        for _ in 0..3 {
+            let agent = agents.get(&claim.microvm_id).await.map_err(|_| {
+                tonic::Status::unavailable("workspace control admission unavailable")
+            })?;
+            if agent.uid().as_deref() != Some(&claim.microvm_uid)
+                || agent.spec.runtime_epoch != claim.runtime_epoch
+                || agent.metadata.deletion_timestamp.is_some()
+                || agent.spec.desired_state != crate::crd::MicroVMDesiredState::Running
+                || agent
+                    .metadata
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get(ACTIVE_RUN_ANNOTATION))
+                    .is_some_and(|value| is_idle_sleep_claim(value))
+            {
+                return Err(tonic::Status::failed_precondition(
+                    "workspace is sleeping or unavailable; resume it explicitly",
+                ));
+            }
+            let version = agent.resource_version().ok_or_else(|| {
+                tonic::Status::unavailable("workspace control admission has no resource version")
+            })?;
+            let now = Utc::now();
+            let mut patch = activity_metadata_patch(now);
+            patch["metadata"]["uid"] = json!(claim.microvm_uid);
+            patch["metadata"]["resourceVersion"] = json!(version);
+            match agents
+                .patch(
+                    &claim.microvm_id,
+                    &PatchParams::default(),
+                    &Patch::Merge(patch),
+                )
+                .await
+            {
+                Ok(_) => return Ok(now),
+                Err(kube::Error::Api(error)) if error.code == 409 => continue,
+                Err(_) => {
+                    return Err(tonic::Status::unavailable(
+                        "workspace control activity could not be recorded",
+                    ));
+                }
+            }
+        }
+        Err(tonic::Status::unavailable(
+            "workspace control admission changed concurrently; retry",
+        ))
     }
 
     pub async fn touch_now(&self, agent_id: &str, now: DateTime<Utc>) -> Result<(), kube::Error> {
