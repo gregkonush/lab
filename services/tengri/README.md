@@ -547,7 +547,10 @@ controls live in Restate. One workflow per control ID records the exact pending 
 the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
 Native approval IDs additionally bind a random process identity, thread, and turn.
 
-Stop is a durable request. It does not release the workspace after an interrupt acknowledgement: the worker waits for
+Stop is a durable request. The workspace object retains the latest signed Stop authority, ordered by the original
+admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
+that context. The run polls this short object call and retains sole ownership of native interruption and completion.
+Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
 an exact terminal turn. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
 runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop

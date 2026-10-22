@@ -51,6 +51,13 @@ struct Claim {
     signature: String,
 }
 
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct StopQuery {
+    claim: Claim,
+    known_id: String,
+}
+
 impl Claim {
     fn payload(&self) -> String {
         format!("{}\n{}", self.workspace_uid, self.run_id)
@@ -467,8 +474,20 @@ impl TengriAgentRun {
             return Ok(Json(snapshot.state));
         }
         ctx.set("snapshot", Json(snapshot.clone()));
-        snapshot.state = ctx
-            .run(|| async {
+        let mut stop = workspace
+            .latest_stop(Json(StopQuery {
+                claim: admission.claim.clone(),
+                known_id: String::new(),
+            }))
+            .call()
+            .await?
+            .into_inner();
+        snapshot.state = if stop.is_some() {
+            State::Cancelled {
+                turn_id: String::new(),
+            }
+        } else {
+            ctx.run(|| async {
                 Ok(Json(
                     self.service
                         .dispatch_durable_run(&admission.principal, &admission.input)
@@ -477,7 +496,8 @@ impl TengriAgentRun {
             })
             .name("dispatch_codex_turn")
             .await?
-            .into_inner();
+            .into_inner()
+        };
         if !snapshot.state.terminal() {
             ctx.set("snapshot", Json(snapshot.clone()));
         }
@@ -508,8 +528,7 @@ impl TengriAgentRun {
                 break;
             }
             if matches!(snapshot.state, State::NeedsReconciliation { .. }) {
-                if reconciliation_attempts < 5 {
-                    reconciliation_attempts += 1;
+                if reconciliation_attempts < 5 || reconciliation_attempts == 19 {
                     snapshot.state = ctx
                         .run(|| async {
                             Ok(Json(
@@ -528,19 +547,31 @@ impl TengriAgentRun {
                     if !snapshot.state.terminal() {
                         ctx.set("snapshot", Json(snapshot.clone()));
                     }
-                } else {
-                    restate_sdk::select! {
-                        result=ctx.promise::<Json<Control>>("stop") => {result?;},
-                        result=ctx.sleep(Duration::from_secs(30)) => {result?;}
-                    }
-                    reconciliation_attempts = 4;
                 }
+                reconciliation_attempts = if reconciliation_attempts >= 19 {
+                    5
+                } else {
+                    reconciliation_attempts + 1
+                };
+            }
+            if snapshot.state.terminal() {
+                break;
             }
             ctx.sleep(Duration::from_secs(2)).await?;
-            let mut stop = ctx
-                .peek_promise::<Json<Control>>("stop")
+            if let Some(latest) = workspace
+                .latest_stop(Json(StopQuery {
+                    claim: admission.claim.clone(),
+                    known_id: stop
+                        .as_ref()
+                        .map(|control: &Control| control.id.clone())
+                        .unwrap_or_default(),
+                }))
+                .call()
                 .await?
-                .map(Json::into_inner);
+                .into_inner()
+            {
+                stop = Some(latest);
+            }
             let now: u64 = ctx
                 .run(|| async { Ok(crate::ofz::now_ms().map_err(terminal)?) })
                 .await?;
@@ -663,7 +694,12 @@ impl TengriAgentRun {
             return Err(TerminalError::new_with_code(403, "run unavailable").into());
         }
         if control.method == "turn/interrupt" {
-            ctx.resolve_promise("stop", Json(control));
+            if !snapshot.state.terminal() {
+                ctx.object_client::<TengriWorkspaceRunsClient>(&snapshot.workspace_uid)
+                    .store_stop(envelope)
+                    .call()
+                    .await?;
+            }
             return Ok(Json(ControlResult {
                 delivered: true,
                 result: serde_json::json!({}),
@@ -840,16 +876,72 @@ impl TengriWorkspaceRuns {
         Ok(Json(ctx.get::<String>("active").await?))
     }
     #[handler(ingress_private = true)]
+    async fn store_stop(
+        &self,
+        ctx: ObjectContext<'_>,
+        envelope: Json<Envelope>,
+    ) -> HandlerResult<()> {
+        let workspace_uid = ctx.key().to_owned();
+        let control: Control = ctx
+            .run(|| async {
+                let control: Control = open(&self.service, "control", &envelope.0)
+                    .await
+                    .map_err(terminal)?;
+                if control.principal.context.workspace_uid != workspace_uid
+                    || control.method != "turn/interrupt"
+                    || Uuid::parse_str(&control.id).is_err()
+                {
+                    return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+                }
+                Ok(Json(control))
+            })
+            .await?
+            .into_inner();
+        if ctx.get::<String>("active").await?.as_deref() != Some(&control.run_id) {
+            return Err(TerminalError::new_with_code(409, "run is no longer active").into());
+        }
+        let previous = ctx.get::<Json<Control>>("stop").await?;
+        if previous.as_ref().is_none_or(|previous| {
+            previous.0.principal.context.deadline_unix_ms
+                <= control.principal.context.deadline_unix_ms
+        }) {
+            ctx.set("stop", Json(control));
+        }
+        Ok(())
+    }
+
+    #[handler(
+        ingress_private = true,
+        journal_retention = "0s",
+        idempotency_retention = "0s"
+    )]
+    async fn latest_stop(
+        &self,
+        ctx: ObjectContext<'_>,
+        query: Json<StopQuery>,
+    ) -> HandlerResult<Json<Option<Control>>> {
+        self.verify_claim(&ctx, &query.0.claim).await?;
+        let stop = ctx
+            .get::<Json<Control>>("stop")
+            .await?
+            .map(Json::into_inner)
+            .filter(|control| {
+                control.run_id == query.0.claim.run_id && control.id != query.0.known_id
+            });
+        Ok(Json(stop))
+    }
+
+    #[handler(ingress_private = true)]
     async fn claim(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
         self.verify_claim(&ctx, &claim.0).await?;
-        if ctx
-            .get::<String>("active")
-            .await?
-            .is_some_and(|id| id != claim.0.run_id)
-        {
+        let active = ctx.get::<String>("active").await?;
+        if active.as_ref().is_some_and(|id| id != &claim.0.run_id) {
             return Err(
                 TerminalError::new_with_code(409, "workspace already has an active run").into(),
             );
+        }
+        if active.is_none() {
+            ctx.clear("stop");
         }
         ctx.set("active", claim.0.run_id);
         Ok(())
@@ -860,6 +952,7 @@ impl TengriWorkspaceRuns {
         self.verify_claim(&ctx, &claim.0).await?;
         if ctx.get::<String>("active").await?.as_deref() == Some(&claim.0.run_id) {
             ctx.clear("active");
+            ctx.clear("stop");
         }
         Ok(())
     }

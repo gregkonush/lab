@@ -141,6 +141,57 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
     );
 }
 
+#[derive(Serialize, Deserialize)]
+struct StopAuthorityProofInput {
+    claim: Claim,
+    old: Envelope,
+    fresh: Envelope,
+}
+
+struct StopAuthorityProof;
+#[workflow]
+impl StopAuthorityProof {
+    #[handler]
+    async fn run(
+        &self,
+        ctx: WorkflowContext<'_>,
+        input: Json<StopAuthorityProofInput>,
+    ) -> HandlerResult<Json<Option<Control>>> {
+        let workspace =
+            ctx.object_client::<TengriWorkspaceRunsClient>(&input.0.claim.workspace_uid);
+        workspace.claim(Json(input.0.claim.clone())).call().await?;
+        workspace
+            .store_stop(Json(input.0.old.clone()))
+            .call()
+            .await?;
+        workspace.store_stop(Json(input.0.fresh)).call().await?;
+        workspace.store_stop(Json(input.0.old)).call().await?;
+        workspace
+            .latest_stop(Json(StopQuery {
+                claim: input.0.claim,
+                known_id: String::new(),
+            }))
+            .call()
+            .await
+            .map_err(Into::into)
+    }
+    #[handler]
+    async fn inspect(
+        &self,
+        ctx: SharedWorkflowContext<'_>,
+        claim: Json<Claim>,
+    ) -> HandlerResult<Json<Option<Control>>> {
+        ctx.object_client::<TengriWorkspaceRunsClient>(&claim.0.workspace_uid)
+            .latest_stop(Json(StopQuery {
+                claim: claim.0,
+                known_id: String::new(),
+            }))
+            .call()
+            .await
+            .map_err(Into::into)
+    }
+}
+
 #[tokio::test]
 #[ignore = "child process for the disposable Restate recovery test"]
 async fn fixture_worker() {
@@ -154,6 +205,7 @@ async fn fixture_worker() {
             service: service.clone(),
         })
         .bind(TengriWorkspaceRuns { service })
+        .bind(StopAuthorityProof)
         .build();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
@@ -321,6 +373,59 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let original_deployment = register(&http, &admin, port, deadline).await;
     let service = fixture();
+    let proof_run = Uuid::new_v4().to_string();
+    let mut proof_claim = Claim {
+        workspace_uid: Uuid::new_v4().to_string(),
+        run_id: proof_run.clone(),
+        signature: String::new(),
+    };
+    proof_claim.signature = service
+        .auth
+        .seal_run("workspace", proof_claim.payload().as_bytes())
+        .await
+        .unwrap();
+    let mut old_stop = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: proof_run,
+        agent_id: "proof-agent".into(),
+        principal: principal(),
+        method: "turn/interrupt".into(),
+        params: serde_json::json!({}),
+    };
+    old_stop.principal.context.workspace_uid = proof_claim.workspace_uid.clone();
+    old_stop.principal.context.session_id = Uuid::new_v4().to_string();
+    old_stop.principal.context.deadline_unix_ms = crate::ofz::now_ms()
+        .unwrap()
+        .saturating_sub(8 * 60 * 60 * 1000);
+    let mut fresh_stop = old_stop.clone();
+    fresh_stop.principal.context.session_id = Uuid::new_v4().to_string();
+    fresh_stop.principal.context.deadline_unix_ms = crate::ofz::now_ms().unwrap() + 25000;
+    fresh_stop.id = Uuid::new_v4().to_string();
+    let proof_client =
+        StopAuthorityProofIngressClient::from_client(ingress.clone(), Uuid::new_v4().to_string());
+    proof_client
+        .run(Json(StopAuthorityProofInput {
+            claim: proof_claim.clone(),
+            old: seal(&service, "control", &old_stop).await.unwrap(),
+            fresh: seal(&service, "control", &fresh_stop).await.unwrap(),
+        }))
+        .send()
+        .await
+        .unwrap();
+    let latest = proof_client
+        .handle()
+        .await
+        .unwrap()
+        .attach()
+        .await
+        .unwrap()
+        .into_body()
+        .into_inner()
+        .unwrap();
+    assert_eq!(
+        latest.id, fresh_stop.id,
+        "an older delayed Stop cannot replace refreshed authority"
+    );
     let input = input();
     let client = TengriAgentRunIngressClient::from_client(ingress.clone(), input.id.clone());
     client
@@ -452,6 +557,23 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     process.0.wait().unwrap();
     // These are independent OS processes. Listener cancellation alone would leave HTTP/2 tasks alive.
     process = worker(port);
+    let latest = proof_client
+        .inspect(Json(proof_claim))
+        .call()
+        .await
+        .unwrap()
+        .into_body()
+        .unwrap()
+        .into_inner()
+        .unwrap();
+    assert_eq!(
+        latest.id, fresh_stop.id,
+        "the refreshed Stop authority survives actual worker replacement"
+    );
+    assert_eq!(
+        latest.principal.context.session_id,
+        fresh_stop.principal.context.session_id
+    );
     let stop = Control {
         id: Uuid::new_v4().to_string(),
         run_id: input.id.clone(),

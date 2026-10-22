@@ -121,3 +121,9 @@ process remains uncertain unless that receipt exists. The pinned Codex fixture v
 held-request interruption, and the terminal notification receipt. Ambiguous browser retries keep their original model
 settings and operation UUID, with an explicit notice if the selection changed. The first Linux desktop workflow,
 including real Chromium/CUA/VS Code acceptance, passed at `e831184c33`; the final source must pass the same gate.
+
+Cancellation retains the latest signed Stop in the existing workspace object. A new login can supply fresh authority
+after a long explicit sleep; an older delayed Stop cannot replace that context. Only the run workflow interrupts and
+observes the exact turn. The real Restate fixture verifies two distinct session contexts, stale delivery ordering and
+retention of the newer context across worker SIGKILL/restart. Slow read-only reconciliation continues periodically
+without resubmitting an uncertain native request.
