@@ -35,6 +35,11 @@ reconstructing it again after entry pricing. Changed data still requires full re
 also require an exact committed database reference. Retained and returned references have separate manifest copies.
 Quote age, inference expiry, current authority, risk evaluation and durable decision guards remain independent checks.
 
+Jev batch admission reproduces its observation once and carries that verified result into persistence. The writer
+still checks the cycle, authority generation, exact reconciliation and portfolio sources in its transaction before
+recording the observation and request claims. Admission keeps its original deadline checks before and after that work;
+reusing the verified observation does not extend the inference window or authorize an incomplete batch.
+
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
