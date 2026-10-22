@@ -6,7 +6,9 @@ import unittest
 from pathlib import Path
 
 from runner import (
+    Adapter,
     Calls,
+    Editor,
     compare_decisions,
     encode,
     identity,
@@ -441,6 +443,33 @@ class RunnerTests(unittest.TestCase):
             self.assertEqual(
                 json.loads(audits[0].read_bytes())["change"], "NO_INSTRUCTION_CHANGE"
             )
+
+    def test_rejected_changed_instruction_remains_available_for_reflection(self):
+        data = study()
+        storage, cli = MemoryStorage(), NativeCLI()
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            calls = Calls(data, root, storage, cli, lambda: 1000)
+            adapter = Adapter(data, root, calls)
+            context = root / "reflection"
+            for relative, instructions in (
+                ("base_harness", data["baseline"]),
+                ("harness", data["baseline"]),
+                ("pool/rejected/harness", {"entry": "A rejected instruction edit."}),
+            ):
+                path = context / relative
+                path.mkdir(parents=True)
+                (path / "instructions.json").write_bytes(encode(instructions))
+            (context / "task.md").write_text(adapter.task_prompt("development"))
+            reply = Editor(adapter).call(
+                "Reflect on all compared edits.", context, "reflection"
+            )
+            self.assertEqual(reply.attempts, 1)
+            self.assertEqual(len(cli.requests), 1)
+            self.assertEqual(cli.requests[0][1]["purpose"], "reflection")
+            audit = json.loads((context / "instruction-comparison.json").read_bytes())
+            self.assertEqual(audit["change"], "INSTRUCTION_CHANGES_PRESENT")
+            self.assertEqual(len(audit["comparedInstructions"]), 2)
 
     def test_ambiguous_jev_probe_is_never_retransmitted(self):
         storage, cli = MemoryStorage(), NativeCLI(fail_probe=True)
