@@ -3,6 +3,7 @@ import { equityMarketProfile } from '../jev/markets'
 import { assessBacktestSession, BacktestIssue } from './backtest'
 import { driveReplaySession } from './session'
 import { DecisionReadinessReason } from '../cycle/runner/readiness'
+import { intradayEntryRearmDelayMs } from '../cycle/runner/calendar-decisions'
 import { OrderStatus, OrderType as BrokerOrderType, TimeInForce as BrokerTimeInForce } from '../broker/alpaca/model'
 import { CandidateObservationStoreLive } from '../db/candidate-observation-postgres'
 import { makeSimulatedExecutionClock } from './clock'
@@ -928,8 +929,8 @@ durableTest.each(
           yield* runtime.advance
           yield* advanceMarketTo(initialMs + 2)
           yield* runtime.advance
-          expect(yield* sql`SELECT state, decision_hash FROM autonomous_cycles`).toEqual([
-            { state: 'ACTIVE', decision_hash: null },
+          expect(yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles`).toEqual([
+            { state: 'NO_TRADE', bound: true },
           ])
           yield* advanceMarketTo(finalizationAtMs)
           const schedule = yield* driveReplaySession(
@@ -952,9 +953,19 @@ durableTest.each(
           expect(state.ledger.positions).toEqual([])
           expect(
             yield* sql`SELECT state, decision_hash IS NOT NULL AS bound FROM autonomous_cycles WHERE execution_session_date = '2026-09-04' AND execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2'`,
-          ).toEqual([{ state: 'BLOCKED', bound: false }])
+          ).toEqual([{ state: 'NO_TRADE', bound: true }])
           expect(yield* sql`SELECT count(*)::int AS count FROM intents`).toEqual([{ count: 0 }])
           yield* advanceMarketTo(finalizationAtMs + 180_001)
+          expect((yield* runtime.advance).observation).toMatchObject({
+            result: 'SUCCESS',
+            recoveryAction: 'BLOCKED',
+          })
+          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs - 1)
+          expect((yield* runtime.advance).observation).toMatchObject({
+            result: 'SUCCESS',
+            outcome: 'ALREADY_TERMINAL',
+          })
+          yield* advanceMarketTo(finalizationAtMs + 180_001 + intradayEntryRearmDelayMs)
           const successor = yield* runtime.advance
           expect(successor.observation).toMatchObject({
             result: 'SUCCESS',
@@ -969,7 +980,8 @@ durableTest.each(
             WHERE execution_calendar_schema_version = 'bayn.continuous-market-hours.v1' ORDER BY entry_attempt_ordinal`,
           ).toEqual([
             { state: 'BLOCKED', ordinal: 2 },
-            { state: 'ACTIVE', ordinal: 3 },
+            { state: 'BLOCKED', ordinal: 3 },
+            { state: 'ACTIVE', ordinal: 4 },
           ])
           expect(schedule.failedPassCount).toBe(0)
           expect(schedule.unavailableDecisionPassCount).toBeGreaterThan(0)
