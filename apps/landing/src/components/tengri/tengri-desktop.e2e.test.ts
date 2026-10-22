@@ -7326,9 +7326,9 @@ test('reopens terminally closed chat and Finder streams without reloading the de
     return closed
   })
   expect(closed).toBe(2)
-  await expect(chat.getByText('Agent event stream is reconnecting', { exact: true })).toBeVisible()
+  await expect(chat.getByText('Reconnecting to your agent…', { exact: true })).toBeVisible()
   await page.clock.runFor(1_200)
-  await expect(chat.getByText('Agent event stream is reconnecting', { exact: true })).toHaveCount(0)
+  await expect(chat.getByText('Reconnecting to your agent…', { exact: true })).toHaveCount(0)
   await expect(finder.getByText(/Reconnecting/)).toHaveCount(0)
   await expect
     .poll(() => mock.actions.filter((action) => action.action === 'list-files').length)
@@ -7942,7 +7942,8 @@ for (const recoveryAction of ['active-codex-run', 'codex-run'] as const) {
     })
     await page.goto('/')
     const tengri = page.getByRole('region', { name: 'Tengri window' })
-    await expect(tengri.getByRole('alert')).toHaveText('Temporary run recovery outage')
+    await expect(tengri.getByRole('alert')).toHaveText('Reconnecting to your agent…')
+    await expect(tengri.getByText('Temporary run recovery outage', { exact: true })).toHaveCount(0)
     unavailable = false
     await page.clock.runFor(3_100)
     await expect(tengri.getByRole('alert')).toHaveCount(0)
@@ -7957,6 +7958,30 @@ for (const recoveryAction of ['active-codex-run', 'codex-run'] as const) {
     )
   })
 }
+
+test('shows concise response activity instead of internal run reasons', async ({ page }) => {
+  const run: TengriCodexRun = {
+    runId: '44444444-4444-4444-8444-444444444444',
+    agentId: 'microvm-ada',
+    threadId: 'thread-waiting',
+    state: { phase: 'accepted' },
+  }
+  const mock = await mockTengri(page, { durableRun: run })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Starting')
+  await expect(chat.getByText('Run accepted. Waiting for the agent.', { exact: true })).toHaveCount(0)
+  run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Connecting')
+  await expect(chat.getByText(run.state.reason, { exact: true })).toHaveCount(0)
+  run.state = { phase: 'recovering', turnId: 'turn-current', reason: 'waiting for the authorized guest' }
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Reconnecting')
+  await expect(chat.getByText(run.state.reason, { exact: true })).toHaveCount(0)
+  run.state = { phase: 'cancelling', turnId: 'turn-current', reason: 'waiting for command cleanup receipt' }
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Stopping')
+  await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
+})
 
 test('records Stop for an accepted run before a native turn exists', async ({ page }) => {
   const runId = '44444444-4444-4444-8444-444444444444'

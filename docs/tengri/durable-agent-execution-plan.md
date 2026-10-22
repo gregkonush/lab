@@ -1,6 +1,8 @@
 # Tengri durable agent execution
 
-Status: Deployed through Kargo and Argo on 2026-10-22. Authenticated product acceptance is pending owner sign-in.
+Status: The core Restate integration is deployed through Kargo and Argo. Authenticated run recovery passed on
+2026-10-22. Command cancellation needs the merged guest API 7 release and a retained-home replacement. Its image
+qualification is in progress with release aliases held. Latency and activity-message repairs are under validation.
 Goal `01a15d3d-a9f2-7320-a38a-473615e3425c` remains active.
 
 The scope is the execution gaps identified in [the research](durable-agent-execution-research.md). It includes lost
@@ -143,15 +145,30 @@ The cutover completed these steps:
 8. Verify the actual successor Pod UID, qualified images, new filesystem, and prepared snapshot. The guest is sleeping
    with no authorized runtime started and no Firecracker process resident.
 
-No old files or memory snapshot were imported. The existing release hold is now open. Normal recovery still preserves
+No old files or memory snapshot were imported. The API 7 release hold is closed until qualification and fencing pass.
+Normal recovery still preserves
 current run identities, journals, homes, and authority fences. An older memory snapshot cannot be restored against
 an advanced disk. The [claimed-guest replacement procedure](operations.md#replacing-a-claimed-guest-while-retaining-its-home)
 remains the normal maintenance procedure when preservation is required.
 
-## Remaining authenticated acceptance
+## Authenticated acceptance
 
-The existing owner session expired. The browser is waiting for its existing passkey response. The following checks
-remain unverified against the deployed product:
+Normal owner sign-in through the existing saved 1Password passkey passed without new enrollment or manual unlock.
+The fresh workspace also completed normal Codex sign-in. Run `7d4d6f0a-e574-4df2-adb9-5c7153fc2856` returned
+`TENGRI_RECOVERY_OK` through the desktop.
+
+Run `de18e396-2a5a-49b5-9dbf-21cc27fe9809` survived browser reload and one exact worker Pod replacement. Its
+original foreground process completed with one unconditional, fsynced append. The accepted Restate invocation
+retried under the same pinned deployment and native turn. This establishes running-command recovery across a worker
+replacement, without an application deduplication guard hiding duplicate dispatch.
+
+Run `05321bc8-32bd-4f19-aca5-34e88a66e77d` exposed a cancellation defect. Native interruption ended the turn but left
+its yielded command running. [PR #15278](https://github.com/proompteng/lab/pull/15278), merged as
+`8e9d418f44e0e61b61de0bf412d1b80a32c4f471`, adds command cleanup and the API 7 receipt contract. Its pinned native
+regression passes. The deployed API 6 guest still requires replacement before the live Stop check can pass.
+
+The following acceptance sequence applies to the new release. Completed checks above remain evidence for the earlier
+cohort; they do not establish the result of the pending replacement:
 
 1. Complete normal owner sign-in and resume the fresh workspace through authenticated lifecycle control. Complete
    normal same-account Codex sign-in if the clean home requires it.
@@ -172,15 +189,33 @@ remain unverified against the deployed product:
 The local append-only decision trail is `.audit/tengri-durable-execution.tsv`. Native run artifacts retain qualification
 attempts and image indexes. These artifacts, release readback, and the remaining product receipts have distinct scopes.
 
+## Dispatch latency and activity messages
+
+At 19:25 UTC, run `948e959b-8873-4c32-9cec-320a85b40090` took 14.405 seconds from durable acceptance to native
+dispatch. Its initial workspace claim took 4.335 seconds and the separate initial Stop lookup took 3.833 seconds.
+Tempo recorded a 20.535-second send request. Failed status reads exhausted their two-second Restate deadline after
+authorization, returning HTTP 503 while the native turn continued.
+
+The repair returns the initial Stop from the workspace claim and removes the redundant call. It retains the final
+Stop check after preparation and before dispatch. Status handlers retain journaled signature and expiry verification.
+An isolated pinned-engine worker-kill probe reproduced a journal mismatch when query expiry was rechecked before
+replaying the state read, so that attempted optimization was rejected. The private claim response changes require
+active run and control invocations to drain before worker registration. Old pinned versions remain available for
+retained history.
+
+The desktop uses concise activity labels and retries transient status failures with a reconnect message. A successful
+read clears that failure. The focused browser regressions and real Restate crash/rotation/expiry fixture pass locally.
+Post-deployment latency remains unmeasured. The observed mean durable append was 328 milliseconds, so removing serial
+calls does not resolve the separate shared-storage bottleneck. No durability or authorization setting was weakened.
+
 ## Settings passkey enrollment
 
 [PR #15215](https://github.com/proompteng/lab/pull/15215) is included in the deployed cohort. Its entry point is
 **Settings → Access → Add passkey**. The Keycloak theme is deployed. The virtual Keycloak/browser/Ofz fixture passed
-165 assertions; it does not prove physical 1Password enrollment or sign-in.
-
-After normal sign-in, open the deployed enrollment flow and retain the original USB credential, GitHub subject,
-broker links, RP ID, and WebAuthn verification policy. The owner completes new credential creation and saving in
-1Password. Real provider enrollment and subsequent same-identity sign-in remain unverified.
+165 assertions. The owner saved the additional passkey in 1Password. Subsequent same-identity sign-in through that
+saved passkey passed against the deployed product. Keep the original credentials, GitHub subject, broker links, RP ID,
+and WebAuthn verification policy. No further enrollment is needed. The merged sign-in cleanup in
+[PR #15269](https://github.com/proompteng/lab/pull/15269) is included in the pending API 7 cohort.
 
 ## Observed limits
 

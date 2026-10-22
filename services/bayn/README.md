@@ -103,6 +103,11 @@ rolls back the new observation and plan. Each response receipt remains independe
 expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
+When every candidate already has a committed resolution, finalization verifies the persisted requests, receipts,
+resolutions and source observations, then commits the complete result with one idempotent insert. Immutable evidence
+does not require another locking transaction. Concurrent finalizers retain the first committed result; pending claims
+still use the locked recovery and abandonment path. The result must remain usable at the actual post-commit clock.
+
 Migration 137 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v17 strategy identity.
