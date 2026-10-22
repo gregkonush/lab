@@ -34,7 +34,7 @@ command is **not** run automatically from the trading service at startup.
 
 # Bayn GitOps rollout notes
 
-## Isolated Alpha-R1 research
+## Isolated Jev instruction research
 
 The same immutable image includes `bayn-harness2` for bounded prompt refinement. Use the
 [Harness2 runbook](../../../docs/bayn/harness2.md) for frozen manifests, durable object-store evidence, restart behavior,
@@ -43,7 +43,7 @@ or additional network/database grants.
 
 `research-worker.yaml` runs `BaynResearchRun` and the independent public-information jobs. Model research permits one
 inference in flight and uses a separate two-connection PostgreSQL pool; public collection uses HTTP and object storage.
-The worker has no broker, capital, Kafka, ClickHouse, model-provider or TigerBeetle credential. Kargo's
+The worker receives the existing Jev credential for native probes. It has no broker, capital, Kafka, ClickHouse or TigerBeetle credential. Kargo's
 existing `bayn-main` renderer supplies the same verified immutable image as the other Bayn workloads. Research rolls
 out after execution activation and the public service, so its initial grants cannot delay their rollout.
 Recovery pauses only the research worker through GitOps; it does not change trading authority.
@@ -70,7 +70,7 @@ transmit once. Do not print credentials or put plaintext in source or process ar
 
 Worker metrics are exported to Mimir and native/Effect traces to Tempo. `bayn-research.rules` in the existing Mimir
 rule source covers missing telemetry, repeated failed attempts and incomplete expense coverage. Verify actual
-factor selection, cancellation, retained replay, expense recovery and matching Loki/Tempo/Mimir evidence against
+instruction proposals, cancellation, retained replay, expense recovery and matching Loki/Tempo/Mimir evidence against
 the deployed revision. Synthetic acceptance does not establish economic qualification or session latency.
 
 The model provisioner and Bayn worker each follow their existing Kargo Stage. Verify both promoted revisions and
@@ -79,7 +79,7 @@ without the identity header is rejected; research cannot fall back to alias-only
 provisioner restarts only the independent model endpoint and re-verifies the cached checkpoint.
 
 Original-session eligibility, preparation expenses and comparison requirements are described in the
-[research contract](../../../docs/bayn/alpha-r1-research-plan.md). Invalidated or unsealed captures cannot establish
+[research contract](../../../docs/bayn/harness2.md). Invalidated or unsealed captures cannot establish
 complete original coverage; do not manufacture descriptions or later outcomes to make old captures eligible.
 
 Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and

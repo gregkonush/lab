@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 
@@ -28,6 +29,7 @@ import {
   controlStudyDefinition,
   runControlSession,
   runControlStudy,
+  prepareControlStudy,
   type ControlCapital,
   type ControlMarket,
 } from './control-study'
@@ -762,9 +764,11 @@ const frozenControlFixture = () => {
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v4',
+      schemaVersion: 'bayn.backtest.v5',
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
         inputDefinition: 'bayn.jev-trading-signal-state.v15',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
@@ -804,6 +808,21 @@ const frozenControlFixture = () => {
   const receipt = retainedReplayCaptureFixture(source)
   return { retained, source, input, receipt }
 }
+
+test('net control comparisons require a priced data allocation', () => {
+  const { input, receipt } = frozenControlFixture()
+  expect(
+    Result.isFailure(
+      prepareControlStudy(
+        {
+          ...input,
+          backtest: { ...input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        receipt,
+      ),
+    ),
+  ).toBe(true)
+})
 
 test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()

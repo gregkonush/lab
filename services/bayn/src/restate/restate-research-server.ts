@@ -93,7 +93,7 @@ export const researchServerProgram = Effect.gen(function* () {
           const parent = currentOpenTelemetryParentSpan()
           const attempt = Effect.gen(function* () {
             if (
-              run.schemaVersion !== 'bayn.jev-harness2-editor.v1' ||
+              run.schemaVersion !== 'bayn.jev-harness2-editor.v2' ||
               run.sourceRevision !== config.sourceRevision ||
               (yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash
             )

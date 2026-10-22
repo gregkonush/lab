@@ -1,6 +1,13 @@
 import { Result } from 'effect'
 import { sha256 } from '../hash'
-import { alphaCheckpoint, alphaModel, decodeResearchRun } from './contract'
+import {
+  alphaCheckpoint,
+  alphaModel,
+  decodeResearchRun,
+  harnessEditorCheckpoint,
+  harnessEditorModel,
+  HarnessPurpose,
+} from './contract'
 
 export const researchFixture = () => {
   const run = Result.getOrThrow(
@@ -70,35 +77,62 @@ export const researchFixture = () => {
   if (run.schemaVersion !== 'bayn.research-run.v1') throw new Error('Invalid factor fixture')
   return run
 }
-export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
+export const harnessEditorFixture = () => {
+  const historical = researchFixture()
+  const { maximumFactors: _historicalLimit, ...policy } = historical.policy
+  const run = Result.getOrThrow(
+    decodeResearchRun({
+      ...historical,
+      schemaVersion: 'bayn.jev-harness2-editor.v2',
+      purpose: HarnessPurpose.PromptEdit,
+      promptTemplate: 'Revise only the three Jev instructions using the supplied development evidence.',
+      context: { memory: historical.context.memory },
+      policy: {
+        ...policy,
+        model: harnessEditorModel,
+        checkpoint: harnessEditorCheckpoint,
+        tokenizerRevision: harnessEditorCheckpoint,
+        chatTemplateRevision: harnessEditorCheckpoint,
+        temperature: 0.7,
+        top_p: 0.8,
+        top_k: 20,
+        enable_thinking: false,
+      },
+    }),
+  )
+  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v2') throw new Error('Invalid editor fixture')
+  return run
+}
+
+export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>', model: string = alphaModel) =>
   [
     {
       id: 'chatcmpl-synthetic',
-      model: alphaModel,
+      model,
       choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
       usage: { prompt_tokens: 10, completion_tokens: 0, total_tokens: 10 },
     },
     {
       id: 'chatcmpl-synthetic',
-      model: alphaModel,
+      model,
       choices: [{ index: 0, delta: { reasoning: 'thinking' }, finish_reason: null }],
       usage: { prompt_tokens: 10, completion_tokens: 2, total_tokens: 12 },
     },
     {
       id: 'chatcmpl-synthetic',
-      model: alphaModel,
+      model,
       choices: [{ index: 0, delta: { content }, finish_reason: null }],
       usage: { prompt_tokens: 10, completion_tokens: 19, total_tokens: 29 },
     },
     {
       id: 'chatcmpl-synthetic',
-      model: alphaModel,
+      model,
       choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
       usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
     },
     {
       id: 'chatcmpl-synthetic',
-      model: alphaModel,
+      model,
       choices: [],
       usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
     },
@@ -106,12 +140,15 @@ export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>') =>
     .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
     .join('') + 'data: [DONE]\n\n'
 
-export const fullTokenBudgetStreamFixture = () => {
+export const fullTokenBudgetStreamFixture = (
+  model: string = alphaModel,
+  content = '<alpha_list>alpha001</alpha_list>',
+) => {
   const chunk = (completion: number, delta: Record<string, string>, finish: string | null = null) => ({
     id: 'chatcmpl-synthetic',
     object: 'chat.completion.chunk',
     created: 1791792592,
-    model: alphaModel,
+    model,
     choices: [{ index: 0, delta, logprobs: null, finish_reason: finish, token_ids: null }],
     usage: {
       prompt_tokens: 10,
@@ -124,7 +161,7 @@ export const fullTokenBudgetStreamFixture = () => {
     [
       chunk(0, { role: 'assistant', content: '' }),
       ...Array.from({ length: 4095 }, (_, index) => chunk(index + 1, { reasoning: ' test' })),
-      chunk(4096, { content: '<alpha_list>alpha001</alpha_list>' }, 'stop'),
+      chunk(4096, { content }, 'stop'),
       { ...chunk(4096, {}), choices: [] },
     ]
       .map((frame) => `data: ${JSON.stringify(frame)}\n\n`)
