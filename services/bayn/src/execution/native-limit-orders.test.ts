@@ -18,7 +18,7 @@ const request = {
 } as const
 
 const currentIntent = {
-  schemaVersion: 'bayn.execution-intent.v4' as const,
+  schemaVersion: 'bayn.execution-intent.v5' as const,
   authorityGenerationHash: '4'.repeat(64),
   intentId: '5'.repeat(64),
   strategyName: 'native-limit-test',
@@ -53,7 +53,7 @@ test('fractional equity LIMIT/DAY preserves its explicit price through currency 
 
 test('the explicit limit price is part of intent identity even when rounded notional is unchanged', () => {
   const plan = {
-    schemaVersion: 'bayn.intent-plan.v2' as const,
+    schemaVersion: 'bayn.intent-plan.v3' as const,
     strategyName: 'native-limit-test',
     cycleId: '1'.repeat(64),
     decisionHash: '2'.repeat(64),

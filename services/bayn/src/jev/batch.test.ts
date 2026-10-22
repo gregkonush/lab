@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   decodeJevBatchPlan,
   decodeJevBatchResult,
@@ -24,7 +24,7 @@ const request = evaluationRequestFixture()
 const { requestId: _, ...requestMaterial } = request
 const second = Result.getOrThrow(makeJevEvaluationRequest({ ...requestMaterial, symbol: 'AMZN' }))
 const planMaterial = {
-  schemaVersion: JevBatchPlanVersion.V4,
+  schemaVersion: JevBatchPlanVersion.V6,
   cycleId: request.cycleId,
   authorityGenerationHash: request.authorityGenerationHash,
   observationHash: 'd'.repeat(64),
@@ -33,7 +33,15 @@ const planMaterial = {
   observedAt: request.observedAt,
   expiresAt: request.expiresAt,
   benchmarkSymbol: 'SPY',
-  questionSetHash: canonicalHashV1({ model: request.request.model, questions: request.request.questions }),
+  questionSetHash: Result.getOrThrow(
+    canonicalHashV1Result(
+      [request, second].map((entry) => ({
+        symbol: entry.symbol,
+        model: entry.request.model,
+        questions: entry.request.questions,
+      })),
+    ),
+  ),
   candidates: [
     { symbol: 'AAPL', status: JevCandidatePlanStatus.Requested, request },
     { symbol: 'AMZN', status: JevCandidatePlanStatus.Requested, request: second },
@@ -92,7 +100,7 @@ describe('complete Jev batch evidence', () => {
       unfavorable: 0.46,
       unclear: 0.08,
     }
-    tied.responseHash = canonicalHashV1(tied.response)
+    tied.responseHash = Result.getOrThrow(canonicalHashV1Result(tied.response))
     const result = Result.getOrThrow(
       makeJevBatchResult(
         plan,
@@ -137,12 +145,22 @@ describe('complete Jev batch evidence', () => {
       Result.isFailure(makeJevBatchPlan({ ...planMaterial, schemaVersion: 'bayn.jev-batch-plan.v1', candidates })),
     ).toBe(true)
     const mixed = Result.getOrThrow(
-      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V4, candidates }),
+      makeJevBatchPlan({
+        ...planMaterial,
+        schemaVersion: JevBatchPlanVersion.V6,
+        candidates,
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
+      }),
     )
     const result = Result.getOrThrow(makeJevBatchResult(mixed, resultMaterial(mixed)))
     expect(Result.isFailure(usableJevBatchInferences(mixed, result, 450))).toBe(true)
     const versionThree = Result.getOrThrow(
-      makeJevBatchPlan({ ...planMaterial, schemaVersion: JevBatchPlanVersion.V4, candidates }),
+      makeJevBatchPlan({
+        ...planMaterial,
+        schemaVersion: JevBatchPlanVersion.V6,
+        candidates,
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
+      }),
     )
     const versionThreeResult = Result.getOrThrow(makeJevBatchResult(versionThree, resultMaterial(versionThree)))
     expect(Result.isFailure(usableJevBatchInferences(versionThree, versionThreeResult, 450))).toBe(true)
@@ -176,9 +194,11 @@ describe('complete Jev batch evidence', () => {
       [{ symbol: 'AAPL', status: JevCandidateResultStatus.Excluded }, ...material.candidates.slice(1)],
     ]) {
       const changed = { ...material, candidates }
-      expect(Result.isFailure(decodeJevBatchResult(plan, { ...changed, resultHash: canonicalHashV1(changed) }))).toBe(
-        true,
-      )
+      expect(
+        Result.isFailure(
+          decodeJevBatchResult(plan, { ...changed, resultHash: Result.getOrThrow(canonicalHashV1Result(changed)) }),
+        ),
+      ).toBe(true)
     }
   })
 

@@ -1,3 +1,4 @@
+import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { expect, test } from 'bun:test'
@@ -5,13 +6,13 @@ import { Effect, Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { nativeJevFixture } from '../jev/native.test-support'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
 import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
-import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
+
 import {
   applyControlOrder,
   controlEntryQuantity,
@@ -44,7 +45,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 1000,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: atMs, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const order = (side: OrderSide, atMs = at, shares = 10n) => ({
   symbol: 'AAPL',
@@ -550,7 +551,16 @@ test('relative momentum preserves candidate quote freshness while using a real o
 })
 
 test('retained breakout accepts a fresh benchmark quote when its trade is older than candidate freshness', () => {
-  const later = nativeJevFixture(undefined, new Date(at + 30_000).toISOString())
+  const later = nativeJevFixture(
+    undefined,
+    new Date(at + 30_000).toISOString(),
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    false,
+  )
   const observedAtMs = Date.parse(later.snapshot.manifest.observedAt)
   const snapshot = {
     ...later.snapshot,

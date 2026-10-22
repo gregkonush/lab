@@ -1,3 +1,4 @@
+import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
 import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
@@ -30,6 +31,7 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
+import { jevEntrySetupQuestion, jevTradePlanQuestion } from './trade-plan-choices'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -219,7 +221,7 @@ export const jevBenchmarkSignalFor = (snapshot: StrategyMarketSnapshot, symbol: 
     return yield* jevSignalFor(snapshot, symbol)
   })
 
-const commonMomentumPrices = (
+export const commonMomentumPrices = (
   snapshot: StrategyMarketSnapshot,
   symbol: string,
   benchmarkSymbol: string,
@@ -244,55 +246,6 @@ const commonMomentumPrices = (
       },
     }
   })
-
-/** Candidate and benchmark returns use the same actual observed reference minute. */
-export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot) =>
-  Result.gen(function* () {
-    const signals = []
-    for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
-      if (
-        snapshot.manifest.candidateExclusions?.some(
-          (entry) =>
-            entry.symbol === symbol ||
-            (entry.symbol === jevBenchmarkSymbol(symbol) &&
-              snapshot.manifest.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars),
-        ) === true
-      )
-        continue
-      const candidate = yield* jevSignalFor(snapshot, symbol)
-      const benchmarkResult = jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(symbol))
-      if (Result.isFailure(benchmarkResult)) return yield* Result.fail(benchmarkResult.failure)
-      const benchmark = benchmarkResult.success
-      const common = yield* commonMomentumPrices(snapshot, symbol, jevBenchmarkSymbol(symbol), candidate, benchmark)
-      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
-      const quote = snapshot.latestQuotes[symbol]
-      if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
-      if (
-        (yield* jevEntryQuoteExclusion(quote)) === null &&
-        common.candidate.bid + common.candidate.ask > 2n * common.candidate.reference &&
-        excessReturn.numerator > 0n
-      )
-        signals.push({ symbol, excessReturn })
-    }
-    return signals.sort((a, b) => {
-      const difference =
-        a.excessReturn.numerator * b.excessReturn.denominator - b.excessReturn.numerator * a.excessReturn.denominator
-      return difference === 0n ? a.symbol.localeCompare(b.symbol) : difference > 0n ? -1 : 1
-    })
-  })
-
-export const jevTradingQuestions = {
-  action: {
-    type: 'choice',
-    instructions:
-      'Given `candidate`, `benchmark`, `relativeSignals` and `entryEconomics`, which long-only entry decision is best supported over the next `task.horizonMinutes` minutes? Enter only when the evidence supports reaching entryEconomics.profitTargetExitBidUsd before the holding deadline. That target includes estimated entry and exit fees, bounded adverse execution and the required net profit. Use wait or avoid when the target is unsupported or entryEconomics is null. Code owns the entry-bound stop, profit target, permission, sizing and risk.',
-    criteria: {
-      enter: 'Evidence supports entering a long position now.',
-      wait: 'A possible setup needs further confirmation.',
-      avoid: 'The setup is adverse, exhausted, contradictory or unsupported.',
-    },
-  },
-} satisfies JevRequest['questions']
 
 export const jevManagementQuestions = {
   action: {
@@ -344,6 +297,16 @@ const requestFromSnapshot = (
         remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
       }
     }
+    const economics =
+      native.portfolio.purpose === JevPurpose.Entry
+        ? yield* jevEntryEconomics({
+            protocol: native.protocol,
+            symbol,
+            bidMicros: candidate.prices.bid,
+            askMicros: candidate.prices.ask,
+            capitalMicros: native.portfolio.brokerState.account.equityMicros,
+          })
+        : null
     return yield* prepareJevRequest({
       model: jevModel,
       state: {
@@ -356,16 +319,7 @@ const requestFromSnapshot = (
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
         position,
-        entryEconomics:
-          native.portfolio.purpose === JevPurpose.Entry
-            ? yield* jevEntryEconomics({
-                protocol: native.protocol,
-                symbol,
-                bidMicros: candidate.prices.bid,
-                askMicros: candidate.prices.ask,
-                capitalMicros: native.portfolio.brokerState.account.equityMicros,
-              })
-            : null,
+        entryEconomics: economics,
         execution: {
           orderType: 'LIMIT',
           timeInForce: continuous ? 'IOC' : 'DAY',
@@ -409,7 +363,13 @@ const requestFromSnapshot = (
           benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
         },
       },
-      questions: native.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
+      questions:
+        native.portfolio.purpose === JevPurpose.Manage
+          ? jevManagementQuestions
+          : {
+              action: yield* jevTradePlanQuestion({ snapshot, symbol, economics, protocol: native.protocol }),
+              setup: jevEntrySetupQuestion,
+            },
     })
   })
 
@@ -457,16 +417,12 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V4)
-      return yield* unavailable('The current trading protocol requires batch v4')
+    if (planVersion !== JevBatchPlanVersion.V6)
+      return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
-    const momentumCandidates =
-      observation.portfolio.purpose === JevPurpose.Entry
-        ? new Set((yield* jevMomentumEntryCandidates(snapshot)).map(({ symbol }) => symbol))
-        : null
     const candidates = []
     for (const symbol of manifest.candidateSymbols) {
       const excluded = manifest.candidateExclusions?.find((candidate) => candidate.symbol === symbol)
@@ -490,7 +446,7 @@ const batchFromObservation = (
         })
         continue
       }
-      const prepareRequest = () => requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
+      const prepared = yield* requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {
@@ -509,17 +465,6 @@ const batchFromObservation = (
           }
         }
       }
-      if (momentumCandidates !== null && !momentumCandidates.has(symbol)) {
-        candidates.push({
-          symbol,
-          status: JevCandidatePlanStatus.Excluded,
-          reason: JevEntryExclusion.Momentum,
-          message:
-            'Verified candidate lacks strictly positive exact own and benchmark-relative return over the observed common-minute window',
-        })
-        continue
-      }
-      const prepared = yield* prepareRequest()
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,
@@ -545,12 +490,7 @@ const batchFromObservation = (
       observedAt: manifest.observedAt,
       expiresAt,
       benchmarkSymbol: jevBenchmarkSymbol(manifest.candidateSymbols[0] ?? 'SPY'),
-      questionSetHash: yield* canonicalHashV1Result({
-        model: jevModel,
-        questions: observation.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
-      }).pipe(
-        Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
-      ),
+      questionSetHash: yield* jevBatchQuestionSetHash(candidates),
       candidates,
     })
   })

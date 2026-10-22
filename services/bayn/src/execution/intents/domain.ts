@@ -16,6 +16,7 @@ import {
   RiskOutcome,
   TerminalOutcome,
   TimeInForce,
+  NativeProtectionSchema,
   type Intent,
   type ReferenceIntent,
   type RiskDecision,
@@ -30,7 +31,6 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { WriterFenceError } from '../writer-fence'
-import { Pipeable } from '../../pipeable'
 
 export const IntentPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal(intentPlanSchemaVersion),
@@ -41,11 +41,12 @@ export const IntentPlanSchema = Schema.Struct({
   accountId: NonEmptyString,
   symbol: SymbolName,
   side: Schema.Enum(OrderSide),
-  orderType: Schema.Literal(OrderType.Limit),
-  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel]),
+  orderType: Schema.Literals([OrderType.Limit, OrderType.StopLimit]),
+  timeInForce: Schema.Literals([TimeInForce.Day, TimeInForce.ImmediateOrCancel, TimeInForce.GoodUntilCanceled]),
   quantityAtoms: PositiveMicrosSchema,
   notionalLimitMicros: PositiveMicrosSchema,
   limitPriceMicros: PositiveMicrosSchema,
+  protection: Schema.optionalKey(NativeProtectionSchema),
   /** Binds a residual close intent to the immediately preceding close-plan generation. */
   replanGenerationHash: Schema.optionalKey(Sha256),
   createdAt: UtcInstant,
@@ -96,12 +97,19 @@ const canonicalHashResult = (
     (cause): IntentCanonicalizationFailure => ({ _tag: 'CanonicalizationFailed', material, cause }),
   )
 
-const referenceIdentityMaterial = (input: IntentPlan) => ({
-  schemaVersion: 'bayn.reference-intent-identity.v2',
-  strategyName: input.strategyName,
-  cycleId: input.cycleId,
-  decisionHash: input.decisionHash,
-  accountId: input.accountId,
+const orderTerms = (
+  input: Pick<
+    IntentPlan,
+    | 'symbol'
+    | 'side'
+    | 'orderType'
+    | 'timeInForce'
+    | 'quantityAtoms'
+    | 'notionalLimitMicros'
+    | 'limitPriceMicros'
+    | 'protection'
+  >,
+) => ({
   symbol: input.symbol,
   side: input.side,
   orderType: input.orderType,
@@ -109,6 +117,16 @@ const referenceIdentityMaterial = (input: IntentPlan) => ({
   quantityAtoms: input.quantityAtoms,
   notionalLimitMicros: input.notionalLimitMicros,
   limitPriceMicros: input.limitPriceMicros,
+  ...(input.protection === undefined ? {} : { protection: input.protection }),
+})
+
+const referenceIdentityMaterial = (input: IntentPlan) => ({
+  schemaVersion: 'bayn.reference-intent-identity.v3',
+  strategyName: input.strategyName,
+  cycleId: input.cycleId,
+  decisionHash: input.decisionHash,
+  accountId: input.accountId,
+  ...orderTerms(input),
 })
 
 const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: string) => ({
@@ -118,13 +136,7 @@ const executionIdentityMaterial = (input: IntentPlan, authorityGenerationHash: s
   cycleId: input.cycleId,
   decisionHash: input.decisionHash,
   accountId: input.accountId,
-  symbol: input.symbol,
-  side: input.side,
-  orderType: input.orderType,
-  timeInForce: input.timeInForce,
-  quantityAtoms: input.quantityAtoms,
-  notionalLimitMicros: input.notionalLimitMicros,
-  limitPriceMicros: input.limitPriceMicros,
+  ...orderTerms(input),
   ...(input.replanGenerationHash === undefined ? {} : { replanGenerationHash: input.replanGenerationHash }),
 })
 
@@ -141,7 +153,7 @@ const referenceIntentIdResult = (input: IntentPlan): Result.Result<string, Inten
     referenceIdentityMaterial(input),
   )
 
-const executionIntentIdResult = (
+export const executionIntentIdForDecodedPlan = (
   input: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<string, IntentCanonicalizationFailure> =>
@@ -158,8 +170,6 @@ const executionIntentIdResult = (
     },
     executionIdentityMaterial(input, authorityGenerationHash),
   )
-
-export const executionIntentIdForDecodedPlan = Pipeable.dual(2, executionIntentIdResult)
 
 export const intentIdForPlan = referenceIntentIdResult
 
@@ -192,7 +202,9 @@ type IntentConstructionFailure =
       readonly cause: unknown
     }
 
-const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<ReferenceIntent, IntentConstructionFailure> => {
+export const makeReferenceIntentResult = (
+  decoded: IntentPlan,
+): Result.Result<ReferenceIntent, IntentConstructionFailure> => {
   const intentId = referenceIntentIdResult(decoded)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
@@ -208,13 +220,7 @@ const makeReferenceIntentResult = (decoded: IntentPlan): Result.Result<Reference
       policyHash: decoded.policyHash,
       accountId: decoded.accountId,
       clientOrderId: clientOrderIdForIntentId(intentId.success),
-      symbol: decoded.symbol,
-      side: decoded.side,
-      orderType: decoded.orderType,
-      timeInForce: decoded.timeInForce,
-      quantityAtoms: decoded.quantityAtoms,
-      notionalLimitMicros: decoded.notionalLimitMicros,
-      limitPriceMicros: decoded.limitPriceMicros,
+      ...orderTerms(decoded),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
     }),
@@ -226,7 +232,7 @@ export const makeExecutionIntentFromDecodedPlan = (
   decoded: IntentPlan,
   authorityGenerationHash: string,
 ): Result.Result<Intent, IntentConstructionFailure> => {
-  const intentId = executionIntentIdResult(decoded, authorityGenerationHash)
+  const intentId = executionIntentIdForDecodedPlan(decoded, authorityGenerationHash)
   if (Result.isFailure(intentId)) return Result.fail(intentId.failure)
   return Result.mapError(
     decodeIntentResult({
@@ -239,13 +245,7 @@ export const makeExecutionIntentFromDecodedPlan = (
       policyHash: decoded.policyHash,
       accountId: decoded.accountId,
       clientOrderId: clientOrderIdForIntentId(intentId.success),
-      symbol: decoded.symbol,
-      side: decoded.side,
-      orderType: decoded.orderType,
-      timeInForce: decoded.timeInForce,
-      quantityAtoms: decoded.quantityAtoms,
-      notionalLimitMicros: decoded.notionalLimitMicros,
-      limitPriceMicros: decoded.limitPriceMicros,
+      ...orderTerms(decoded),
       ...(decoded.replanGenerationHash === undefined ? {} : { replanGenerationHash: decoded.replanGenerationHash }),
       state: IntentState.Planned,
       createdAt: decoded.createdAt,
@@ -270,7 +270,7 @@ export const plan = (input: unknown): Effect.Effect<ReferenceIntent, IntentPlann
   return Effect.fromResult(Result.flatMap(decoded, makeReferenceIntentResult))
 }
 
-const executionIntentIdForPlanDataFirst = (
+export const executionIntentIdForPlan = (
   input: unknown,
   authorityGenerationHash: string,
 ): Effect.Effect<string, IntentPlanningFailure> => {
@@ -281,18 +281,16 @@ const executionIntentIdForPlanDataFirst = (
   )
   return Effect.fromResult(
     Result.flatMap(decoded, (intentPlan) =>
-      Result.flatMap(generation, (generationHash) => executionIntentIdResult(intentPlan, generationHash)),
+      Result.flatMap(generation, (generationHash) => executionIntentIdForDecodedPlan(intentPlan, generationHash)),
     ),
   )
 }
-
-export const executionIntentIdForPlan = Pipeable.dual(2, executionIntentIdForPlanDataFirst)
 
 export class ExecutionIntentBindingError extends Data.TaggedError('ExecutionIntentBindingError')<{
   readonly message: string
 }> {}
 
-const planExecutionIntentDataFirst = (
+export const planExecutionIntent = (
   input: unknown,
   state: Pick<State, 'authority'>,
 ): Effect.Effect<Intent, IntentPlanningFailure | ExecutionIntentBindingError> => {
@@ -309,8 +307,6 @@ const planExecutionIntentDataFirst = (
     ),
   )
 }
-
-export const planExecutionIntent = Pipeable.dual(2, planExecutionIntentDataFirst)
 
 export class IntentStoreError extends Data.TaggedError('IntentStoreError')<{
   readonly failure: 'conflict' | 'decode' | 'invariant' | 'query'
@@ -342,6 +338,12 @@ export interface IntentStoreService {
     decision: RiskDecision,
   ) => Effect.Effect<IntentReceipt, IntentStoreError | WriterFenceError>
   readonly read: (intentId: string) => Effect.Effect<Option.Option<StoredIntent>, IntentStoreError>
+  readonly protectionForCycle: (cycleId: string) => Effect.Effect<readonly StoredIntent[], IntentStoreError>
+  readonly beginProtectionCancel: (
+    intentId: string,
+    brokerOrderId: string,
+    observedAt: string,
+  ) => Effect.Effect<boolean, IntentStoreError | WriterFenceError>
 }
 
 export class IntentStore extends Context.Service<IntentStore, IntentStoreService>()(
@@ -366,6 +368,7 @@ const intentRowFields = {
   quantity_atoms: PositiveMicrosSchema,
   notional_limit_micros: PositiveMicrosSchema,
   limit_price_micros: PositiveMicrosSchema,
+  protection: Schema.NullOr(NativeProtectionSchema),
   replan_generation_hash: Schema.NullOr(Sha256),
   state: Schema.Enum(IntentState),
   terminal_outcome: Schema.NullOr(Schema.Enum(TerminalOutcome)),
@@ -446,6 +449,7 @@ const storedRowToRecord = (row: StoredRow): Result.Result<StoredIntent, StoredRo
     quantityAtoms: row.quantity_atoms,
     notionalLimitMicros: row.notional_limit_micros,
     limitPriceMicros: row.limit_price_micros,
+    ...(row.protection === null ? {} : { protection: row.protection }),
     ...(row.replan_generation_hash === null ? {} : { replanGenerationHash: row.replan_generation_hash }),
     state: row.state,
     ...(row.terminal_outcome === null ? {} : { terminalOutcome: row.terminal_outcome }),
@@ -517,18 +521,12 @@ const planFromIntent = (intent: Intent): IntentPlan => ({
   decisionHash: intent.decisionHash,
   policyHash: intent.policyHash,
   accountId: intent.accountId,
-  symbol: intent.symbol,
-  side: intent.side,
-  orderType: intent.orderType,
-  timeInForce: intent.timeInForce,
-  quantityAtoms: intent.quantityAtoms,
-  notionalLimitMicros: intent.notionalLimitMicros,
-  limitPriceMicros: intent.limitPriceMicros,
+  ...orderTerms(intent),
   ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
 
-const validateCommitIdentityDataFirst = (
+export const validateCommitIdentity = (
   inputIntent: unknown,
   inputDecision: unknown,
 ): Result.Result<PreparedCommit, CommitMaterialFailure> => {
@@ -573,8 +571,6 @@ const validateCommitIdentityDataFirst = (
   return Result.succeed({ _tag: 'PreparedCommit', intent: intent.success, decision: decision.success })
 }
 
-export const validateCommitIdentity = Pipeable.dual(2, validateCommitIdentityDataFirst)
-
 const immutableIntentMaterial = (intent: Intent) => ({
   schemaVersion: intent.schemaVersion,
   intentId: intent.intentId,
@@ -585,13 +581,7 @@ const immutableIntentMaterial = (intent: Intent) => ({
   policyHash: intent.policyHash,
   accountId: intent.accountId,
   clientOrderId: intent.clientOrderId,
-  symbol: intent.symbol,
-  side: intent.side,
-  orderType: intent.orderType,
-  timeInForce: intent.timeInForce,
-  quantityAtoms: intent.quantityAtoms,
-  notionalLimitMicros: intent.notionalLimitMicros,
-  limitPriceMicros: intent.limitPriceMicros,
+  ...orderTerms(intent),
   ...(intent.replanGenerationHash === undefined ? {} : { replanGenerationHash: intent.replanGenerationHash }),
   createdAt: intent.createdAt,
 })
@@ -621,7 +611,7 @@ const decisionStateMatches = (record: StoredIntent, decision: RiskDecision): boo
     ? record.intent.state !== IntentState.Planned
     : record.intent.state === IntentState.Terminal && record.intent.terminalOutcome === TerminalOutcome.Blocked
 
-const classifyExistingCommitDataFirst = (
+export const classifyExistingCommit = (
   records: readonly StoredIntent[],
   prepared: PreparedCommit,
 ): Result.Result<ExistingCommitDisposition, ExistingCommitFailure> => {
@@ -664,8 +654,6 @@ const classifyExistingCommitDataFirst = (
   return Result.succeed({ _tag: 'CompleteIntent', record })
 }
 
-export const classifyExistingCommit = Pipeable.dual(2, classifyExistingCommitDataFirst)
-
 export type AuthorityBindingFailure =
   | { readonly _tag: 'AuthorityMissing' }
   | { readonly _tag: 'MultipleAuthorityRows'; readonly count: number }
@@ -692,7 +680,7 @@ export const decodeAuthorityBindingRows = (
     cause,
   }))
 
-const validateCurrentAuthorityDataFirst = (
+export const validateCurrentAuthority = (
   rows: readonly AuthorityBindingRow[],
   intent: Intent,
 ): Result.Result<
@@ -739,9 +727,7 @@ const validateCurrentAuthorityDataFirst = (
   return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
 }
 
-export const validateCurrentAuthority = Pipeable.dual(2, validateCurrentAuthorityDataFirst)
-
-const validateCurrentClosingAuthorityDataFirst = (
+export const validateCurrentClosingAuthority = (
   rows: readonly AuthorityBindingRow[],
   intent: Intent,
 ): Result.Result<
@@ -785,8 +771,6 @@ const validateCurrentClosingAuthorityDataFirst = (
   return Result.succeed({ _tag: 'CurrentCapitalGrant', binding: authority })
 }
 
-export const validateCurrentClosingAuthority = Pipeable.dual(2, validateCurrentClosingAuthorityDataFirst)
-
 export type WriteDispositionFailure =
   | {
       readonly _tag: 'ReturningRowsDecodeFailed'
@@ -804,7 +788,7 @@ export type IntentInsertDisposition =
   | { readonly _tag: 'IntentInserted'; readonly intentId: string }
   | { readonly _tag: 'IntentInsertConflict'; readonly intentId: string }
 
-const decideIntentInsertDataFirst = (
+export const decideIntentInsert = (
   rows: unknown,
   expectedIntentId: string,
 ): Result.Result<IntentInsertDisposition, WriteDispositionFailure> => {
@@ -827,9 +811,7 @@ const decideIntentInsertDataFirst = (
   })
 }
 
-export const decideIntentInsert = Pipeable.dual(2, decideIntentInsertDataFirst)
-
-const decideRiskCommitDataFirst = (
+export const decideRiskCommit = (
   rows: unknown,
   expectedDecisionId: string,
 ): Result.Result<{ readonly _tag: 'RiskDecisionInserted'; readonly decisionId: string }, WriteDispositionFailure> => {
@@ -849,9 +831,7 @@ const decideRiskCommitDataFirst = (
   })
 }
 
-export const decideRiskCommit = Pipeable.dual(2, decideRiskCommitDataFirst)
-
-const decideIntentTransitionDataFirst = (
+export const decideIntentTransition = (
   rows: unknown,
   expectedIntentId: string,
 ): Result.Result<{ readonly _tag: 'IntentTransitioned'; readonly intentId: string }, WriteDispositionFailure> => {
@@ -870,5 +850,3 @@ const decideIntentTransitionDataFirst = (
     observedIds: decoded.success.map((row) => row.intent_id),
   })
 }
-
-export const decideIntentTransition = Pipeable.dual(2, decideIntentTransitionDataFirst)

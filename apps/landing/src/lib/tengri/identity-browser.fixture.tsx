@@ -1,6 +1,7 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { AccessPanel } from '@/components/tengri/access-panel'
+import { PasskeyRegistration } from '@/components/tengri/passkey-registration'
 import { startTengriSignIn, signOutTengri } from './auth-client'
 
 function Fixture() {
@@ -33,6 +34,7 @@ function Fixture() {
         </button>
       )}
       {error ? <p role="alert">{error}</p> : null}
+      <PasskeyRegistration />
     </main>
   )
 }

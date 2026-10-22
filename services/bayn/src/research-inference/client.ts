@@ -3,7 +3,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
-  parseResearchFactors,
+  parseResearchOutput,
   ResearchError,
   ResearchOutcome,
   hashResearch,
@@ -169,7 +169,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         return yield* Result.fail(
           new ResearchError({ message: 'Research stream lacks complete termination, identity or usage' }),
         )
-      return yield* parseResearchFactors(run, output)
+      return yield* parseResearchOutput(run, output)
     })
   return { push, snapshot, complete }
 }
@@ -180,6 +180,8 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   endpoint: string,
   traceHeaders: Readonly<Record<string, string>> = {},
 ) {
+  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v2')
+    return yield* new ResearchError({ message: 'Retired research contracts cannot dispatch new model inference' })
   const startedAtMs = yield* Clock.currentTimeMillis
   const deadline = Date.parse(run.deadlineAt)
   const request = researchRequest(run)

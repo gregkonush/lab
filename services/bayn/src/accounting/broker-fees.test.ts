@@ -1,6 +1,6 @@
 import { describe, expect, test } from 'bun:test'
-import { Result } from 'effect'
-import { canonicalHashV1 } from '../hash'
+import { Result, Schema } from 'effect'
+import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import { brokerFeeLedgerPlan } from './domain'
 import {
@@ -8,6 +8,7 @@ import {
   verifyBrokerFeeRecord,
   prepareFeeMatchCorrection,
   type StoredBrokerFee,
+  FeeReadEvidenceSchema,
 } from './broker-fees'
 
 const identity = { clusterId: 2001n, ledger: 7001 }
@@ -31,7 +32,7 @@ const record: StoredBrokerFee = {
     contentHash: 'a'.repeat(64),
     observedAt: '2026-09-11T07:46:53.124Z',
   },
-  content_hash: canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data }),
+  content_hash: Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data })),
   ledger_plan_hash: planHash.success,
   tigerbeetle_cluster_id: '2001',
   tigerbeetle_ledger: 7001,
@@ -42,6 +43,27 @@ describe('broker fee evidence verification', () => {
   test('compares fee trading dates with the opening baseline in New York', () => {
     expect(brokerFeePredatesOpeningCash(data, '2026-09-11T00:01:00.000Z')).toBe(false)
     expect(brokerFeePredatesOpeningCash(data, '2026-09-11T04:01:00.000Z')).toBe(true)
+    expect(
+      brokerFeePredatesOpeningCash(
+        { ...data, date: '2026-09-12', cryptoCashFee: true, sourceCreatedAt: '2026-09-10T23:59:58.123456000Z' },
+        '2026-09-11T00:00:00.000Z',
+      ),
+    ).toBe(true)
+    expect(
+      brokerFeePredatesOpeningCash(
+        { ...data, date: '2026-09-12', cryptoCashFee: true, sourceCreatedAt: '2026-09-11T07:46:53.123999999Z' },
+        '2026-09-11T07:46:53.124Z',
+      ),
+    ).toBe(true)
+  })
+
+  test('requires source timestamps to precede the receipt capture at full provider precision', () => {
+    const decode = Schema.decodeUnknownResult(FeeReadEvidenceSchema)
+    expect(
+      Result.isSuccess(decode({ ...record.read_evidence, sourceCreatedAt: '2026-09-10T23:59:58.123456000Z' })),
+    ).toBe(true)
+    for (const sourceCreatedAt of ['2026-09-11T07:46:53.124000001Z', '2026-02-30T00:00:00.000000000Z'])
+      expect(Result.isFailure(decode({ ...record.read_evidence, sourceCreatedAt }))).toBe(true)
   })
 
   test('reconstructs the exact authoritative fee plan', () => {
@@ -70,7 +92,7 @@ test('a non-crypto fee match is corrected with a new debit while its original pl
     ...record,
     data: fee,
     matched_cash_micros: '210000',
-    content_hash: canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...fee }),
+    content_hash: Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee })),
     ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(originalPlan)),
   }
   const correctionData = {
@@ -131,7 +153,7 @@ test('a rounded crypto overrelease is debited without reversing the actual recei
     ...record,
     data: fee,
     matched_cash_micros: '210000',
-    content_hash: canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...fee }),
+    content_hash: Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...fee })),
     ledger_plan_hash: Result.getOrThrow(hashLedgerPlanResult(originalPlan)),
   }
   const source = {

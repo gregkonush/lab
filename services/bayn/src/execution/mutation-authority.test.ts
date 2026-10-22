@@ -43,6 +43,7 @@ import {
   makeAuthorityGuardedBrokerMutation,
   confirmExecutionBrokerState,
   validateExecutionBrokerSubmitSnapshot,
+  validateExecutionCapitalLimits,
   validatePersistedCapitalGrantForSubmit,
   type FinalSubmitAuthorization,
 } from './mutation-authority'
@@ -144,7 +145,7 @@ const order = (overrides: Partial<Order> = {}, omitted: readonly OmittedOrderFie
 }
 
 const intent = (overrides: Partial<Intent> = {}): Intent => ({
-  schemaVersion: 'bayn.execution-intent.v4',
+  schemaVersion: 'bayn.execution-intent.v5',
   intentId: '5'.repeat(64),
   authorityGenerationHash,
   riskDecisionId: '6'.repeat(64),
@@ -1351,4 +1352,43 @@ describe('final broker mutation authority', () => {
     expect(cancels).toBe(1)
     expect(grantReads).toBe(0)
   })
+})
+
+test.each(['Bracket', 'Oco'] as const)('final capital limits reserve every order in a native %s request', (kind) => {
+  const authority = mutationAuthority(BrokerEnvironment.Live, grantedCapitalAuthority(persistedGrantRecord()))
+  const existing = Array.from({ length: kind === 'Bracket' ? 3 : 4 }, (_, index) =>
+    order({ brokerOrderId: `pending-${index}`, clientOrderId: `pending-client-${index}` }),
+  )
+  const levels = { stopPriceMicros: '99000000', stopLimitPriceMicros: '98900000', profitLimitPriceMicros: '102000000' }
+  const protection =
+    kind === 'Bracket'
+      ? { _tag: 'Bracket' as const, ...levels }
+      : { _tag: 'Oco' as const, ...levels, entryDecisionHash: 'a'.repeat(64) }
+  const requested = intent({
+    side: kind === 'Bracket' ? OrderSide.Buy : OrderSide.Sell,
+    limitPriceMicros: kind === 'Bracket' ? '100000000' : '102000000',
+    notionalLimitMicros: kind === 'Bracket' ? '100000000' : '102000000',
+    protection,
+  })
+  const result = validateExecutionCapitalLimits(
+    authority,
+    defaultLimits,
+    requested,
+    { account: account(), positions: kind === 'Oco' ? [position()] : [], openOrders: existing },
+    BigInt(requested.notionalLimitMicros),
+    BigInt(requested.notionalLimitMicros),
+    new Map(),
+    {
+      closeOnly: kind === 'Oco',
+      maxBrokerStateAgeMs: 300000,
+      maxNetExposureMicros: '1000000000',
+      currentDailyTradedNotionalMicros: '0',
+      maxDailyTradedNotionalMicros: '1000000000',
+      peakEquityMicros: '1000000000',
+      maxDrawdownMicros: '1000000000',
+    },
+  )
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isSuccess(result)) throw new Error('Native group exceeded the order limit')
+  expect(result.failure).toEqual({ _tag: 'OpenOrderLimitExceeded', limit: 5, observed: 6 })
 })

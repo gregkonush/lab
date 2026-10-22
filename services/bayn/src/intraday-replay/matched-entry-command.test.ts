@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { Deferred, Effect, Exit, Fiber, FileSystem, Result } from 'effect'
 import { ChildProcess, ChildProcessSpawner } from 'effect/process'
 import { TestClock } from 'effect/testing'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevBatchResult, nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { JevBatchPlanVersion } from '../jev/batch'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
@@ -63,10 +63,12 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   ].sort((a, b) => a.cycleId.localeCompare(b.cycleId))
   const receipt = {
     schemaVersion: 'bayn.jev-study-export.v1',
-    accountBindingHash: canonicalHashV1({
-      schemaVersion: 'bayn.jev-study-account.v1',
-      accountId: batch.observation.portfolio.brokerState.account.accountId,
-    }),
+    accountBindingHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.jev-study-account.v1',
+        accountId: batch.observation.portfolio.brokerState.account.accountId,
+      }),
+    ),
     sessionDate,
     asOf: '2026-09-12T00:00:00.000Z',
     cycleCount: cycles.length,
@@ -82,16 +84,17 @@ const inventoryFor = (data: ReturnType<typeof fixture>, sessionDate = data.input
   }
   return {
     schemaVersion: 'bayn.jev-study-inventory.v1',
-    receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+    receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
     cycles,
     batches,
   }
 }
 
-const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, profitTargetNetBps = 100) => {
+const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, maximumHoldingMinutes = 15) => {
   const base = nativeJevFixture(JevPurpose.Entry, undefined, 'jev-native-test', {
     ...defaultJevProtocolDocument,
-    profitTargetNetBps,
+    maximumHoldingMinutes,
+    horizonMinutes: maximumHoldingMinutes,
   })
   const dates = ['2026-09-04', '2026-09-08', '2026-09-09', '2026-09-10', '2026-09-11'] as const
   const calendar = Result.getOrThrow(
@@ -117,7 +120,7 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, pro
     makeJevTradingSignalBatch({
       observation: retained.observation,
       expiresAt: retained.batchPlan.expiresAt,
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const evidence = { ...retained, batchPlan, batchResult: nativeJevBatchResult(batchPlan, retained.decidedAt) }
@@ -199,20 +202,22 @@ const fixture = (transientStopAfterMs?: number, partialExitAfterMs?: number, pro
   }
   const registration = {
     schemaVersion: 'bayn.matched-entry-registration.v2',
-    definitionHash: canonicalHashV1(matchedEntryDefinition),
+    definitionHash: Result.getOrThrow(canonicalHashV1Result(matchedEntryDefinition)),
     sourceRevision: 'a'.repeat(40),
-    protocolHash: canonicalHashV1(base.protocol),
+    protocolHash: Result.getOrThrow(canonicalHashV1Result(base.protocol)),
     registeredAt: '2026-09-03T00:00:00.000Z',
     dataRole: MatchedDataRole.Development,
     sessionDates: dates,
     latencyMs: 100,
-    executionAssumptionsHash: canonicalHashV1({
-      instruments: replayTestInstruments,
-      latencyMs: 100,
-      slippageBps: 0,
-      availableLiquidityPpm: 1000000,
-      feeMultiplierPpm: 1000000,
-    }),
+    executionAssumptionsHash: Result.getOrThrow(
+      canonicalHashV1Result({
+        instruments: replayTestInstruments,
+        latencyMs: 100,
+        slippageBps: 0,
+        availableLiquidityPpm: 1000000,
+        feeMultiplierPpm: 1000000,
+      }),
+    ),
     latencyEvidenceHash: null,
     capacityEvidenceHash: null,
   }
@@ -416,7 +421,7 @@ test.each([
               ...retained,
               cycles,
               schemaVersion: scenario === 'unsupported' ? 'bayn.jev-study-inventory.v0' : retained.schemaVersion,
-              receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+              receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
               batches: scenario === 'pending' ? batchRows.map((batch) => ({ ...batch, resultHash: null })) : batchRows,
             },
       )
@@ -543,7 +548,7 @@ test('native inventories round-trip pending entry and management batches with no
         ...retained,
         cycles,
         batches: batchRows,
-        receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+        receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
       })
       const evidenceHash = sha256(bytes)
       const path = `${directory}/inventory.json`
@@ -595,81 +600,90 @@ test.each([
   ['selection-clock', 'Timing receipt belongs to another batch, source or clock'],
   ['decision-file', 'Timing receipt does not bind the committed native entry decision'],
   ['decision-hash', 'Timing receipt does not bind the committed native entry decision'],
-] as const)('timing witness rejects an unrelated %s', async (variant, message) => {
-  await Effect.runPromise(
-    Effect.gen(function* () {
-      const {
-        data,
-        fs,
-        directory,
-        arrivals,
-        batch,
-        committed,
-        at,
-        clocks,
-        timingBytes,
-        evidenceHash,
-        decisionEvidenceHash,
-        input,
-      } = yield* witnessedFixture()
-      let changed = input
-      if (variant === 'selection-clock') {
-        changed = {
-          ...input,
-          timings: [
-            {
-              batchId: batch.batchPlan.batchId,
-              witness: {
-                ...clocks,
-                evidenceHash,
-                decisionEvidenceHash,
-                deterministicSelectedAt: new Date(at - 1).toISOString(),
-              },
-            },
-          ],
-        }
-      } else {
-        const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
-        expect(alternate.contentHash).not.toBe(committed.contentHash)
-        if (variant === 'decision-file') {
-          const alternateBytes = JSON.stringify(alternate)
-          const alternateHash = sha256(alternateBytes)
-          const alternatePath = `${directory}/alternate-decision.json`
-          yield* fs.writeFileString(alternatePath, alternateBytes)
+] as const)(
+  'timing witness rejects an unrelated %s',
+  async (variant, message) => {
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        const {
+          data,
+          fs,
+          directory,
+          arrivals,
+          batch,
+          committed,
+          at,
+          clocks,
+          timingBytes,
+          evidenceHash,
+          decisionEvidenceHash,
+          input,
+        } = yield* witnessedFixture()
+        let changed = input
+        if (variant === 'selection-clock') {
           changed = {
             ...input,
-            witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
             timings: [
               {
                 batchId: batch.batchPlan.batchId,
-                witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+                witness: {
+                  ...clocks,
+                  evidenceHash,
+                  decisionEvidenceHash,
+                  deterministicSelectedAt: new Date(at - 1).toISOString(),
+                },
               },
             ],
           }
         } else {
-          const wrongReceiptBytes = JSON.stringify({ ...JSON.parse(timingBytes), decisionHash: alternate.contentHash })
-          const wrongReceiptHash = sha256(wrongReceiptBytes)
-          const wrongReceiptPath = `${directory}/wrong-timing.json`
-          yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
-          changed = {
-            ...input,
-            witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
-            timings: [
-              {
-                batchId: batch.batchPlan.batchId,
-                witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
-              },
-            ],
+          const alternate = yield* matchedCommittedDecisionFixture(data.native, data.evidence, '2')
+          expect(alternate.contentHash).not.toBe(committed.contentHash)
+          if (variant === 'decision-file') {
+            const alternateBytes = JSON.stringify(alternate)
+            const alternateHash = sha256(alternateBytes)
+            const alternatePath = `${directory}/alternate-decision.json`
+            yield* fs.writeFileString(alternatePath, alternateBytes)
+            changed = {
+              ...input,
+              witnesses: [...input.witnesses, { path: alternatePath, sha256: alternateHash }],
+              timings: [
+                {
+                  batchId: batch.batchPlan.batchId,
+                  witness: { ...clocks, evidenceHash, decisionEvidenceHash: alternateHash },
+                },
+              ],
+            }
+          } else {
+            const wrongReceiptBytes = JSON.stringify({
+              ...JSON.parse(timingBytes),
+              decisionHash: alternate.contentHash,
+            })
+            const wrongReceiptHash = sha256(wrongReceiptBytes)
+            const wrongReceiptPath = `${directory}/wrong-timing.json`
+            yield* fs.writeFileString(wrongReceiptPath, wrongReceiptBytes)
+            changed = {
+              ...input,
+              witnesses: [...input.witnesses, { path: wrongReceiptPath, sha256: wrongReceiptHash }],
+              timings: [
+                {
+                  batchId: batch.batchPlan.batchId,
+                  witness: { ...clocks, decisionEvidenceHash, evidenceHash: wrongReceiptHash },
+                },
+              ],
+            }
           }
         }
-      }
-      const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(Effect.result)
-      expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
-        message,
-      )
-    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
-  )
-})
+        const result = yield* runMatchedEntryStudy(changed, data.registration, arrivals, data.receipt).pipe(
+          Effect.result,
+        )
+        expect(Result.isFailure(result) && result.failure instanceof SignalStudyFailure && result.failure.message).toBe(
+          message,
+        )
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    )
+  },
+  30_000,
+)
 
 test('offline command reproduces native observations, prices shared lifecycle once, hashes report and refuses overwrite', async () => {
   const data = fixture()
@@ -788,7 +802,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(yield* fs.exists(outputPath)).toBeFalse()
       yield* fs.rename(`${checkout}/git-metadata`, `${checkout}/.git`)
       const report = yield* run(args)
-      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v6')
+      expect(report.schemaVersion).toBe('bayn.matched-entry-study.v7')
       expect(report.pairs).toHaveLength(1)
       expect(report.pairs[0]?.jev).toEqual(report.pairs[0]?.delayedMomentum)
       expect(report.pairs[0]?.jev?.status).toBe('RESOLVED')
@@ -798,7 +812,7 @@ test('offline command reproduces native observations, prices shared lifecycle on
       expect(report.summary.completion).toBe('INCOMPLETE')
       expect(report.summary.means.selectionBudgetReturnBps).toBeNull()
       const { reportHash, ...material } = report
-      expect(canonicalHashV1(material)).toBe(reportHash)
+      expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
       expect(JSON.parse(yield* fs.readFileString(outputPath))).toEqual(report)
       expect(Result.isFailure(yield* run(args).pipe(Effect.result))).toBeTrue()
       expect(
@@ -811,12 +825,14 @@ test('offline command reproduces native observations, prices shared lifecycle on
         dataRole: MatchedDataRole.Prospective,
         registeredAt: '2026-09-04T13:30:00.000Z',
       }
-      const oldDefinitionHash = canonicalHashV1({
-        ...matchedEntryDefinition,
-        schemaVersion: 'bayn.matched-entry-definition.v5',
-        lifecycle:
-          'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
-      })
+      const oldDefinitionHash = Result.getOrThrow(
+        canonicalHashV1Result({
+          ...matchedEntryDefinition,
+          schemaVersion: 'bayn.matched-entry-definition.v5',
+          lifecycle:
+            'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
+        }),
+      )
       const oldRegistration = { ...data.registration, definitionHash: oldDefinitionHash }
       const oldResult = yield* runMatchedEntryStudy(data.input, oldRegistration, arrivals, data.receipt).pipe(
         Effect.result,
@@ -849,7 +865,11 @@ test('offline command reproduces native observations, prices shared lifecycle on
       const slow = { ...data.input, study: { ...data.input.study, assumptions: slowAssumptions } }
       const slowReport = yield* runMatchedEntryStudy(
         slow,
-        { ...data.registration, latencyMs: 20000, executionAssumptionsHash: canonicalHashV1(slowAssumptions) },
+        {
+          ...data.registration,
+          latencyMs: 20000,
+          executionAssumptionsHash: Result.getOrThrow(canonicalHashV1Result(slowAssumptions)),
+        },
         arrivals,
         data.receipt,
       )
@@ -894,7 +914,7 @@ test.each([
           {
             ...data.registration,
             latencyMs: assumptions.latencyMs,
-            executionAssumptionsHash: canonicalHashV1(assumptions),
+            executionAssumptionsHash: Result.getOrThrow(canonicalHashV1Result(assumptions)),
           },
           arrivals,
           data.receipt,
@@ -970,8 +990,8 @@ test.each(['timeout', 'interruption', 'defect'] as const)(
   },
 )
 
-test('matched studies reject a registered protocol with a different net-profit target', async () => {
-  const data = fixture(undefined, undefined, 99)
+test('matched studies reject a registered protocol with a different capital-risk budget', async () => {
+  const data = fixture(undefined, undefined, 9)
   const result = await Effect.runPromise(
     runMatchedEntryStudy(data.input, data.registration, '/unused-matched-arrivals', data.receipt).pipe(
       Effect.result,

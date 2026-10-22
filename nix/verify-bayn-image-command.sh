@@ -67,6 +67,12 @@ cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
+harness_wrapper="$(resolve_image_entry /bin/bayn-harness2)"
+harness_runner="$(resolve_image_entry /app/services/bayn/harness2/runner.py)"
+harness_probe_wrapper="$(resolve_image_entry /bin/bayn-harness2-probe)"
+harness_probe_command="$(resolve_image_entry /app/services/bayn/dist/harness2-command.js)"
+backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
+backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
 execution_server="$(resolve_image_entry /app/services/bayn/dist/restate-execution-server.js)"
 image_node="$(resolve_image_entry /bin/node)"
@@ -78,6 +84,12 @@ test -x "${cost_wrapper}"
 test -f "${cost_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
+test -x "${harness_wrapper}"
+test -f "${harness_runner}"
+test -x "${harness_probe_wrapper}"
+test -f "${harness_probe_command}"
+test -x "${backtest_wrapper}"
+test -f "${backtest_command}"
 test -f "${research_server}"
 test -f "${execution_server}"
 test -x "${image_node}"
@@ -126,6 +138,30 @@ research_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
 expected_research='Usage: bayn-research --validate <run.json> | --run <run.json> --output <new-receipt.json> | --help'
 if [[ "${research_actual}" != "${expected_research}" ]]; then
   printf 'Unexpected Bayn research help output: %s\n' "${research_actual}" >&2
+  exit 1
+fi
+
+harness_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-harness2 "${image_id}" --help)"
+if [[ "${harness_actual}" != *'usage: bayn-harness2'* ]]; then
+  printf 'Unexpected Bayn Harness2 help output: %s\n' "${harness_actual}" >&2
+  exit 1
+fi
+
+harness_probe_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-harness2-probe "${image_id}" --help)"
+if [[ "${harness_probe_actual}" != 'Usage: bayn-harness2-probe '* ]]; then
+  printf 'Unexpected Bayn Jev probe help output: %s\n' "${harness_probe_actual}" >&2
+  exit 1
+fi
+
+backtest_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
+  --entrypoint /bin/bayn-backtest "${image_id}" --help)"
+if [[ "${backtest_actual}" != 'Usage: bayn-backtest '* ]]; then
+  printf 'Unexpected Bayn native backtest help output: %s\n' "${backtest_actual}" >&2
   exit 1
 fi
 

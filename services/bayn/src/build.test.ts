@@ -9,13 +9,13 @@ import {
   type EmbeddedBuildMetadata,
   type EmbeddedRuntimeIdentity,
 } from './build'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { decodeJevProtocol, defaultJevProtocolDocument } from './jev/protocol'
 
 describe('compiled build identity', () => {
   test('rejects build metadata for different compiled parameters', async () => {
     const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    const parameterHash = canonicalHashV1(protocol)
+    const parameterHash = Result.getOrThrow(canonicalHashV1Result(protocol))
     const metadata: EmbeddedBuildMetadata = {
       sourceRevision: 'a'.repeat(40),
       imageRepository: 'registry.example.test/lab/bayn',

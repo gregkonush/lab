@@ -9,16 +9,16 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.entry-bound-exits.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "a9205de6b18592ce2aa3697720eefaf45c555d34a1df80bd7ef9ac3650de9c74";
-  # Canonical hash of the compiled bayn.jev.protocol.v13 document.
-  strategyParameterHash = "e8efe1ed01ca88afb5ca016a48027b0d04dd54af91ee8024d5a23eee8822ecaf";
+  # SHA-256 identity for bayn.jev.setup-and-plan.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180";
+  # Canonical hash of the compiled bayn.jev.protocol.v17 document.
+  strategyParameterHash = "8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "b58904422ea4b1e53026d6bbb28bd1b0eae5468b60175ecfc639d43db3a6fba8";
+  strategyProtocolHash = "682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
-  executionRiskPolicyHash = "09d88572adc29a83d155fcf46db99aa28daf12f3b353f8b889be09882bc4cc8b";
+  executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
   forwardPerformanceCommand = pkgs.writeShellScriptBin "bayn-forward-performance" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -34,32 +34,60 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
   '';
+  harnessProbeCommand = pkgs.writeShellScriptBin "bayn-harness2-probe" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
+  '';
+  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
+  '';
+  harnessPython = pkgs.python312.withPackages (ps: [
+    ps.boto3
+    (ps.buildPythonPackage {
+      pname = "harness2";
+      version = "0.1.0";
+      pyproject = true;
+      src = pkgs.fetchurl {
+        url = "https://github.com/google-research/harness2/archive/1cfe254e8d25b15f37048c3730134686abe60335.tar.gz";
+        hash = "sha256-Izf5G3GhMOBV2N+5nq0mZ6Rgh8Kd+TnU1PCjw1e1dI8=";
+      };
+      build-system = [ ps.setuptools ps.wheel ];
+      pythonImportsCheck = [ "harness2.core.schedule" ];
+      doCheck = false;
+    })
+  ]);
+  harnessCommand = pkgs.writeShellScriptBin "bayn-harness2" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${harnessPython}/bin/python "$root/app/services/bayn/harness2/runner.py" "$@"
+  '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+  buildDefines = lib.concatStringsSep " " [
+    (buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision)
+    (buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository)
+    (buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash)
+    (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
+  ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-1EnepW+Xt4wRX2Aa/JVb9RpvTqKU+t5SQpd7leIOhUY=";
-    aarch64-linux = "sha256-TqKJESlWRykrievwAo1gi1F4BIFLjmW4NeX0KlGFcVQ=";
+    x86_64-linux = "sha256-TY+rJMR1vTCP84/kFDIRPurtGaCepT6lGy4Zjkx9ouA=";
+    aarch64-linux = "sha256-CqZAxmjpRsJYuztoHliGnPJQCX0GuiMGH9NiZIR5H+E=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    (
-      "bun --cwd=services/bayn run build "
-      + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
-      + " "
-      + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash
-      + " "
-      + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
-    )
+    "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/harness2-command.js --help"
+    "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -76,7 +104,10 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
+    mkdir -p "$out/app/services/bayn/harness2"
+    cp "$TMPDIR/work/services/bayn/harness2/runner.py" "$out/app/services/bayn/harness2/runner.py"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -125,6 +156,10 @@ import ./bun-workspace-service.nix {
     forwardPerformanceCommand
     inferenceCostCommand
     researchCommand
+    harnessCommand
+    harnessProbeCommand
+    backtestCommand
+    harnessPython
   ];
   exposedPorts = {
     "8080/tcp" = { };

@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
 import { intradayInstantNanos } from '../intraday/time'
 import {
@@ -44,7 +44,7 @@ const bars = (): readonly IntradayBar[] =>
   }))
 const rehash = (changed: RollingMarketFeature): RollingMarketFeature => ({
   ...changed,
-  featureId: canonicalHashV1(changed.material),
+  featureId: Result.getOrThrow(canonicalHashV1Result(changed.material)),
 })
 
 describe('Dorvud rolling feature wire contract', () => {
@@ -83,7 +83,7 @@ describe('Dorvud rolling feature wire contract', () => {
 
   test('decodes the Kotlin-produced fixture with identical definition and content identity', () => {
     const value = feature()
-    expect(value.featureId).toBe(canonicalHashV1(value.material))
+    expect(value.featureId).toBe(Result.getOrThrow(canonicalHashV1Result(value.material)))
     expect(value.material.values).toEqual({
       referencePriceMicros: '100000000',
       rangeHighPriceMicros: '131000000',
