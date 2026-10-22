@@ -1,3 +1,4 @@
+import jevEditorStructuredOutput from '../../migrations/0138_jev_editor_structured_output'
 import setupAndPlan from '../../migrations/0137_setup_and_plan'
 import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
 import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
@@ -140,6 +141,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '137_setup_and_plan': setupAndPlan,
+  '138_jev_editor_structured_output': jevEditorStructuredOutput,
   '136_current_authority_writes': currentAuthorityWrites,
   '134_remove_unused_schema': removeUnusedSchema,
   '127_current_jev_cycles': currentJevCycles,

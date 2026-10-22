@@ -251,7 +251,7 @@ class Calls:
                 )
                 if kind == "editor":
                     run = {
-                        "schemaVersion": "bayn.jev-harness2-editor.v2",
+                        "schemaVersion": "bayn.jev-harness2-editor.v3",
                         "sourceRevision": self.study["sourceRevision"],
                         "studyHash": identity(self.study),
                         "armManifestHashes": [identity(self.study["baseline"])],
@@ -671,8 +671,8 @@ class Editor(Proposer):
             if path.is_file()
         )
         instruction = (
-            "Return a JSON object with exactly one entry string field, inside exactly one <harness>...</harness> block. The string is bounded to 2000 characters and should use at most 100 words. Keep analysis brief and return the complete JSON within the token budget. "
-            "followed by <notes>...</notes>. The Bayn executor only receives immutable market state and typed Jev questions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
+            "Return a JSON object with exactly one entry string field. Return only that JSON, with no XML tags, notes or context wrapper. The string is bounded to 2000 characters. Keep analysis brief and return the complete JSON within the token budget. "
+            "The Bayn executor only receives immutable market state and typed Jev questions. It has no tools, files, skills, scripts, plugins, subagents or alternate APIs. "
             "References to those capabilities in the generic upstream mission do not apply to Bayn. "
             "Never instruct the executor to use them or invent a fallback path. "
             if kwargs.get("harvest")
@@ -698,13 +698,14 @@ class Editor(Proposer):
         text = receipt["responseText"]
         workspace = None
         if kwargs.get("harvest"):
-            proposals = re.findall(r"<harness>([\s\S]*?)</harness>", text)
-            if len(proposals) != 1:
+            try:
+                instructions = validate_instructions(json.loads(text))
+            except ValueError:
                 raise ProposerError(
-                    "Editor must return exactly one harness", attempts=1
-                )
-            tree = {"instructions.json": proposals[0].strip()}
-            self.adapter.validate_tree(tree)
+                    "Editor must return the native instruction JSON document",
+                    attempts=1,
+                ) from None
+            tree = {"instructions.json": encode(instructions).decode()}
             workspace = context / "harness"
             (workspace / "instructions.json").write_text(tree["instructions.json"])
         reply = Reply(label=label, text=text, ok=True, attempts=1, workspace=workspace)

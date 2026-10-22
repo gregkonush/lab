@@ -59,6 +59,21 @@ describe('frozen research contract and existing expense ledger', () => {
     expect(Result.isFailure(parseResearchOutput(current, '{"currentInstructions":{"entry":"Assess"}}'))).toBe(true)
     expect(Result.isSuccess(parseResearchOutput(current, '{"entry":"Assess"}'))).toBe(true)
   })
+  test.each([
+    '{"entry":""}',
+    '{"entry":"   "}',
+    JSON.stringify({ entry: 'a'.repeat(2001) }),
+    '{"entry":"Assess","notes":"extra output"}',
+    '<harness>{"entry":"Assess"}</harness>',
+    '{"entry":"Assess"} trailing text',
+  ])('rejects non-native structured editor documents %#', (output) => {
+    expect(Result.isFailure(parseResearchOutput(harnessEditorFixture(), output))).toBe(true)
+  })
+  test('keeps reflection outside the instruction JSON format', () => {
+    const reflection = { ...harnessEditorFixture(), purpose: HarnessPurpose.Reflection }
+    expect(researchRequest(reflection)).not.toHaveProperty('response_format')
+    expect(Result.getOrThrow(parseResearchOutput(reflection, 'NO_ENTRY'))).toEqual([])
+  })
   test('preserves the original unconstrained v2 provider request identity for retained receipts', () => {
     const historical = Result.getOrThrow(
       decodeResearchRun({

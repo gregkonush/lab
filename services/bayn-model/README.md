@@ -38,7 +38,11 @@ trajectories retain their original evidence. The pinned tokenizer measured up to
 19-candidate, 16-plan synthetic composition/reflection fixture. Its 4,096-token output allowance exceeds a 16,384-token
 context and fits the 32,768-token budget. Actual serving and shared-GPU capacity still require runtime proof.
 
-The current `bayn.jev-harness2-editor.v2` contract accepts bounded instruction proposals and evidence-supported
+Prompt-edit requests constrain generation with a JSON schema for the native one-field instruction document.
+Reflection requests keep their separate text format. The pinned [vLLM structured-output API](https://docs.vllm.ai/en/v0.29.0/features/structured_outputs/) supports both request types; this does
+not qualify an editor's financial reasoning or a generated strategy.
+
+The current `bayn.jev-harness2-editor.v3` contract accepts bounded instruction proposals and evidence-supported
 reflection. A proposal changes only the complete-plan `entry` instruction. Validate their schema and
 native request identity before a probe. Generated text is data; the editor cannot add executable code, change
 market state or choices, alter risk policy, or submit an order. A truncated, timed-out, malformed or foreign-model
