@@ -3,7 +3,7 @@ import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
-import currentAuthorityWrites from '../../migrations/0134_current_authority_writes'
+import currentAuthorityWrites from '../../migrations/0135_current_authority_writes'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { Authority } from '../execution/contracts'
 import { canonicalHashV1Result } from '../hash'
@@ -79,7 +79,7 @@ const activate = (generationHash: string) =>
       kill_state='CLEAR',reason=NULL,version=(SELECT authority_version FROM authority_generations WHERE generation_hash=${generationHash}),
       updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${generationHash}) WHERE singleton`
   })
-const fenceId = 134
+const fenceId = 135
 const migrate = PgMigrator.run({
   loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= fenceId))),
   table: 'schema_migrations',
