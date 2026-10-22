@@ -20,8 +20,7 @@
                 <#if authenticators??>
                     <form id="authn_select" class="${properties.kcFormClass!}">
                         <#list authenticators.authenticators as authenticator>
-                            <input type="hidden" name="authn_use_chk" value="${authenticator.credentialId}"
-                                   data-transports="${authenticator.transports.displayNameProperties?join(',')}"/>
+                            <input type="hidden" name="authn_use_chk" value="${authenticator.credentialId}"/>
                         </#list>
                     </form>
 

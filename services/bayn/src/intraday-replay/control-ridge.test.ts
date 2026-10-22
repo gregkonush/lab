@@ -19,7 +19,6 @@ import { config } from '../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis as iso } from '../time'
 import {
   prepareBoundRidge,
-  RidgeControlPolicy,
   ridgeExecutionLabelDefinition,
   scorePinnedRidgeCandidates,
   selectBoundRidge,
@@ -253,7 +252,7 @@ test('both six-bar controls record first-minute cash while their mathematical hi
     observedAtMs,
     candidates: equityMarketProfile.candidateSymbols,
   })
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const result = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, observedAtMs), query, data.bound, policy),
     )
@@ -275,8 +274,8 @@ test('both six-bar controls record first-minute cash while their mathematical hi
 test('the pair extracts the same causal features and uses the actual training mean', async () => {
   const data = await Effect.runPromise(fixture({ mean: 0, intercept: 5 }))
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
-  const ridge = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, RidgeControlPolicy.Ridge))
-  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, RidgeControlPolicy.TrainingMean))
+  const ridge = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, ControlPolicy.Ridge))
+  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, ControlPolicy.TrainingMean))
   expect(ridge.status).toBe('AVAILABLE')
   expect(baseline.status).toBe('AVAILABLE')
   if (ridge.status !== 'AVAILABLE' || baseline.status !== 'AVAILABLE')
@@ -302,7 +301,7 @@ test.each([0, -5])('a %d-bps constant preserves candidate-local gaps as exclusio
       replaySixBarFixture(data.captured, firstDecisionMs),
       data.query,
       data.bound,
-      RidgeControlPolicy.TrainingMean,
+      ControlPolicy.TrainingMean,
     ),
   )
   expect(decision.status).toBe('AVAILABLE')
@@ -341,7 +340,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'late-bar', 'stale-q
             }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const select = () =>
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy)
       const decision = Result.getOrThrow(select())
@@ -387,7 +386,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
             }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const decision = Result.getOrThrow(
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
       )
@@ -402,7 +401,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
 
 test('evidenced exclusions retain an available cash decision with empty admissible candidates', async () => {
   const data = await Effect.runPromise(fixture({ exclude: true }))
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const decision = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
     )
@@ -422,7 +421,7 @@ test('candidate gaps can produce evidenced cash only while the benchmark remains
       transformInputs: (inputs) => inputs.filter((input) => input.symbol === 'SPY' || input.channel !== 'quotes'),
     }),
   )
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
     const decision = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, policy))
     expect(decision.status).toBe('AVAILABLE')
@@ -455,7 +454,7 @@ test.each(['crossed-quote', 'premature-bar', 'nonfinal-bar'] as const)(
           }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean])
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)
       expect(
         Result.isFailure(
           selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
@@ -511,13 +510,11 @@ test('artifact, source, calendar, partition, label and actual successor mismatch
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
   for (const observedAt of ['2026-09-04T14:00:00.000Z', session.closeAt])
     expect(
-      Result.isFailure(
-        selectBoundRidge(cursor, { ...data.query, observedAt }, data.bound, RidgeControlPolicy.TrainingMean),
-      ),
+      Result.isFailure(selectBoundRidge(cursor, { ...data.query, observedAt }, data.bound, ControlPolicy.TrainingMean)),
     ).toBeTrue()
   expect(
     Result.isFailure(
-      selectBoundRidge(cursor, { ...data.query, candidateSymbols: [] }, data.bound, RidgeControlPolicy.Ridge),
+      selectBoundRidge(cursor, { ...data.query, candidateSymbols: [] }, data.bound, ControlPolicy.Ridge),
     ),
   ).toBeTrue()
 })
@@ -720,7 +717,7 @@ const simulate = (
               replaySixBarFixture(data.captured, cutAt),
               query,
               data.bound,
-              options.policy === ControlPolicy.Ridge ? RidgeControlPolicy.Ridge : RidgeControlPolicy.TrainingMean,
+              options.policy === ControlPolicy.Ridge ? ControlPolicy.Ridge : ControlPolicy.TrainingMean,
             ),
           ).pipe(Effect.mapError((cause) => new ControlStudyFailure({ message: 'Synthetic selection failed', cause })))
         },
@@ -729,7 +726,7 @@ const simulate = (
     return { result, selectedAt, data }
   })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s uses one real position and persistent partial exits with finite quote liquidity',
   async (policy) => {
     const { result } = await Effect.runPromise(simulate({ policy }))
@@ -766,7 +763,7 @@ test.each([
   if (scenario === 'canceled') expect(result.orders).toHaveLength(1)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s keeps a candidate-local gap out of allocations and records it without invalidating the session',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
@@ -803,7 +800,7 @@ test('missing input leaves the same minute window available for a later causal p
   expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(2400)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s reports evidenced exclusions in decisions and opportunity counters',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, exclude: true }))
@@ -824,7 +821,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   },
 )
 
-test.each([RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s requires the original complete extraction pins after row projection',
   async (policy) => {
     const data = await Effect.runPromise(fixture())
@@ -890,8 +887,8 @@ test('the constant validates source and content without depending on Ridge norma
     ),
   )
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
-  expect(Result.isFailure(selectBoundRidge(cursor, data.query, bound, RidgeControlPolicy.Ridge))).toBeTrue()
-  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, bound, RidgeControlPolicy.TrainingMean))
+  expect(Result.isFailure(selectBoundRidge(cursor, data.query, bound, ControlPolicy.Ridge))).toBeTrue()
+  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, bound, ControlPolicy.TrainingMean))
   expect(baseline.status).toBe('AVAILABLE')
   if (baseline.status !== 'AVAILABLE') throw new Error('Expected available constant scores')
   expect(baseline.evidence.scores).toEqual(

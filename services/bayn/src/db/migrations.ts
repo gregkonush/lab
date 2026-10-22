@@ -1,5 +1,6 @@
 import currentAuthorityWrites from '../../migrations/0135_current_authority_writes'
 import completePlanChoice from '../../migrations/0133_complete_plan_choice'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
 import jevHarness2 from '../../migrations/0132_jev_harness2'
 import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
 import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
@@ -137,6 +138,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '135_current_authority_writes': currentAuthorityWrites,
+  '134_remove_unused_schema': removeUnusedSchema,
   '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
   '128_strategy_native_protection': strategyNativeProtection,

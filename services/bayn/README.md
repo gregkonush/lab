@@ -4,6 +4,11 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+The [October 20 system cleanup](../../docs/bayn/system-cleanup-2026-10-20.md) records the database and
+observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
+event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.
+`tools/audit-database.sql` provides bounded read-only table sizes, exact retirement counts and migration readback.
+
 Internal construction and canonical hashing use the typed `Result` APIs. Eager
 validation stays in `Result`; runtime callers lift failures into their owning
 Effect error channel and retain the cause. Tests assert expected success locally
@@ -43,6 +48,10 @@ an order proposal, never fabricated market history. There are no independent ent
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
 constraints and the hard migration. These model decisions have no demonstrated profitable edge.
+
+Observed bar prices retain provider precision in source evidence and model context. Complete-plan construction rounds
+these historical prices down to micros before applying instrument ticks. Broker quotes and executable prices keep
+their separate precision checks; a provider bar with more than nine decimal places cannot invalidate the whole batch.
 
 For flat PAPER accounts, the same reconciled daily-loss and all-time drawdown limits also run before market-data
 reads and Jev batch admission. `ACCOUNT_PROTECTION` readiness names the existing limit that prevents an entry;
@@ -115,8 +124,16 @@ Recovery derives duration from the held instruments and processes one market per
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+An abstention waits for another observation only while that lease has enough finalization headroom.
+Equity session hours cannot extend the unused lease or defer its valid no-trade decision until the closing bell.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
+The database retains its row and deferred commit guards when persistence crosses that lease. Only rejection by
+the named entry-admission constraint becomes a normal expired-entry result after the transaction rolls back.
+Recovery then blocks the still-unused cycle with a fresh timestamp through the existing guarded store; it never
+retries the stale decision or retains its partial binding. Other constraint and persistence failures remain errors.
+Combined failures, defects and interruption remain intact across the store, writer fence and binding runner; a lease
+rejection accompanied by failed rollback cannot become normal expiry or authorize a successor.
 Bound decisions, orders and positions retain recovery priority. An expired continuous-market cycle renews only its
 three-minute close lease. Fresh reconciled positions can authorize the existing close-only liquidation binding after an outage;
 entries retain their original deadline and all account, authority, quantity and order-risk checks still apply.
@@ -1778,6 +1795,14 @@ bun run --filter @proompteng/bayn tsc
 bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
+
+CI partitions the complete unit suite into four duration-balanced Bun shards with two isolated workers per shard.
+The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
+Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
+four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
+runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
+the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
