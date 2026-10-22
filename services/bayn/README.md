@@ -1502,6 +1502,11 @@ codecs remain available to historical performance reporting, and the write const
 
 ## Replay and backtesting
 
+Native simulated broker state uses `bayn.simulated-broker-state.v7`. Fill activity IDs include a zero-padded global
+execution ordinal before the order ID, so same-millisecond buys and protective sells retain their execution order
+during accounting and checkpoint recovery. Earlier v6 checkpoints require their original executable; new runs and
+restores accept v7 only. Production broker activity IDs and accounting ordering are unchanged.
+
 `bayn-gap-recovery` is an offline, original-receipt decision replay command built by
 `bun run --filter @proompteng/bayn build:research`. Run it with
 `bun run --filter @proompteng/bayn gap:recovery`. It implements the fixed gap-recovery entry rule, with a separate
