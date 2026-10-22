@@ -631,6 +631,32 @@ test('unknown native data allocations remain unknown and cannot produce a comple
   expect(Result.isFailure(project(reseal({ ...report, completion: 'COMPLETE' })))).toBe(true)
 })
 
+test.each([
+  BacktestIssue.CycleFailure,
+  BacktestIssue.InexactAccounting,
+  BacktestIssue.UnresolvedMutation,
+  BacktestIssue.UnclosedOrder,
+  BacktestIssue.MissingValuation,
+])('native fitness retains a session-only %s failure even when its ending ledger is flat', (issue) => {
+  const original = nativeReportFixture()
+  const report = reseal({
+    ...original,
+    completion: 'INCOMPLETE',
+    reconciledNetPnlAfterCostsMicros: null,
+    maximumObservedDrawdownMicros: null,
+    sessions: original.sessions.map((session) => ({
+      ...session,
+      completion: 'INCOMPLETE',
+      issues: [issue],
+      netEquityChangeMicros: null,
+    })),
+  })
+  const outcome = Result.getOrThrow(project(report))
+  expect(outcome.remainingPositions).toBe(0)
+  expect(outcome.knownNetPnlMicros).not.toBeNull()
+  expect(outcome.issues).toContain(issue)
+})
+
 test('fractional trading, broker assets, calendar and cadence changes cannot masquerade as instruction effects', () => {
   const baselineReport = nativeReportFixture()
   const repeated = nativeReportFixture(jevInstructions, 'b')
