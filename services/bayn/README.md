@@ -614,10 +614,12 @@ quantity caps and final submission deadlines still apply. This entry check never
 Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
 headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
 limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
-deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
-still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
-final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
-freshness limits are unchanged; the preparation ordering does not guarantee submission.
+deadline expires, the unbound entry waits for fresh evidence. Changed authority or expired broker facts still require
+reconciliation. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. The controller's reconciliation cadence schedules
+preflights; it does not expire broker-valid facts during one serialized preparation. The pass rechecks authority on
+every reuse and discards its cache before post-mutation continuation. Quote and broker freshness limits are unchanged;
+the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
