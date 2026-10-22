@@ -109,6 +109,12 @@ The report separates engine completion, changed native decisions and economic im
 candidate funded selections, quantities, protection plans and rejection reasons on the same hidden observations.
 A probability change that leaves the native selection and plan unchanged does not count as a changed decision.
 
+Before reflection, the adapter hashes the selected instruction document and every compared candidate against the
+baseline. If all instruction documents match, it records `instruction-comparison.json`, skips the generative
+reflection call and returns `NO_ENTRY`. Provider output differences under unchanged instructions cannot create a
+successful-edit lesson in the upstream library. A rejected candidate with changed instructions remains available
+for reflection even when the selected document is the baseline.
+
 `NO_OBSERVED_CHANGE` means every paired validation probe completed and produced the same native decision.
 `INCONCLUSIVE` includes changed decisions without independent outcome evidence, incomplete calls or missing pairs.
 A different choice, more entries, fewer rejections, a composed prompt or a successful model call does not establish
