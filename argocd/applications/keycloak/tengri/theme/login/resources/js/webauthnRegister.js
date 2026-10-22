@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-// Keycloak 26.7.4 registration uses its default label because embedded browsers reject prompt().
+// Embedded browsers reject prompt(); unique labels let existing accounts enroll another passkey.
 import { base64url } from "rfc4648";
 
 export async function registerByWebAuthn(input) {
@@ -11,6 +11,7 @@ export async function registerByWebAuthn(input) {
     }
 
     const publicKey = {
+        hints: ['client-device', 'hybrid', 'security-key'],
         challenge: base64url.parse(input.challenge, {loose: true}),
         rp: {id: input.rpId, name: input.rpEntityName},
         user: {
@@ -140,7 +141,7 @@ function returnSuccess(result, initLabel) {
         document.getElementById("authenticatorAttachment").value = result.authenticatorAttachment;
     }
 
-    document.getElementById("authenticatorLabel").value = initLabel;
+    document.getElementById("authenticatorLabel").value = `${initLabel} (${crypto.randomUUID()})`;
 
     document.getElementById("register").requestSubmit();
 }
