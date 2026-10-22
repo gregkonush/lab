@@ -410,7 +410,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
     strategyDecision,
   })
   const candidate = report.candidates.find((value) => value.symbol === 'SOL/USD')
-  if (candidate === undefined || candidate.plans === undefined || candidate.coverage === undefined)
+  if (candidate === undefined || !('plans' in candidate) || !('coverage' in candidate))
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ estimatedFeeBpsPerSide: 25, estimatedRoundTripFeesBps: 50 })
   expect(candidate.entryEconomics?.requiredBidRiseBps).toBeGreaterThan(80)
