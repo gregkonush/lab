@@ -29,7 +29,6 @@ import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-mo
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
 import { studyOrder } from './signal-study'
-import { RidgeControlPolicy } from './control-ridge'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
 
 export const controlExitDefinition = { protectiveStopBps: 50, profitTargetNetBps: 100 } as const
@@ -40,8 +39,8 @@ export enum ControlPolicy {
   RelativeMomentum = 'REPEATED_RELATIVE_MOMENTUM',
   JevEntry = 'REPEATED_JEV_ENTRY',
   ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
-  Ridge = RidgeControlPolicy.Ridge,
-  TrainingMean = RidgeControlPolicy.TrainingMean,
+  Ridge = 'SIX_BAR_RIDGE_V1',
+  TrainingMean = 'SIX_BAR_TRAINING_MEAN_V1',
   FixedCandidateTraining = 'SIX_BAR_FIXED_CANDIDATE_TRAINING_V1',
 }
 

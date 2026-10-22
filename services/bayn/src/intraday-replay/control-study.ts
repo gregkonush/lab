@@ -49,7 +49,6 @@ import { residualShockDefinition, selectResidualShock } from './residual-shock'
 import {
   BoundRidgeInputSchema,
   prepareBoundRidge,
-  RidgeControlPolicy,
   ridgeExecutionLabelDefinition,
   selectBoundRidge,
   type BoundRidge,
@@ -169,7 +168,7 @@ const opportunityAccountingDefinition = {
 
 const ridgeControlStudyDefinition = {
   schemaVersion: 'bayn.control-study-definition.v8',
-  policies: [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean],
+  policies: [ControlPolicy.Ridge, ControlPolicy.TrainingMean],
   qualification: 'UNQUALIFIED',
   controllerCoverage: 'UNKNOWN',
   featureWindow: 'First-completed-minute entry eligibility; six-bar controls require six actual completed bars.',
@@ -1077,9 +1076,7 @@ export const runControlStudy = (
                               cursor,
                               query,
                               boundRidge,
-                              policy === ControlPolicy.Ridge
-                                ? RidgeControlPolicy.Ridge
-                                : RidgeControlPolicy.TrainingMean,
+                              policy === ControlPolicy.Ridge ? ControlPolicy.Ridge : ControlPolicy.TrainingMean,
                             ),
                           ),
                         ),
