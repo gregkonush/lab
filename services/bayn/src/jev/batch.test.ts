@@ -24,7 +24,7 @@ const request = evaluationRequestFixture()
 const { requestId: _, ...requestMaterial } = request
 const second = Result.getOrThrow(makeJevEvaluationRequest({ ...requestMaterial, symbol: 'AMZN' }))
 const planMaterial = {
-  schemaVersion: JevBatchPlanVersion.V5,
+  schemaVersion: JevBatchPlanVersion.V6,
   cycleId: request.cycleId,
   authorityGenerationHash: request.authorityGenerationHash,
   observationHash: 'd'.repeat(64),
@@ -147,7 +147,7 @@ describe('complete Jev batch evidence', () => {
     const mixed = Result.getOrThrow(
       makeJevBatchPlan({
         ...planMaterial,
-        schemaVersion: JevBatchPlanVersion.V5,
+        schemaVersion: JevBatchPlanVersion.V6,
         candidates,
         questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),
@@ -157,7 +157,7 @@ describe('complete Jev batch evidence', () => {
     const versionThree = Result.getOrThrow(
       makeJevBatchPlan({
         ...planMaterial,
-        schemaVersion: JevBatchPlanVersion.V5,
+        schemaVersion: JevBatchPlanVersion.V6,
         candidates,
         questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
       }),

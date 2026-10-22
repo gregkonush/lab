@@ -865,7 +865,16 @@ const makeCycleObservability = Effect.gen(function* () {
                   'quoteCount', coalesce((decision.document #>> '{bindings,executionMarketData,quoteCount}')::integer, 0),
                   'tradeCount', coalesce((decision.document #>> '{bindings,executionMarketData,tradeCount}')::integer, 0),
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
-                  'targetPlanReason', decision.document #>> '{targetPlan,reason}',
+                  'targetPlanReason', CASE
+                    WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v5'
+                      AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
+                    THEN CASE WHEN EXISTS (
+                      SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                      WHERE reason.value IN ('MODEL_WAIT', 'MODEL_AVOID')
+                    ) THEN 'JEV_MODEL_ABSTAINED' ELSE 'JEV_NO_FUNDED_CANDIDATES' END
+                    ELSE decision.document #>> '{targetPlan,reason}'
+                  END,
                   'targetCount', (
                     SELECT count(*)::integer
                     FROM jsonb_array_elements(coalesce(decision.document #> '{targetPlan,targets}', '[]'::jsonb)) AS target

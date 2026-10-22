@@ -2,6 +2,7 @@ import AxeBuilder from '@axe-core/playwright'
 import { expect, test, type Locator, type Page, type WebSocketRoute } from '@playwright/test'
 import { createHash } from 'node:crypto'
 import { codexModelFixtures } from './codex-models.fixture'
+import type { TengriCodexRun } from '@/lib/tengri/codex-run'
 
 const user = {
   id: '424242',
@@ -129,8 +130,10 @@ function embeddedPreviewDocument() {
 }
 
 type TerminalStore = { sessions: Record<string, unknown>[] }
+const runEventHandlers = new WeakMap<Page, (event: Record<string, unknown>) => void>()
 
 type MockOptions = {
+  durableRun?: TengriCodexRun
   activeCodexLogin?: boolean
   authenticated?: boolean
   userId?: string
@@ -180,6 +183,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
   let resumeThreadRequests = 0
   let resumeThreadResponses = 0
   let createdThreads = 0
+  const completedThreads = new Set<string>()
+  const runs = new Map<string, { runId: string; agentId: string; threadId: string; state: Record<string, unknown> }>()
+  if (options.durableRun) runs.set(options.durableRun.runId, options.durableRun)
+  if (!runEventHandlers.has(page))
+    await page.exposeFunction('__tengriTestRunEvent', (event: Record<string, unknown>) =>
+      runEventHandlers.get(page)?.(event),
+    )
+  runEventHandlers.set(page, (event) => {
+    if (event.method !== 'turn/completed') return
+    completedThreads.add(String(event.threadId))
+    for (const run of runs.values())
+      if (run.threadId === event.threadId) run.state = { phase: 'succeeded', turnId: String(event.turnId || 'turn-1') }
+  })
   let codexAccountFailuresReleased = !options.failCodexAccountUntilReleased
   let heldCodexAccountRequest = false
   const heldCodexModels = Promise.withResolvers<void>()
@@ -773,13 +789,53 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
               : recoveryRecords(String(action.threadId), options),
         })
         return
+      case 'active-codex-run': {
+        const existing = [...runs.values()].find(
+          (run) =>
+            run.agentId === action.agentId &&
+            !['succeeded', 'failed', 'cancelled', 'rejected'].includes(String(run.state.phase)),
+        )
+        if (existing) {
+          result = existing
+          break
+        }
+        const thread = await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada') || '')
+        const raw = options.resumeThreadRawJsonById?.[thread] || options.resumeThreadRawJson
+        const active =
+          thread && !completedThreads.has(thread) && raw
+            ? (JSON.parse(raw).thread?.turns || []).find((turn: { status: string }) => turn.status === 'inProgress')
+            : undefined
+        if (active) {
+          const runId = '11111111-1111-4111-8111-111111111111'
+          result = { runId, agentId: action.agentId, threadId: thread, state: { phase: 'running', turnId: active.id } }
+          runs.set(
+            runId,
+            result as { runId: string; agentId: string; threadId: string; state: Record<string, unknown> },
+          )
+        } else {
+          result = null
+        }
+        break
+      }
+      case 'codex-run':
+        result = runs.get(String(action.runId)) || null
+        break
       case 'send-turn':
         if (sendTurnFailuresRemaining) {
           sendTurnFailuresRemaining -= 1
           await route.fulfill({ status: 503, json: { error: 'Temporary image send failure' } })
           return
         }
-        result = { id: 'turn-1', threadId: action.threadId }
+        result = {
+          runId: action.operationId,
+          agentId: action.agentId,
+          threadId: action.threadId,
+          state: { phase: 'running', turnId: 'turn-1' },
+        }
+        runs.set(
+          String(action.operationId),
+          result as { runId: string; agentId: string; threadId: string; state: Record<string, unknown> },
+        )
         break
       case 'sleep-agent':
         if (options.holdLifecycleAction === 'sleep-agent') {
@@ -1067,6 +1123,10 @@ function emitCodexEvent(page: Page, event: Record<string, unknown>) {
       }
     ).__tengriEventSources?.find((candidate) => !candidate.closed && candidate.url.includes('/api/tengri/events?'))
     if (!source?.onmessage) throw new Error('Codex event stream is unavailable')
+    const notify = Reflect.get(window, '__tengriTestRunEvent') as
+      | ((event: Record<string, unknown>) => Promise<void>)
+      | undefined
+    void notify?.(payload)
     source.onmessage(new MessageEvent('message', { data: JSON.stringify(payload) }))
   }, event)
 }
@@ -3305,7 +3365,14 @@ test('uses one composer control for sending, steering, and stopping a response',
   await expect(action).toHaveAccessibleName('Stop response')
   await action.click()
   await expect
-    .poll(() => mock.actions.some((item) => item.action === 'interrupt-turn' && item.turnId === 'turn-1'))
+    .poll(() =>
+      mock.actions.some(
+        (item) =>
+          item.action === 'interrupt-turn' &&
+          item.runId === mock.actions.find((action) => action.action === 'send-turn')?.operationId &&
+          typeof item.operationId === 'string',
+      ),
+    )
     .toBe(true)
   await emitCodexEvent(page, {
     sequence: 3,
@@ -5753,7 +5820,7 @@ test('clears unsent text and images when starting another new conversation', asy
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
-test('creates and switches running conversations while retaining each draft and accepted prompt', async ({ page }) => {
+test('serializes workspace runs while retaining each conversation draft and accepted prompt', async ({ page }) => {
   const activeThread = JSON.stringify({ thread: { turns: [{ id: 'turn-1', status: 'inProgress', items: [] }] } })
   const mock = await mockTengri(page, { resumeThreadRawJson: activeThread })
   await page.goto('/')
@@ -5769,6 +5836,19 @@ test('creates and switches running conversations while retaining each draft and 
   await expect(composer).toBeFocused()
   await expect(tengri.getByRole('article', { name: 'Your message' })).toHaveCount(0)
   await composer.fill('Work on the second conversation.')
+  await expect(tengri.getByRole('button', { name: 'Send message', exact: true })).toBeDisabled()
+  await expect(tengri.getByText('Another conversation has an active run.', { exact: false })).toBeVisible()
+  await emitCodexEvent(page, {
+    sequence: 1,
+    method: 'turn/completed',
+    kind: 'thread-state',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
   await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'create-thread').length).toBe(2)
   await expect
@@ -5827,6 +5907,17 @@ test('retains draft conversation notices after assigning its first server thread
   for (const kind of ['warning', 'error']) {
     await expect(tengri.getByText(`Draft conversation ${kind}`, { exact: true })).toHaveCount(0)
   }
+  await emitCodexEvent(page, {
+    sequence: 3,
+    method: 'turn/completed',
+    kind: 'thread-state',
+    threadId: 'thread-1',
+    turnId: 'turn-1',
+    itemId: '',
+    approvalId: '',
+    text: '',
+    rawJson: '{}',
+  })
   await composer.fill('Start the second conversation')
   await tengri.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect(sidebar.locator('[data-conversation-id="thread-2"]')).toBeVisible()
@@ -6985,8 +7076,15 @@ test('retains pasted images and text after a failed send and supports retry', as
   )
   await expect(prompt).toHaveValue('Inspect this screenshot')
   await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  const original = mock.actions.find((action) => action.action === 'send-turn')
+  await selectCodexOption(page, page.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(2)
+  const retry = mock.actions.filter((action) => action.action === 'send-turn')[1]
+  expect(retry.operationId).toBe(original?.operationId)
+  expect(retry.model).toBe(original?.model)
+  expect(retry.reasoningEffort).toBe(original?.reasoningEffort)
+  await expect(page.getByText('This retry uses the original message model and reasoning settings.')).toBeVisible()
   await expect(page.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
 })
 
@@ -7734,4 +7832,180 @@ test('shows failed auto-approvals for manual retry without repeatedly submitting
   await expect(tengri.getByRole('button', { name: 'Approve once', exact: true })).toBeVisible()
   expect(attempts).toBe(1)
   expect(mock.actions.filter((action) => action.action === 'resolve-approval')).toHaveLength(0)
+})
+
+test('recovers the exact durable run and pending approval with empty browser storage', async ({ page }) => {
+  const runId = '33333333-3333-4333-8333-333333333333'
+  const mock = await mockTengri(page, {
+    durableRun: {
+      runId,
+      agentId: 'microvm-ada',
+      threadId: 'thread-recovered',
+      state: {
+        phase: 'waiting_for_approval',
+        turnId: 'turn-recovered',
+        approvals: [
+          {
+            approvalId: 'process-identity:17',
+            raw: {
+              id: 17,
+              method: 'item/commandExecution/requestApproval',
+              params: {
+                threadId: 'thread-recovered',
+                turnId: 'turn-recovered',
+                command: 'echo durable',
+                cwd: '/workspace',
+              },
+            },
+          },
+        ],
+      },
+    },
+  })
+  await page.goto('/')
+  const approval = page.getByRole('article', { name: 'Codex approval' })
+  await expect(approval).toBeVisible()
+  await page.evaluate(() => localStorage.clear())
+  await page.reload()
+  await expect(approval).toBeVisible()
+  await approval.getByRole('button', { name: 'Approve once', exact: true }).click()
+  await expect.poll(() => mock.actions.find((action) => action.action === 'resolve-approval')?.runId).toBe(runId)
+  const action = mock.actions.find((action) => action.action === 'resolve-approval')
+  expect(action?.approvalId).toBe('process-identity:17')
+  expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
+})
+
+test('records Stop for an accepted run before a native turn exists', async ({ page }) => {
+  const runId = '44444444-4444-4444-8444-444444444444'
+  const mock = await mockTengri(page, {
+    durableRun: {
+      runId,
+      agentId: 'microvm-ada',
+      threadId: 'thread-waiting',
+      state: { phase: 'waiting_for_guest', reason: 'Waiting for the authorized guest' },
+    },
+  })
+  await page.goto('/')
+  const stop = page.getByRole('button', { name: 'Stop response', exact: true })
+  await expect(stop).toBeEnabled()
+  await stop.click()
+  await expect.poll(() => mock.actions.find((action) => action.action === 'interrupt-turn')?.runId).toBe(runId)
+  const action = mock.actions.find((action) => action.action === 'interrupt-turn')
+  expect(action).not.toHaveProperty('turnId')
+  expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
+  await expect.poll(() => page.evaluate((id) => localStorage.getItem(`tengri-stop:${id}`), runId)).toBeNull()
+  await expect(stop).toBeEnabled()
+  await stop.click()
+  await expect.poll(() => mock.actions.filter((item) => item.action === 'interrupt-turn').length).toBe(2)
+  const refreshed = mock.actions.filter((item) => item.action === 'interrupt-turn')[1]
+  expect(refreshed.operationId).not.toBe(action?.operationId)
+})
+
+test.describe('durable control retries', () => {
+  for (const control of ['approval', 'question'] as const) {
+    for (const outcome of ['not dispatched', 'unknown'] as const) {
+      const behavior =
+        outcome === 'not dispatched'
+          ? 'replaces a rejected operation on retry'
+          : 'retains an uncertain operation on retry'
+      test(`${control} ${behavior}`, async ({ page }) => {
+        const mock = await mockTengri(page, {
+          resumeThreadRawJson: JSON.stringify({
+            thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+          }),
+        })
+        await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+        const operationIds: string[] = []
+        const actionName = control === 'approval' ? 'resolve-approval' : 'answer-questions'
+        await page.route('**/api/tengri', async (route) => {
+          if (route.request().method() !== 'POST') return route.fallback()
+          const action = route.request().postDataJSON()
+          if (action.action !== actionName) return route.fallback()
+          operationIds.push(String(action.operationId))
+          if (operationIds.length === 1 || (outcome === 'not dispatched' && action.operationId === operationIds[0]))
+            return route.fulfill({
+              status: outcome === 'not dispatched' ? 409 : 503,
+              json: {
+                error: 'The control response failed',
+                ...(outcome === 'not dispatched' ? { code: 'control_not_dispatched' } : {}),
+              },
+            })
+          return route.fallback()
+        })
+        await page.goto('/')
+        const tengri = page.getByRole('region', { name: 'Tengri window' })
+        await expect
+          .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+          .toBeGreaterThan(0)
+        await emitCodexEvent(page, {
+          sequence: 1,
+          kind: 'approval',
+          method: control === 'approval' ? 'item/commandExecution/requestApproval' : 'item/tool/requestUserInput',
+          threadId: 'thread-active',
+          turnId: 'turn-active',
+          itemId: '',
+          approvalId: 'control-retry',
+          text: 'Confirm the check',
+          rawJson:
+            control === 'question'
+              ? JSON.stringify({ params: { questions: [{ id: 'notes', question: 'Any notes?' }] } })
+              : '{}',
+        })
+        const card = tengri.getByRole('article', { name: control === 'approval' ? 'Codex approval' : 'Agent question' })
+        if (control === 'question')
+          await card.getByRole('textbox', { name: 'Any notes?', exact: true }).fill('Keep the files')
+        const button = card.getByRole('button', {
+          name: control === 'approval' ? 'Approve once' : 'Submit answers',
+          exact: true,
+        })
+        await button.click()
+        await expect(tengri.getByText('The control response failed', { exact: true })).toBeVisible()
+        await button.click()
+        await expect.poll(() => operationIds.length).toBe(2)
+        expect(operationIds[0]).toMatch(/^[0-9a-f-]{36}$/)
+        if (outcome === 'not dispatched') expect(operationIds[1]).not.toBe(operationIds[0])
+        else expect(operationIds[1]).toBe(operationIds[0])
+        await expect(card).toHaveCount(0)
+      })
+    }
+  }
+
+  test('auto-approval waits for the durable native turn', async ({ page }) => {
+    const run: TengriCodexRun = {
+      runId: '44444444-4444-4444-8444-444444444444',
+      agentId: 'microvm-ada',
+      threadId: 'thread-active',
+      state: { phase: 'accepted' },
+    }
+    const mock = await mockTengri(page, {
+      durableRun: run,
+      resumeThreadRawJson: JSON.stringify({
+        thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+      }),
+    })
+    await page.addInitScript(() => {
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+      localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+    })
+    await page.goto('/')
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-run').length).toBeGreaterThan(0)
+    const before = mock.actions.filter((action) => action.action === 'codex-run').length
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'approval',
+      method: 'item/commandExecution/requestApproval',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: '',
+      approvalId: 'early-approval',
+      text: 'Run the check?',
+      rawJson: '{}',
+    })
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+      .toBeGreaterThan(before)
+    expect(mock.actions.filter((action) => action.action === 'resolve-approval')).toHaveLength(0)
+    run.state = { phase: 'running', turnId: 'turn-active' }
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length).toBe(1)
+  })
 })

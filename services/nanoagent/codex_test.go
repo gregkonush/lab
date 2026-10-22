@@ -156,6 +156,7 @@ func TestCodexRPCAllowlistExposesOnlyDesktopOperations(t *testing.T) {
 		"account/read",
 		"account/login/start",
 		"thread/start",
+		"thread/read",
 		"thread/resume",
 		"thread/turns/list",
 		"thread/items/list",
@@ -445,10 +446,10 @@ func TestCodexMCPToolApprovalWaitsForExplicitDecision(t *testing.T) {
 			if len(writer.messages) != 0 || len(supervisor.approvals) != 1 {
 				t.Fatal("MCP confirmation did not wait for an explicit user decision")
 			}
-			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != "17" || string(supervisor.buffer[0].Raw) != string(raw) {
+			if len(supervisor.buffer) != 1 || supervisor.buffer[0].ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || string(supervisor.buffer[0].Raw) != string(raw) {
 				t.Fatal("MCP confirmation was not published with its original scope and arguments")
 			}
-			if err := supervisor.resolveApproval(context.Background(), "17", decision); err != nil {
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), decision); err != nil {
 				t.Fatal(err)
 			}
 			response := readCodexWireRequest(t, writer)
@@ -522,7 +523,7 @@ func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
 				t.Fatal("oversized confirmation did not wait for an explicit decision")
 			}
 			event := supervisor.buffer[0]
-			if event.Method != message.Method || event.ApprovalID != "17" || len(event.Raw) > 16<<10 {
+			if event.Method != message.Method || event.ApprovalID != approvalKey(supervisor.generation, json.RawMessage(`17`)) || len(event.Raw) > 16<<10 {
 				t.Fatal("oversized confirmation lost its method, approval ID, or size bound")
 			}
 			var bounded struct {
@@ -556,11 +557,11 @@ func TestCodexOversizedMCPApprovalPreservesDisplayAndScope(t *testing.T) {
 				t.Fatalf("bounded confirmation changed advertised scopes: %s", event.Raw)
 			}
 			if !session {
-				if err := supervisor.resolveApproval(context.Background(), "17", "approveSession"); err == nil || len(writer.messages) != 0 {
+				if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveSession"); err == nil || len(writer.messages) != 0 {
 					t.Fatal("bounded confirmation accepted an unadvertised scope")
 				}
 			}
-			if err := supervisor.resolveApproval(context.Background(), "17", "deny"); err != nil {
+			if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "deny"); err != nil {
 				t.Fatal(err)
 			}
 			if response := readCodexWireRequest(t, writer); string(response.Result) != `{"action":"decline"}` {
@@ -617,7 +618,7 @@ func TestCodexResolvedMCPRequestCannotBeApprovedAfterCancellation(t *testing.T) 
 	resolved := codexRPCMessage{Method: "serverRequest/resolved", Params: json.RawMessage(`{"threadId":"thread-1","requestId":17}`)}
 	raw, _ = json.Marshal(resolved)
 	supervisor.handleServerMessage(supervisor.generation, resolved, raw)
-	if err := supervisor.resolveApproval(context.Background(), "17", "approveOnce"); err == nil || len(writer.messages) != 0 {
+	if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveOnce"); err == nil || len(writer.messages) != 0 {
 		t.Fatal("canceled MCP request was allowed to execute from a stale approval card")
 	}
 }

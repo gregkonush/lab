@@ -881,7 +881,7 @@ function toolResultText(item: Record<string, unknown>) {
   const output = [dynamic, content, structured, rawResult].filter(Boolean).join('\n')
   if (!output) return ''
   const name = [string(item.server) || string(item.namespace), string(item.tool)].filter(Boolean).join('/')
-  return codexToolText([name, output].filter(Boolean).join('\n'))
+  return [name, codexToolText(output)].filter(Boolean).join('\n')
 }
 
 function contentItemsText(value: unknown) {

@@ -1409,3 +1409,19 @@ test('keeps status-only connector outcomes visible', () => {
     }
   }
 })
+
+test('decodes complete JSON string connector results before adding tool labels', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    const item = {
+      id: 'encoded-result',
+      type,
+      server: 'codex_apps',
+      tool: 'github.fetch',
+      result: JSON.stringify('First line\nSecond line'),
+    }
+    const output = { ...event, kind: 'tool-output' as const, text: '', rawJson: JSON.stringify({ params: { item } }) }
+    const expected = 'codex_apps/github.fetch\nFirst line\nSecond line'
+    expect(codexEventDisplayText(output)).toBe(expected)
+    expect(codexTranscriptFromThread(JSON.stringify({ thread: { turns: [{ items: [item] }] } }))[0].text).toBe(expected)
+  }
+})

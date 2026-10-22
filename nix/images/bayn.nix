@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.model-selected-trade-plan.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "55e0d13466d967a71e7e669021ae3dd21eb2f481a32c3de0d33bc14895ff6ccf";
-  # Canonical hash of the compiled bayn.jev.protocol.v15 document.
-  strategyParameterHash = "563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d";
+  # SHA-256 identity for bayn.jev.complete-plan-choice.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "118da7b475784ce63cb8d6636c0d469857ee36e2c7d8305e2d400f9aa47d548c";
+  # Canonical hash of the compiled bayn.jev.protocol.v16 document.
+  strategyParameterHash = "6dab28f7282460dcb9fc4551a8b6f287066ab08959e726074a2bf8e00167f8a9";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59";
+  strategyProtocolHash = "762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -33,6 +33,11 @@ let
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
+  '';
+  harnessProbeCommand = pkgs.writeShellScriptBin "bayn-harness2-probe" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
   '';
   harnessPython = pkgs.python312.withPackages (ps: [
     ps.boto3
@@ -58,8 +63,8 @@ let
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
-    x86_64-linux = "sha256-1EnepW+Xt4wRX2Aa/JVb9RpvTqKU+t5SQpd7leIOhUY=";
-    aarch64-linux = "sha256-TqKJESlWRykrievwAo1gi1F4BIFLjmW4NeX0KlGFcVQ=";
+    x86_64-linux = "sha256-TY+rJMR1vTCP84/kFDIRPurtGaCepT6lGy4Zjkx9ouA=";
+    aarch64-linux = "sha256-CqZAxmjpRsJYuztoHliGnPJQCX0GuiMGH9NiZIR5H+E=";
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
@@ -81,6 +86,7 @@ let
     )
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
+    "node services/bayn/dist/harness2-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -149,6 +155,7 @@ import ./bun-workspace-service.nix {
     inferenceCostCommand
     researchCommand
     harnessCommand
+    harnessProbeCommand
     harnessPython
   ];
   exposedPorts = {

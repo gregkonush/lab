@@ -308,6 +308,19 @@ pub async fn converge(
                     "policyVersion": authority.policy_version, "ownerHash": authority.owner_id},
         });
         if desired == MicroVMDesiredState::Running
+            && (microvm.spec.desired_state != MicroVMDesiredState::Running
+                || microvm.spec.runtime_epoch != authority.runtime_epoch)
+            && microvm
+                .metadata
+                .annotations
+                .as_ref()
+                .and_then(|a| a.get(crate::activity::ACTIVE_RUN_ANNOTATION))
+                .is_some_and(|value| crate::activity::is_idle_sleep_claim(value))
+        {
+            patch["metadata"]["annotations"][crate::activity::ACTIVE_RUN_ANNOTATION] =
+                serde_json::Value::Null;
+        }
+        if desired == MicroVMDesiredState::Running
             && (microvm.spec.desired_state != desired
                 || microvm.spec.runtime_epoch != authority.runtime_epoch)
         {
@@ -341,9 +354,15 @@ pub async fn converge(
     let allocation = allocation_for(&microvm)?;
     supervisor.install_fence(leadership.fence()?).await?;
     let now = Utc::now();
-    if idle_deadline_passed(&microvm, now)
+    if (crate::activity::has_idle_sleep_claim(&microvm) || idle_deadline_passed(&microvm, now))
         && microvm.spec.desired_state != MicroVMDesiredState::Sleeping
     {
+        leadership.fence()?;
+        let microvm = if crate::activity::has_idle_sleep_claim(&microvm) {
+            microvm.clone()
+        } else {
+            crate::activity::claim_idle_sleep(client.clone(), namespace, &microvm).await?
+        };
         leadership.fence()?;
         authorization.stop_runtime(&microvm).await?;
         return api.get(&microvm.name_any()).await.map_err(Into::into);

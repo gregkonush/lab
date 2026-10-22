@@ -28,7 +28,7 @@ test.each([
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const statements: string[] = []
@@ -105,7 +105,7 @@ test('batch finalization binds its observation lookup to the indexed cycle and m
     makeJevTradingSignalBatch({
       observation: fixture.observation.payload,
       expiresAt: utcInstantFromEpochMillis(observed + fixture.protocol.inferenceValidityMs),
-      planVersion: JevBatchPlanVersion.V5,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const symbols = plan.candidates.flatMap((candidate) =>

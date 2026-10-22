@@ -1,3 +1,4 @@
+import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
@@ -38,6 +39,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable fixture'; END; $$`
         yield* migration
         yield* harnessMigration
+        yield* jevHarnessMigration
       }),
     )
   })
@@ -67,7 +69,7 @@ integration('research attempt durability with real PostgreSQL', () => {
   })
   test('claims and replays a harness proposal through the same immutable store', async () => {
     let calls = 0
-    const text = '<harness>Return IDs inside <alpha_list> tags.</harness>'
+    const text = '<harness>{"entry":"Assess complete entry plans"}</harness>'
     const model = Bun.serve({
       port: 0,
       fetch: () => {
@@ -87,10 +89,14 @@ integration('research attempt durability with real PostgreSQL', () => {
           const store = makeResearchStore(sql)
           const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`)
           const now = new Date().toISOString()
+          const fixture = researchFixture()
+          const { maximumFactors: _retired, ...policy } = fixture.policy
           const run = Result.getOrThrow(
             decodeResearchRun({
-              ...researchFixture(),
-              schemaVersion: 'bayn.harness2-inference.v1',
+              ...fixture,
+              context: { memory: fixture.context.memory },
+              policy,
+              schemaVersion: 'bayn.jev-harness2-editor.v1',
               purpose: HarnessPurpose.PromptEdit,
               registeredAt: now,
               featureCutoff: now,
