@@ -7,14 +7,10 @@ import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
+import { postgresMigrations } from './postgres-migrations'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
-const cutoverId = 134
-const migrateCutover = PgMigrator.run({
-  loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id <= cutoverId))),
-  table: 'schema_migrations',
-})
 const retiredTables = [
   'broker_errors',
   'rate_limits',
@@ -53,7 +49,7 @@ describePostgres('unused schema hard cutover', () => {
         yield* sql`DROP SCHEMA public CASCADE`
         yield* sql`CREATE SCHEMA public`
         yield* PgMigrator.run({
-          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < cutoverId))),
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 134))),
           table: 'schema_migrations',
         })
       }),
@@ -77,9 +73,11 @@ describePostgres('unused schema hard cutover', () => {
         const evidence = sql`SELECT to_jsonb(event) AS event, to_jsonb(snapshot) AS snapshot
           FROM broker_events AS event JOIN account_snapshots AS snapshot USING (event_id)`
         const before = yield* evidence
-        yield* migrateCutover
+        yield* postgresMigrations
         expect(yield* evidence).toEqual(before)
-        expect(yield* sql`SELECT max(migration_id)::integer AS id FROM schema_migrations`).toEqual([{ id: cutoverId }])
+        expect(yield* sql`SELECT migration_id::integer AS id FROM schema_migrations WHERE migration_id = 134`).toEqual([
+          { id: 134 },
+        ])
         for (const table of retiredTables)
           expect(yield* sql`SELECT to_regclass(${`public.${table}`}) AS relation`).toEqual([{ relation: null }])
         for (const table of [
@@ -98,7 +96,7 @@ describePostgres('unused schema hard cutover', () => {
           expect(Exit.isFailure(retired)).toBe(true)
           if (Exit.isFailure(retired)) expect(Cause.pretty(retired.cause)).toContain('broker_events_event_kind_check')
         }
-        yield* migrateCutover
+        yield* postgresMigrations
         expect(yield* evidence).toEqual(before)
       }),
     )
