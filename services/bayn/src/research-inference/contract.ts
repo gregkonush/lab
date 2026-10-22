@@ -1,6 +1,7 @@
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
+import { JevInstructionsSchema } from '../jev/instructions-contract'
 import {
   GitSourceRevisionSchema,
   NonNegativeIntegerSchema,
@@ -107,13 +108,18 @@ const HistoricalHarnessEditorRunSchema = Schema.Struct({
   context: Schema.Struct({ memory: Schema.Struct({ ...Evidence.fields, text: Text }) }),
   policy: HistoricalHarnessEditorPolicySchema,
 })
-export const HarnessEditorRunSchema = Schema.Struct({
+const UnconstrainedHarnessEditorRunSchema = Schema.Struct({
   ...HistoricalHarnessEditorRunSchema.fields,
   schemaVersion: Schema.Literal('bayn.jev-harness2-editor.v2'),
   policy: HarnessEditorPolicySchema,
 })
+export const HarnessEditorRunSchema = Schema.Struct({
+  ...UnconstrainedHarnessEditorRunSchema.fields,
+  schemaVersion: Schema.Literal('bayn.jev-harness2-editor.v3'),
+})
 export const ResearchRunSchema = Schema.Union([
   HarnessEditorRunSchema,
+  UnconstrainedHarnessEditorRunSchema,
   HistoricalHarnessEditorRunSchema,
   FactorResearchRunSchema,
   Schema.Struct({
@@ -125,8 +131,13 @@ export const ResearchRunSchema = Schema.Union([
 export type ResearchRun = typeof ResearchRunSchema.Type
 export const isHarnessEditorRun = (
   run: ResearchRun,
-): run is typeof HarnessEditorRunSchema.Type | typeof HistoricalHarnessEditorRunSchema.Type =>
-  run.schemaVersion === 'bayn.jev-harness2-editor.v1' || run.schemaVersion === 'bayn.jev-harness2-editor.v2'
+): run is
+  | typeof HarnessEditorRunSchema.Type
+  | typeof UnconstrainedHarnessEditorRunSchema.Type
+  | typeof HistoricalHarnessEditorRunSchema.Type =>
+  run.schemaVersion === 'bayn.jev-harness2-editor.v1' ||
+  run.schemaVersion === 'bayn.jev-harness2-editor.v2' ||
+  run.schemaVersion === 'bayn.jev-harness2-editor.v3'
 export const ResearchServingIdentitySchema = Schema.Struct({
   model: StrictNonEmptyStringSchema.check(Schema.isMaxLength(160)),
   checkpoint: GitSourceRevisionSchema,
@@ -222,14 +233,30 @@ export const researchRequest = (run: ResearchRun) => {
     max_tokens,
     stop,
   } = run.policy
+  const constrainedEdit =
+    run.schemaVersion === 'bayn.jev-harness2-editor.v3' && run.purpose === HarnessPurpose.PromptEdit
   const outputInstruction =
     run.schemaVersion === 'bayn.research-run.v1'
       ? `Select at most ${run.policy.maximumFactors} factors. Return their exact IDs inside <alpha_list>...</alpha_list>.`
-      : run.purpose === HarnessPurpose.PromptEdit
-        ? 'Return the complete revised prompt inside exactly one <harness>...</harness> block, with at most 8000 characters. Explain the change in <notes>...</notes>.'
-        : 'Return only evidence-supported edits and experience in the requested reflection format, or NO_ENTRY when no lesson is supported.'
+      : constrainedEdit
+        ? 'Return only the complete instruction JSON object with exactly one entry string field. Do not return context wrappers, XML tags, notes or other keys.'
+        : run.purpose === HarnessPurpose.PromptEdit
+          ? 'Return the complete revised prompt inside exactly one <harness>...</harness> block, with at most 8000 characters. Explain the change in <notes>...</notes>.'
+          : 'Return only evidence-supported edits and experience in the requested reflection format, or NO_ENTRY when no lesson is supported.'
   return {
     model,
+    ...(constrainedEdit
+      ? {
+          response_format: {
+            type: 'json_schema',
+            json_schema: {
+              name: 'bayn_jev_instructions',
+              strict: true,
+              schema: Schema.toJsonSchemaDocument(JevInstructionsSchema, { onExcessProperty: 'error' }).schema,
+            },
+          },
+        }
+      : {}),
     temperature,
     top_p,
     top_k,
@@ -316,6 +343,18 @@ export const sealResearchReceipt = (
 
 export const parseResearchOutput = (run: ResearchRun, output: string) =>
   Result.gen(function* () {
+    if (run.schemaVersion === 'bayn.jev-harness2-editor.v3' && run.purpose === HarnessPurpose.PromptEdit) {
+      yield* Schema.decodeUnknownResult(
+        Schema.fromJsonString(JevInstructionsSchema),
+        strictParseOptions,
+      )(output).pipe(
+        Result.mapError(
+          (cause) =>
+            new ResearchError({ message: 'Jev editor must return only the native instruction JSON document', cause }),
+        ),
+      )
+      return []
+    }
     const visible = output.replace(/<think>[\s\S]*?<\/think>/g, '')
     if (visible.trim() === '' || visible.includes('<think>'))
       return yield* Result.fail(new ResearchError({ message: 'Research output is empty or has incomplete reasoning' }))

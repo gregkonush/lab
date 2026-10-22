@@ -4,7 +4,7 @@ import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import { maximumResearchReceiptBytes } from './contract'
 import { submitResearch } from './submission'
-import { harnessEditorFixture, researchFixture } from './test-support'
+import { harnessEditorFixture } from './test-support'
 
 test('bounds the serialized Workflow receipt before decoding it', async () => {
   const http = HttpClient.make((request) =>
@@ -27,10 +27,11 @@ test('retired registrations are rejected before a Workflow submission', async ()
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}')))
   })
   const result = await Effect.runPromise(
-    submitResearch(researchFixture(), 'http://fixture.invalid', Redacted.make('7'.repeat(64))).pipe(
-      Effect.provideService(HttpClient.HttpClient, http),
-      Effect.result,
-    ),
+    submitResearch(
+      { ...harnessEditorFixture(), schemaVersion: 'bayn.jev-harness2-editor.v2' },
+      'http://fixture.invalid',
+      Redacted.make('7'.repeat(64)),
+    ).pipe(Effect.provideService(HttpClient.HttpClient, http), Effect.result),
   )
   expect(result._tag).toBe('Failure')
   expect(calls).toBe(0)

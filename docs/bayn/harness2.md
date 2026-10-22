@@ -29,7 +29,11 @@ into the same funded selections and protection-plan rejections used by the live 
 The pinned Qwen3-8B general instruction endpoint serves as the generative editor and reflection writer. It does not execute probes,
 select factors or make trading decisions. Editor calls retain signed native registrations, original SSE bytes,
 serving identity, usage and expense evidence through the existing Restate workflow. The worker accepts only the
-`bayn.jev-harness2-editor.v2` contract. Historical Alpha-R1 editor and factor registrations remain immutable accounting evidence; their
+`bayn.jev-harness2-editor.v3` contract. Prompt edits use vLLM's JSON Schema response format, derived from
+`JevInstructionsSchema` with extra properties forbidden. The provider returns only the complete `{"entry":"..."}`
+document. The native stream decoder and Python adapter both reject wrappers, XML tags, notes, missing fields and
+invalid instruction strings. Reflection keeps its separate evidence format. Retired v2 requests remain readable
+for receipt and expense verification, but cannot be submitted or dispatched. Historical Alpha-R1 editor and factor registrations remain immutable accounting evidence; their
 formats cannot be submitted for new inference through the command or deployed worker.
 
 The active trading exit path enforces the protection terms selected before entry. This experiment does not optimize

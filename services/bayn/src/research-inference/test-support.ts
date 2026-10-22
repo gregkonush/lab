@@ -83,9 +83,9 @@ export const harnessEditorFixture = () => {
   const run = Result.getOrThrow(
     decodeResearchRun({
       ...historical,
-      schemaVersion: 'bayn.jev-harness2-editor.v2',
+      schemaVersion: 'bayn.jev-harness2-editor.v3',
       purpose: HarnessPurpose.PromptEdit,
-      promptTemplate: 'Revise only the three Jev instructions using the supplied development evidence.',
+      promptTemplate: 'Revise only the Jev conditional plan instruction using the supplied development evidence.',
       context: { memory: historical.context.memory },
       policy: {
         ...policy,
@@ -100,7 +100,7 @@ export const harnessEditorFixture = () => {
       },
     }),
   )
-  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v2') throw new Error('Invalid editor fixture')
+  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v3') throw new Error('Invalid editor fixture')
   return run
 }
 
