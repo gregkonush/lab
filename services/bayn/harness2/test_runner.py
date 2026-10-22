@@ -1,10 +1,20 @@
 import copy
+import re
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from runner import Calls, compare_decisions, encode, identity, run_study, validate_study
+from runner import (
+    Calls,
+    compare_decisions,
+    encode,
+    identity,
+    editor_evidence,
+    native_evidence,
+    run_study,
+    validate_study,
+)
 
 
 class MemoryStorage:
@@ -63,6 +73,7 @@ class NativeCLI:
             if self.fail_probe:
                 raise RuntimeError("ambiguous provider transmission")
             content = {
+                "excludedCandidates": [],
                 "decision": {
                     "purpose": "ENTRY",
                     "selected": [],
@@ -106,6 +117,239 @@ class NativeCLI:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_editor_summary_preserves_native_requests(self):
+        receipt = {
+            "excludedCandidates": [],
+            "decision": {"selected": []},
+            "requests": [
+                {
+                    "symbol": "BTC/USD",
+                    "requestHash": "a" * 64,
+                    "request": {
+                        "questions": {
+                            "action": {
+                                "criteria": {
+                                    "wait": "Needs confirmation",
+                                    "avoid": "Unsupported setup",
+                                    "plan_0": {
+                                        "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                        "meaning": "A complete hypothetical plan",
+                                        "stopPriceUsd": 98,
+                                        "targetPriceUsd": 103,
+                                        "estimatedLossUsd": 2,
+                                        "estimatedProfitUsd": 3,
+                                    },
+                                    "plan_1": {
+                                        "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                        "meaning": "A complete hypothetical plan",
+                                        "stopPriceUsd": 97,
+                                        "targetPriceUsd": 105,
+                                        "estimatedLossUsd": 3,
+                                        "estimatedProfitUsd": 5,
+                                    },
+                                }
+                            }
+                        },
+                        "state": {
+                            "candidate": {
+                                "bars1m": [{"close": 100}] * 500,
+                                "returnsBps": 25,
+                            },
+                            "benchmark": {"bars1m": [{"close": 200}] * 500},
+                        },
+                    },
+                    "inference": {
+                        "response": {
+                            "answers": {
+                                "action": {
+                                    "choice": "wait",
+                                    "confidence": 0.5,
+                                    "probabilities": {
+                                        "wait": 0.6,
+                                        "enter": 0.3,
+                                        "avoid": 0.1,
+                                    },
+                                }
+                            }
+                        }
+                    },
+                }
+            ],
+        }
+        original = copy.deepcopy(receipt)
+        summary = native_evidence(receipt)
+        self.assertEqual(receipt, original)
+        self.assertLess(len(encode(summary)), 2000)
+        row = summary["observations"][0]
+        self.assertEqual(row["signals"]["candidate"]["returnsBps"], 25)
+        self.assertEqual(row["omittedHistory"]["candidate"]["bars1mCount"], 500)
+        self.assertEqual(row["answers"]["action"]["selectedProbability"], 0.6)
+        self.assertEqual(
+            row["planCriteria"]["abstentions"],
+            {"wait": "Needs confirmation", "avoid": "Unsupported setup"},
+        )
+        self.assertEqual(
+            row["planCriteria"]["columns"],
+            [
+                "choice",
+                "stopPriceUsd",
+                "targetPriceUsd",
+                "estimatedLossUsd",
+                "estimatedProfitUsd",
+            ],
+        )
+        self.assertEqual(
+            row["planCriteria"]["plans"],
+            [["plan_0", 98, 103, 2, 3], ["plan_1", 97, 105, 3, 5]],
+        )
+
+    def test_full_universe_keeps_every_signal_group_within_editor_budget(self):
+        state = {
+            "relativeSignals": {
+                "excessReturnBps": 15,
+                "lookbackReturnBps": 25,
+                "spreadBps": 3,
+                "rangeLocationPpm": 42000,
+                "referenceAt": "x" * 1000,
+            },
+            "entryEconomics": {
+                "breakEvenExitBidUsd": 83514.937133,
+                "requiredBidRiseBps": 82.74,
+                "maximumHoldingMinutes": 15,
+                "operatingCostCoverage": "UNKNOWN",
+            },
+            "candidate": {
+                "symbol": "AAPL",
+                "returnsBps": {"1": 0.01, "5": -2.01, "15": -5.83, "30": -30.88},
+                "quote": {"bid": 100, "ask": 100.1},
+                "priceWindow": {"referencePrice": 99, "rangeHigh": 103, "rangeLow": 98},
+                "bars1m": [{}] * 500,
+            },
+            "benchmark": {
+                "symbol": "SPY",
+                "returnsBps": {"1": 0.01, "5": -2.01, "15": -5.83, "30": -30.88},
+                "latestCompletedClose": 110,
+                "priceWindow": {
+                    "referencePrice": 109,
+                    "rangeHigh": 113,
+                    "rangeLow": 108,
+                },
+                "bars1m": [{}] * 500,
+            },
+        }
+        receipt = {
+            "excludedCandidates": [],
+            "decision": {"selected": []},
+            "requests": [
+                {
+                    "symbol": f"C{index}",
+                    "requestHash": "a" * 64,
+                    "originalRequestHash": f"{index:064x}",
+                    "request": {
+                        "state": copy.deepcopy(state),
+                        "questions": {
+                            "action": {
+                                "criteria": {
+                                    "wait": "Needs confirmation",
+                                    "avoid": "Unsupported setup",
+                                    **{
+                                        f"plan_{plan}": {
+                                            "priceBasis": "HYPOTHETICAL_ORDER_PRICES",
+                                            "meaning": "A supplied complete hypothetical plan",
+                                            "stopPriceUsd": 83000 + plan,
+                                            "targetPriceUsd": 84000 + plan,
+                                            "estimatedLossUsd": 4.25 + plan,
+                                            "estimatedProfitUsd": 6.5 + plan,
+                                        }
+                                        for plan in range(16)
+                                    },
+                                }
+                            }
+                        },
+                    },
+                    "inference": None,
+                }
+                for index in range(19)
+            ],
+        }
+        summary = native_evidence(receipt)
+        for row in summary["observations"]:
+            self.assertEqual(row["signals"]["relativeSignals"]["excessReturnBps"], 15)
+            self.assertEqual(
+                row["signals"]["entryEconomics"]["requiredBidRiseBps"], 82.74
+            )
+            self.assertEqual(row["signals"]["candidate"]["priceWindow"]["rangeLow"], 98)
+            self.assertEqual(row["signals"]["benchmark"]["latestCompletedClose"], 110)
+            self.assertEqual(len(row["planCriteria"]["plans"]), 16)
+        trajectories = []
+        for execution in range(4):
+            evidence = copy.deepcopy(summary)
+            for row in evidence["observations"]:
+                row["requestHash"] = f"{execution:064x}"
+            trajectories.append(
+                (
+                    f"rollout-{execution}.md",
+                    "[BAYN_NATIVE_EVIDENCE]\n"
+                    + encode(evidence).decode()
+                    + "\n[/BAYN_NATIVE_EVIDENCE]",
+                )
+            )
+        context = editor_evidence(trajectories)
+        shared = json.loads(context.split("below.\n")[1])
+        self.assertEqual(len(shared), 19)
+        expected = {}
+        for row in summary["observations"]:
+            facts = {
+                name: row[name]
+                for name in (
+                    "symbol",
+                    "originalRequestHash",
+                    "signals",
+                    "planCriteria",
+                    "omittedHistory",
+                )
+            }
+            expected[identity(facts)] = facts
+        self.assertEqual(
+            {identity(value): value for value in shared.values()}, expected
+        )
+        executions = re.findall(
+            r"\[BAYN_EXECUTION\]\n(.*?)\n\[/BAYN_EXECUTION\]", context, flags=re.DOTALL
+        )
+        self.assertEqual(len(executions), 4)
+        for execution, document in enumerate(executions):
+            rows = json.loads(document)["observations"]
+            self.assertEqual(len(rows), 19)
+            for original, row in zip(summary["observations"], rows):
+                self.assertEqual(row["requestHash"], f"{execution:064x}")
+                self.assertEqual(
+                    shared[row["sourceFacts"]]["planCriteria"], original["planCriteria"]
+                )
+                self.assertEqual(
+                    shared[row["sourceFacts"]]["signals"], original["signals"]
+                )
+        self.assertLess(len(context.encode()), 90000)
+
+    def test_all_excluded_probe_keeps_source_failures_in_editor_context(self):
+        excluded = [
+            {
+                "status": "EXCLUDED",
+                "symbol": "BTC/USD",
+                "reason": "not-ready",
+                "message": "intraday snapshot lacks a trade for candidate symbol",
+            }
+        ]
+        receipt = {
+            "excludedCandidates": excluded,
+            "requests": [],
+            "decision": {"selected": [], "entryPlanRejections": {}},
+        }
+        original = copy.deepcopy(receipt)
+        summary = native_evidence(receipt)
+        self.assertEqual(summary["excludedCandidates"], excluded)
+        self.assertEqual(summary["observations"], [])
+        self.assertEqual(receipt, original)
+
     def test_real_upstream_refines_jev_and_only_then_evaluates_untouched_observations(
         self,
     ):
@@ -134,7 +378,7 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    run["schemaVersion"] == "bayn.jev-harness2-editor.v1"
+                    run["schemaVersion"] == "bayn.jev-harness2-editor.v2"
                     for run in editors
                 )
             )

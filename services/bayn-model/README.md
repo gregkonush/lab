@@ -1,24 +1,29 @@
-# Bayn financial model
+# Bayn Jev instruction editor
 
-`bayn-model` replaces Rune with the public [FinStep/Alpha-R1](https://huggingface.co/FinStep/Alpha-R1)
-checkpoint on Turin's Blackwell GPU. It serves private, bounded research inference at
+`bayn-model` serves the pinned general instruction model [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B)
+on Turin's Blackwell GPU for Harness2 proposals and reflection about Jev's question instructions. It replaces
+the Alpha-R1 factor-selection checkpoint and has no active factor-selection contract or model fallback.
+It serves private, bounded research inference at
 `http://bayn-model.bayn-model.svc.cluster.local:8080/v1/chat/completions`.
 
 Jev remains Bayn's trading decision model. Entry, position management, protective exits, broker observation and
 TigerBeetle accounting do not call this endpoint. A model outage therefore pauses research without adding a wait,
-retry or fallback to execution. Alpha-R1's published five-day factor-selection experiment does not establish an
-advantage for Bayn's fifteen-minute holding horizon. No live strategy admission is granted by this deployment.
+retry or fallback to execution. General instruction-following capability is the reason for this editor choice;
+it does not establish financial prediction or improved Bayn decisions. No live strategy admission is granted by
+this deployment.
 
 ## Model and serving identity
 
-- Checkpoint: `FinStep/Alpha-R1`, revision `82c2aa5fcdda6b4ff00caeba68b0903f13d0e1a5`.
-- Served name: `alpha-r1-82c2aa5fcdda`.
+- Checkpoint: `Qwen/Qwen3-8B`, revision `b968826d9c46dd6066d109eabc6255188de91218`.
+- Served name: `qwen3-jev-editor-b968826d9c46`.
 - Architecture: Qwen3-8B, BF16 safetensors, no remote model code.
 - vLLM: `v0.29.0-cu129`, immutable index
   `sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2`.
 - GPU: one time-sliced slot on Turin's single RTX PRO 6000 Blackwell Max-Q. Slots do not isolate GPU memory or compute.
-- Launch budget: 24% of physical VRAM, 16,384 total context tokens, 2,048 batched prefill tokens, one active sequence.
-- Generation: greedy by default; server-wide output ceiling 4,096 tokens, Qwen3 reasoning parser, prefix cache enabled.
+- Launch budget: 24% of physical VRAM, 32,768 total context tokens, 2,048 batched prefill tokens, one active sequence.
+- Generation: native frozen policy uses non-thinking mode, temperature 0.7, top-p 0.8 and top-k 20, following the
+  [authors' non-thinking guidance](https://huggingface.co/Qwen/Qwen3-8B#best-practices). The server-wide output
+  ceiling remains 4,096 tokens, with the Qwen3 reasoning parser and prefix cache enabled.
 - Every completed stream includes actual token usage, forced server-side even when the caller omits stream options.
 - HTTP admission: two in-flight requests, at most one waiting behind the active sequence, 262,144 request-body bytes,
   180-second total request deadline including body input, queue and generation. Excess work receives HTTP 429 immediately.
@@ -27,17 +32,29 @@ advantage for Bayn's fifteen-minute holding horizon. No live strategy admission 
   response generator. The pinned vLLM non-streaming handler leaves detached tasks on parent cancellation, so that
   path is closed rather than wrapped in another serving layer.
 
-Alpha-R1 is trained to select allowed factor identifiers in `<alpha_list>...</alpha_list>`. Preserve that trained
-format and validate every returned identifier against the experiment's candidate pool. Do not execute generated
-code or admit model text directly as an order. A truncated, timed-out, malformed or foreign-model response cannot
-be a research result.
+The editor retains all candidate signal groups, exclusions and complete-plan alternatives, including stop, target,
+estimated loss and estimated profit. Repeated immutable facts share references within the prompt; archived
+trajectories retain their original evidence. The pinned tokenizer measured up to 22,304 input tokens for the
+19-candidate, 16-plan synthetic composition/reflection fixture. Its 4,096-token output allowance exceeds a 16,384-token
+context and fits the 32,768-token budget. Actual serving and shared-GPU capacity still require runtime proof.
+
+The current `bayn.jev-harness2-editor.v2` contract accepts bounded instruction proposals and evidence-supported
+reflection. A proposal changes only the complete-plan `entry` instruction. Validate their schema and
+native request identity before a probe. Generated text is data; the editor cannot add executable code, change
+market state or choices, alter risk policy, or submit an order. A truncated, timed-out, malformed or foreign-model
+response cannot be a completed proposal. Retained Alpha-R1 registrations remain readable immutable evidence;
+the worker and submission command reject them for new inference.
 
 `model-source.json` is the generator input. `python3 lock_model.py` resolves exact byte lengths and SHA-256 hashes
 into `model-lock.json`; review checkpoint changes together. The init container downloads public files without an HF
 token, verifies every cached or downloaded file, and atomically publishes each download. A corrupt existing file
 fails closed and remains available for inspection. The vLLM container loads only that local verified checkpoint and
 runs with offline Hugging Face access. A 32 GiB local-NVMe claim stores the approximately 15.3 GiB weights and runtime
-cache. Provisioning is sequential and uses no GPU.
+cache. Provisioning is sequential and uses no GPU. The PVC belongs to this single model deployment. Its `Recreate`
+strategy terminates the previous server before provisioning starts. The init process removes other real checkpoint
+directories named by a full revision hash before downloading the replacement, preserves the separate runtime cache,
+and refuses checkpoint symlinks. It requires space for all missing locked files plus 2 GiB of runtime headroom.
+A rollback re-downloads the former pinned checkpoint; it does not depend on a retained obsolete copy.
 
 The provisioner image contains the lock, launch profile and small admission middleware. Kargo promotes that image;
 the reviewed Deployment pins the upstream vLLM runtime. This avoids rebuilding CUDA or duplicating its roughly
@@ -60,20 +77,23 @@ flowchart LR
   O --> L[TigerBeetle and retained receipts]
   C --> X[Deterministic deadline and protective exits]
   X --> R
-  S[Retained research captures] -. independent future consumer .-> W[Separate Restate research Workflow per run]
-  W -. bounded request .-> M[Alpha-R1 private vLLM endpoint]
-  M -. validated candidate factors and usage .-> E[Research receipts and strategy comparisons]
+  S[Retained development captures] --> H[Harness2 propose and compose]
+  H --> W[Separate Restate research Workflow per run]
+  W --> M[Qwen3 private instruction editor]
+  M --> E[Instruction proposals and metered receipts]
+  E --> J2[Native Jev probes and portfolio evaluation]
 ```
 
-Dashed edges describe the research integration contract, not handlers installed by this serving cutover. Its worker
-must use a separate deployment, process, connection pools and immutable run identity. It reads retained captures
-independently; execution adds no model RPC, send acknowledgement or outbox wait. Research results require untouched
-strategy comparisons against Jev-only, the existing Flamingo model and a cheap numeric selector before admission.
+The research worker uses a separate deployment, process, connection pools and immutable run identity. It reads
+retained captures independently; execution adds no editor RPC, send acknowledgement or outbox wait. The editor
+has no access to final-test results during proposal or composition. Native probe completion is distinct from full
+portfolio evaluation and acceptance. Research results require untouched comparisons with the unchanged strategy,
+repeatability and financial controls before adoption.
 Shared-GPU contention still needs a measured baseline and overload test; asynchronous orchestration alone does not
 provide resource isolation.
 
-The [research implementation plan](../../docs/bayn/alpha-r1-research-plan.md) defines the input qualification,
-independent worker, cost accounting, comparisons and live acceptance required to connect this endpoint to Bayn.
+The [Jev Harness2 contract](../../docs/bayn/harness2.md) defines the current integration, and its linked design
+audit records remaining evaluation requirements. The former factor-screening plan is historical design evidence.
 
 ## Observability and cost
 
