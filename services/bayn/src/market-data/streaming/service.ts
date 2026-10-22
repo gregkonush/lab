@@ -9,10 +9,9 @@ import {
   type IntradayMarketDataService,
   type IntradaySnapshotQuery,
 } from '../intraday/model'
-import { persistIntradayRecordRows } from '../intraday/verification'
 import { KafkaMarketProjection } from './kafka'
 import { recoverStreamingSnapshotReference, streamingSnapshotReference } from './reference'
-import { reproduceStreamingSnapshot } from './replay'
+import { verifyStreamingSnapshotReplay } from './replay'
 import { constructStreamingSnapshot, type StreamingVerifiedMarketSnapshot } from './snapshot'
 import { snapshotFailureMeasurement } from './telemetry'
 
@@ -53,9 +52,7 @@ export const StreamingIntradayMarketDataLive = Layer.effect(
             operation: 'load',
             message: 'Live market data requires a captured Kafka snapshot',
           })
-        const replay = persistIntradayRecordRows(snapshot).pipe(
-          Result.flatMap((rows) => reproduceStreamingSnapshot(manifest, rows)),
-        )
+        const replay = verifyStreamingSnapshotReplay(snapshot)
         if (Result.isFailure(replay))
           return yield* operationalError({
             component: 'market-data',

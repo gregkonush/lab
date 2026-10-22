@@ -8,6 +8,7 @@ import {
   normalizeBar,
   normalizeQuote,
   normalizeTrade,
+  persistIntradayRecordRows,
   type PersistedIntradaySnapshotRows,
 } from '../intraday/verification'
 import { bootstrapKafkaPartitions, canonicalPositions } from './bootstrap'
@@ -40,6 +41,58 @@ const fail = (message: string, cause?: unknown) =>
   new IntradaySnapshotFailure({ reason: 'hash', message, ...(cause === undefined ? {} : { cause }) })
 const coordinate = (topic: string, partition: number, offset: string) =>
   `${topicPartitionKey(topic, partition)}:${offset}`
+
+// Proof is process-local object identity, never a caller-supplied hash or brand.
+// Only a successful native replay can register a detached, deeply immutable graph.
+const reproducedSnapshots = new WeakSet<object>()
+const isPlainData = (value: unknown): boolean => {
+  if (value === null || typeof value !== 'object') return typeof value !== 'function' && typeof value !== 'symbol'
+  const prototype = Object.getPrototypeOf(value)
+  if (prototype !== Object.prototype && prototype !== Array.prototype && prototype !== null) return false
+  return Reflect.ownKeys(value).every((key) => {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    return descriptor !== undefined && 'value' in descriptor && isPlainData(descriptor.value)
+  })
+}
+const freezeData = (value: unknown): void => {
+  if (value === null || typeof value !== 'object' || Object.isFrozen(value)) return
+  for (const key of Reflect.ownKeys(value)) freezeData(Object.getOwnPropertyDescriptor(value, key)?.value)
+  Object.freeze(value)
+}
+const cloneData = (value: unknown): unknown => {
+  if (value === null || typeof value !== 'object') return value
+  const clone = Array.isArray(value) ? [] : Object.create(Object.getPrototypeOf(value))
+  for (const key of Reflect.ownKeys(value)) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key)
+    if (descriptor !== undefined && 'value' in descriptor)
+      Object.defineProperty(clone, key, { ...descriptor, value: cloneData(descriptor.value) })
+  }
+  return clone
+}
+const retainReproductionProof = (snapshot: StreamingMarketSnapshot): StreamingMarketSnapshot => {
+  // Future mutable backing types must take the original verification path.
+  if (!isPlainData(snapshot)) return snapshot
+  const immutable = cloneData(snapshot) as StreamingMarketSnapshot
+  freezeData(immutable)
+  reproducedSnapshots.add(immutable)
+  return immutable
+}
+
+export const hasStreamingReproductionProof = (snapshot: unknown): snapshot is StreamingMarketSnapshot =>
+  snapshot !== null && typeof snapshot === 'object' && reproducedSnapshots.has(snapshot)
+
+export const verifyStreamingSnapshotReplay = (
+  snapshot: StrategyMarketSnapshot,
+): Result.Result<StreamingMarketSnapshot, IntradaySnapshotFailure> =>
+  Result.gen(function* () {
+    const manifest = snapshot.manifest
+    if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1')
+      return yield* Result.fail(fail('Streaming replay requires the current streaming snapshot contract'))
+    if (hasStreamingReproductionProof(snapshot)) return snapshot
+    const streaming = { ...snapshot, manifest }
+    const rows = yield* persistIntradayRecordRows(streaming)
+    return yield* reproduceStreamingSnapshot(manifest, rows)
+  })
 
 export const reproduceStrategySnapshot = (
   input: unknown,
@@ -159,7 +212,7 @@ export const reproduceStreamingSnapshot = (
       reproduced.manifest.snapshotId !== manifest.snapshotId
     )
       return yield* Result.fail(fail('Recorded inputs do not reproduce the bound streaming snapshot'))
-    return reproduced
+    return retainReproductionProof(reproduced)
   })
 
 const restoreRecordedProjection = (
