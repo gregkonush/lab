@@ -9,8 +9,16 @@ import { nativeJevFixture, nativeJevDecisionEvidence } from './native.test-suppo
 import { makeJevTradingSignalRequest } from './trading-signals'
 import { JevEntrySetup, selectedJevTradePlan } from './trade-plan-choices'
 import { nativeJevInference } from './native.test-support'
+import { prepareJevRequest } from './contract'
 
 const fixture = nativeJevFixture()
+
+test('a positive native inference fixture survives canonical request serialization', () => {
+  const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  const serialized = Result.getOrThrow(prepareJevRequest(JSON.parse(prepared.body)))
+  const inference = nativeJevInference(serialized.request, fixture.snapshot.manifest.observedAt)
+  expect(Result.getOrThrow(selectedJevTradePlan(serialized.request, inference.response))).not.toBeNull()
+})
 
 test('negative own and relative returns reach Jev without a momentum gate', () => {
   const falling = nativeJevFixture(undefined, undefined, undefined, undefined, undefined, { AAPL: -0.02, AMZN: -0.03 })
