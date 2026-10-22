@@ -104,7 +104,7 @@ search completion does not authorize production adoption or capital.
 ## Numerical controls and full portfolio outcomes
 
 Use the existing breakout and relative-momentum controls before adding a learner. Their common mechanical exit
-policy isolates entry selection. Compare unchanged Jev and the frozen selected question in that same entry-control
+policy keeps exit rules fixed across entry policies. Compare unchanged Jev and the frozen selected question in that same entry-control
 engine using independent portfolios, source, allocation, quote availability and declared/measured timing. Report
 those results separately from full native portfolios, which retain Jev-selected protection plans and complete
 production accounting/recovery behavior.

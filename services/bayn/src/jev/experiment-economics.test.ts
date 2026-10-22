@@ -678,7 +678,7 @@ test('unallocated native operating expenses and missing session rows cannot comp
   expect(Result.isFailure(project(report, []))).toBe(true)
 })
 
-test('comparison command reads digest-bound native files without provider or broker configuration', async () => {
+test('comparison command reads complete digest-bound native files above 16 MiB without provider credentials', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
@@ -690,7 +690,10 @@ test('comparison command reads digest-bound native files without provider or bro
           yield* fs.writeFileString(path, raw)
           return { reportPath: path, reportSha256: sha256(raw), operatingAllocations: allocations }
         })
-      const baseline = yield* artifact('baseline', nativeReportFixture())
+      const baseline = yield* artifact(
+        'baseline',
+        reseal({ ...nativeReportFixture(), retainedDiagnosticEvidence: 'x'.repeat(17 * 1024 * 1024) }),
+      )
       const baselineRepeat = yield* artifact('repeat', nativeReportFixture(jevInstructions, 'b'))
       const candidateReport = nativeReportFixture(candidateInstructions, 'c')
       const buildPath = `${directory}/candidate-build.json`

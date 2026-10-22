@@ -96,7 +96,7 @@ export const jevEvaluationCommand = (args: readonly string[]) =>
         variantBuild: unknown,
       ) =>
         Effect.gen(function* () {
-          const raw = yield* readBounded(artifact.reportPath, 16 * 1024 * 1024)
+          const raw = yield* readBounded(artifact.reportPath, 256 * 1024 * 1024)
           if (sha256(raw) !== artifact.reportSha256)
             return yield* new JevContractError({ message: 'Native report file differs from the manifest digest' })
           return yield* Effect.fromResult(
