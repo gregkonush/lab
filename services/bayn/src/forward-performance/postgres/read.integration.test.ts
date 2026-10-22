@@ -521,6 +521,11 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               yield* sql`UPDATE autonomous_cycles SET decision_hash = NULL`
               yield* sql`INSERT INTO intents VALUES (${cycleId}, ${accountId}, ${generationHash})`
               const boundIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'PENDING'`
+              const pendingIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'BLOCKED'`
+              const blockedIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
               yield* sql`UPDATE intents SET account_id = 'foreign'`
               const foreignIntentAccount = yield* readCount
               yield* sql`UPDATE intents SET account_id = ${accountId}, authority_generation_hash = ${hash('f')}`
@@ -540,6 +545,8 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
                 foreignGeneration,
                 foreignAccount,
                 boundIntent,
+                pendingIntent,
+                blockedIntent,
                 foreignIntentAccount,
                 foreignIntentGeneration,
                 completed,
@@ -560,6 +567,8 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
         foreignGeneration: 0,
         foreignAccount: 0,
         boundIntent: 1,
+        pendingIntent: 1,
+        blockedIntent: 1,
         foreignIntentAccount: 0,
         foreignIntentGeneration: 0,
         completed: 0,
