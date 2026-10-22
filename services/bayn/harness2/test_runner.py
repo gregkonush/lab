@@ -115,6 +115,15 @@ class NativeCLI:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_unicode_instruction_hash_matches_native_canonical_hash(self):
+        instructions = {
+            "entry": "Use café’s observed price; never invent future returns."
+        }
+        self.assertEqual(
+            identity(instructions),
+            "e176b22edf1f1e10ea18c07e01f5db63a0713feb294cc7070b38424114c0e583",
+        )
+
     def test_editor_summary_preserves_native_requests(self):
         receipt = {
             "excludedCandidates": [],

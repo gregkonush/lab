@@ -28,7 +28,7 @@ MAX_BYTES = 16 * 1024 * 1024
 
 def encode(value):
     return json.dumps(
-        value, sort_keys=True, separators=(",", ":"), allow_nan=False
+        value, sort_keys=True, separators=(",", ":"), allow_nan=False, ensure_ascii=False
     ).encode()
 
 
