@@ -672,7 +672,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       const threadId = String(call.request.threadId)
       if (threadId === 'missing-conversation') {
-        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
+        call.emit('error', serviceError(grpc.status.NOT_FOUND, 'Codex conversation could not be found'))
         return
       }
       if (threadId === 'missing-resource') {
@@ -683,7 +683,7 @@ beforeAll(async () => {
         return
       }
       if (threadId === 'unavailable-conversation') {
-        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
+        call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
       call.write({

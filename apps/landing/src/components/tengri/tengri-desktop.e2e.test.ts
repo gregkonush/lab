@@ -2569,8 +2569,8 @@ test('keeps the chat connection and models when another desktop window takes foc
   expect(await streamCount()).toBe(beforeStreams)
 })
 
-test('removes duplicate recovered restart notices from the live conversation', async ({ page }) => {
-  await mockTengri(page)
+test('clears restart notices when the runtime recovers before starting another turn', async ({ page }) => {
+  const mock = await mockTengri(page)
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByLabel('Model', { exact: true })).toBeEnabled()
@@ -2590,15 +2590,18 @@ test('removes duplicate recovered restart notices from the live conversation', a
   await emitCodexEvent(page, {
     sequence: 3,
     kind: 'thread-state',
-    method: 'turn/started',
+    method: 'tengri/runtimeReady',
     threadId: '',
-    turnId: 'turn-1',
+    turnId: '',
     itemId: '',
     approvalId: '',
     rawJson: '{}',
     text: '',
   })
   await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(0)
+  await tengri.getByRole('button', { name: 'New conversation', exact: true }).click()
+  await expect(tengri.getByText('Codex app-server is restarting', { exact: true })).toHaveCount(0)
+  expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
 test('sends a real agent turn and executes sleep, resume, and confirmed deletion', async ({ page }) => {
@@ -4357,37 +4360,32 @@ for (const recoveredState of ['sleeping', 'signed out'] as const) {
   })
 }
 
-for (const surface of ['sign-in', 'settings'] as const) {
-  test(`adds a passkey from ${surface} and retries a failed start`, async ({ page }, testInfo) => {
-    await mockTengri(page, { authenticated: surface === 'settings' })
-    let attempts = 0
-    await page.route('**/api/auth/add-passkey', async (route) => {
-      expect(route.request().method()).toBe('POST')
-      attempts += 1
-      await route.fulfill({
-        status: attempts === 1 ? 503 : 200,
-        json:
-          attempts === 1
-            ? { error: 'Passkey setup is unavailable' }
-            : { url: 'https://auth.proompteng.ai/passkey-fixture' },
-      })
+test('adds another passkey from Settings and retries a failed start', async ({ page }, testInfo) => {
+  await mockTengri(page)
+  let attempts = 0
+  await page.route('**/api/auth/add-passkey', async (route) => {
+    expect(route.request().method()).toBe('POST')
+    attempts += 1
+    await route.fulfill({
+      status: attempts === 1 ? 503 : 200,
+      json:
+        attempts === 1
+          ? { error: 'Passkey setup is unavailable' }
+          : { url: 'https://auth.proompteng.ai/passkey-fixture' },
     })
-    await page.route('https://auth.proompteng.ai/passkey-fixture', (route) => route.fulfill({ body: 'Passkey setup' }))
-    if (surface === 'sign-in') await page.setViewportSize({ width: 390, height: 844 })
-    await page.goto('/')
-    if (surface === 'settings') {
-      await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
-      await page.getByRole('button', { name: 'Access', exact: true }).click()
-    }
-    await expect(page.getByRole('button', { name: 'Add passkey', exact: true })).toBeInViewport()
-    await page.screenshot({ path: testInfo.outputPath(`passkey-${surface}.png`) })
-    await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
-    await expect(page.getByRole('alert').filter({ hasText: 'Passkey setup is unavailable' })).toBeVisible()
-    await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
-    await page.waitForURL('https://auth.proompteng.ai/passkey-fixture')
-    expect(attempts).toBe(2)
   })
-}
+  await page.route('https://auth.proompteng.ai/passkey-fixture', (route) => route.fulfill({ body: 'Passkey setup' }))
+  await page.goto('/')
+  await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+  await page.getByRole('button', { name: 'Access', exact: true }).click()
+  await expect(page.getByRole('button', { name: 'Add another passkey', exact: true })).toBeInViewport()
+  await page.screenshot({ path: testInfo.outputPath('passkey-settings.png') })
+  await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+  await expect(page.getByRole('alert').filter({ hasText: 'Passkey setup is unavailable' })).toBeVisible()
+  await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+  await page.waitForURL('https://auth.proompteng.ai/passkey-fixture')
+  expect(attempts).toBe(2)
+})
 
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
@@ -4398,6 +4396,8 @@ test('shows native-feeling unauthenticated and create-agent states', async ({ pa
   await expect(signInControls).toHaveCount(3)
   for (const button of await signInControls.all()) await expect(button).toBeDisabled()
   await expect(page.getByRole('button', { name: 'Continue with GitHub' })).toBeVisible()
+  await expect(signIn).toContainText('Then use your saved passkey')
+  await expect(page.getByRole('button', { name: /Add.*passkey/ })).toHaveCount(0)
 
   await page.unrouteAll({ behavior: 'wait' })
   await mockTengri(page, { agent: null })
@@ -7918,6 +7918,45 @@ test('recovers the exact durable run and pending approval with empty browser sto
   expect(action?.approvalId).toBe('process-identity:17')
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
 })
+
+for (const recoveryAction of ['active-codex-run', 'codex-run'] as const) {
+  test(`clears a recovered ${recoveryAction} outage without sending another turn`, async ({ page }) => {
+    await page.clock.install()
+    const mock = await mockTengri(page, {
+      durableRun:
+        recoveryAction === 'codex-run'
+          ? {
+              runId: '33333333-3333-4333-8333-333333333333',
+              agentId: 'microvm-ada',
+              threadId: 'thread-recovered',
+              state: { phase: 'running', turnId: 'turn-recovered' },
+            }
+          : undefined,
+    })
+    let unavailable = true
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== recoveryAction)
+        return route.fallback()
+      if (unavailable) return route.fulfill({ status: 503, json: { error: 'Temporary run recovery outage' } })
+      return route.fallback()
+    })
+    await page.goto('/')
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    await expect(tengri.getByRole('alert')).toHaveText('Temporary run recovery outage')
+    unavailable = false
+    await page.clock.runFor(3_100)
+    await expect(tengri.getByRole('alert')).toHaveCount(0)
+    if (recoveryAction === 'codex-run') {
+      await expect(tengri.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+    } else {
+      await tengri.getByRole('textbox', { name: 'Message your agent' }).fill('Unsent draft')
+      await expect(tengri.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    }
+    expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(
+      false,
+    )
+  })
+}
 
 test('records Stop for an accepted run before a native turn exists', async ({ page }) => {
   const runId = '44444444-4444-4444-8444-444444444444'

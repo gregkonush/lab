@@ -290,6 +290,10 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	closeSignal(generation.ready)
 	supervisor.mu.Unlock()
+	supervisor.publish("tengri/runtimeReady", "", map[string]any{
+		"method": "tengri/runtimeReady",
+		"params": map[string]string{"generationId": generation.id},
+	})
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
 	if waitErr != nil {
