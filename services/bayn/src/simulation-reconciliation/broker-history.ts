@@ -157,7 +157,8 @@ export const decideOrderPage = (
   )
   if (Result.isFailure(pageResult)) return Result.fail(pageResult.failure)
   const pageRows = Chunk.toReadonlyArray(pageResult.success.rows)
-  if (page.value.length < limit)
+  const pageOrderCount = page.value.reduce((count, order) => count + 1 + (order.legs?.length ?? 0), 0)
+  if (pageOrderCount < limit)
     return Result.succeed({ _tag: 'Complete', read: { rows: [...state.rows, ...pageRows], observedAt } })
   // Alpaca orders pages descend by submission time; exclusive `until` excludes every sibling at its timestamp.
   // Defer the entire oldest group so the next page can enumerate hidden siblings before retaining that group.
