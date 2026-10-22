@@ -35,8 +35,10 @@ reconstructing it again after entry pricing. Changed data still requires full re
 also require an exact committed database reference. Retained and returned references have separate manifest copies.
 Quote age, inference expiry, current authority, risk evaluation and durable decision guards remain independent checks.
 
-Jev batch admission reproduces its observation once and carries that verified result into persistence. The writer
-still checks the cycle, authority generation, exact reconciliation and portfolio sources in its transaction before
+Jev batch admission detaches the selected source observation before reproducing it once, then carries that private
+verified graph into persistence. Mutating a caller or database-result alias during an awaited read cannot change the
+verified bytes or their sealed hash. The writer still checks the cycle, authority generation, exact reconciliation
+and portfolio sources in its transaction before
 recording the observation and request claims. Admission keeps its original deadline checks before and after that work;
 reusing the verified observation does not extend the inference window or authorize an incomplete batch.
 
