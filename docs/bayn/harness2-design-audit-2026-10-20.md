@@ -1,6 +1,6 @@
 # Harness2 and Jev design audit
 
-Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-21.
+Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-22.
 Initial implementation inspected at
 `fc73e8967522bf788b3539d4686d6237f5655a4b`; the earlier native integration is deployed from
 `8bed05c8f6ca87e428522e76716e75e85cb40f5c`. This is a design assessment, not a real-market improvement result.
@@ -10,6 +10,59 @@ Bayn decision-improvement experiment. Its request reproduction and funded select
 comparison cannot establish economic improvement. Delivering another healthy image would not close that gap.
 PR [#15233](https://github.com/proompteng/lab/pull/15233) delivers research tooling; its review and deployment do not
 establish economic acceptance of a generated candidate.
+
+## Optimizer recommendation, rechecked October 22
+
+For the current bounded instruction-editing task, **GEPA `optimize_anything` is the strongest architectural fit
+among the reviewed tools**, with Bayn's native execution evaluator providing the score. This is a recommendation
+from interface and objective fit, not a measured claim that GEPA beats Harness2 on Bayn. No reviewed paper establishes
+a best financial optimizer for this strategy.
+
+| Candidate                                                                                                    | Primary-source capability                                                                                                                                         | Bayn fit                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| [GEPA `optimize_anything`](https://gepa-ai.github.io/gepa/api/optimize_anything/optimize_anything/)          | Evolves a text artifact using a caller-supplied numeric score and diagnostic feedback; supports opaque dataset examples, validation and separate test evaluation. | First choice for the existing single instruction document: invoke the native variant compiler and evaluator without converting Jev into a generative agent or wrapping the strategy in DSPy. |
+| [TypeSafe feature-discovery autoresearch](https://docs.typesafe.ai/cookbooks/autoresearch_feature_discovery) | An LLM proposes questions, Jev answers become numeric features, and supervised CatBoost errors guide revisions.                                                   | A better matched research design when changing the predictive representation or policy is authorized. Its wine-review results do not establish market forecasting value.                     |
+| [Optuna samplers](https://optuna.readthedocs.io/en/stable/reference/samplers/index.html)                     | Searches defined parameter spaces using TPE, random, grid and other samplers, including multiple objectives.                                                      | Appropriate for authorized numeric policy parameters or a finite prompt catalog; it does not generate semantic question revisions by itself.                                                 |
+| [DSPy MIPROv2](https://dspy.ai/3.1.0/learn/optimization/optimizers/)                                         | Searches instructions and few-shot demonstrations for DSPy predictors using Bayesian optimization.                                                                | A valid metric-driven alternative, with additional adaptation for the existing typed HTTP path. Adopting the DSPy program model adds little to a one-string intervention.                    |
+| [Harness2](https://arxiv.org/html/2610.14224v1)                                                          | Proposes, probes and composes agent-harness edits using behavioral contrasts and model judgment without ground-truth supervision.                                 | A bounded proposal control, with a weaker selection signal for realized financial outcomes. Its authors warn about execution variation, shared model biases and transfer.                    |
+
+The direct reason to prefer GEPA here is its evaluator contract: Bayn can return measured execution outcomes and
+failure diagnostics instead of asking a model which trajectory appears better. The [GEPA paper](https://arxiv.org/abs/2507.19457)
+evaluates other tasks; its benchmark gains must not be relabeled as trading gains. The documented API also scores
+held-out tests outside its optimization budget. A Bayn adapter must therefore retain its own total provider-call
+and expense limits, including validation and tests, rather than equating library evaluations with paid dispatches.
+
+Current source at `eee94a5509ba82d734c7fca333bc390b5339b66e` narrows the intervention further. In
+`services/bayn/src/jev/decision.ts`, eligibility requires the separate setup judgment and a supplied funded plan;
+eligible symbols are ranked by the selected **setup** probability. The editable `entry` string controls only the
+conditional plan question. The earlier plan-probability ranking observation below describes an older revision.
+An instruction editor cannot change the current setup question, supply a missing market observation, or replace the
+portfolio policy. TypeSafe defines [Choice confidence](https://docs.typesafe.ai/confidence) from the returned option
+distribution; that is not an independently calibrated expected-profit score.
+
+Before broadening to feature discovery, measure whether Jev adds predictive value over a simple numeric-only model
+using the same available market features and the same native execution engine. A regularized linear or tree model
+is a control, not an assumed improvement. If Jev contributes no value after its measured latency and cost, a more
+elaborate question search is not justified. Future outcomes may be supervised training labels; they must never enter
+the contemporaneous Jev state or evaluation features. Keep permissions, sizing, protection and account-risk rules
+outside the optimizer's editable surface.
+
+One existing market session is enough for a bounded engineering comparison. It does not require collecting twenty
+new sessions. For an adaptive search, use chronological development and later evaluation blocks, keeping every
+overlapping holding/label horizon out of both sides of a boundary. The [time-series split guidance](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html)
+explains future-to-past leakage and gap handling; irregular market events also require grouping by time and label
+interval rather than treating a fixed row count as a sufficient gap. Data already used to inspect or select candidates
+is development evidence. The [backtest-overfitting paper](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf)
+explains why repeated strategy selection can inflate historical performance. Preserve all trials and keep a
+single-session observed delta separate from a claim of durable profitability. These distinctions do not block
+shipping the evaluator or reporting a bounded negative result.
+
+Recommendation: retain the native evaluator, compiler and immutable receipts as the common boundary. Use GEPA for
+the next authorized instruction-optimization experiment; use supervised feature discovery only if the task expands
+to learning predictive features or a policy. Do not install parallel optimizer stacks or change production strategy
+based on this research recommendation alone.
+
+## Earlier implementation findings
 
 The follow-up source now replaces the active Alpha-R1 policy with a pinned general instruction editor, supplies a
 research-only compiler for the native portfolio executable, binds its instruction hash and provider-call budget,
