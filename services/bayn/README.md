@@ -1607,16 +1607,21 @@ node services/bayn/dist/research/backtest-command.js \
   --source-receipt source-receipt.json --source-receipt-sha256 "$SOURCE_RECEIPT_SHA256" --output new-run-directory
 ```
 
-The input is `bayn.backtest.v4` in `src/intraday-replay/backtest.ts`. It binds an explicit UTC `interval` with `startAt` and `endAt`, the full broker calendar,
+The input is `bayn.backtest.v5` in `src/intraday-replay/backtest.ts`. It binds an explicit UTC `interval` with `startAt` and `endAt`, the full broker calendar,
 source manifest, native Jev build and strategy identities, opening cash, asset metadata, execution assumptions,
 controller cadence, and cost assumptions. Retired momentum backtest inputs cannot start the native runtime.
 Historical artifacts remain available for comparison and audit.
 
-Set `BAYN_JEV_API_KEY` through the existing protected environment. The command requires an
+Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v15"`. Its `costs` object contains
+`inputDefinition: "bayn.jev-trading-signal-state.v15"`, and positive `maximumCalls`. The input
+binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
+Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
-`allocatedDataCostPerSessionMicros`. Changing these assumptions changes the run identity.
+`allocatedDataCostPerSessionMicros`, either a priced integer-string allocation or explicit `null` when unknown.
+An unknown allocation preserves execution evidence while making sessions and net results incomplete; it never
+becomes a zero expense. Control comparisons and net-label training require a priced allocation. Changing these
+assumptions changes the run identity.
 
 The provider uses an independent live clock. Replay retains original provider requests, responses and timestamps
 in `jev-calls.ndjson` before advancing market and database time. Concurrent calls share elapsed time. Native
@@ -1624,10 +1629,10 @@ PostgreSQL batch and evaluation stores retain the mapped evidence and enforce th
 Failed or interrupted calls with unresolved charges make the cost result incomplete. Known charges use the declared
 tariff with each call rounded upward to one micro-dollar. Invoice verification remains required for qualification.
 
-This local replay command connects directly to TypeSafe through Node HTTP. Production inference uses the dedicated
-CONNECT proxy. Development replay latency therefore includes the local host and network path; it does not prove
-production proxy latency or connectivity. Record that transport difference with the run and measure the deployed
-path before claiming production timing parity.
+Native replay uses the same Jev CONNECT-proxy adapter as production. Its provider-call ceiling counts dispatch
+attempts, including failures and interrupted calls, and never refunds or retries an exhausted slot. Provider timing
+still includes the actual test host and network path; original-session timing and production capacity require
+independent verification. The complete report is written privately to `report.json`; stdout contains a small summary.
 
 Final authorization samples measured elapsed time after provider, persistence, writer-lock, grant and broker reads.
 Every replay reconciliation, including those inside the cycle driver, uses that measured clock after ingestion.
@@ -1672,7 +1677,7 @@ See the [streaming guide](src/market-data/streaming/README.md) for source captur
 Each pass records the engine's decision/cycle result and simulated broker state. Entry and position-management waits
 retain typed readiness: pending, rejected or expired inference and unavailable market inputs count as missing decision
 data, even when a later deterministic exit succeeds. A verified model hold remains distinct from unavailable evidence.
-The final `bayn.backtest-report.v3`
+The final `bayn.backtest-report.v4`
 retains every session's schedule, closing broker equity, net equity after known model and allocated data costs,
 and reconciliation, plus cumulative net equity change, observed peak
 and drawdown, final broker orders/fills/positions, durable accounting counts, and input identities. The output keeps
@@ -1828,7 +1833,7 @@ with the attempt count and elapsed outage time. This confirms transport recovery
 of spans during the outage. Broker projection rejection logs distinguish stale, future, account and chronology
 failures with observation age, without recording account identifiers or payloads.
 
-## Independent Alpha-R1 research
+## Independent Jev instruction research
 
 The [Harness2 adapter](../../docs/bayn/harness2.md) refines the same Jev complete-plan entry
 question instruction used by the trading runtime. Native probes reproduce retained observations and use Bayn's
@@ -1838,9 +1843,9 @@ from the editor. The old Alpha-R1 factor-selection adapter is removed. Research 
 authority or establish economic improvement.
 
 `BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
-The [runtime contract](../../docs/bayn/alpha-r1-research-plan.md) describes frozen semantic context, decoding policy,
+The [runtime contract](../../docs/bayn/harness2.md) describes frozen development context, decoding policy,
 original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
-The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research) defines the approved restricted
+The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-jev-instruction-research) defines the approved restricted
 database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
 
 The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
@@ -1864,7 +1869,7 @@ RESTATE_INGRESS_ORIGIN=http://restate.restate.svc.cluster.local:8080 \
   bayn-research --run run.json --output new-receipt.json
 ```
 
-Successful selection, token usage and known Alpha-R1 allocation remain UNQUALIFIED. The original full-session capture,
+A completed proposal, token usage and known editor allocation remain UNQUALIFIED. The original full-session capture,
 Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
 measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
 the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.

@@ -1,4 +1,5 @@
 import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
+import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
 import completePlanChoice from '../../migrations/0133_complete_plan_choice'
 import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
 import jevHarness2 from '../../migrations/0132_jev_harness2'
@@ -142,6 +143,7 @@ export const migrationLoader = PgMigrator.fromRecord({
   '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
   '128_strategy_native_protection': strategyNativeProtection,
+  '135_jev_editor_identity': jevEditorIdentity,
   '132_jev_harness2': jevHarness2,
   '131_model_selected_trade_plan': modelSelectedTradePlan,
   '133_complete_plan_choice': completePlanChoice,

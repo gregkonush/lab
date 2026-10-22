@@ -12,7 +12,7 @@ import {
   sealResearchReceipt,
 } from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
-import { fullTokenBudgetStreamFixture, researchFixture, streamFixture } from './test-support'
+import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
 
 const run = researchFixture()
 const id = Result.getOrThrow(hashResearch(run))
@@ -36,6 +36,14 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('current Jev editor is bound to the general instruction checkpoint and rejects Alpha-R1 substitution', () => {
+    const current = harnessEditorFixture()
+    expect(researchRequest(current).model).toBe('qwen3-jev-editor-b968826d9c46')
+    expect(researchRequest(current).chat_template_kwargs.enable_thinking).toBe(false)
+    const { maximumFactors: _historicalLimit, ...retired } = run.policy
+    expect(Result.isFailure(decodeResearchRun({ ...current, policy: retired }))).toBe(true)
+    expect(researchRequest(current).messages[0]?.content).not.toContain('<alpha_list>')
+  })
   test('Jev editors use native instruction text without factor-selection context', () => {
     const { maximumFactors: _retired, ...policy } = run.policy
     const editor = Result.getOrThrow(

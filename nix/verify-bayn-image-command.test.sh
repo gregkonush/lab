@@ -48,6 +48,9 @@ func exists(path string) bool {
 
 func main() {
 	switch filepath.Base(os.Args[0]) {
+	case "bayn-backtest":
+		fmt.Println("Usage: bayn-backtest --help")
+		return
 	case "bayn-harness2-probe":
 		fmt.Println("Usage: bayn-harness2-probe --help")
 		return
@@ -117,14 +120,14 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance inference-cost research harness2 harness2-probe; do
+for command in forward-performance inference-cost research harness2 harness2-probe backtest; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
 mkdir -p "${root}/app/services/bayn/harness2"
 : > "${root}/app/services/bayn/harness2/runner.py"
-for command in forward-performance-command inference-cost-command restate-execution-server restate-research-server research-command harness2-command streaming-diagnostics-command; do
+for command in forward-performance-command inference-cost-command restate-execution-server restate-research-server research-command harness2-command backtest-command streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \
