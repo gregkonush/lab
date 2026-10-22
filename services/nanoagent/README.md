@@ -111,7 +111,9 @@ time are revalidated, and the signal is sent through that descriptor so PID reus
 development hosts retain process-group cleanup when Linux process identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
-ready, and restarts failed processes with bounded backoff. Its authenticated `GetInfo` metadata reports whether Codex
+ready, and restarts failed processes with bounded backoff. Successful initialization publishes a replayable
+`tengri/runtimeReady` event with the process generation. The chat clears earlier restart notices on this event,
+without requiring another user turn. Its authenticated `GetInfo` metadata reports whether Codex
 is working across any conversation and the monotonic time since work ended. Starts and steering remain active while
 awaiting a response even if the caller disconnects; turn/status notifications and process generations settle work state.
 Pending approvals also inhibit automatic sleep. No event subscriber is required, and metadata probes do not reset the
