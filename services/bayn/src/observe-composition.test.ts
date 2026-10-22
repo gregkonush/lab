@@ -4631,6 +4631,7 @@ describe('OBSERVE runtime composition', () => {
       readonly pricingReadDelayMs?: number
       readonly brokerMaximumAgeMs?: number
       readonly admissionRemainingMs?: number
+      readonly cycleCreatedAt?: string
       readonly entryAction?: 'enter' | 'wait'
       readonly postInferenceReconcileMs?: number
       readonly decisionFinalizationHeadroomMs?: number
@@ -4681,12 +4682,12 @@ describe('OBSERVE runtime composition', () => {
         const document = yield* buildMutationShadowCycleDecision({
           authorityGenerationHash: generationHash,
           cycle:
-            options.admissionRemainingMs === undefined
+            options.admissionRemainingMs === undefined && options.cycleCreatedAt === undefined
               ? cycle
               : {
                   ...cycle,
-                  createdAt: utcInstantFromEpochMillis(testStartedAt - 1_000),
-                  updatedAt: utcInstantFromEpochMillis(testStartedAt - 1_000),
+                  createdAt: options.cycleCreatedAt ?? utcInstantFromEpochMillis(testStartedAt - 1_000),
+                  updatedAt: options.cycleCreatedAt ?? utcInstantFromEpochMillis(testStartedAt - 1_000),
                 },
           executionModel: fixture.preparation.executionModel,
           policy,
@@ -4779,6 +4780,34 @@ describe('OBSERVE runtime composition', () => {
       expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
         _tag: 'ObserveDecisionAwaitingSignal',
       })
+      expect(result.events).not.toContain('pricing')
+      expect(result.refreshes).toBe(0)
+    },
+  )
+
+  test.each([5_000, 10_000])(
+    'Jev equity abstention uses the unused entry lease with %ims of finalization headroom',
+    async (decisionFinalizationHeadroomMs) => {
+      const result = await buildEntryWithHeadroom({
+        entryAction: 'wait',
+        initialAgeMs: 0,
+        cycleCreatedAt: utcInstantFromEpochMillis(Date.parse(evaluatedAt) - 50_000),
+        inferenceMs: 1_000,
+        decisionFinalizationHeadroomMs,
+      })
+      if (decisionFinalizationHeadroomMs === 5_000) {
+        expect(Exit.isFailure(result.exit)).toBe(true)
+        if (Exit.isSuccess(result.exit)) throw new Error('entry lease still permits another observation')
+        expect(Option.getOrThrow(Cause.findErrorOption(result.exit.cause))).toMatchObject({
+          _tag: 'ObserveDecisionAwaitingSignal',
+          readiness: { reason: DecisionReadinessReason.NoEligibleCandidate },
+        })
+      } else {
+        if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
+        expect(result.exit.value.targetPlan.status).toBe('NO_TRADE')
+        expect(result.exit.value.orderedIntentIds).toEqual([])
+        expect(result.reconciliationReads).toBe(2)
+      }
       expect(result.events).not.toContain('pricing')
       expect(result.refreshes).toBe(0)
     },
