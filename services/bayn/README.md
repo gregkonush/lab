@@ -87,6 +87,11 @@ Migration 133 retires prior executable Jev authority after terminal mutation cyc
 complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
 retained generations remain immutable audit evidence. New authority requires the v16 strategy identity.
 
+Migration 136 closes the remaining retired authority write paths: new PAPER generations require the research v3
+activation contract and Jev v16, while OBSERVE initialization and recovery remain available. It changes constraints
+only, without rotating active authority, rewriting retained generations or changing accounting history. Historical
+qualified and retired-strategy generations remain readable and can still recover through their existing OBSERVE path.
+
 Crypto benchmarks use verified completed bars and their matching Dorvud feature, with the last completed close as
 the benchmark endpoint. BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
