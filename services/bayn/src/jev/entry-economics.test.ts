@@ -17,7 +17,7 @@ test('typed entry and protection choices support an entry without a confidence g
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(
     Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
-  ).toEqual({ action: 'choice' })
+  ).toEqual({ action: 'choice', setup: 'choice' })
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })

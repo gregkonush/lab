@@ -22,14 +22,18 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   const report = reportJevAbstention(document)
   expect(report).toMatchObject({
     diagnosticOnly: true,
-    protocol: 'bayn.jev.protocol.v16',
-    inputDefinition: 'bayn.jev-trading-signal-state.v15',
+    schemaVersion: 'bayn.jev-abstention-report.v2',
+    protocol: 'bayn.jev.protocol.v17',
+    inputDefinition: 'bayn.jev-trading-signal-state.v16',
     selectedSymbols: [],
     profitableEdgeProven: false,
   })
   const candidate = report.candidates.find((value) => value.symbol === 'AAPL')
   expect(candidate).toMatchObject({
     chosenAction: 'wait',
+    chosenSetup: 'upward',
+    setupProbabilities: { upward: 0.8 },
+    planChoiceCondition: 'SUPPORTED_LONG_SETUP_ASSUMED',
     rejection: 'MODEL_WAIT',
     fundedPlanCount: 16,
     horizonMinutes: 15,
