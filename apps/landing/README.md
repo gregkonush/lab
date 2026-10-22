@@ -139,6 +139,10 @@ Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
+Consecutive tools appear in compact, collapsible groups. Each row keeps its command or connector action and target;
+expanding it shows arguments and results. Terminal output removes ANSI controls and decodes JSON string wrappers while
+preserving columns. Conversation and tool-output scrollbars use a thin thumb with a transparent track.
+
 Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
 appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`

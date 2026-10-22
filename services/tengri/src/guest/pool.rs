@@ -74,6 +74,7 @@ mod tests {
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
                     protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
                 })
             })),
             list_files: Some(Arc::new(move |request| {
@@ -252,6 +253,7 @@ mod tests {
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
                     protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
                 })
             })),
             list_terminals: Some(Arc::new(move |request| {
@@ -535,6 +537,7 @@ mod tests {
                 Ok(proto::GuestInfo {
                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
                     protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
                 })
             })),
             ..Default::default()
@@ -778,5 +781,166 @@ impl GuestPool {
             .await?
             .clone()
             .authorize(issuer)
+    }
+}
+
+#[cfg(test)]
+mod agent_work_tests {
+    use super::*;
+    use crate::{
+        activity::{ActivityTracker, AgentWorkMonitor},
+        guest::{
+            authorization::GuestAuthority,
+            rpc::{
+                proto,
+                test_server::{TestServer, TestService},
+            },
+        },
+    };
+    use kube::client::Body as KubeBody;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicU8, AtomicUsize, Ordering};
+
+    #[tokio::test]
+    async fn automatic_sleep_requires_confirmed_idle_and_preserves_user_activity() {
+        let mode = Arc::new(AtomicU8::new(0));
+        let reported = mode.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(move |_| {
+                let mode = reported.load(Ordering::SeqCst);
+                if mode == 4 {
+                    return Err(tonic::Status::unavailable("guest reconnecting"));
+                }
+                Ok(proto::GuestInfo {
+                    microvm_id: "33333333-3333-4333-8333-333333333333".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    codex_activity: match mode {
+                        3 => None,
+                        _ => Some(proto::CodexActivity {
+                            working: mode == 0,
+                            idle_for_ms: if mode == 1 { 59_999 } else { 60_000 },
+                        }),
+                    },
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let mut agent: MicroVM = serde_json::from_value(json!({
+            "apiVersion":"runtime.proompteng.ai/v1alpha1", "kind":"MicroVM",
+            "metadata":{"name":"agent-a", "uid":"11111111-1111-4111-8111-111111111111", "generation":2},
+            "spec":{
+                "reservationId":"77f8ce6b-18c5-4f7b-950c-b5639b70619e",
+                "runtimeEpoch":"39d272fe-2781-4bc2-886c-a2993865f646", "policyVersion":1,
+                "displayName":"Agent", "ownerHash":"owner", "desiredState":"Running",
+                "image":"test-image", "architecture":"amd64", "resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},
+                "createdAt":"2026-10-11T00:00:00Z", "idleDeadline":"2026-10-12T00:00:00Z",
+                "slot":{"name":"slot-a","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"home-a","pvcUid":"home-uid","epoch":7}
+            },
+            "status":{"phase":"Ready", "guestReady":true, "podUid":"33333333-3333-4333-8333-333333333333", "podIp":"127.0.0.1", "observedGeneration":2}
+        })).unwrap();
+        agent.spec.power.idle_timeout_minutes = 1;
+        let reply = json!(agent).to_string();
+        let patches = Arc::new(AtomicUsize::new(0));
+        let writes = patches.clone();
+        let service = tower::service_fn(move |request: http::Request<KubeBody>| {
+            let reply = reply.clone();
+            let writes = writes.clone();
+            async move {
+                let body = if request.method() == http::Method::PATCH {
+                    assert!(request.uri().path().ends_with("/microvms/agent-a"));
+                    let bytes = http_body_util::BodyExt::collect(request.into_body())
+                        .await
+                        .unwrap()
+                        .to_bytes();
+                    let patch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+                    assert!(
+                        patch["metadata"]["annotations"]
+                            [crate::activity::LAST_AGENT_WORK_ANNOTATION]
+                            .is_string()
+                    );
+                    assert!(
+                        patch["metadata"]["annotations"]
+                            .get(crate::activity::LAST_ACTIVITY_ANNOTATION)
+                            .is_none(),
+                        "guest work must not overwrite newer user activity"
+                    );
+                    writes.fetch_add(1, Ordering::SeqCst);
+                    reply
+                } else {
+                    assert!(request.uri().path().ends_with("/secrets/slot-a-bootstrap"));
+                    json!({"apiVersion":"v1","kind":"Secret","immutable":true,"data":{"token":"Zml4dHVyZS10b2tlbg=="}}).to_string()
+                };
+                Ok::<_, std::convert::Infallible>(http::Response::new(KubeBody::from(
+                    body.into_bytes(),
+                )))
+            }
+        });
+        let client = Client::new(service, "tengri");
+        let port = server
+            .guest
+            .base_url()
+            .strip_prefix("http://")
+            .unwrap()
+            .parse::<SocketAddr>()
+            .unwrap()
+            .port();
+        let monitor = AgentWorkMonitor::new(
+            GuestPool::new(client.clone(), "tengri", WorkloadIdentity::Fixture(port)),
+            GuestAuthority::fixture(),
+            ActivityTracker::new(client, "tengri".into()),
+        );
+        assert!(
+            !monitor.permits_sleep(&agent).await.unwrap(),
+            "active work must inhibit sleep"
+        );
+        mode.store(1, Ordering::SeqCst);
+        assert!(
+            !monitor.permits_sleep(&agent).await.unwrap(),
+            "recent completion must start a full idle interval"
+        );
+        assert_eq!(patches.load(Ordering::SeqCst), 2);
+        mode.store(2, Ordering::SeqCst);
+        assert!(
+            monitor.permits_sleep(&agent).await.unwrap(),
+            "fully idle guest may sleep"
+        );
+        assert_eq!(
+            patches.load(Ordering::SeqCst),
+            2,
+            "observer probes cannot extend idle activity"
+        );
+        for unavailable in [3, 4] {
+            mode.store(unavailable, Ordering::SeqCst);
+            assert!(
+                monitor.permits_sleep(&agent).await.is_err(),
+                "unknown or unavailable state cannot authorize sleep"
+            );
+        }
+        mode.store(0, Ordering::SeqCst);
+        assert!(
+            !monitor.permits_sleep(&agent).await.unwrap(),
+            "reconnection must observe ongoing work"
+        );
+    }
+
+    #[tokio::test]
+    async fn work_probe_cannot_read_workspace_content() {
+        let agent: MicroVM = serde_json::from_value(json!({
+            "apiVersion":"runtime.proompteng.ai/v1alpha1","kind":"MicroVM",
+            "metadata":{"name":"agent-a","uid":"11111111-1111-4111-8111-111111111111"},
+            "spec":{"reservationId":"77f8ce6b-18c5-4f7b-950c-b5639b70619e","runtimeEpoch":"39d272fe-2781-4bc2-886c-a2993865f646","policyVersion":1,"displayName":"Agent","ownerHash":"owner","desiredState":"Running","image":"test","architecture":"amd64","resources":{"cpuMillis":4000,"memoryMib":8192,"workspaceGib":32},"createdAt":"2026-10-11T00:00:00Z","idleDeadline":"2026-10-12T00:00:00Z","slot":{"name":"slot-a","podUid":"33333333-3333-4333-8333-333333333333","pvcName":"home-a","pvcUid":"home-uid","epoch":7}}
+        })).unwrap();
+        let issuer = GuestAuthority::fixture().probe().bind(&agent).unwrap();
+        let error = issuer
+            .sign(
+                "/proompteng.runtime.guest.v1.NanoagentService/ListFiles",
+                "/workspace",
+                &[],
+            )
+            .await
+            .err()
+            .expect("content must be denied");
+        assert_eq!(error.code(), tonic::Code::PermissionDenied);
     }
 }

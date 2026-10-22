@@ -32,6 +32,7 @@ async fn identity_is_verified_over_authenticated_grpc() {
                 Ok(proto::GuestInfo {
                     microvm_id: id.into(),
                     protocol_version: version,
+                    ..Default::default()
                 })
             })),
             ..Default::default()
@@ -45,26 +46,28 @@ async fn identity_is_verified_over_authenticated_grpc() {
 }
 
 #[tokio::test]
-async fn grpc_question_answers_preserve_the_payload_without_an_approval_decision() {
-    let response = serde_json::to_vec(&serde_json::json!({
-        "answers": {"target": {"answers": ["Staging"]}}
-    }))
-    .unwrap();
-    let expected = response.clone();
+async fn grpc_identified_question_control_preserves_the_exact_payload() {
+    let params = serde_json::json!({"threadId":"thread-1","approvalId":"process:17","clientUserMessageId":"11111111-1111-4111-8111-111111111111","response":{"answers":{"target":{"answers":["Staging"]}}}});
+    let expected = params.clone();
     let fixture = TestServer::start(TestService {
-        resolve_codex_approval: Some(std::sync::Arc::new(move |request| {
+        codex_call: Some(std::sync::Arc::new(move |request| {
             let request = request.into_inner();
-            assert_eq!(request.approval_id, "question-1");
-            assert!(request.decision.is_empty());
-            assert_eq!(request.response_json, expected);
-            Ok(proto::Empty {})
+            assert_eq!(request.method, "tengri/resolveApproval");
+            assert_eq!(
+                serde_json::from_slice::<serde_json::Value>(&request.params_json).unwrap(),
+                expected
+            );
+            Ok(proto::CodexResult {
+                result_json: b"{}".to_vec(),
+                event_sequence: 0,
+            })
         })),
         ..Default::default()
     })
     .await;
     fixture
         .guest
-        .answer_codex_input("question-1", response)
+        .codex_call("tengri/resolveApproval", params)
         .await
         .unwrap();
 }
@@ -353,6 +356,7 @@ async fn rust_server_requires_the_bff_identity_and_renews_its_svid() {
                         Ok(proto::GuestInfo {
                             microvm_id: "tls-fixture".into(),
                             protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                            ..Default::default()
                         })
                     })),
                     ..Default::default()
@@ -654,13 +658,6 @@ async fn rust_client_uses_real_go_guest_for_files_codex_and_terminal_streams() {
     );
     drop(codex);
     assert!(matches!(
-        guest.resolve_codex_approval("missing", "accept").await,
-        Err(GuestError::Api {
-            status: StatusCode::NOT_FOUND,
-            ..
-        })
-    ));
-    assert!(matches!(
         rpc.codex_call("unsupported/method", serde_json::json!({}))
             .await,
         Err(GuestError::Api {
@@ -826,11 +823,10 @@ async fn codex_image_storage_failure_does_not_produce_an_input() {
 }
 
 #[tokio::test]
-async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
+async fn failed_image_batch_preserves_content_addressed_attachments_for_other_runs() {
     use std::sync::{Arc, Mutex};
     let files = Arc::new(Mutex::new(std::collections::HashMap::new()));
     let writes = files.clone();
-    let deletes = files.clone();
     let fixture = TestServer::start(TestService {
         create_directory: Some(Arc::new(|request| {
             Ok(proto::FileEntry {
@@ -854,11 +850,8 @@ async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
                 revision: revision_for_content(&file.content),
             })
         })),
-        delete_file: Some(Arc::new(move |request| {
-            let file = request.into_inner();
-            assert!(!file.recursive);
-            assert!(deletes.lock().unwrap().remove(&file.path).is_some());
-            Ok(proto::Empty {})
+        delete_file: Some(Arc::new(move |_| {
+            panic!("content-addressed attachments can belong to an accepted run")
         })),
         ..Default::default()
     })
@@ -867,12 +860,14 @@ async fn failed_image_batch_cleans_prior_and_partially_written_attachments() {
         media_type: "image/png".into(),
         content: b"\x89PNG\r\n\x1a\n".to_vec(),
     };
+    let mut second = image.clone();
+    second.content.push(1);
     assert!(
-        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image.clone(), image])
+        crate::grpc::codex_turn_input(&fixture.guest, "Inspect these", &[image, second])
             .await
             .is_err()
     );
-    assert!(files.lock().unwrap().is_empty());
+    assert_eq!(files.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -899,4 +894,41 @@ async fn image_cleanup_preserves_an_existing_file_rejected_by_create_only_write(
             .await
             .is_err()
     );
+}
+
+#[test]
+fn native_rejection_requires_typed_proof_and_the_exact_status() {
+    let details = RpcDetails {
+        details: vec![RpcDetail {
+            type_url: "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure".into(),
+            value: proto::OperationFailure {
+                codex_operation_rejected: true,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }],
+    }
+    .encode_to_vec();
+    assert!(matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::InvalidArgument,
+            "rejected",
+            details.clone().into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::Unavailable,
+            "rejected",
+            details.into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::invalid_argument(
+            "Codex rejected the operation before dispatch"
+        )),
+        GuestError::CodexOperationRejected
+    ));
 }

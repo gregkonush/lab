@@ -14,6 +14,7 @@ use kube::{
     api::{ListParams, Patch, PatchParams, PostParams},
 };
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use tokio::sync::{Mutex, oneshot};
 use tokio::time::sleep;
 use tonic::{Request, Response, Status};
@@ -45,13 +46,13 @@ pub mod proto {
 use proto::{
     Agent, AgentCondition, AgentPhase, Architecture, CodexAccount, CodexApprovalDecision,
     CodexEvent, CodexEventKind, CodexHistoryPage, CodexHistoryPart, CodexImage, CodexLogin,
-    CodexModels, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
+    CodexModels, CodexRun, CodexThread, CodexTurn, CreateAgentRequest, CreateCodexThreadRequest,
     CreateDirectoryRequest, CreateTerminalRequest, DeleteFileRequest, Empty, FileEntry, FileEvent,
     FileEventKind, GetAgentRequest, GetCodexAccountRequest, GetCodexLoginRequest,
-    InterruptCodexTurnRequest, IssueDesktopSessionRequest, IssuePreviewSessionRequest,
-    IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse, ListCodexModelsRequest,
-    ListFilesRequest, ListFilesResponse, ListTerminalsRequest, ListTerminalsResponse,
-    MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
+    GetCodexRunRequest, InterruptCodexTurnRequest, IssueDesktopSessionRequest,
+    IssuePreviewSessionRequest, IssueTerminalTicketRequest, ListAgentsRequest, ListAgentsResponse,
+    ListCodexModelsRequest, ListFilesRequest, ListFilesResponse, ListTerminalsRequest,
+    ListTerminalsResponse, MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
     ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
     SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, StartCodexLoginRequest,
     SteerCodexInputRequest, TerminalSession, TerminalTicket, TerminateTerminalRequest,
@@ -71,12 +72,12 @@ const RETIRED_PROVISIONAL_TERMINAL_CREATION_ANNOTATION_PREFIX: &str =
 
 #[derive(Clone)]
 pub struct ControlPlane {
-    client: Client,
+    pub(crate) client: Client,
     guests: GuestPool,
-    namespace: Arc<str>,
+    pub(crate) namespace: Arc<str>,
     default_image: Arc<str>,
     architecture: MicroVMArchitecture,
-    auth: Authenticator,
+    pub(crate) auth: Authenticator,
     authorization: WorkspaceAuthorization,
     guest_authority: crate::guest::authorization::GuestAuthority,
     tickets: TicketStore,
@@ -152,7 +153,7 @@ impl ControlPlane {
         self.auth.authorize(request, &rpc_path).await
     }
 
-    async fn agent_access(
+    pub(crate) async fn agent_access(
         &self,
         principal: &Principal,
         id: &str,
@@ -203,7 +204,7 @@ impl ControlPlane {
         Ok(agents)
     }
 
-    async fn guest(
+    pub(crate) async fn guest(
         &self,
         principal: &Principal,
         id: &str,
@@ -242,6 +243,10 @@ impl ControlPlane {
 
     pub fn guest_pool(&self) -> GuestPool {
         self.guests.clone()
+    }
+
+    pub(crate) async fn workspace_removal_complete(&self, uid: &str) -> Result<bool, Status> {
+        self.authorization.removal_complete(uid).await
     }
 }
 
@@ -926,38 +931,84 @@ impl MicroVmControlPlane for ControlPlane {
     async fn send_codex_input(
         &self,
         request: Request<SendCodexInputRequest>,
-    ) -> Result<Response<CodexTurn>, Status> {
+    ) -> Result<Response<CodexRun>, Status> {
         let principal = self.authorize(&request, "SendCodexInput").await?;
         let request = request.into_inner();
+        validate_codex_operation(&request.operation_id)?;
         validate_codex_id(&request.thread_id)?;
         validate_codex_message(&request.text, &request.images)?;
-        let options = CodexOptions::parse(request.model, request.reasoning_effort)
+        CodexOptions::parse(request.model.clone(), request.reasoning_effort.clone())
             .map_err(Status::invalid_argument)?;
-        let guest = self
-            .guest(&principal, &request.agent_id, &request.thread_id)
+        self.agent_access(&principal, &request.agent_id, &request.operation_id)
             .await?;
-        let input = codex_turn_input(&guest, &request.text, &request.images).await?;
-        let value = guest
-            .codex_call(
-                "turn/start",
-                json!({
-                    "threadId": request.thread_id,
-                    "model": options.model,
-                    "effort": options.reasoning_effort,
-                    "input": input,
-                    "cwd": "/workspace",
-                    "runtimeWorkspaceRoots": ["/workspace"],
-                    "approvalPolicy": "on-request",
-                    "sandboxPolicy": {"type": "dangerFullAccess"},
-                }),
+        let input = crate::runs::Input {
+            id: request.operation_id.clone(),
+            agent_id: request.agent_id.clone(),
+            thread_id: request.thread_id.clone(),
+            text: request.text.clone(),
+            model: request.model.clone(),
+            reasoning_effort: request.reasoning_effort.clone(),
+            images: request
+                .images
+                .iter()
+                .map(codex_attachment)
+                .collect::<Result<Vec<_>, _>>()?,
+        };
+        if !request.images.is_empty() {
+            match crate::runs::read(
+                self,
+                &principal,
+                &input.id,
+                Some(crate::runs::input_digest(&input)?),
             )
             .await
-            .map_err(map_guest_error)?;
-        Ok(Response::new(CodexTurn {
-            id: json_string(&value, &["/turn/id"]),
-            thread_id: request.thread_id,
-            raw_json: value.to_string(),
-        }))
+            {
+                Ok(snapshot) => return Ok(Response::new(codex_run(snapshot)?)),
+                Err(error)
+                    if matches!(
+                        error.code(),
+                        tonic::Code::Unavailable | tonic::Code::NotFound
+                    ) => {}
+                Err(error) => return Err(error),
+            }
+            let guest = self
+                .guest(&principal, &request.agent_id, &request.thread_id)
+                .await?;
+            codex_turn_input(&guest, &request.text, &request.images).await?;
+        }
+        let snapshot = crate::runs::submit(self, principal, input).await?;
+        Ok(Response::new(codex_run(snapshot)?))
+    }
+
+    async fn get_active_codex_run(
+        &self,
+        request: Request<GetAgentRequest>,
+    ) -> Result<Response<CodexRun>, Status> {
+        let principal = self.authorize(&request, "GetActiveCodexRun").await?;
+        let request = request.into_inner();
+        self.agent_access(&principal, &request.id, "").await?;
+        let result = match crate::runs::active(self, &principal).await? {
+            Some(snapshot) if snapshot.agent_id == request.id => codex_run(snapshot)?,
+            Some(_) => return Err(Status::permission_denied("run unavailable")),
+            None => CodexRun::default(),
+        };
+        Ok(Response::new(result))
+    }
+
+    async fn get_codex_run(
+        &self,
+        request: Request<GetCodexRunRequest>,
+    ) -> Result<Response<CodexRun>, Status> {
+        let principal = self.authorize(&request, "GetCodexRun").await?;
+        let request = request.into_inner();
+        validate_codex_operation(&request.run_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        let snapshot = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        if snapshot.agent_id != request.agent_id {
+            return Err(Status::permission_denied("run unavailable"));
+        }
+        Ok(Response::new(codex_run(snapshot)?))
     }
 
     async fn steer_codex_input(
@@ -966,6 +1017,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<CodexTurn>, Status> {
         let principal = self.authorize(&request, "SteerCodexInput").await?;
         let request = request.into_inner();
+        validate_codex_operation(&request.operation_id)?;
         validate_codex_id(&request.thread_id)?;
         validate_codex_id(&request.turn_id)?;
         validate_codex_message(&request.text, &request.images)?;
@@ -973,17 +1025,23 @@ impl MicroVmControlPlane for ControlPlane {
             .guest(&principal, &request.agent_id, &request.thread_id)
             .await?;
         let input = codex_turn_input(&guest, &request.text, &request.images).await?;
-        let value = guest
-            .codex_call(
-                "turn/steer",
-                json!({
-                    "threadId": request.thread_id,
-                    "expectedTurnId": request.turn_id,
-                    "input": input,
+        validate_codex_operation(&request.run_id)?;
+        let value = crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id.clone(),
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "turn/steer".into(),
+                params: json!({
+                    "threadId":request.thread_id,"expectedTurnId":request.turn_id,
+                    "clientUserMessageId":request.operation_id,"input":input,
                 }),
-            )
-            .await
-            .map_err(map_guest_error)?;
+            },
+        )
+        .await?
+        .result;
         Ok(Response::new(CodexTurn {
             id: json_string(&value, &["/turn/id", "/turnId"]),
             thread_id: request.thread_id,
@@ -997,16 +1055,22 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Empty>, Status> {
         let principal = self.authorize(&request, "InterruptCodexTurn").await?;
         let request = request.into_inner();
-        validate_codex_id(&request.thread_id)?;
-        validate_codex_id(&request.turn_id)?;
-        self.guest(&principal, &request.agent_id, &request.thread_id)
-            .await?
-            .codex_call(
-                "turn/interrupt",
-                json!({"threadId": request.thread_id, "turnId": request.turn_id}),
-            )
-            .await
-            .map_err(map_guest_error)?;
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "turn/interrupt".into(),
+                params: json!({}),
+            },
+        )
+        .await?;
         Ok(Response::new(Empty {}))
     }
 
@@ -1017,6 +1081,12 @@ impl MicroVmControlPlane for ControlPlane {
         let principal = self.authorize(&request, "ResolveCodexApproval").await?;
         let request = request.into_inner();
         validate_codex_id(&request.approval_id)?;
+        validate_codex_operation(&request.run_id)?;
+        validate_codex_operation(&request.operation_id)?;
+        self.agent_access(&principal, &request.agent_id, &request.run_id)
+            .await?;
+        let run = crate::runs::read(self, &principal, &request.run_id, None).await?;
+        let mut params = json!({"threadId":run.thread_id,"approvalId":request.approval_id,"clientUserMessageId":request.operation_id});
         if !request.response_json.is_empty() {
             if request.decision != CodexApprovalDecision::Unspecified as i32
                 || request.response_json.len() > 32768
@@ -1030,30 +1100,33 @@ impl MicroVmControlPlane for ControlPlane {
                     "question response must be an object",
                 ));
             }
-            self.guest(&principal, &request.agent_id, "")
-                .await?
-                .answer_codex_input(&request.approval_id, request.response_json)
-                .await
-                .map_err(map_guest_error)?;
-            return Ok(Response::new(Empty {}));
+            params["response"] = response;
+        } else {
+            params["decision"] = json!(match CodexApprovalDecision::try_from(request.decision)
+                .unwrap_or(CodexApprovalDecision::Unspecified)
+            {
+                CodexApprovalDecision::ApproveOnce => "approveOnce",
+                CodexApprovalDecision::ApproveSession => "approveSession",
+                CodexApprovalDecision::ApproveExecPolicyAmendment => "approveExecPolicyAmendment",
+                CodexApprovalDecision::ApproveNetworkPolicyAmendment =>
+                    "approveNetworkPolicyAmendment",
+                CodexApprovalDecision::Deny => "deny",
+                CodexApprovalDecision::Unspecified =>
+                    return Err(Status::invalid_argument("approval decision is required")),
+            });
         }
-        let decision = match CodexApprovalDecision::try_from(request.decision)
-            .unwrap_or(CodexApprovalDecision::Unspecified)
-        {
-            CodexApprovalDecision::ApproveOnce => "approveOnce",
-            CodexApprovalDecision::ApproveSession => "approveSession",
-            CodexApprovalDecision::ApproveExecPolicyAmendment => "approveExecPolicyAmendment",
-            CodexApprovalDecision::ApproveNetworkPolicyAmendment => "approveNetworkPolicyAmendment",
-            CodexApprovalDecision::Deny => "deny",
-            CodexApprovalDecision::Unspecified => {
-                return Err(Status::invalid_argument("approval decision is required"));
-            }
-        };
-        self.guest(&principal, &request.agent_id, "")
-            .await?
-            .resolve_codex_approval(&request.approval_id, decision)
-            .await
-            .map_err(map_guest_error)?;
+        crate::runs::control(
+            self,
+            crate::runs::Control {
+                id: request.operation_id,
+                run_id: request.run_id,
+                agent_id: request.agent_id,
+                principal,
+                method: "tengri/resolveApproval".into(),
+                params,
+            },
+        )
+        .await?;
         Ok(Response::new(Empty {}))
     }
 
@@ -2257,6 +2330,24 @@ fn validate_preview_session_id(value: &str) -> Result<(), Status> {
     Ok(())
 }
 
+fn codex_run(snapshot: crate::runs::Snapshot) -> Result<CodexRun, Status> {
+    Ok(CodexRun {
+        run_id: snapshot.run_id,
+        agent_id: snapshot.agent_id,
+        thread_id: snapshot.thread_id,
+        state_json: serde_json::to_string(&snapshot.state)
+            .map_err(|_| Status::internal("encode run state"))?,
+    })
+}
+
+fn validate_codex_operation(value: &str) -> Result<(), Status> {
+    Uuid::parse_str(value)
+        .ok()
+        .filter(|id| !id.is_nil() && id.to_string() == value)
+        .map(|_| ())
+        .ok_or_else(|| Status::invalid_argument("a canonical operation UUID is required"))
+}
+
 fn validate_codex_id(value: &str) -> Result<(), Status> {
     if value.is_empty()
         || value.len() > 160
@@ -2327,28 +2418,34 @@ pub(crate) async fn codex_turn_input(
         {
             return Err(map_guest_error(error));
         }
-        let mut written_paths = Vec::new();
         for image in images {
-            let path = format!("{directory}/{}.{}", Uuid::new_v4(), image_extension(image)?);
+            let path = codex_attachment(image)?.path;
             if let Err(error) = guest.write_file(&path, &image.content, "missing").await {
-                if !matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT)
+                let conflict = matches!(&error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::CONFLICT);
+                if !conflict
+                    || !guest
+                        .read_file(&path)
+                        .await
+                        .is_ok_and(|existing| existing.content == image.content)
                 {
-                    written_paths.push(path);
+                    return Err(map_guest_error(error));
                 }
-                for staged_path in &written_paths {
-                    if let Err(cleanup_error) = guest.delete_file(staged_path, false).await
-                        && !matches!(&cleanup_error, GuestError::Api { status, .. } if *status == axum::http::StatusCode::NOT_FOUND)
-                    {
-                        tracing::warn!(error = %cleanup_error, "failed to clean unsent Codex attachment");
-                    }
-                }
-                return Err(map_guest_error(error));
             }
-            written_paths.push(path.clone());
             input.push(json!({"type": "localImage", "path": path}));
         }
     }
     Ok(input)
+}
+
+fn codex_attachment(image: &CodexImage) -> Result<crate::runs::Image, Status> {
+    let revision = format!("{:x}", Sha256::digest(&image.content));
+    Ok(crate::runs::Image {
+        path: format!(
+            "/workspace/.tengri-attachments/{revision}.{}",
+            image_extension(image)?
+        ),
+        revision,
+    })
 }
 
 fn validate_preview_port(value: u32) -> Result<u16, Status> {
@@ -2533,7 +2630,7 @@ fn map_guest_error(error: GuestError) -> Status {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
 
     #[test]
     fn validates_codex_images_and_image_only_messages() {
@@ -2576,7 +2673,7 @@ mod tests {
     use kube::client::Body as KubeBody;
     use sha2::{Digest, Sha256};
 
-    fn test_control_plane(client: Client) -> ControlPlane {
+    pub(crate) fn test_control_plane(client: Client) -> ControlPlane {
         let namespace = "tengri".to_owned();
         ControlPlane::new(
             client.clone(),
@@ -3884,7 +3981,7 @@ mod tests {
         second.await.expect("replayed creation task");
     }
 
-    fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
+    pub(crate) fn provisional_terminal_test_agent(now: DateTime<Utc>) -> MicroVM {
         let mut agent = MicroVM::new(
             "agent-current",
             MicroVMSpec {

@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
-	"google.golang.org/grpc/codes"
-	"google.golang.org/grpc/status"
 	"strings"
 	"testing"
 )
@@ -20,25 +18,23 @@ func TestCodexQuestionsWaitForAnActualUserAnswer(t *testing.T) {
 	if len(writer.messages) != 0 || len(supervisor.approvals) != 1 || len(supervisor.buffer) != 1 {
 		t.Fatal("question was answered or omitted before user input")
 	}
-	if err := supervisor.resolveApproval(context.Background(), "17", "approveOnce"); err == nil {
+	if err := supervisor.resolveApproval(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), "approveOnce"); err == nil {
 		t.Fatal("question accepted an action approval")
 	}
-	if err := supervisor.resolveInput(context.Background(), "17", json.RawMessage(`{"answers":{"wrong":{"answers":["Staging"]}}}`)); err == nil {
+	if err := supervisor.resolveInput(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), json.RawMessage(`{"answers":{"wrong":{"answers":["Staging"]}}}`)); err == nil {
 		t.Fatal("question accepted an unknown ID")
 	}
 	server := &guestRPCServer{api: &apiServer{codex: supervisor}}
 	responseJSON := []byte(`{"answers":{"target":{"answers":["Staging"]}}}`)
-	if _, err := server.ResolveCodexApproval(context.Background(), &pb.CodexApproval{ApprovalId: "17", Decision: "approveOnce", ResponseJson: responseJSON}); status.Code(err) != codes.InvalidArgument {
-		t.Fatal("mixed approval and input response was accepted")
-	}
-	if _, err := server.ResolveCodexApproval(context.Background(), &pb.CodexApproval{ApprovalId: "17", ResponseJson: responseJSON}); err != nil {
+	params, _ := json.Marshal(map[string]any{"threadId": "thread-1", "expectedTurnId": "turn-1", "approvalId": approvalKey(supervisor.generation, json.RawMessage(`17`)), "clientUserMessageId": "11111111-1111-4111-8111-111111111111", "response": json.RawMessage(responseJSON)})
+	if _, err := server.CodexCall(context.Background(), &pb.CodexRequest{Method: "tengri/resolveApproval", ParamsJson: params}); err != nil {
 		t.Fatal(err)
 	}
 	response := readCodexWireRequest(t, writer)
 	if !strings.Contains(string(response.Result), `"Staging"`) || len(supervisor.approvals) != 0 {
 		t.Fatalf("answer was not delivered exactly once: %#v", writer.messages)
 	}
-	if err := supervisor.resolveInput(context.Background(), "17", json.RawMessage(`{"answers":{}}`)); err == nil {
+	if err := supervisor.resolveInput(context.Background(), approvalKey(supervisor.generation, json.RawMessage(`17`)), json.RawMessage(`{"answers":{}}`)); err == nil {
 		t.Fatal("resolved question accepted a second answer")
 	}
 }
