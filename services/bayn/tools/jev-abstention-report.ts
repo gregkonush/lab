@@ -24,7 +24,7 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v15'),
+  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v16'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({ estimatedFeeBpsPerSide: NonNegative, estimatedRoundTripFeesBps: NonNegative }),
   entryEconomics: Schema.NullOr(
@@ -106,13 +106,18 @@ export const reportJevAbstention = (input: unknown) => {
         ? result.receipt.outcome.inference.response
         : null
     const answer = response?.answers['action']
+    const setup = response?.answers['setup']
     if (answer !== undefined && answer.type !== 'choice') throw new Error('Expected a choice answer')
+    if (setup !== undefined && setup.type !== 'choice') throw new Error('Expected a setup choice answer')
     return {
       symbol: candidate.symbol,
       status: candidate.status,
       requestHash: candidate.request.requestHash,
       inputDefinition: state.schemaVersion,
       chosenAction: answer?.choice ?? null,
+      chosenSetup: setup?.choice ?? null,
+      setupProbabilities: setup?.probabilities ?? null,
+      planChoiceCondition: 'SUPPORTED_LONG_SETUP_ASSUMED',
       rejection: target.entryPlanRejections[candidate.symbol] ?? null,
       choiceMass: answer === undefined ? null : summarizeJevChoiceMass(answer.probabilities),
       fundedPlanCount: plans.length,
@@ -137,7 +142,7 @@ export const reportJevAbstention = (input: unknown) => {
     }
   })
   return {
-    schemaVersion: 'bayn.jev-abstention-report.v1',
+    schemaVersion: 'bayn.jev-abstention-report.v2',
     diagnosticOnly: true,
     modelRationaleAvailable: false,
     profitableEdgeProven: false,
