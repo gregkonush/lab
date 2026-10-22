@@ -127,3 +127,9 @@ after a long explicit sleep; an older delayed Stop cannot replace that context. 
 observes the exact turn. The real Restate fixture verifies two distinct session contexts, stale delivery ordering and
 retention of the newer context across worker SIGKILL/restart. Slow read-only reconciliation continues periodically
 without resubmitting an uncertain native request.
+
+Keep each publication attempt's KVM diagnostics and verified image index artifacts. Their names include the run attempt,
+so re-running held publication does not collide with an immutable artifact or replace earlier acceptance evidence.
+After enrolling the reviewed guest digest, rerun the original main run's publisher against its unchanged architecture
+artifacts, require successful original build/validation gates and fresh signing, and verify both digests remain exact.
+Never rebuild and silently substitute another guest digest after enrolling the home.
