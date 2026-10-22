@@ -16,7 +16,8 @@ response validation, proxy and ten-second request timeout. Probes reconstruct st
 an original native Bayn observation. The baseline instructions must match the compiled live instructions exactly.
 
 Harness2 edits only `instructions.json`, containing one `entry` string of at most 2,000
-characters. This is the complete-plan question instruction used by `trade-plan-choices.ts`.
+characters. This is the conditional complete-plan question instruction used by `trade-plan-choices.ts`.
+The independent current-setup question remains source controlled and cannot be replaced by an editor's plan instruction.
 The editor sees a bounded summary with original request hashes, relative returns, break-even economics, candidate
 and benchmark returns, price ranges, quotes, and selected answers. Unrepresented fields never establish missing
 facts. Each signal group remains represented for the full candidate universe.

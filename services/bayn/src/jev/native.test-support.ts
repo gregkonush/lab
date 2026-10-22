@@ -297,7 +297,7 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
           : key === 'action'
             ? action
             : choices[0]
-      const choiceProbability = key === 'action' ? probability : 0.8
+      const choiceProbability = key === 'action' || key === 'setup' ? probability : 0.8
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
         type: 'choice',

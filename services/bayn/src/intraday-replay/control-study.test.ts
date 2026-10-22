@@ -770,7 +770,7 @@ const frozenControlFixture = () => {
         mode: 'measured-provider',
         maximumCalls: 1000,
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v15',
+        inputDefinition: 'bayn.jev-trading-signal-state.v16',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
