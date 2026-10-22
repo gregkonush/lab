@@ -61,6 +61,13 @@ after explicit sleep; an older delayed Stop cannot replace that context. Only th
 observes the exact turn. Snapshot sleep preserves running processes, so Stop remains pending until interruption is
 confirmed. Workspace removal requires the final Ofz receipt; Kubernetes absence is insufficient.
 
+The live cancellation check exposed a native Codex 0.159.2 distinction: `turn/interrupt` ends the turn while a yielded
+`exec_command` process can continue. Guest API 7 requires Nanoagent's version 2 terminal receipt with confirmed
+command cleanup. It records command item ownership before interruption, terminates only that turn's native background
+terminals, and verifies their absence before releasing activity or the run's sleep pin. Interrupted history alone
+retains cancellation. The pinned native fixture must prove that the real command exits. Existing API 6 guests need
+a fenced cold replacement retaining their current home, Codex identity, and conversation history before live acceptance.
+
 Arbitrary shell or browser effects require authoritative readback or an explicit uncertain outcome. A workflow wrapper
 cannot make every external action transactional. Automatic replay must stop when the outcome cannot be proved.
 
