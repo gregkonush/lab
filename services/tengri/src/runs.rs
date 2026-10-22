@@ -429,25 +429,20 @@ impl TengriAgentRun {
         };
         let workspace =
             ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
-        if let Err(error) = workspace.claim(Json(admission.claim.clone())).call().await {
-            if error.code() != 409 {
-                return Err(error.into());
+        let mut stop = match workspace.claim(Json(admission.claim.clone())).call().await {
+            Ok(stop) => stop.into_inner(),
+            Err(error) => {
+                if error.code() != 409 {
+                    return Err(error.into());
+                }
+                snapshot.state = State::Rejected {
+                    reason: "workspace already has an active run".into(),
+                };
+                ctx.set("snapshot", Json(snapshot.clone()));
+                return Ok(Json(snapshot.state));
             }
-            snapshot.state = State::Rejected {
-                reason: "workspace already has an active run".into(),
-            };
-            ctx.set("snapshot", Json(snapshot.clone()));
-            return Ok(Json(snapshot.state));
-        }
+        };
         ctx.set("snapshot", Json(snapshot.clone()));
-        let mut stop = workspace
-            .latest_stop(Json(StopQuery {
-                claim: admission.claim.clone(),
-                known_id: String::new(),
-            }))
-            .call()
-            .await?
-            .into_inner();
         snapshot.state = if stop.is_some() {
             State::Cancelled {
                 turn_id: String::new(),
@@ -758,20 +753,12 @@ impl TengriAgentRun {
         envelope: Json<Envelope>,
     ) -> HandlerResult<Json<Snapshot>> {
         let run_id = ctx.key().to_owned();
-        let query: Query = ctx
-            .run(|| async {
-                let query: Query = open(&self.service, "query", &envelope.0)
-                    .await
-                    .map_err(terminal)?;
-                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-                    || query.run_id != run_id
-                {
-                    return Err(TerminalError::new_with_code(401, "run query expired").into());
-                }
-                Ok(Json(query))
-            })
-            .await?
-            .into_inner();
+        let query: Query = open(&self.service, "query", &envelope.0)
+            .await
+            .map_err(terminal)?;
+        if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? || query.run_id != run_id {
+            return Err(TerminalError::new_with_code(401, "run query expired").into());
+        }
         let snapshot = ctx
             .get::<Json<Snapshot>>("snapshot")
             .await?
@@ -928,18 +915,14 @@ impl TengriWorkspaceRuns {
         envelope: Json<Envelope>,
     ) -> HandlerResult<Json<Option<String>>> {
         let workspace = ctx.key().to_owned();
-        ctx.run(|| async {
-            let query: Query = open(&self.service, "active-query", &envelope.0)
-                .await
-                .map_err(terminal)?;
-            if query.workspace_uid != workspace
-                || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-            {
-                return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
-            }
-            Ok(())
-        })
-        .await?;
+        let query: Query = open(&self.service, "active-query", &envelope.0)
+            .await
+            .map_err(terminal)?;
+        if query.workspace_uid != workspace
+            || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
+        {
+            return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+        }
         Ok(Json(
             ctx.get::<Json<Claim>>("active")
                 .await?
@@ -1005,10 +988,18 @@ impl TengriWorkspaceRuns {
     }
 
     #[handler(ingress_private = true)]
-    async fn claim(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
+    async fn claim(
+        &self,
+        ctx: ObjectContext<'_>,
+        claim: Json<Claim>,
+    ) -> HandlerResult<Json<Option<Control>>> {
         let active = ctx.get::<Json<Claim>>("active").await?;
         if active.as_ref().is_some_and(|active| active.0 == claim.0) {
-            return Ok(());
+            return Ok(Json(
+                ctx.get::<Json<Control>>("stop")
+                    .await?
+                    .map(Json::into_inner),
+            ));
         }
         if active.is_some() {
             return Err(
@@ -1020,7 +1011,7 @@ impl TengriWorkspaceRuns {
         }
         ctx.clear("stop");
         ctx.set("active", claim);
-        Ok(())
+        Ok(Json(None))
     }
 
     #[handler(ingress_private = true)]

@@ -113,6 +113,35 @@ type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
 type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
 
+function runRecoveryError(cause: unknown, fallback: string): Error {
+  if ((cause instanceof TengriRequestError && cause.status >= 500) || cause instanceof TypeError) {
+    return new Error('Reconnecting to your agent…', { cause })
+  }
+  return cause instanceof Error ? cause : new Error(fallback)
+}
+
+function codexRunActivity(state: TengriCodexRun['state']): string | null {
+  switch (state.phase) {
+    case 'accepted':
+      return 'Starting'
+    case 'waiting_for_guest':
+      return 'Connecting'
+    case 'recovering':
+      return 'Reconnecting'
+    case 'cancelling':
+      return 'Stopping'
+    case 'needs_reconciliation':
+      return "The agent's last action could not be confirmed. Check the conversation before continuing."
+    case 'running':
+    case 'waiting_for_approval':
+    case 'succeeded':
+    case 'failed':
+    case 'cancelled':
+    case 'rejected':
+      return null
+  }
+}
+
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
@@ -191,6 +220,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const accountChecked = account !== null
   const showStopAction =
     Boolean(activeTurnId || (run && !codexRunIsTerminal(run))) && !prompt.trim() && images.length === 0
+  const runActivity = (run && codexRunActivity(run.state)) || (submitting && !activeTurnId ? 'Starting' : null)
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !submitting && !interrupting && !readingImages && resolvingApprovals.size === 0
 
@@ -234,7 +264,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (active && active.threadId !== threadId) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = cause instanceof Error ? cause : new Error('Active run recovery failed')
+        lastRecoveryFailure = runRecoveryError(cause, 'Active run recovery failed')
         setError(lastRecoveryFailure)
         timer = setTimeout(() => void recover(), 3000)
       }
@@ -299,7 +329,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
       } catch (cause) {
         if (controller.signal.aborted) return
-        lastRecoveryFailure = cause instanceof Error ? cause : new Error('Agent run could not be recovered')
+        lastRecoveryFailure = runRecoveryError(cause, 'Agent run could not be recovered')
         setError(lastRecoveryFailure)
       }
       timer = setTimeout(() => void refresh(), 2000)
@@ -1551,12 +1581,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     .
                   </p>
                 ) : null}
-                {run && !codexRunIsTerminal(run) && !['running', 'waiting_for_approval'].includes(run.state.phase) ? (
-                  <p role="status" className="text-copy-14 text-zinc-400">
-                    {'reason' in run.state ? run.state.reason : 'Run accepted. Waiting for the agent.'}
+                {runActivity ? (
+                  <p role="status" aria-label="Agent activity" className="text-copy-14 text-zinc-400">
+                    {runActivity}
                   </p>
                 ) : null}
-                {activeTurnId && !approvalPending ? (
+                {activeTurnId && !approvalPending && !runActivity ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>
@@ -2134,7 +2164,7 @@ function StreamStatus({ error, state }: { error: string; state: EventStreamState
       </span>
       {state === 'reconnecting' ? (
         <p role="status" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
-          Agent event stream is reconnecting
+          Reconnecting to your agent…
         </p>
       ) : null}
       {error ? (

@@ -269,6 +269,10 @@ native multi-question requests, supported primitive MCP forms and HTTPS URL conf
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
 
+Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
+stay out of these activity labels. Failed status reads show a reconnect message, retry, and clear their own error
+after a successful read. Authentication and permission failures keep their original errors.
+
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
 
