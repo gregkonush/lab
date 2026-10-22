@@ -39,18 +39,19 @@ export enum JevBatchPlanVersion {
   V6 = 'bayn.jev-batch-plan.v6',
 }
 
+export const JevCandidateExclusionSchema = Schema.Struct({
+  status: Schema.Literal(JevCandidatePlanStatus.Excluded),
+  symbol: SymbolSchema,
+  reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
+  message: Schema.NonEmptyString,
+})
 const CandidatePlanSchema = Schema.Union([
   Schema.Struct({
     status: Schema.Literal(JevCandidatePlanStatus.Requested),
     symbol: SymbolSchema,
     request: JevEvaluationRequestSchema,
   }),
-  Schema.Struct({
-    status: Schema.Literal(JevCandidatePlanStatus.Excluded),
-    symbol: SymbolSchema,
-    reason: Schema.Union([Schema.Enum(JevSourceExclusion), Schema.Enum(JevEntryExclusion)]),
-    message: Schema.NonEmptyString,
-  }),
+  JevCandidateExclusionSchema,
 ])
 
 const PlanMaterialSchema = Schema.Struct({

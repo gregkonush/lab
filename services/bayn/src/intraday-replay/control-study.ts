@@ -896,6 +896,11 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
+    if (dataCostMicros === null)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Control net outcomes require a priced data allocation' }),
+      )
     const falsification = input.falsificationCandidate != null
     if (
       falsification &&
@@ -937,7 +942,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control polling and routing latency must each be at most one minute' }),
       )
-    return { input, prepared, falsification, definition }
+    return { input, prepared, falsification, definition, dataCostMicros }
   })
 
 export const runControlStudy = (
@@ -947,7 +952,9 @@ export const runControlStudy = (
   management: ControlStudyManagement,
 ) =>
   Effect.gen(function* () {
-    const { input, prepared, falsification, definition } = yield* Effect.fromResult(prepareControlStudy(raw, receipt))
+    const { input, prepared, falsification, definition, dataCostMicros } = yield* Effect.fromResult(
+      prepareControlStudy(raw, receipt),
+    )
     if (input.management !== management.mode)
       return yield* new ControlStudyFailure({ message: 'Control management binding differs from its frozen input' })
     if ((input.entry === ControlEntryMode.Jev) !== 'provider' in management)
@@ -1056,7 +1063,7 @@ export const runControlStudy = (
             session,
             calendar,
             openingCapital: capital,
-            dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
+            dataCostMicros,
             targetWeight:
               input.ridge !== undefined
                 ? 1

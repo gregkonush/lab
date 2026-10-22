@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
@@ -552,12 +553,14 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v4',
+            schemaVersion: 'bayn.backtest.v5',
+            jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
             source: data.source,
             openingCashMicros: '100000000000',
             fractionalTrading: false,
             inference: {
               mode: 'measured-provider',
+              maximumCalls: 1000,
               model: jevModel,
               inputDefinition: 'bayn.jev-trading-signal-state.v15',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },

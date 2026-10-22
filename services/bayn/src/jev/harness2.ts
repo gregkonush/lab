@@ -2,7 +2,7 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { GitSourceRevisionSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
-import { JevCandidatePlanStatus } from './batch'
+import { JevBatchPlanVersion, JevCandidateExclusionSchema, JevCandidatePlanStatus } from './batch'
 import {
   JevContractError,
   JevFailure,
@@ -13,11 +13,11 @@ import {
   type JevRequest,
 } from './contract'
 import { selectJevEntryCandidates } from './decision'
-import { JevInstructionsSchema, type JevInstructions } from './instructions'
+import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevObservationSchema } from './observation-contract'
 import { JevPurpose } from './portfolio'
-import { jevEntryQuoteExclusion, makeJevTradingSignalRequest } from './trading-signals'
+import { makeJevTradingSignalBatch } from './trading-signals'
 import type { JevInference } from './client'
 
 const HarnessInferenceSchema = Schema.Struct({
@@ -28,7 +28,7 @@ const HarnessInferenceSchema = Schema.Struct({
   response: JevResponseSchema,
 })
 const JevHarnessReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-harness2-receipt.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-harness2-receipt.v2'),
   runId: Sha256Schema,
   sourceRevision: GitSourceRevisionSchema,
   observationHash: Sha256Schema,
@@ -36,6 +36,7 @@ const JevHarnessReceiptSchema = Schema.Struct({
   startedAtMs: Schema.Int,
   completedAtMs: Schema.Int,
   outcome: Schema.Literals(['COMPLETE', 'INCONCLUSIVE']),
+  excludedCandidates: Schema.Array(JevCandidateExclusionSchema),
   requests: Schema.Array(
     Schema.Struct({
       symbol: Schema.String,
@@ -87,17 +88,25 @@ export const prepareJevHarnessProbe = (input: unknown) =>
       return yield* Result.fail(
         new JevContractError({ message: 'Harness2 refines native entry and protection choices only' }),
       )
+    const plan = yield* makeJevTradingSignalBatch({
+      observation: run.observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + observation.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V6,
+    })
     const requests = []
-    for (const symbol of observation.snapshot.manifest.candidateSymbols ?? []) {
-      const quote = observation.snapshot.latestQuotes[symbol]
-      if (quote === undefined)
-        return yield* Result.fail(new JevContractError({ message: 'Harness candidate has no verified quote' }))
-      if ((yield* jevEntryQuoteExclusion(quote)) !== null) continue
-      const original = yield* makeJevTradingSignalRequest(run.observation, symbol)
+    for (const candidate of plan.candidates) {
+      if (candidate.status === JevCandidatePlanStatus.Excluded) continue
+      const { symbol, request: original } = candidate
       const prepared = yield* applyJevInstructions(original.request, run.instructions)
       requests.push({ symbol, originalRequestHash: original.requestHash, ...prepared })
     }
-    return { run, observation, requests, runId: yield* canonicalHashV1Result(run) }
+    return {
+      run,
+      observation,
+      requests,
+      excludedCandidates: plan.candidates.filter((candidate) => candidate.status === JevCandidatePlanStatus.Excluded),
+      runId: yield* canonicalHashV1Result(run),
+    }
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev Harness2 probe does not reproduce', cause })))
 
 export const jevHarnessDecision = (
@@ -133,6 +142,8 @@ export const verifyJevHarnessReceipt = (input: unknown, value: unknown) =>
       receipt.startedAtMs < Date.parse(prepared.run.registeredAt) ||
       receipt.completedAtMs < receipt.startedAtMs ||
       receipt.completedAtMs >= Date.parse(prepared.run.deadlineAt) ||
+      (yield* canonicalHashV1Result(receipt.excludedCandidates)) !==
+        (yield* canonicalHashV1Result(prepared.excludedCandidates)) ||
       receipt.requests.length !== prepared.requests.length
     )
       return yield* Result.fail(

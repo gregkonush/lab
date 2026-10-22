@@ -128,7 +128,9 @@ def validate_study(value):
 
 def validate_instructions(value):
     if not isinstance(value, dict) or set(value) != {"entry"}:
-        raise ValueError("Only the native Jev complete-plan question instruction is editable")
+        raise ValueError(
+            "Only the native Jev complete-plan question instruction is editable"
+        )
     if any(
         not isinstance(text, str) or not 1 <= len(text.strip()) <= 2000
         for text in value.values()
@@ -249,7 +251,7 @@ class Calls:
                 )
                 if kind == "editor":
                     run = {
-                        "schemaVersion": "bayn.jev-harness2-editor.v1",
+                        "schemaVersion": "bayn.jev-harness2-editor.v2",
                         "sourceRevision": self.study["sourceRevision"],
                         "studyHash": identity(self.study),
                         "armManifestHashes": [identity(self.study["baseline"])],
@@ -373,6 +375,166 @@ class Substrate:
         )
 
 
+def native_evidence(receipt):
+    def fields(value, names):
+        return {name: value[name] for name in names if name in value}
+
+    observations = []
+    for row in receipt["requests"]:
+        state = row["request"]["state"]
+        signals, omitted = {}, {}
+        for name in ("candidate", "benchmark"):
+            source = state.get(name, {})
+            signals[name] = fields(
+                source,
+                (
+                    "symbol",
+                    "returnsBps",
+                    "minuteLogReturnVolatilityBps",
+                    "latestCompletedClose",
+                ),
+            )
+            signals[name]["quote"] = fields(source.get("quote", {}), ("bid", "ask"))
+            signals[name]["priceWindow"] = fields(
+                source.get("priceWindow", {}),
+                ("referencePrice", "rangeHigh", "rangeLow"),
+            )
+            omitted[name] = {"bars1mCount": len(source.get("bars1m", []))}
+        inference = row.get("inference")
+        response = inference["response"] if inference is not None else None
+        criteria = (
+            row["request"].get("questions", {}).get("action", {}).get("criteria", {})
+        )
+        plan_columns = [
+            "stopPriceUsd",
+            "targetPriceUsd",
+            "estimatedLossUsd",
+            "estimatedProfitUsd",
+        ]
+        plans = [
+            (name, value)
+            for name, value in criteria.items()
+            if name.startswith("plan_")
+        ]
+        observations.append(
+            {
+                "symbol": row["symbol"],
+                "requestHash": row.get("requestHash"),
+                "originalRequestHash": row.get("originalRequestHash"),
+                "planCriteria": {
+                    "columns": ["choice", *plan_columns],
+                    "plans": [
+                        [name, *[value[field] for field in plan_columns]]
+                        for name, value in plans
+                    ],
+                    "meanings": list(
+                        dict.fromkeys(value["meaning"] for _, value in plans)
+                    ),
+                    "priceBases": list(
+                        dict.fromkeys(value["priceBasis"] for _, value in plans)
+                    ),
+                    "abstentions": {
+                        name: value
+                        for name, value in criteria.items()
+                        if not name.startswith("plan_")
+                    },
+                },
+                "signals": {
+                    "relativeSignals": fields(
+                        state.get("relativeSignals", {}),
+                        (
+                            "lookbackReturnBps",
+                            "excessReturnBps",
+                            "spreadBps",
+                            "rangeLocationPpm",
+                        ),
+                    ),
+                    "entryEconomics": fields(
+                        state.get("entryEconomics") or {},
+                        (
+                            "breakEvenExitBidUsd",
+                            "requiredBidRiseBps",
+                            "maximumHoldingMinutes",
+                            "operatingCostCoverage",
+                        ),
+                    ),
+                    **signals,
+                },
+                "omittedHistory": omitted,
+                "answers": None
+                if response is None
+                else {
+                    name: {
+                        "choice": answer.get("choice"),
+                        "confidence": answer.get("confidence"),
+                        "selectedProbability": answer.get("probabilities", {}).get(
+                            answer.get("choice")
+                        ),
+                    }
+                    for name, answer in response["answers"].items()
+                },
+            }
+        )
+    return {
+        "notice": "Editor summary only. Only the named signals are represented; do not infer missing evidence. Jev received the complete original state and all answer choices; full requests and responses remain in the receipt.",
+        "excludedCandidates": receipt["excludedCandidates"],
+        "observations": observations,
+        "decision": receipt["decision"],
+    }
+
+
+def editor_evidence(files):
+    shared = {}
+    aliases = {}
+
+    def reference(match):
+        execution = json.loads(match.group(1))
+        observations = []
+        for row in execution["observations"]:
+            facts = {
+                name: row[name]
+                for name in (
+                    "symbol",
+                    "originalRequestHash",
+                    "signals",
+                    "planCriteria",
+                    "omittedHistory",
+                )
+            }
+            key = identity(facts)
+            alias = aliases.setdefault(key, f"facts{len(aliases)}")
+            shared[alias] = facts
+            observations.append(
+                {
+                    "sourceFacts": alias,
+                    "requestHash": row["requestHash"],
+                    "answers": row["answers"],
+                }
+            )
+        return (
+            "[BAYN_EXECUTION]\n"
+            + encode({**execution, "observations": observations}).decode()
+            + "\n[/BAYN_EXECUTION]"
+        )
+
+    parts = [
+        f"FILE {name}\n"
+        + re.sub(
+            r"\[BAYN_NATIVE_EVIDENCE\]\n(.*?)\n\[/BAYN_NATIVE_EVIDENCE\]",
+            reference,
+            value,
+            flags=re.DOTALL,
+        )
+        for name, value in files
+    ]
+    if shared:
+        parts.append(
+            "SHARED_NATIVE_FACTS\nEach sourceFacts key references the complete immutable signal and plan terms below.\n"
+            + encode(shared).decode()
+        )
+    return "\n\n".join(parts)
+
+
 class Adapter:
     def __init__(self, study, root, calls):
         self.study, self.root, self.calls = study, root, calls
@@ -430,11 +592,11 @@ class Adapter:
         directory.mkdir(parents=True, exist_ok=True)
         (directory / "answer.txt").write_text(json.dumps(receipt["decision"]))
         (directory / "trajectory.md").write_text(
-            "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[OBSERVATION]\n"
+            "[ACTION] Evaluate Jev through the native typed API and Bayn decision code\n[BAYN_NATIVE_EVIDENCE]\n"
             + json.dumps(
-                {"requests": receipt["requests"], "decision": receipt["decision"]},
-                sort_keys=True,
+                native_evidence(receipt), sort_keys=True, separators=(",", ":")
             )
+            + "\n[/BAYN_NATIVE_EVIDENCE]"
         )
         if run_id.endswith("/c1"):
             (self.root / "candidate-instructions.json").write_text(prompt)
@@ -466,8 +628,8 @@ class Editor(Proposer):
             for task in self.adapter.tasks()
             if self.adapter.task_prompt(task) == task_text
         )
-        evidence = "\n\n".join(
-            f"FILE {path.relative_to(context)}\n{path.read_text()}"
+        evidence = editor_evidence(
+            (str(path.relative_to(context)), path.read_text())
             for path in sorted(context.rglob("*"))
             if path.is_file()
         )

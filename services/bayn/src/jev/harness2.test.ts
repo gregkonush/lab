@@ -2,12 +2,21 @@ import { describe, expect, setDefaultTimeout, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
+import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
+import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
+import { streamingFixture } from '../testing/streaming-market-fixture'
+import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { decideJevEntry } from './decision'
 import { JevPurpose } from './portfolio'
 import { jevInstructions } from './instructions'
 import { jevHarnessDecision, prepareJevHarnessProbe, verifyJevHarnessReceipt } from './harness2'
-import { nativeJevDecisionEvidence, nativeJevFixture, nativeJevInference } from './native.test-support'
-import { makeJevTradingSignalRequest } from './trading-signals'
+import {
+  jevObservationForSnapshot,
+  nativeJevDecisionEvidence,
+  nativeJevFixture,
+  nativeJevInference,
+} from './native.test-support'
+import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 
 setDefaultTimeout(30_000)
 
@@ -22,8 +31,84 @@ const run = () => ({
   instructions: jevInstructions,
 })
 const at = new Date(Date.parse(fixture.observation.payload.observedAt) + 100).toISOString()
+const receiptMaterial = (prepared: Result.Result.Success<ReturnType<typeof prepareJevHarnessProbe>>) => {
+  const completedAt = new Date(Date.parse(prepared.run.registeredAt) + 100).toISOString()
+  const inferences = prepared.requests.map(({ symbol, request }) => ({
+    symbol,
+    inference: nativeJevInference(request, completedAt),
+  }))
+  return {
+    schemaVersion: 'bayn.jev-harness2-receipt.v2',
+    runId: prepared.runId,
+    sourceRevision: prepared.run.sourceRevision,
+    observationHash: prepared.observation.contentHash,
+    instructionsHash: Result.getOrThrow(canonicalHashV1Result(prepared.run.instructions)),
+    startedAtMs: Date.parse(prepared.run.registeredAt),
+    completedAtMs: Date.parse(completedAt),
+    outcome: 'COMPLETE',
+    excludedCandidates: prepared.excludedCandidates,
+    requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
+      symbol,
+      originalRequestHash,
+      request,
+      requestHash,
+      inference: inferences[index]?.inference,
+      failure: null,
+    })),
+    decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
+    costPicoUsd: null,
+    qualification: 'UNQUALIFIED',
+    timingQualification: 'OFFLINE_REEVALUATION',
+  }
+}
 
 describe('Harness2 uses native Jev requests and decision policy', () => {
+  test('reproduces native exclusions when a candidate lacks window trades', () => {
+    const { cut, query } = streamingFixture()
+    const tradeHistory = new Map(cut.projection.tradeHistory)
+    tradeHistory.delete('AAPL')
+    const snapshot = Result.getOrThrow(
+      constructStreamingSnapshot(
+        { ...cut, projection: { ...cut.projection, tradeHistory } },
+        { ...query, candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade },
+      ),
+    )
+    const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
+    const native = Result.getOrThrow(
+      makeJevTradingSignalBatch({
+        observation: observation.payload,
+        expiresAt: new Date(
+          Date.parse(observation.payload.observedAt) + observation.payload.protocol.inferenceValidityMs,
+        ).toISOString(),
+        planVersion: JevBatchPlanVersion.V6,
+      }),
+    )
+    expect(native.candidates.some((entry) => entry.status === JevCandidatePlanStatus.Excluded)).toBe(true)
+    const prepared = Result.getOrThrow(prepareJevHarnessProbe({ ...run(), observation: observation.payload }))
+    expect(prepared.requests.map(({ symbol, requestHash }) => ({ symbol, requestHash }))).toEqual(
+      native.candidates.flatMap((entry) =>
+        entry.status === JevCandidatePlanStatus.Requested
+          ? [{ symbol: entry.symbol, requestHash: entry.request.requestHash }]
+          : [],
+      ),
+    )
+    expect(prepared).toHaveProperty(
+      'excludedCandidates',
+      native.candidates.filter((entry) => entry.status === JevCandidatePlanStatus.Excluded),
+    )
+    const input = { ...run(), observation: observation.payload }
+    const material = receiptMaterial(prepared)
+    const seal = (value: typeof material) => ({
+      ...value,
+      receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),
+    })
+    expect(Result.isSuccess(verifyJevHarnessReceipt(input, seal(material)))).toBe(true)
+    for (const excludedCandidates of [
+      [],
+      material.excludedCandidates.map((row) => ({ ...row, message: 'Invented source failure' })),
+    ])
+      expect(Result.isFailure(verifyJevHarnessReceipt(input, seal({ ...material, excludedCandidates })))).toBe(true)
+  })
   test('baseline reproduces live request bytes and funded entry selections', () => {
     const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
     for (const request of prepared.requests)
@@ -45,7 +130,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         expect(selected.exitPlan).toEqual(native.exitPolicy.plans[selected.symbol])
       }
     }
-  })
+  }, 15_000)
   test('edits affect only instruction text while preserving state and supplied choices', () => {
     const baseline = Result.getOrThrow(prepareJevHarnessProbe(run()))
     const candidate = Result.getOrThrow(
@@ -72,7 +157,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         prepareJevHarnessProbe({ ...run(), instructions: { ...jevInstructions, tools: 'Place an order' } }),
       ),
     ).toBe(true)
-  })
+  }, 15_000)
   test('retired separate protection instructions cannot enter the complete-plan harness', () => {
     expect(
       Result.isFailure(
@@ -102,32 +187,7 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
     'retained receipts reproduce their requests, inference evidence and native decision: %s',
     (scenario) => {
       const prepared = Result.getOrThrow(prepareJevHarnessProbe(run()))
-      const inferences = prepared.requests.map(({ symbol, request }) => ({
-        symbol,
-        inference: nativeJevInference(request, at),
-      }))
-      const material = {
-        schemaVersion: 'bayn.jev-harness2-receipt.v1',
-        runId: prepared.runId,
-        sourceRevision: run().sourceRevision,
-        observationHash: prepared.observation.contentHash,
-        instructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
-        startedAtMs: Date.parse(run().registeredAt),
-        completedAtMs: Date.parse(at),
-        outcome: 'COMPLETE',
-        requests: prepared.requests.map(({ symbol, originalRequestHash, request, requestHash }, index) => ({
-          symbol,
-          originalRequestHash,
-          request,
-          requestHash,
-          inference: inferences[index]?.inference,
-          failure: null,
-        })),
-        decision: Result.getOrThrow(jevHarnessDecision(prepared, inferences)),
-        costPicoUsd: null,
-        qualification: 'UNQUALIFIED',
-        timingQualification: 'OFFLINE_REEVALUATION',
-      }
+      const material = receiptMaterial(prepared)
       const seal = (value: Omit<typeof material, 'decision'> & { readonly decision: unknown }) => ({
         ...value,
         receiptHash: Result.getOrThrow(canonicalHashV1Result(value)),
@@ -142,5 +202,6 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         )
       }
     },
+    15_000,
   )
 })
