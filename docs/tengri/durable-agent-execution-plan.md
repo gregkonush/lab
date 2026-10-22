@@ -1,6 +1,6 @@
 # Tengri durable agent execution
 
-Status: Restate migration merged and images qualified; Settings passkey enrollment and retained-home cutover pending. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
+Status: Restate and Settings enrollment merged; rollout held for the sleep-admission fix, its final image cohort, and retained-home cutover. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
 
 The scope is the execution gaps identified in [the research](durable-agent-execution-research.md). It includes lost
 submission responses, interrupted Codex processes, pending controls, workspace concurrency, active-run sleep,
@@ -95,7 +95,7 @@ The operator's [versioning contract](https://github.com/restatedev/restate-opera
 ## API 6 cutover
 
 The existing release hold `TENGRI_PREPARED_SLOT_CUTOVER_READY` was set to `false` before publication. Production
-currently has one retained API 5 workspace in `Sleeping`. Do not release either application alias until its original
+has one retained API 5 workspace. Its owner resumed work after the initial sleeping inventory. Do not release either application alias until its original
 writer is fenced and its unchanged 32 GiB home is enrolled with the reviewed API 6 guest digest. Preserve its MicroVM
 UID, home PVC UID, filesystem UUID, representative file hashes, credentials, and native conversations. Record the paired
 image receipts, Kargo branches, and Argo revisions here as delivery progresses. No new identity or device permissions
@@ -171,15 +171,15 @@ after it. The complete local browser suite passes 172 tests with two environment
 TypeScript checking, formatting, and lint pass.
 
 The release hold remains closed. Qualify a complete four-image cohort from the final reviewed source against the
-unchanged native gates before enrolling the retained home. At this readback, owner passkey sign-in was pending;
-authenticated legacy-work reconciliation and product acceptance remained unverified. Complete safe quiescence and fencing, enroll
+unchanged native gates before enrolling the retained home. Owner sign-in now succeeds; legacy-work reconciliation
+and product acceptance remain unverified. Complete safe quiescence and fencing, enroll
 the exact qualified API 6 guest digest without replacing the home, release through Kargo and Argo, and exercise
 disconnect/recovery, approval, cancellation, worker replacement, and the active-run sleep fence before closing the goal.
 
 ## Settings passkey enrollment
 
-The user additionally requested a new 1Password passkey and a Settings entry for enrollment. Continue the existing
-[PR #15215](https://github.com/proompteng/lab/pull/15215) against the current Restate source. Settings → Access must
+The user additionally requested a new 1Password passkey and a Settings entry for enrollment.
+[PR #15215](https://github.com/proompteng/lab/pull/15215) merged as `a08cc0d386b4eeb582cafd41118476d189517139`. Settings → Access must
 expose Add passkey, obtain fresh verification with the existing credential, and offer phone/password-manager enrollment.
 Preserve the original USB credential, GitHub subject, broker links, RP ID, and WebAuthn verification policy. The owner
 completes passkey creation and saving in 1Password; real provider enrollment and subsequent sign-in remain required.
@@ -189,7 +189,7 @@ tests, 209 Rust tests with 45 environment-dependent tests ignored, three CRD tes
 Go race/vet, TypeScript checking, formatting, lint, and authorization inventory. The browser run passed 174 cases with
 two environment skips; its sole failing case used stale Darwin snapshots for the already-merged tool-label changes.
 Both snapshots were visually inspected and regenerated, and the complete case then passed without snapshot updates.
-Final Linux browser acceptance remains required. The real
+The exact-head Linux browser workflow `39731384576` and merged-source workflow `39732821655` passed. The real
 Keycloak 26.7.4/browser/Ofz fixture passes 165 assertions, including second-credential enrollment, preservation of the
 original USB credential, fresh sign-in after removing the fixture USB authenticator, cancellation preservation, and
 same-identity readback. The authenticator is virtual; this does not prove physical 1Password behavior.
@@ -207,3 +207,22 @@ Restate acceptance after the final paired release. The release hold remains clos
 The merged active-work change has an unresolved P1 review finding in PR #15238: a new control can race with the
 automatic-sleep reservation after the idle probe. Require the reviewed follow-up fix in the final production source;
 do not open the release hold merely because the passkey PR's checks pass.
+
+## Retained-home maintenance checkpoint
+
+The user authorized coordination with the existing native agent. It accepted ownership of PR #15245's required CI,
+review fixes, merge, and a terminal checkpoint before migration. The preview and existing-terminal ticket admission
+finding is fixed in `b8b8c77a4a1276397e1e7e68ed9b8bf0c51437e6` and its review thread is resolved. Its landing CI
+`39735302470` still failed real VS Code acceptance; the agent is fixing that gate. Do not interrupt its running turn
+or infer a safe checkpoint from its Kubernetes readiness.
+
+Keycloak reconciled the enrollment merge on both ready replicas. Their mounted registration and authentication
+modules match that commit. This proves theme delivery, not physical 1Password enrollment. The web Settings button
+and Tengri Restate worker remain undeployed while the release hold is closed.
+
+Follow [the claimed-guest replacement procedure](operations.md#replacing-a-claimed-guest-while-retaining-its-home).
+The live `platform` ApplicationSet preserves the temporary `skip-reconcile` annotation. Keep the existing automatic
+sync policy, Kargo source, and metadata intact. Capture a fresh home baseline after the agent's final checkpoint;
+the earlier sleeping inventory predates its legitimate work. Retain the old Lease Pod UID until the reviewed new
+controller is present, then clear that reference before clearing `MicroVM.spec.slot` so the pool can prepare and bind
+the same retained home under its actual successor Pod UID.
