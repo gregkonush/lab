@@ -570,11 +570,12 @@ export const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, In
 export const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuote, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const identity = yield* recordIdentity(row)
-    const bidPrice = yield* numberValue(row.bid_price, 'quote bid price', true)
+    const bidPrice = yield* numberValue(row.bid_price, 'quote bid price', false)
     const bidSize = yield* numberValue(row.bid_size, 'quote bid size', false)
-    const askPrice = yield* numberValue(row.ask_price, 'quote ask price', true)
+    const askPrice = yield* numberValue(row.ask_price, 'quote ask price', false)
     const askSize = yield* numberValue(row.ask_size, 'quote ask size', false)
-    if (bidPrice > askPrice) return yield* Result.fail(failure('rows', 'intraday quote is crossed'))
+    if (bidPrice > 0 && askPrice > 0 && bidPrice > askPrice)
+      return yield* Result.fail(failure('rows', 'intraday quote is crossed'))
     return Object.freeze({ ...identity, bidPrice, bidSize, askPrice, askSize })
   })
 
@@ -898,6 +899,8 @@ export const latestQuotes = (
         ),
       )
     }
+    if (quote !== undefined && (quote.bidPrice === 0 || quote.askPrice === 0))
+      return Result.fail(failure('not-ready', 'intraday quote has a withdrawn bid or ask side', { symbol }))
     if (
       request.purpose === undefined &&
       (trade === undefined ||

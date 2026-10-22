@@ -18,7 +18,7 @@ import {
   type BindCycleExecutionSessionInput,
   type ExecutionSessionBinding,
 } from './execution-session'
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { strictParseOptions } from './schemas'
 import { intradayMomentumExecutionModel } from './strategy/intraday-momentum/protocol'
 
@@ -43,7 +43,7 @@ const calendar = (closeAt = '2026-02-02T21:00:00.000Z'): MarketCalendarObservati
       },
     ],
   })
-  return { ...material, normalizedResponseHash: canonicalHashV1(material) }
+  return { ...material, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }
 
 const activeCycle = (): AutonomousCycle => {

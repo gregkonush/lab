@@ -25,6 +25,7 @@ targets:
       - services/nanoagent/**
       - services/tengri/**
       - .github/workflows/tengri.yaml
+      - .github/scripts/install-tengri-chromium.mjs
 
   app:
     kind: validation

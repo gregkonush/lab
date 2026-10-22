@@ -66,7 +66,7 @@ export function doAuthenticate(input) {
     }
 
     const publicKey = {
-        hints: getAuthenticatorHints(),
+        hints: ['client-device', 'hybrid', 'security-key'],
         rpId: input.rpId,
         challenge: base64url.parse(input.challenge, { loose: true }),
     };
@@ -112,20 +112,4 @@ export function returnSuccess(result) {
 export function returnFailure(err) {
     document.getElementById("error").value = err;
     document.getElementById("webauth").requestSubmit();
-}
-
-function getAuthenticatorHints() {
-    const transports = Array.from(
-        document.querySelectorAll('#authn_select input[name="authn_use_chk"]'),
-        (entry) => (entry.dataset.transports ?? '').split(',').filter(Boolean),
-    );
-    if (transports.some((values) => values.includes('internal'))) {
-        return ['client-device', 'security-key'];
-    }
-    if (transports.length > 0 && transports.every(
-        (values) => values.length > 0 && values.every((value) => ['usb', 'nfc', 'bluetooth'].includes(value)),
-    )) {
-        return ['security-key'];
-    }
-    return [];
 }

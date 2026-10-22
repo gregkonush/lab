@@ -56,6 +56,7 @@ hyper = { version = "1", features = ["client", "http1", "http2", "server"] }
 http-body-util = "0.1.3"
 aws-lc-rs = { version = "1.18.0", default-features = false, features = ["alloc", "non-fips"] }
 zeroize = "1.9.0"
+restate-sdk = { version = "=0.12.1", features = ["aws_lc_rs", "http_server", "reqwest-client"], default-features = false }
 
 [build-dependencies]
 prost-build = "0.14.4"

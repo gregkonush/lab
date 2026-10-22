@@ -1,6 +1,6 @@
 import { Data, Result, Schema } from 'effect'
 import { ExecutionModelV6Schema, usEquityRegularSessionDurationMs } from '../../execution-model-contract'
-import { canonicalHashV1Result, sha256, type CanonicalHashFailure } from '../../hash'
+import { sha256 } from '../../hash'
 import {
   maximumIntradayObservationLagMs,
   maximumIntradayQuoteAgeMs,
@@ -254,12 +254,3 @@ export const decodeIntradayMomentumProtocol = (
     decode(input),
     (cause) => new IntradayMomentumProtocolDecodeError({ message: 'invalid intraday-momentum parameters', cause }),
   )
-
-export const decodeDefaultIntradayMomentumProtocol = (): Result.Result<
-  IntradayMomentumProtocol,
-  IntradayMomentumProtocolDecodeError
-> => decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument)
-
-export const hashIntradayMomentumProtocol = (
-  protocol: IntradayMomentumProtocol,
-): Result.Result<string, CanonicalHashFailure> => canonicalHashV1Result(protocol)

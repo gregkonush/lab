@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import fixture from './fixtures/crypto-continuous-v2.json'
 import { decodeCryptoMarketFeature } from './crypto-contract'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { nativePayloadCanonicalJson, nativeSourceContentHash } from '../native-json'
 
 test('the consumer verifies the real Dorvud-produced crypto fixture across a weekend midnight', () => {
@@ -32,7 +32,11 @@ test('crypto feature verification rejects changed payloads, broken history, and 
   const changed = { ...fixture.feature.material, historyHash: 'f'.repeat(64) }
   expect(
     Result.isFailure(
-      decodeCryptoMarketFeature({ ...fixture.feature, material: changed, featureId: canonicalHashV1(changed) }),
+      decodeCryptoMarketFeature({
+        ...fixture.feature,
+        material: changed,
+        featureId: Result.getOrThrow(canonicalHashV1Result(changed)),
+      }),
     ),
   ).toBe(true)
   expect(

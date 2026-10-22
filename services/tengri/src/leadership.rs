@@ -1,14 +1,6 @@
 use std::{future::Future, sync::Arc, time::Duration};
 
-use anyhow::{Context, ensure};
-use k8s_openapi::{
-    api::coordination::v1::{Lease, LeaseSpec},
-    apimachinery::pkg::apis::meta::v1::MicroTime,
-};
-use kube::{
-    Api, Client, ResourceExt,
-    api::{ObjectMeta, PostParams},
-};
+use anyhow::ensure;
 use tokio::{
     sync::watch,
     time::{Instant, timeout},
@@ -17,7 +9,6 @@ use uuid::Uuid;
 
 use crate::control::{Database, Fence};
 
-const NAME: &str = "tengri-controller-leader";
 pub(crate) const LEASE_DURATION: Duration = Duration::from_secs(60);
 const RENEW_INTERVAL: Duration = Duration::from_secs(5);
 const RENEW_TIMEOUT: Duration = Duration::from_secs(2);
@@ -61,34 +52,23 @@ impl Guard {
 }
 
 pub struct Election {
-    leases: Api<Lease>,
-    namespace: String,
     owner: Uuid,
     database: Arc<Database>,
     authority: watch::Sender<Option<Authority>>,
-    last_observed: Option<(String, Instant)>,
 }
 
 impl Election {
-    pub fn new(
-        client: Client,
-        namespace: String,
-        owner: Uuid,
-        database: Arc<Database>,
-    ) -> anyhow::Result<Self> {
+    pub fn new(owner: Uuid, database: Arc<Database>) -> anyhow::Result<Self> {
         ensure!(!owner.is_nil(), "controller Pod UID required");
         let (authority, _) = watch::channel(None);
         Ok(Self {
-            leases: Api::namespaced(client, &namespace),
-            namespace,
             owner,
             database,
             authority,
-            last_observed: None,
         })
     }
 
-    pub async fn run(mut self, context: crate::controller::ControllerContext) {
+    pub async fn run(self, context: crate::controller::ControllerContext) {
         loop {
             let authority = match acquire_authority(self.acquire()).await {
                 Ok(Some(authority)) => authority,
@@ -128,7 +108,7 @@ impl Election {
                 self.authority.send_replace(None);
             }
             // Admission closes before releasing shared authority. A crashed
-            // process cannot release it; the SQL deadline and Lease observation bound takeover.
+            // process cannot release it; the SQL deadline bounds takeover.
             let _ = timeout(RENEW_TIMEOUT, self.database.release(fence)).await;
             tracing::warn!(
                 generation = fence.generation,
@@ -137,76 +117,11 @@ impl Election {
         }
     }
 
-    async fn acquire(&mut self) -> anyhow::Result<Option<Fence>> {
-        let mut lease = match self.leases.get_opt(NAME).await? {
-            Some(lease) => lease,
-            None => {
-                let lease = Lease {
-                    metadata: ObjectMeta {
-                        name: Some(NAME.into()),
-                        namespace: Some(self.namespace.clone()),
-                        ..Default::default()
-                    },
-                    spec: Some(LeaseSpec {
-                        lease_duration_seconds: Some(15),
-                        ..Default::default()
-                    }),
-                };
-                match self.leases.create(&PostParams::default(), &lease).await {
-                    Ok(lease) => lease,
-                    Err(kube::Error::Api(error)) if error.code == 409 => return Ok(None),
-                    Err(error) => return Err(error.into()),
-                }
-            }
-        };
-        let version = lease
-            .resource_version()
-            .context("leader Lease has no version")?;
-        let observed = match &self.last_observed {
-            Some((previous, at)) if previous == &version => *at,
-            _ => {
-                let now = Instant::now();
-                self.last_observed = Some((version, now));
-                now
-            }
-        };
-        let spec = lease.spec.get_or_insert_default();
-        let own = spec.holder_identity.as_deref() == Some(self.owner.to_string().as_str());
-        if spec.holder_identity.is_some() && !own && observed.elapsed() < LEASE_DURATION {
-            return Ok(None);
-        }
-        spec.holder_identity = Some(self.owner.to_string());
-        spec.lease_duration_seconds = Some(LEASE_DURATION.as_secs() as i32);
-        spec.renew_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
-        spec.acquire_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
-        spec.lease_transitions = Some(
-            spec.lease_transitions
-                .unwrap_or_default()
-                .checked_add(1)
-                .context("leader generation exhausted")?,
-        );
-        match self
-            .leases
-            .replace(NAME, &PostParams::default(), &lease)
-            .await
-        {
-            Ok(_) => self.database.acquire(self.owner).await.map_err(Into::into),
-            Err(kube::Error::Api(error)) if error.code == 409 => Ok(None),
-            Err(error) => Err(error.into()),
-        }
+    async fn acquire(&self) -> anyhow::Result<Option<Fence>> {
+        self.database.acquire(self.owner).await.map_err(Into::into)
     }
 
     async fn renew(&self, fence: Fence) -> anyhow::Result<bool> {
-        let mut lease = self.leases.get(NAME).await?;
-        let spec = lease.spec.as_mut().context("leader Lease has no spec")?;
-        if spec.holder_identity.as_deref() != Some(self.owner.to_string().as_str()) {
-            return Ok(false);
-        }
-        spec.lease_duration_seconds = Some(LEASE_DURATION.as_secs() as i32);
-        spec.renew_time = Some(MicroTime(k8s_openapi::jiff::Timestamp::now()));
-        self.leases
-            .replace(NAME, &PostParams::default(), &lease)
-            .await?;
         self.database.renew(fence).await.map_err(Into::into)
     }
 }
@@ -277,6 +192,56 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_election_uses_sql_without_kubernetes() {
+        let first =
+            Election::new(Uuid::new_v4(), Arc::new(Database::shared_fixture().await)).unwrap();
+        let second =
+            Election::new(Uuid::new_v4(), Arc::new(Database::shared_fixture().await)).unwrap();
+        let (left, right) = tokio::join!(
+            acquire_authority(first.acquire()),
+            acquire_authority(second.acquire()),
+        );
+        let (left, right) = (left.unwrap(), right.unwrap());
+        assert_ne!(left.is_some(), right.is_some());
+        let (leader, follower, authority) = match (left, right) {
+            (Some(authority), None) => (&first, &second, authority),
+            (None, Some(authority)) => (&second, &first, authority),
+            _ => panic!("SQL must elect exactly one controller"),
+        };
+        leader.authority.send_replace(Some(authority));
+        let old_guard = Guard {
+            authority: leader.authority.subscribe(),
+            fence: authority.fence,
+        };
+        assert!(old_guard.fence().is_ok());
+        assert!(leader.renew(authority.fence).await.unwrap());
+        assert!(follower.acquire().await.unwrap().is_none());
+        leader.authority.send_replace(None);
+        leader.database.release(authority.fence).await.unwrap();
+        assert!(old_guard.fence().is_err());
+
+        let next = acquire_authority(follower.acquire())
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(next.fence.owner, follower.owner);
+        assert!(next.fence.generation > authority.fence.generation);
+        assert!(
+            leader
+                .database
+                .require_fence(authority.fence)
+                .await
+                .is_err()
+        );
+        assert!(!leader.renew(authority.fence).await.unwrap());
+        // A retired process cannot release its successor's ownership.
+        leader.database.release(authority.fence).await.unwrap();
+        assert!(follower.database.require_fence(next.fence).await.is_ok());
+        follower.database.release(next.fence).await.unwrap();
+    }
 
     #[tokio::test(start_paused = true)]
     async fn observed_commit_tail_keeps_confirmed_leadership_without_restarting_its_clock() {

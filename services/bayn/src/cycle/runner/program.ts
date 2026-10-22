@@ -1,12 +1,12 @@
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
-import { canonicalHashV1 } from '../../hash'
-import { Effect, Option, pipe, Schema } from 'effect'
+import { canonicalHashV1Result } from '../../hash'
+import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { IsoDateSchema } from '../../schemas'
-import { CycleState, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
 import { CycleStore } from '../store/model'
@@ -23,7 +23,17 @@ import {
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
 
-const currentIsoTime = currentUtcInstant
+const hashCalendar = (hours: MarketHours) =>
+  Effect.fromResult(canonicalHashV1Result(hours)).pipe(
+    Effect.mapError((cause) =>
+      runnerError({
+        operation: 'build-cycle',
+        failure: 'contract',
+        message: 'market calendar cannot be canonicalized',
+        cause,
+      }),
+    ),
+  )
 
 export const discoverAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
@@ -36,7 +46,7 @@ export const discoverAutonomousCyclePass = <R>(
     executionPolicy: context.executionPolicy,
   }
   return Effect.gen(function* () {
-    const observedAt = yield* currentIsoTime
+    const observedAt = yield* currentUtcInstant
     const query = yield* Effect.fromResult(marketCalendarQueryFromSession(observedAt.slice(0, 10))).pipe(
       Effect.mapError(calendarQueryFailureError),
     )
@@ -68,7 +78,7 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
     let hours: MarketHours = continuousMarketHours
-    let hoursReadHash = canonicalHashV1(continuousMarketHours)
+    let hoursReadHash = yield* hashCalendar(continuousMarketHours)
     // One account worker alternates eligible market data profiles. Recovery always runs before discovery.
     if (Option.isNone(existing) || existing.value.identity.entryAttemptOrdinal % 2 === 0) {
       const broker = yield* BrokerRead
@@ -172,7 +182,7 @@ export const discoverAutonomousCyclePass = <R>(
       outcome: receipt.created ? 'ACQUIRED' : 'REACQUIRED',
       executionSessionDate: executionSession.date,
       observedAt,
-      calendarResponseHash: canonicalHashV1(hours),
+      calendarResponseHash: yield* hashCalendar(hours),
       calendarReadContentHash: hoursReadHash,
       receipt,
     } as const
@@ -253,7 +263,7 @@ const recoverCycle = <R>(
         Effect.matchEffect({
           onFailure: (cause) =>
             cause.failure === 'not-ready'
-              ? currentIsoTime.pipe(
+              ? currentUtcInstant.pipe(
                   Effect.map((observedAt) => ({
                     outcome: 'RECOVERED' as const,
                     action: 'WAITING' as const,
@@ -285,19 +295,33 @@ const recoverCycle = <R>(
               ),
               Effect.flatMap((evidence) =>
                 pipe(
-                  currentIsoTime,
+                  currentUtcInstant,
                   Effect.flatMap((bindObservedAt) =>
                     pipe(
                       CycleStore,
                       Effect.flatMap((store) => {
-                        const binding = store.bindDecision(
-                          selection.cycle.identity.cycleId,
-                          document,
-                          bindObservedAt,
-                          evidence,
-                        )
+                        const binding = store
+                          .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence)
+                          .pipe(
+                            Effect.catchCause((cause) => {
+                              const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
+                              return reason !== undefined &&
+                                Cause.isFailReason(reason) &&
+                                reason.error.failure === 'entry-expired'
+                                ? currentUtcInstant.pipe(
+                                    Effect.flatMap((expiredAt) =>
+                                      store.block(
+                                        selection.cycle.identity.cycleId,
+                                        CycleTerminalReason.UnusedEntryExpired,
+                                        expiredAt,
+                                      ),
+                                    ),
+                                  )
+                                : Effect.failCause(cause)
+                            }),
+                          )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
-                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v2') return binding
+                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v6') return binding
                         const timingAttributes = {
                           'bayn.entry_timing.decision_hash': document.contentHash,
                           'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
@@ -315,13 +339,17 @@ const recoverCycle = <R>(
                           Effect.withSpan('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
                         )
                       }),
-                      Effect.mapError((cause) =>
-                        runnerError({
-                          operation: 'recover-cycle',
-                          failure: 'store',
-                          message: 'durable shadow decision binding failed',
-                          cause,
-                        }),
+                      Effect.catchCause((failure) =>
+                        Effect.failCause(
+                          Cause.map(failure, (cause) =>
+                            runnerError({
+                              operation: 'recover-cycle',
+                              failure: 'store',
+                              message: 'durable shadow decision binding failed',
+                              cause,
+                            }),
+                          ),
+                        ),
                       ),
                       Effect.map(
                         (binding): CycleRunResult => ({
@@ -352,7 +380,7 @@ const recoverCycle = <R>(
         ),
         Effect.flatMap((document) =>
           pipe(
-            currentIsoTime,
+            currentUtcInstant,
             Effect.flatMap((decisionObservedAt) =>
               pipe(
                 chooseRecovery({
@@ -390,7 +418,7 @@ export const runAutonomousCyclePass = <R>(
   context: CycleRunContext<R>,
   cycle: AutonomousCycle | undefined,
 ): Effect.Effect<CycleRunResult, CycleRunnerError, BrokerRead | CycleStore | R> =>
-  currentIsoTime.pipe(
+  currentUtcInstant.pipe(
     Effect.flatMap((observedAt) =>
       chooseRecovery({
         cycleBindingId: context.cycleBindingId,
