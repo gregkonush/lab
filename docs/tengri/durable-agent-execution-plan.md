@@ -140,3 +140,9 @@ authority as proof that no effect occurred. The replay retains an uncertain outc
 operation identity. A confirmed Stop acknowledgement clears its browser retry identity so another login can record
 fresh cancellation authority; ambiguous failures retain the identity. Both regressions pass, alongside the full
 205-test Rust suite and the real Restate worker SIGKILL fixture.
+
+The final review also requires a durable Stop check between preparation and native dispatch. The real Restate fixture
+records Stop at that boundary and exercises the production dispatch gate. Workspace claims authenticate once at
+creation and retain their exact signed binding in the workspace object. Stop reads and release compare the stored
+claim after HMAC rotation; a changed claim remains denied. The fixture rotates the mounted key and replaces the
+worker before checking retained Stop authority and releasing the original claim.

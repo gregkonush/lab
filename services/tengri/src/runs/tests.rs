@@ -176,11 +176,14 @@ async fn snapshot_sleep_keeps_stop_pending_until_the_preserved_turn_is_interrupt
 #[derive(Serialize, Deserialize)]
 struct StopAuthorityProofInput {
     claim: Claim,
+    prepared: Admission,
     old: Envelope,
     fresh: Envelope,
 }
 
-struct StopAuthorityProof;
+struct StopAuthorityProof {
+    service: Arc<ControlPlane>,
+}
 #[workflow]
 impl StopAuthorityProof {
     #[handler]
@@ -198,6 +201,18 @@ impl StopAuthorityProof {
             .await?;
         workspace.store_stop(Json(input.0.fresh)).call().await?;
         workspace.store_stop(Json(input.0.old)).call().await?;
+        let state = TengriAgentRun {
+            service: self.service.clone(),
+        }
+        .dispatch_prepared(&ctx, &input.0.prepared)
+        .await?;
+        if !matches!(state, State::Cancelled { .. }) {
+            return Err(TerminalError::new_with_code(
+                500,
+                "recorded Stop was not checked before native dispatch",
+            )
+            .into());
+        }
         workspace
             .latest_stop(Json(StopQuery {
                 claim: input.0.claim,
@@ -222,13 +237,31 @@ impl StopAuthorityProof {
             .await
             .map_err(Into::into)
     }
+    #[handler]
+    async fn release(
+        &self,
+        ctx: SharedWorkflowContext<'_>,
+        claim: Json<Claim>,
+    ) -> HandlerResult<()> {
+        ctx.object_client::<TengriWorkspaceRunsClient>(&claim.0.workspace_uid)
+            .release(claim)
+            .call()
+            .await
+            .map_err(Into::into)
+    }
 }
 
 #[tokio::test]
 #[ignore = "child process for the disposable Restate recovery test"]
 async fn fixture_worker() {
     let port = env::var("TENGRI_FIXTURE_PORT").expect("fixture child only");
-    let service = Arc::new(fixture());
+    let mut service = fixture();
+    service.auth = crate::auth::Authenticator::new(
+        std::path::Path::new(&env::var("TENGRI_FIXTURE_KEY_FILE").unwrap()),
+        "https://proompteng.ai".into(),
+    )
+    .unwrap();
+    let service = Arc::new(service);
     let endpoint = Endpoint::builder()
         .bind(TengriAgentRun {
             service: service.clone(),
@@ -236,8 +269,10 @@ async fn fixture_worker() {
         .bind(TengriRunControl {
             service: service.clone(),
         })
-        .bind(TengriWorkspaceRuns { service })
-        .bind(StopAuthorityProof)
+        .bind(TengriWorkspaceRuns {
+            service: service.clone(),
+        })
+        .bind(StopAuthorityProof { service })
         .build();
     let listener = tokio::net::TcpListener::bind(format!("0.0.0.0:{port}"))
         .await
@@ -252,7 +287,7 @@ impl Drop for Worker {
         let _ = self.0.wait();
     }
 }
-fn worker(port: u16) -> Worker {
+fn worker(port: u16, key_file: &std::path::Path) -> Worker {
     Worker(
         Command::new(env::current_exe().unwrap())
             .args([
@@ -262,6 +297,7 @@ fn worker(port: u16) -> Worker {
                 "--nocapture",
             ])
             .env("TENGRI_FIXTURE_PORT", port.to_string())
+            .env("TENGRI_FIXTURE_KEY_FILE", key_file)
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -370,6 +406,8 @@ async fn status(
 #[tokio::test]
 #[ignore = "requires Docker; starts an isolated Restate 1.7.9 and kills an actual worker process"]
 async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill() {
+    let key_file = env::temp_dir().join(format!("tengri-restate-key-{}", Uuid::new_v4()));
+    std::fs::write(&key_file, "68".repeat(32)).unwrap();
     let image = "docker.restate.dev/restatedev/restate:1.7.9@sha256:329e32e12059610b681e165161bcd0722d193325b6c893bc46bfec72cd54b595";
     let mut command = Command::new("docker");
     command.args([
@@ -400,11 +438,13 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = socket.local_addr().unwrap().port();
     drop(socket);
-    let mut process = worker(port);
+    let mut process = worker(port, &key_file);
     let http = reqwest::Client::new();
     let deadline = tokio::time::Instant::now() + Duration::from_secs(60);
     let original_deployment = register(&http, &admin, port, deadline).await;
-    let service = fixture();
+    let mut service = fixture();
+    service.auth =
+        crate::auth::Authenticator::new(&key_file, "https://proompteng.ai".into()).unwrap();
     let proof_run = Uuid::new_v4().to_string();
     let mut proof_claim = Claim {
         workspace_uid: Uuid::new_v4().to_string(),
@@ -435,9 +475,20 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     fresh_stop.id = Uuid::new_v4().to_string();
     let proof_client =
         StopAuthorityProofIngressClient::from_client(ingress.clone(), Uuid::new_v4().to_string());
+    let prepared_input = Input {
+        id: proof_claim.run_id.clone(),
+        agent_id: fresh_stop.agent_id.clone(),
+        ..input()
+    };
     proof_client
         .run(Json(StopAuthorityProofInput {
             claim: proof_claim.clone(),
+            prepared: Admission {
+                digest: input_digest(&prepared_input).unwrap(),
+                input: prepared_input,
+                principal: fresh_stop.principal.clone(),
+                claim: proof_claim.clone(),
+            },
             old: seal(&service, "control", &old_stop).await.unwrap(),
             fresh: seal(&service, "control", &fresh_stop).await.unwrap(),
         }))
@@ -533,7 +584,7 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     let socket = TcpListener::bind("127.0.0.1:0").unwrap();
     let next_port = socket.local_addr().unwrap().port();
     drop(socket);
-    let _next_version = worker(next_port);
+    let next_version = worker(next_port, &key_file);
     let next_deployment = register(&http, &admin, next_port, deadline).await;
     assert_ne!(
         original_deployment, next_deployment,
@@ -587,10 +638,23 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     }
     process.0.kill().unwrap();
     process.0.wait().unwrap();
+    std::fs::write(&key_file, "69".repeat(32)).unwrap();
+    assert!(
+        service
+            .auth
+            .verify_run(
+                "workspace",
+                proof_claim.payload().as_bytes(),
+                &proof_claim.signature
+            )
+            .await
+            .is_err(),
+        "the mounted key must actually rotate before claim readback"
+    );
     // These are independent OS processes. Listener cancellation alone would leave HTTP/2 tasks alive.
-    process = worker(port);
+    process = worker(port, &key_file);
     let latest = proof_client
-        .inspect(Json(proof_claim))
+        .inspect(Json(proof_claim.clone()))
         .call()
         .await
         .unwrap()
@@ -605,6 +669,42 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
     assert_eq!(
         latest.principal.context.session_id,
         fresh_stop.principal.context.session_id
+    );
+    let mut changed_claim = proof_claim.clone();
+    changed_claim.signature = "00".repeat(32);
+    assert_eq!(
+        proof_client
+            .inspect(Json(changed_claim))
+            .call()
+            .await
+            .and_then(|response| response.into_body())
+            .err()
+            .expect("a changed claim must be rejected")
+            .response()
+            .unwrap()
+            .status(),
+        403,
+        "rotation cannot allow a changed claim to access the stored Stop"
+    );
+    proof_client
+        .release(Json(proof_claim.clone()))
+        .call()
+        .await
+        .unwrap()
+        .into_body()
+        .unwrap();
+    assert_eq!(
+        proof_client
+            .inspect(Json(proof_claim))
+            .call()
+            .await
+            .and_then(|response| response.into_body())
+            .err()
+            .expect("the completed claim must be released after key rotation")
+            .response()
+            .unwrap()
+            .status(),
+        403
     );
     let stop = Control {
         id: Uuid::new_v4().to_string(),
@@ -652,6 +752,8 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     drop(process);
+    drop(next_version);
+    std::fs::remove_file(key_file).unwrap();
 }
 
 #[tokio::test]

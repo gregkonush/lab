@@ -43,7 +43,7 @@ struct Admission {
     claim: Claim,
 }
 
-#[derive(Clone, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct Claim {
     workspace_uid: String,
@@ -860,6 +860,29 @@ impl TengriAgentRun {
         if !matches!(prepared, State::Accepted) {
             return Ok(prepared);
         }
+        self.dispatch_prepared(ctx, admission).await
+    }
+
+    async fn dispatch_prepared(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<State> {
+        if ctx
+            .object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid)
+            .latest_stop(Json(StopQuery {
+                claim: admission.claim.clone(),
+                known_id: String::new(),
+            }))
+            .call()
+            .await?
+            .into_inner()
+            .is_some()
+        {
+            return Ok(State::Cancelled {
+                turn_id: String::new(),
+            });
+        }
         Ok(ctx
             .run(|| async {
                 Ok(Json(
@@ -899,7 +922,11 @@ impl TengriWorkspaceRuns {
             Ok(())
         })
         .await?;
-        Ok(Json(ctx.get::<String>("active").await?))
+        Ok(Json(
+            ctx.get::<Json<Claim>>("active")
+                .await?
+                .map(|claim| claim.0.run_id),
+        ))
     }
     #[handler(ingress_private = true)]
     async fn store_stop(
@@ -923,7 +950,11 @@ impl TengriWorkspaceRuns {
             })
             .await?
             .into_inner();
-        if ctx.get::<String>("active").await?.as_deref() != Some(&control.run_id) {
+        if ctx
+            .get::<Json<Claim>>("active")
+            .await?
+            .is_none_or(|claim| claim.0.run_id != control.run_id)
+        {
             return Err(TerminalError::new_with_code(409, "run is no longer active").into());
         }
         let previous = ctx.get::<Json<Control>>("stop").await?;
@@ -946,7 +977,14 @@ impl TengriWorkspaceRuns {
         ctx: ObjectContext<'_>,
         query: Json<StopQuery>,
     ) -> HandlerResult<Json<Option<Control>>> {
-        self.verify_claim(&ctx, &query.0.claim).await?;
+        if query.0.claim.workspace_uid != ctx.key()
+            || ctx
+                .get::<Json<Claim>>("active")
+                .await?
+                .is_none_or(|active| active.0 != query.0.claim)
+        {
+            return Err(TerminalError::new_with_code(403, "run is no longer active").into());
+        }
         let stop = ctx
             .get::<Json<Control>>("stop")
             .await?
@@ -959,24 +997,31 @@ impl TengriWorkspaceRuns {
 
     #[handler(ingress_private = true)]
     async fn claim(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
-        self.verify_claim(&ctx, &claim.0).await?;
-        let active = ctx.get::<String>("active").await?;
-        if active.as_ref().is_some_and(|id| id != &claim.0.run_id) {
+        let active = ctx.get::<Json<Claim>>("active").await?;
+        if active.as_ref().is_some_and(|active| active.0 == claim.0) {
+            return Ok(());
+        }
+        if active.is_some() {
             return Err(
                 TerminalError::new_with_code(409, "workspace already has an active run").into(),
             );
         }
-        if active.is_none() {
-            ctx.clear("stop");
-        }
-        ctx.set("active", claim.0.run_id);
+        self.verify_claim(&ctx, &claim.0).await?;
+        ctx.clear("stop");
+        ctx.set("active", claim);
         Ok(())
     }
 
     #[handler(ingress_private = true)]
     async fn release(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
-        self.verify_claim(&ctx, &claim.0).await?;
-        if ctx.get::<String>("active").await?.as_deref() == Some(&claim.0.run_id) {
+        if claim.0.workspace_uid != ctx.key() {
+            return Err(TerminalError::new_with_code(400, "workspace binding changed").into());
+        }
+        if ctx
+            .get::<Json<Claim>>("active")
+            .await?
+            .is_some_and(|active| active.0 == claim.0)
+        {
             ctx.clear("active");
             ctx.clear("stop");
         }
