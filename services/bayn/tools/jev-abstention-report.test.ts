@@ -85,7 +85,19 @@ const pathFixture = () => {
   }
 }
 
-const auditedPathFixture = (change: 'none' | 'epoch' | 'interval' | 'sequence' = 'none') => {
+const auditedPathFixture = (
+  change:
+    | 'none'
+    | 'epoch'
+    | 'interval'
+    | 'sequence'
+    | 'bootstrap'
+    | 'source'
+    | 'offset'
+    | 'partition'
+    | 'extra-partition'
+    | 'topic' = 'none',
+) => {
   const f = pathFixture()
   const manifest = Result.getOrThrow(
     Schema.decodeUnknownResult(StrategySnapshotManifestSchema)(
@@ -97,13 +109,31 @@ const auditedPathFixture = (change: 'none' | 'epoch' | 'interval' | 'sequence' =
   const bootstrap = {
     ...manifest.streaming.bootstrap,
     epoch: change === 'epoch' ? 'foreign-epoch' : manifest.streaming.bootstrap.epoch,
+    lowerTimestampMs: manifest.streaming.bootstrap.lowerTimestampMs - (change === 'bootstrap' ? 1 : 0),
+    partitions: manifest.streaming.bootstrap.partitions.flatMap((partition, index) =>
+      change === 'partition' && index === 0
+        ? []
+        : [{ ...partition, startOffset: change === 'offset' && index === 0 ? '1' : partition.startOffset }],
+    ),
   }
+  if (change === 'extra-partition')
+    bootstrap.partitions.push({
+      topic: manifest.sourceTopics.quotes,
+      partition: 99,
+      logStartOffset: '0',
+      startOffset: '0',
+      endOffset: '0',
+    })
   const sources = [
     {
-      universeId: manifest.universeId,
+      universeId: change === 'source' ? 'foreign-source' : manifest.universeId,
       universeSymbolHash: manifest.universeSymbolHash,
       symbols: ['AAPL'],
-      topics: { ...manifest.sourceTopics, features: 'torghut.market-features.v1' },
+      topics: {
+        ...manifest.sourceTopics,
+        bars: change === 'topic' ? 'foreign-bars-topic' : manifest.sourceTopics.bars,
+        features: 'torghut.market-features.v1',
+      },
     },
   ] as const
   const build = nativeArrivalEpochFixture.build
@@ -179,7 +209,17 @@ test('audited bytes preserve unknown controller coverage and exact plan observat
   expect(report.netEconomicPnlMicros).toBeNull()
 })
 
-for (const change of ['epoch', 'interval', 'sequence'] as const)
+for (const change of [
+  'epoch',
+  'interval',
+  'sequence',
+  'bootstrap',
+  'source',
+  'offset',
+  'partition',
+  'extra-partition',
+  'topic',
+] as const)
   test(`audited source rejects foreign ${change}`, () => {
     expect(() => reportAuditedJevPlanPath(auditedPathFixture(change))).toThrow(
       change === 'sequence' ? 'does not follow the sealed observation sequence' : 'differs from the sealed observation',
@@ -285,6 +325,16 @@ test('quote order is validated rather than sorted into a favorable outcome', () 
   expect(() => run([f.quote(200, 2, f.target), f.quote(100, 1, f.stop)])).toThrow()
   expect(() => run([f.quote(100, 1, f.target), f.quote(200, 1, f.stop)])).toThrow()
   expect(run([f.quote(100, 1, f.stop), f.quote(200, 2, f.target)]).observedOrder).toBe('STOP_OBSERVED_FIRST')
+})
+
+test('historical entry contracts are refused rather than relabeled', () => {
+  const document = documentFor()
+  expect(() =>
+    reportJevAbstention({
+      ...document,
+      strategyDecision: { ...document.strategyDecision, schemaVersion: 'bayn.jev-entry-target.v5' },
+    }),
+  ).toThrow('source revision matching the original contract')
 })
 
 test('sealed wait diagnostics preserve decisions and distinguish protocol from input versions', () => {

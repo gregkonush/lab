@@ -14,6 +14,7 @@ import { replayInstrument, ReplayInstrumentsSchema } from '../src/intraday-repla
 import type { IntradayQuote } from '../src/market-data/intraday/model'
 import type { ObservedMarketValue } from '../src/market-data/streaming/projection'
 import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
+import { NativeArrivalEpochSchema } from '../src/market-data/streaming/native-arrival'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
 
@@ -66,7 +67,13 @@ const range = (values: readonly number[]) =>
   values.length === 0 ? null : { minimum: Math.min(...values), maximum: Math.max(...values) }
 
 export const reportJevAbstention = (input: unknown) => {
-  const document = Result.getOrThrow(Schema.decodeUnknownResult(Document)(input))
+  const document = Result.getOrThrowWith(
+    Schema.decodeUnknownResult(Document)(input),
+    () =>
+      new Error(
+        'Unsupported or invalid sealed Jev decision. Use a source revision matching the original contract; never rewrite evidence versions.',
+      ),
+  )
   const target = document.strategyDecision
   if (document.bindings.cycleId !== target.evidence.observation.cycleId)
     throw new Error('Decision bindings identify a different cycle')
@@ -316,10 +323,8 @@ export const reportAuditedJevPlanPath = (input: {
   const sourceEvidenceSha256 = sha256(input.sourceBundle)
   if (sourceEvidenceSha256 !== assumptions.sourceEvidenceSha256)
     throw new Error('Native source bundle bytes differ from declared hash')
-  const audited = Result.getOrThrowWith(
-    auditNativeArrivalCoverage(JSON.parse(Buffer.from(input.sourceBundle).toString('utf8'))),
-    (error) => error,
-  )
+  const sourceBundle: unknown = JSON.parse(Buffer.from(input.sourceBundle).toString('utf8'))
+  const audited = Result.getOrThrowWith(auditNativeArrivalCoverage(sourceBundle), (error) => error)
   const path = reportJevPlanPath({ ...input, quotes: audited.quotes, sourceEvidenceSha256 })
   const { strategyDecision: target } = Result.getOrThrow(Schema.decodeUnknownResult(Document)(input.decisionDocument))
   const manifest = Result.getOrThrow(
@@ -335,6 +340,31 @@ export const reportAuditedJevPlanPath = (input: {
     !audited.report.symbols.some((value) => value.symbol === assumptions.symbol)
   )
     throw new Error('Native source epoch, interval or symbol differs from the sealed observation and declared window')
+  const {
+    epoch: { epoch },
+  } = Result.getOrThrow(
+    Schema.decodeUnknownResult(Schema.Struct({ epoch: Schema.Struct({ epoch: NativeArrivalEpochSchema }) }))(
+      sourceBundle,
+    ),
+  )
+  const source = epoch.sources.find((value) => value.symbols.includes(assumptions.symbol))
+  if (source === undefined) throw new Error('Native source inventory omits the declared symbol')
+  // Match constructStreamingSnapshot's source-specific bootstrap projection.
+  const topics = new Set(Object.values(source.topics))
+  const bootstrap = {
+    ...epoch.bootstrap,
+    partitions: epoch.bootstrap.partitions.filter((partition) => topics.has(partition.topic)),
+  }
+  const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
+  if (
+    hash(bootstrap) !== hash(manifest.streaming.bootstrap) ||
+    source.universeId !== manifest.universeId ||
+    source.universeSymbolHash !== manifest.universeSymbolHash ||
+    source.topics.bars !== manifest.sourceTopics.bars ||
+    source.topics.quotes !== manifest.sourceTopics.quotes ||
+    source.topics.trades !== manifest.sourceTopics.trades
+  )
+    throw new Error('Native source bootstrap or market identity differs from the sealed observation')
   for (const quote of audited.quotes) {
     if (quote.availableAtMs >= startMs && quote.availableAtMs <= endMs && quote.sequence <= manifest.streaming.sequence)
       throw new Error('Native future quote does not follow the sealed observation sequence')
