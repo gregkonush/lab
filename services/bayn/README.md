@@ -123,6 +123,10 @@ unfinished bound cycles or unresolved mutations before installing the new write 
 same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
 reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
 Recovery derives duration from the held instruments and processes one market per pass. There is no MARKET submission path; GTC is restricted to strategy-bound crypto protective stops.
+SELL STOP_LIMIT protection uses the same minimum-proceeds floor as SELL LIMIT orders, including fractional inventory
+after crypto fees. Conservative order-risk ceilings remain separate from that floor. When a native protection check
+observes a flat account, the controller still settles any committed close intents before requesting cycle completion.
+Flat inventory cannot bypass durable terminal-intent and accounting completion evidence.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
