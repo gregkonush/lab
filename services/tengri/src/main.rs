@@ -180,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
         client.clone(),
         namespace.clone(),
         tickets.clone(),
-        activity,
+        activity.clone(),
         preview_origin,
         service.guest_pool(),
         guest_authority.clone(),
@@ -202,6 +202,8 @@ async fn main() -> anyhow::Result<()> {
             .parse()?,
         database.clone(),
     )?;
+    let agent_work =
+        activity::AgentWorkMonitor::new(service.guest_pool(), guest_authority, activity);
     let mut controller_task = tokio::spawn(async move {
         election
             .run(controller::ControllerContext {
@@ -214,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
                 identity: workload_identity,
                 authorization,
                 leadership: None,
+                agent_work,
             })
             .await;
         Ok::<(), anyhow::Error>(())
