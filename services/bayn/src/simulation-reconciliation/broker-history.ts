@@ -319,8 +319,11 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
           .sort((left, right) => left.activityId.localeCompare(right.activityId)),
         orders: history.orders.rows
           .map(({ value }) => {
-            const { observedAt: _observedAt, ...material } = value
-            return material
+            const { observedAt: _observedAt, legs, ...material } = value
+            return {
+              ...material,
+              ...(legs === undefined ? {} : { legs: legs.map(({ observedAt: _legObservedAt, ...leg }) => leg) }),
+            }
           })
           .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
         fills: history.fills
