@@ -411,7 +411,15 @@ are accepted, and zero disables automatic sleep. Manual sleep always releases re
 starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
 Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
-unavailable, restarting or older guests without work metadata defer automatic sleep. Manual sleep remains explicit.
+unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
+activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
+is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
+each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
+reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
+admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
+perform admission even when no guest control RPC is sent. Metadata work probes and background editor/browser renewals
+do not perform admission. Manual sleep remains explicit.
 Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,

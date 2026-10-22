@@ -799,7 +799,19 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
           result = existing
           break
         }
-        const thread = await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada') || '')
+        // Without seeded history there is no recoverable run. Avoid evaluating a
+        // document that may be reloading while this request is still in flight.
+        if (!options.resumeThreadRawJson && !options.resumeThreadRawJsonById) {
+          result = null
+          break
+        }
+        // waitForFunction survives document replacement; a primitive result stays readable after reload.
+        const selectedThread = await page.waitForFunction(
+          () => localStorage.getItem('tengri-thread:microvm-ada') || true,
+        )
+        const selected = await selectedThread.jsonValue()
+        await selectedThread.dispose()
+        const thread = typeof selected === 'string' ? selected : ''
         const raw = options.resumeThreadRawJsonById?.[thread] || options.resumeThreadRawJson
         const active =
           thread && !completedThreads.has(thread) && raw
