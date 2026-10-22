@@ -1,5 +1,39 @@
 # Sealed Jev abstention diagnostics
 
+## Optional historical fee research
+
+The library function `reportJevAbstention(document, historicalMatchedFees)` optionally
+adds historical fee provenance and hypothetical crypto fee sensitivity. The CLI and
+default report are unchanged. This argument is not a policy input and never changes
+live fees, admission, risk limits, model choices, or profitability qualification.
+
+The strict input is `{ source, expectedSourceHash }`, where the hash is the canonical
+SHA-256 of `source`. Source schema `bayn.historical-matched-fees.v1` requires Alpaca
+sandbox scope, the exact sealed account, historical effective/observed timestamps,
+`OBSERVED_PROVIDER_DEBITS_NOT_INFERRED_RATES` rounding, and nonempty `matches`.
+Each match carries a distinct source-fill and provider-activity hash, symbol/side,
+fill quantity atoms and notional USD micros, provider account/environment/symbol/side,
+and equal provider/matched debit objects. Buy debits are `COIN` quantity atoms;
+sell debits are `CASH` USD micros. Unknown fields (including asserted fee tiers),
+identity mismatches, duplicate source events, inverted/future timestamps, and
+unequal matches fail closed. Keep all evidence private; use synthetic test inputs.
+
+These are caller-supplied export assertions, not authenticated provider receipts.
+Hashes establish integrity only, not provider authenticity. Output always says
+`historicalOnly: true`, `currentTier: UNKNOWN`, and independently verified provider
+authenticity is false. Debit ratios are truncated to 0.001bps for description, not
+inferred tier assignments; atom/cent rounding prevents treating ratios as exact tiers.
+Historical sandbox simulation is not evidence of current live exchange fees.
+
+Fixed 25/22/20/18bps-per-side scenarios use native received-coin and cent-rounded
+sell-fee functions with the same acquisition, prices, and protocol allowances.
+The 25bps scenario must reproduce sealed received-quantity atoms and the sealed
+break-even bid, with a safe integer-micro roundtrip of its numeric USD field. Lower scenarios
+are hypothetical, not substitutions derived from a receipt or a recommendation to
+lower the configured ceiling. Incomplete input coverage, unknown fills/capacity and
+operating costs remain unqualified; lower break-even prices do not prove profitable
+execution. Existing plan-path and coverage reports are not recalculated or upgraded.
+
 From `services/bayn`, run:
 
 ```sh
