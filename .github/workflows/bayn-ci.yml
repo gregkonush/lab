@@ -164,7 +164,7 @@ jobs:
           env -u BAYN_ALPACA_ACCOUNT_ID
           -u BAYN_ALPACA_KEY_ID
           -u BAYN_ALPACA_SECRET_KEY
-          bun test --parallel=2 --shard=${{ matrix.shard }}/4
+          bun test --parallel=2 --shard=${{ matrix.shard }}/4 --timeout=15000
           --timings=tools/ci-unit-timings.json --update-timings
           --reporter=junit --reporter-outfile=unit-results.xml
       - name: Retain test durations and results
