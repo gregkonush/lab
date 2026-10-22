@@ -29,6 +29,12 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Live market-data reference verification retains a bounded fingerprint of each fully verified captured snapshot.
+An exact match across the manifest, bars, quotes, trades and latest quotes reuses that capture's source proof without
+reconstructing it again after entry pricing. Changed data still requires full replay verification; unobserved cuts
+also require an exact committed database reference. Retained and returned references have separate manifest copies.
+Quote age, inference expiry, current authority, risk evaluation and durable decision guards remain independent checks.
+
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
