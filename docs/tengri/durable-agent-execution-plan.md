@@ -61,8 +61,8 @@ make a recovery fixture pass.
   changed input and a cross-owner query, excluded another workspace run, and accepted Stop after replacement.
   Its guest is sleeping. This proves orchestration recovery, not recovery of an executing shell command.
 - The controller test suite passed 202 tests with 45 environment-dependent tests ignored; the CRD suite passed
-  three tests and the cross-language authorization suite passed 11. BFF transport, input schema, and operation
-  identity tests passed 76 tests. TypeScript checking and Oxlint passed. The complete desktop browser suite passed 167 tests with two environment-specific skips.
+  three tests and the cross-language authorization suite passed 11. All 418 landing tests passed, including 76 BFF transport, input schema, and operation
+  identity tests. TypeScript checking and Oxlint passed. The complete desktop browser suite passed 167 tests with two environment-specific skips.
 - Kustomize rendering confirms the controller and Restate worker use the same immutable Tengri digest and the
   worker references the generated paired Nanoagent release ConfigMap.
 - Nix's daemon is unavailable locally. Checks use the pinned Go 1.25.5, Rust 1.90.0, and Bun 1.4.2 directly.
@@ -100,3 +100,12 @@ writer is fenced and its unchanged 32 GiB home is enrolled with the reviewed API
 UID, home PVC UID, filesystem UUID, representative file hashes, credentials, and native conversations. Record the paired
 image receipts, Kargo branches, and Argo revisions here as delivery progresses. No new identity or device permissions
 are part of this migration.
+
+## Review delivery
+
+[PR #15241](https://github.com/proompteng/lab/pull/15241) carries the hard migration. Initial CI exposed missing
+authorization inventory entries and the changed kube-router policy fingerprint. The complete inventories and policy
+set now pass 25 Ofz inventory tests and 54 kube-router tests locally. Linux browser setup hit a vendor CDN certificate
+hostname failure before testing; the installer uses the exact Playwright-planned Chrome and headless-shell versions
+from the official Chrome for Testing storage endpoint with normal HTTPS verification. Required CI and live acceptance
+remain open.

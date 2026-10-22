@@ -329,6 +329,31 @@
     "action": "ACTION_CODEX_CONTROL"
   },
   {
+    "surface": "codex",
+    "operation": "thread/read",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/operation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/pending",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/reconcileOperation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/resolveApproval",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
     "surface": "bff",
     "operation": "create-agent",
     "action": "ACTION_WORKSPACE_CREATE"
@@ -436,6 +461,16 @@
   {
     "surface": "bff",
     "operation": "resume-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "active-codex-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-run",
     "action": "ACTION_CODEX_CONTROL"
   },
   {

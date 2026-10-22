@@ -153,7 +153,7 @@ jobs:
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-          bunx playwright install --with-deps chromium
+          node .github/scripts/install-tengri-chromium.mjs
           echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
       - name: Verify generated authorization client
         run: |
