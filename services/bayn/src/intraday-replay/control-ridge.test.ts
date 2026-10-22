@@ -252,7 +252,7 @@ test('both six-bar controls record first-minute cash while their mathematical hi
     observedAtMs,
     candidates: equityMarketProfile.candidateSymbols,
   })
-  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const result = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, observedAtMs), query, data.bound, policy),
     )
@@ -340,7 +340,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'late-bar', 'stale-q
             }),
       }),
     )
-    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const select = () =>
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy)
       const decision = Result.getOrThrow(select())
@@ -386,7 +386,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
             }),
       }),
     )
-    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const decision = Result.getOrThrow(
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
       )
@@ -401,7 +401,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
 
 test('evidenced exclusions retain an available cash decision with empty admissible candidates', async () => {
   const data = await Effect.runPromise(fixture({ exclude: true }))
-  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const decision = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
     )
@@ -421,7 +421,7 @@ test('candidate gaps can produce evidenced cash only while the benchmark remains
       transformInputs: (inputs) => inputs.filter((input) => input.symbol === 'SPY' || input.channel !== 'quotes'),
     }),
   )
-  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
     const decision = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, policy))
     expect(decision.status).toBe('AVAILABLE')
@@ -454,7 +454,7 @@ test.each(['crossed-quote', 'premature-bar', 'nonfinal-bar'] as const)(
           }),
       }),
     )
-    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean])
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)
       expect(
         Result.isFailure(
           selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
@@ -726,7 +726,7 @@ const simulate = (
     return { result, selectedAt, data }
   })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s uses one real position and persistent partial exits with finite quote liquidity',
   async (policy) => {
     const { result } = await Effect.runPromise(simulate({ policy }))
@@ -763,7 +763,7 @@ test.each([
   if (scenario === 'canceled') expect(result.orders).toHaveLength(1)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s keeps a candidate-local gap out of allocations and records it without invalidating the session',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
@@ -800,7 +800,7 @@ test('missing input leaves the same minute window available for a later causal p
   expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(2400)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s reports evidenced exclusions in decisions and opportunity counters',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, exclude: true }))
@@ -821,7 +821,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   },
 )
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s requires the original complete extraction pins after row projection',
   async (policy) => {
     const data = await Effect.runPromise(fixture())
