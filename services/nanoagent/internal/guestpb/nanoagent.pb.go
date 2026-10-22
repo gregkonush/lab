@@ -1954,66 +1954,6 @@ func (x *CodexLoginState) GetStartedAt() string {
 	return ""
 }
 
-type CodexApproval struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	ApprovalId    string                 `protobuf:"bytes,1,opt,name=approval_id,json=approvalId,proto3" json:"approval_id,omitempty"`
-	Decision      string                 `protobuf:"bytes,2,opt,name=decision,proto3" json:"decision,omitempty"`
-	ResponseJson  []byte                 `protobuf:"bytes,3,opt,name=response_json,json=responseJson,proto3" json:"response_json,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *CodexApproval) Reset() {
-	*x = CodexApproval{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[31]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *CodexApproval) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*CodexApproval) ProtoMessage() {}
-
-func (x *CodexApproval) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[31]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use CodexApproval.ProtoReflect.Descriptor instead.
-func (*CodexApproval) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{31}
-}
-
-func (x *CodexApproval) GetApprovalId() string {
-	if x != nil {
-		return x.ApprovalId
-	}
-	return ""
-}
-
-func (x *CodexApproval) GetDecision() string {
-	if x != nil {
-		return x.Decision
-	}
-	return ""
-}
-
-func (x *CodexApproval) GetResponseJson() []byte {
-	if x != nil {
-		return x.ResponseJson
-	}
-	return nil
-}
-
 type CodexWatch struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	After         uint64                 `protobuf:"varint,1,opt,name=after,proto3" json:"after,omitempty"`
@@ -2023,7 +1963,7 @@ type CodexWatch struct {
 
 func (x *CodexWatch) Reset() {
 	*x = CodexWatch{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[32]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[31]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2035,7 +1975,7 @@ func (x *CodexWatch) String() string {
 func (*CodexWatch) ProtoMessage() {}
 
 func (x *CodexWatch) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[32]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[31]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2048,7 +1988,7 @@ func (x *CodexWatch) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodexWatch.ProtoReflect.Descriptor instead.
 func (*CodexWatch) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{32}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{31}
 }
 
 func (x *CodexWatch) GetAfter() uint64 {
@@ -2070,7 +2010,7 @@ type CodexEvent struct {
 
 func (x *CodexEvent) Reset() {
 	*x = CodexEvent{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[33]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[32]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2082,7 +2022,7 @@ func (x *CodexEvent) String() string {
 func (*CodexEvent) ProtoMessage() {}
 
 func (x *CodexEvent) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[33]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[32]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2095,7 +2035,7 @@ func (x *CodexEvent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use CodexEvent.ProtoReflect.Descriptor instead.
 func (*CodexEvent) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{33}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{32}
 }
 
 func (x *CodexEvent) GetSequence() uint64 {
@@ -2129,16 +2069,17 @@ func (x *CodexEvent) GetRawJson() []byte {
 // Operation details preserve revision conflicts and bounded-resource failures
 // without leaking filesystem or credential details.
 type OperationFailure struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	CurrentRevision  string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
-	ResourceTooLarge bool                   `protobuf:"varint,3,opt,name=resource_too_large,json=resourceTooLarge,proto3" json:"resource_too_large,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	CurrentRevision        string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
+	ResourceTooLarge       bool                   `protobuf:"varint,3,opt,name=resource_too_large,json=resourceTooLarge,proto3" json:"resource_too_large,omitempty"`
+	CodexOperationRejected bool                   `protobuf:"varint,4,opt,name=codex_operation_rejected,json=codexOperationRejected,proto3" json:"codex_operation_rejected,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *OperationFailure) Reset() {
 	*x = OperationFailure{}
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[34]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[33]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2150,7 +2091,7 @@ func (x *OperationFailure) String() string {
 func (*OperationFailure) ProtoMessage() {}
 
 func (x *OperationFailure) ProtoReflect() protoreflect.Message {
-	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[34]
+	mi := &file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes[33]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2163,7 +2104,7 @@ func (x *OperationFailure) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use OperationFailure.ProtoReflect.Descriptor instead.
 func (*OperationFailure) Descriptor() ([]byte, []int) {
-	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{34}
+	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP(), []int{33}
 }
 
 func (x *OperationFailure) GetCurrentRevision() string {
@@ -2176,6 +2117,13 @@ func (x *OperationFailure) GetCurrentRevision() string {
 func (x *OperationFailure) GetResourceTooLarge() bool {
 	if x != nil {
 		return x.ResourceTooLarge
+	}
+	return false
+}
+
+func (x *OperationFailure) GetCodexOperationRejected() bool {
+	if x != nil {
+		return x.CodexOperationRejected
 	}
 	return false
 }
@@ -2320,12 +2268,7 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\vresult_json\x18\x02 \x01(\fR\n" +
 	"resultJson\x12\x1d\n" +
 	"\n" +
-	"started_at\x18\x03 \x01(\tR\tstartedAt\"q\n" +
-	"\rCodexApproval\x12\x1f\n" +
-	"\vapproval_id\x18\x01 \x01(\tR\n" +
-	"approvalId\x12\x1a\n" +
-	"\bdecision\x18\x02 \x01(\tR\bdecision\x12#\n" +
-	"\rresponse_json\x18\x03 \x01(\fR\fresponseJson\"\"\n" +
+	"started_at\x18\x03 \x01(\tR\tstartedAt\"\"\n" +
 	"\n" +
 	"CodexWatch\x12\x14\n" +
 	"\x05after\x18\x01 \x01(\x04R\x05after\"|\n" +
@@ -2335,10 +2278,11 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
 	"\vapproval_id\x18\x03 \x01(\tR\n" +
 	"approvalId\x12\x19\n" +
-	"\braw_json\x18\x04 \x01(\fR\arawJson\"~\n" +
+	"\braw_json\x18\x04 \x01(\fR\arawJson\"\xb8\x01\n" +
 	"\x10OperationFailure\x12)\n" +
 	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision\x12,\n" +
-	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLargeJ\x04\b\x01\x10\x02R\vhttp_status2\xb7\x0e\n" +
+	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLarge\x128\n" +
+	"\x18codex_operation_rejected\x18\x04 \x01(\bR\x16codexOperationRejectedJ\x04\b\x01\x10\x02R\vhttp_status2\xcf\r\n" +
 	"\x10NanoagentService\x12U\n" +
 	"\aGetInfo\x12\".proompteng.runtime.guest.v1.Empty\x1a&.proompteng.runtime.guest.v1.GuestInfo\x12U\n" +
 	"\n" +
@@ -2361,7 +2305,6 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\tCodexCall\x12).proompteng.runtime.guest.v1.CodexRequest\x1a(.proompteng.runtime.guest.v1.CodexResult\x12^\n" +
 	"\n" +
 	"CodexLogin\x12\".proompteng.runtime.guest.v1.Empty\x1a,.proompteng.runtime.guest.v1.CodexLoginState\x12f\n" +
-	"\x14ResolveCodexApproval\x12*.proompteng.runtime.guest.v1.CodexApproval\x1a\".proompteng.runtime.guest.v1.Empty\x12f\n" +
 	"\x10WatchCodexEvents\x12'.proompteng.runtime.guest.v1.CodexWatch\x1a'.proompteng.runtime.guest.v1.CodexEvent0\x01B?Z=github.com/proompteng/lab/services/nanoagent/internal/guestpbb\x06proto3"
 
 var (
@@ -2376,7 +2319,7 @@ func file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescGZIP() []byte {
 	return file_proompteng_runtime_guest_v1_nanoagent_proto_rawDescData
 }
 
-var file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_proompteng_runtime_guest_v1_nanoagent_proto_msgTypes = make([]protoimpl.MessageInfo, 34)
 var file_proompteng_runtime_guest_v1_nanoagent_proto_goTypes = []any{
 	(*Empty)(nil),            // 0: proompteng.runtime.guest.v1.Empty
 	(*GuestInfo)(nil),        // 1: proompteng.runtime.guest.v1.GuestInfo
@@ -2409,10 +2352,9 @@ var file_proompteng_runtime_guest_v1_nanoagent_proto_goTypes = []any{
 	(*CodexRequest)(nil),     // 28: proompteng.runtime.guest.v1.CodexRequest
 	(*CodexResult)(nil),      // 29: proompteng.runtime.guest.v1.CodexResult
 	(*CodexLoginState)(nil),  // 30: proompteng.runtime.guest.v1.CodexLoginState
-	(*CodexApproval)(nil),    // 31: proompteng.runtime.guest.v1.CodexApproval
-	(*CodexWatch)(nil),       // 32: proompteng.runtime.guest.v1.CodexWatch
-	(*CodexEvent)(nil),       // 33: proompteng.runtime.guest.v1.CodexEvent
-	(*OperationFailure)(nil), // 34: proompteng.runtime.guest.v1.OperationFailure
+	(*CodexWatch)(nil),       // 31: proompteng.runtime.guest.v1.CodexWatch
+	(*CodexEvent)(nil),       // 32: proompteng.runtime.guest.v1.CodexEvent
+	(*OperationFailure)(nil), // 33: proompteng.runtime.guest.v1.OperationFailure
 }
 var file_proompteng_runtime_guest_v1_nanoagent_proto_depIdxs = []int32{
 	5,  // 0: proompteng.runtime.guest.v1.FileList.entries:type_name -> proompteng.runtime.guest.v1.FileEntry
@@ -2445,29 +2387,27 @@ var file_proompteng_runtime_guest_v1_nanoagent_proto_depIdxs = []int32{
 	23, // 27: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:input_type -> proompteng.runtime.guest.v1.TerminalInput
 	28, // 28: proompteng.runtime.guest.v1.NanoagentService.CodexCall:input_type -> proompteng.runtime.guest.v1.CodexRequest
 	0,  // 29: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:input_type -> proompteng.runtime.guest.v1.Empty
-	31, // 30: proompteng.runtime.guest.v1.NanoagentService.ResolveCodexApproval:input_type -> proompteng.runtime.guest.v1.CodexApproval
-	32, // 31: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:input_type -> proompteng.runtime.guest.v1.CodexWatch
-	1,  // 32: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
-	2,  // 33: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
-	3,  // 34: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:output_type -> proompteng.runtime.guest.v1.Browser
-	6,  // 35: proompteng.runtime.guest.v1.NanoagentService.ListFiles:output_type -> proompteng.runtime.guest.v1.FileList
-	7,  // 36: proompteng.runtime.guest.v1.NanoagentService.ReadFile:output_type -> proompteng.runtime.guest.v1.FileContent
-	9,  // 37: proompteng.runtime.guest.v1.NanoagentService.WriteFile:output_type -> proompteng.runtime.guest.v1.FileWriteResult
-	5,  // 38: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:output_type -> proompteng.runtime.guest.v1.FileEntry
-	5,  // 39: proompteng.runtime.guest.v1.NanoagentService.MoveFile:output_type -> proompteng.runtime.guest.v1.FileEntry
-	0,  // 40: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
-	13, // 41: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:output_type -> proompteng.runtime.guest.v1.FileSearchResult
-	15, // 42: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:output_type -> proompteng.runtime.guest.v1.FileEvent
-	18, // 43: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:output_type -> proompteng.runtime.guest.v1.TerminalCreated
-	19, // 44: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:output_type -> proompteng.runtime.guest.v1.TerminalList
-	0,  // 45: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
-	27, // 46: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:output_type -> proompteng.runtime.guest.v1.TerminalOutput
-	29, // 47: proompteng.runtime.guest.v1.NanoagentService.CodexCall:output_type -> proompteng.runtime.guest.v1.CodexResult
-	30, // 48: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:output_type -> proompteng.runtime.guest.v1.CodexLoginState
-	0,  // 49: proompteng.runtime.guest.v1.NanoagentService.ResolveCodexApproval:output_type -> proompteng.runtime.guest.v1.Empty
-	33, // 50: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:output_type -> proompteng.runtime.guest.v1.CodexEvent
-	32, // [32:51] is the sub-list for method output_type
-	13, // [13:32] is the sub-list for method input_type
+	31, // 30: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:input_type -> proompteng.runtime.guest.v1.CodexWatch
+	1,  // 31: proompteng.runtime.guest.v1.NanoagentService.GetInfo:output_type -> proompteng.runtime.guest.v1.GuestInfo
+	2,  // 32: proompteng.runtime.guest.v1.NanoagentService.OpenEditor:output_type -> proompteng.runtime.guest.v1.Editor
+	3,  // 33: proompteng.runtime.guest.v1.NanoagentService.OpenBrowser:output_type -> proompteng.runtime.guest.v1.Browser
+	6,  // 34: proompteng.runtime.guest.v1.NanoagentService.ListFiles:output_type -> proompteng.runtime.guest.v1.FileList
+	7,  // 35: proompteng.runtime.guest.v1.NanoagentService.ReadFile:output_type -> proompteng.runtime.guest.v1.FileContent
+	9,  // 36: proompteng.runtime.guest.v1.NanoagentService.WriteFile:output_type -> proompteng.runtime.guest.v1.FileWriteResult
+	5,  // 37: proompteng.runtime.guest.v1.NanoagentService.CreateDirectory:output_type -> proompteng.runtime.guest.v1.FileEntry
+	5,  // 38: proompteng.runtime.guest.v1.NanoagentService.MoveFile:output_type -> proompteng.runtime.guest.v1.FileEntry
+	0,  // 39: proompteng.runtime.guest.v1.NanoagentService.DeleteFile:output_type -> proompteng.runtime.guest.v1.Empty
+	13, // 40: proompteng.runtime.guest.v1.NanoagentService.SearchFiles:output_type -> proompteng.runtime.guest.v1.FileSearchResult
+	15, // 41: proompteng.runtime.guest.v1.NanoagentService.WatchFiles:output_type -> proompteng.runtime.guest.v1.FileEvent
+	18, // 42: proompteng.runtime.guest.v1.NanoagentService.CreateTerminal:output_type -> proompteng.runtime.guest.v1.TerminalCreated
+	19, // 43: proompteng.runtime.guest.v1.NanoagentService.ListTerminals:output_type -> proompteng.runtime.guest.v1.TerminalList
+	0,  // 44: proompteng.runtime.guest.v1.NanoagentService.TerminateTerminal:output_type -> proompteng.runtime.guest.v1.Empty
+	27, // 45: proompteng.runtime.guest.v1.NanoagentService.AttachTerminal:output_type -> proompteng.runtime.guest.v1.TerminalOutput
+	29, // 46: proompteng.runtime.guest.v1.NanoagentService.CodexCall:output_type -> proompteng.runtime.guest.v1.CodexResult
+	30, // 47: proompteng.runtime.guest.v1.NanoagentService.CodexLogin:output_type -> proompteng.runtime.guest.v1.CodexLoginState
+	32, // 48: proompteng.runtime.guest.v1.NanoagentService.WatchCodexEvents:output_type -> proompteng.runtime.guest.v1.CodexEvent
+	31, // [31:49] is the sub-list for method output_type
+	13, // [13:31] is the sub-list for method input_type
 	13, // [13:13] is the sub-list for extension type_name
 	13, // [13:13] is the sub-list for extension extendee
 	0,  // [0:13] is the sub-list for field type_name
@@ -2501,7 +2441,7 @@ func file_proompteng_runtime_guest_v1_nanoagent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc), len(file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   35,
+			NumMessages:   34,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

@@ -34,6 +34,8 @@ const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
+    #[error("Codex rejected the operation before dispatch")]
+    CodexOperationRejected,
     #[error("Kubernetes API request failed: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("SPIFFE guest transport failed: {0}")]
@@ -392,22 +394,6 @@ impl GuestClient {
             result: response.result,
             event_sequence: response.event_sequence,
         })
-    }
-    pub async fn answer_codex_input(
-        &self,
-        approval_id: &str,
-        response_json: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.rpc
-            .answer_codex_input(approval_id, response_json)
-            .await
-    }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.rpc.resolve_codex_approval(approval_id, decision).await
     }
     pub async fn watch_codex_events(
         &self,
