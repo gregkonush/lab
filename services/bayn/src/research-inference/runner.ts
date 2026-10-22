@@ -1,7 +1,14 @@
 import { recordResearchMetrics, researchReplayCounter } from './telemetry'
 import { Clock, Effect, Metric, Semaphore } from 'effect'
 
-import { hashResearch, ResearchOutcome, researchRequest, sealResearchReceipt, type ResearchRun } from './contract'
+import {
+  hashResearch,
+  ResearchError,
+  ResearchOutcome,
+  researchRequest,
+  sealResearchReceipt,
+  type ResearchRun,
+} from './contract'
 import { inferResearch } from './client'
 import { verifyResearchReceipt, type ResearchStore } from './store'
 
@@ -9,6 +16,7 @@ export const makeResearchRunner = (
   store: ResearchStore,
   endpoint: string,
   traceHeaders: () => Readonly<Record<string, string>> = () => ({}),
+  workerSourceRevision: string | null = null,
 ) =>
   Effect.gen(function* () {
     const admission = yield* Semaphore.make(1)
@@ -21,11 +29,16 @@ export const makeResearchRunner = (
         yield* Metric.update(researchReplayCounter, 1)
         return yield* Effect.fromResult(verifyResearchReceipt(input, previous))
       }
+      if (input.schemaVersion !== 'bayn.jev-editor.v1')
+        return yield* new ResearchError({
+          message: 'Retired research registrations are readable but cannot be executed',
+        })
       if (!(yield* store.claim(runId, input))) {
         const now = yield* Clock.currentTimeMillis
         return yield* Effect.fromResult(
           sealResearchReceipt(input, {
             runId,
+            workerSourceRevision,
             requestHash: yield* Effect.fromResult(hashResearch(researchRequest(input))),
             startedAtMs: now,
             completedAtMs: now,
@@ -38,11 +51,11 @@ export const makeResearchRunner = (
             responseText: '',
             responseBase64: '',
             usage: null,
-            factors: [],
+            instructions: null,
           }),
         )
       }
-      const receipt = yield* inferResearch(input, runId, endpoint, traceHeaders())
+      const receipt = yield* inferResearch(input, runId, endpoint, traceHeaders(), workerSourceRevision)
       yield* store.finish(input, receipt)
       yield* recordResearchMetrics(receipt)
       yield* Effect.logInfo('Bayn research attempt completed').pipe(

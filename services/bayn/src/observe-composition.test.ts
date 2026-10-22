@@ -64,6 +64,7 @@ import {
 } from './cycle/construction'
 import { makeStrategyProtocolHash } from './contracts.test-support'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from './cycle/store/model'
+import { attachCycleDecisionStoreEvidence } from './cycle/store/decision-contract'
 import { decideCompletion, validateCompletionDocument } from './cycle/store/decisions'
 import type { ReconciliationWriteResult } from './db/reconciliation'
 import {
@@ -857,8 +858,8 @@ test.each([19_999, 20_000, 29_999])('pricing reserves quote headroom when cached
   )
 })
 
-test.each([20_000, 25_000, 29_999])(
-  'pricing reuses broker-valid facts %sms into the reconciliation cadence',
+test.each([20_000, 25_000, 29_999, 30_000, 35_000])(
+  'pricing and follow-up reads reuse broker-valid facts %sms old within one preparation',
   async (ageMs) => {
     let refreshes = 0
     await Effect.runPromise(
@@ -875,7 +876,6 @@ test.each([20_000, 25_000, 29_999])(
             return reconciliationResultAt(yield* currentUtcInstant)
           }),
           Effect.succeed(initial.riskContext.authority),
-          30_000,
           300_000,
         )
         const priced = yield* cache.readForPricing(10_000)
@@ -883,7 +883,10 @@ test.each([20_000, 25_000, 29_999])(
         expect(priced.freshUntil).toBe(now - ageMs + 300_000)
         expect(yield* Clock.currentTimeMillis).toBe(now)
         expect(refreshes).toBe(0)
-        yield* TestClock.adjust(30_000 - ageMs)
+        yield* TestClock.adjust(30_000)
+        yield* cache.read
+        expect(refreshes).toBe(0)
+        yield* TestClock.setTime(now - ageMs + 300_000)
         yield* cache.read
         expect(refreshes).toBe(1)
       }).pipe(Effect.provide(TestClock.layer())),
@@ -4676,7 +4679,6 @@ describe('OBSERVE runtime composition', () => {
             if (authority === null) throw new Error('fixture authority missing')
             return authority
           }),
-          30_000,
           policy.maxBrokerStateAgeMs,
         )
         const document = yield* buildMutationShadowCycleDecision({
@@ -4746,14 +4748,14 @@ describe('OBSERVE runtime composition', () => {
   }
 
   test('Jev pricing follows committed refresh and uses current risk with immutable model evidence', async () => {
-    const result = await buildEntryWithHeadroom()
+    const result = await buildEntryWithHeadroom({ brokerMaximumAgeMs: 40_000 })
     if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
     const document = result.exit.value
     expect(result.events).toEqual(['signal', 'inference-committed', 'refresh-start', 'refresh-committed', 'pricing'])
     expect(result.refreshes).toBe(1)
     expect(result.snapshotRequests[1]?.observedAt).toBe('2020-05-01T16:45:04.000Z')
-    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v5')
-    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
+    expect(document.strategyDecision?.schemaVersion).toBe('bayn.jev-entry-target.v6')
+    if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('expected Jev entry')
     expect(
       Result.getOrThrow(canonicalHashV1Result(document.strategyDecision.evidence.observation.portfolio.brokerState)),
     ).toBe(Result.getOrThrow(canonicalHashV1Result(result.initial.brokerState)))
@@ -4835,24 +4837,48 @@ describe('OBSERVE runtime composition', () => {
     },
   )
 
-  test('Jev binds timely inference without an unnecessary slow reconciliation refresh', async () => {
+  test.each([22_000, 27_000, 35_000])(
+    'Jev binds timely inference with broker-valid facts %ims old without a slow reconciliation refresh',
+    async (initialAgeMs) => {
+      const result = await buildEntryWithHeadroom({
+        initialAgeMs,
+        inferenceMs: 3_000,
+        refreshMs: 9_642,
+        brokerMaximumAgeMs: 300_000,
+      })
+      if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
+      expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+      expect(result.refreshes).toBe(0)
+      const decision = result.exit.value.strategyDecision
+      if (decision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('expected Jev entry')
+      expect(decision.selectedSymbols).toEqual(['NVDA'])
+      expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
+    },
+  )
+
+  test('Jev abstention does not refresh broker-valid facts after the reconciliation cadence expires', async () => {
     const result = await buildEntryWithHeadroom({
-      initialAgeMs: 22_000,
+      entryAction: 'wait',
+      initialAgeMs: 35_000,
       inferenceMs: 3_000,
       refreshMs: 9_642,
       brokerMaximumAgeMs: 300_000,
+      decisionFinalizationHeadroomMs: 60_000,
     })
     if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
-    expect(result.events).toEqual(['signal', 'inference-committed', 'pricing'])
+    expect(result.exit.value.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
+    expect(result.exit.value.orderedIntentIds).toEqual([])
+    expect(result.events).toEqual(['signal', 'inference-committed'])
     expect(result.refreshes).toBe(0)
-    const decision = result.exit.value.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('expected Jev entry')
-    expect(decision.selectedSymbols).toEqual(['NVDA'])
-    expect(result.exit.value.deltaRisk[0]?.facts?.state.account).toEqual(result.initial.brokerState.account)
   })
 
   test.each([
-    { name: 'refresh exhausts the existing model deadline', inferenceMs: 7_000, refreshMs: 3_000 },
+    {
+      name: 'refresh exhausts the existing model deadline',
+      inferenceMs: 7_000,
+      refreshMs: 3_000,
+      brokerMaximumAgeMs: 40_000,
+    },
     {
       name: 'refresh commit consumes the remaining broker-risk headroom',
       refreshedAgeMs: 19_000,
@@ -4893,6 +4919,7 @@ describe('OBSERVE runtime composition', () => {
     'Jev rejects refreshed %s facts before selecting a quote',
     async (change) => {
       const result = await buildEntryWithHeadroom({
+        brokerMaximumAgeMs: 40_000,
         transform: (facts) => {
           if (change === 'holding')
             return reconciliationResultAt(facts.brokerState.account.observedAt, 0, 0, [
@@ -5030,7 +5057,7 @@ describe('OBSERVE runtime composition', () => {
         decisionMarketData: { symbols: equityMarketProfile.universe },
         executionMarketData: { symbols: ['NVDA'], purpose: IntradaySnapshotPurpose.EntryPricing },
       },
-      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v5', selectedSymbols: ['NVDA'] },
+      strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v6', selectedSymbols: ['NVDA'] },
       targetPlan: { status: TargetPlanStatus.Planned },
     })
     expect(fixture.document.orderedIntentIds).toHaveLength(1)
@@ -6021,6 +6048,241 @@ test('reads the execution closure once without weakening completion evidence', a
   })
 })
 
+test('settles the committed close after native protection observes a flat account', async () => {
+  const fixture = await executionLifecycleFixture()
+  const services = makeExactReconciliationServices(Authority.Execution)
+  const at = utcInstantFromEpochMillis(Date.parse(fixture.boundCycle.window.executionCloseAt) - 239_000)
+  const position: Position = {
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: '100000000',
+    accountId,
+    symbol: fixture.intent.symbol,
+    quantityAtoms: '1000000000',
+    averageEntryPriceMicros: '100000000',
+    marketPriceMicros: '100000000',
+    marketValueMicros: '100000000',
+    unrealizedPnlMicros: '0',
+    observedAt: at,
+  }
+  const forbidden = () => Effect.die('settling a filled close cannot submit, cancel or create another plan')
+  const records = new Map(
+    fixture.intents.map((intent, index) => {
+      const decision = fixture.document.deltaRisk[index]?.evaluation.decision
+      if (decision === undefined) throw new Error('missing entry risk decision')
+      return [
+        intent.intentId,
+        {
+          ...storedIntent(
+            { ...intent, riskDecisionId: decision.decisionId },
+            IntentState.Terminal,
+            at,
+            TerminalOutcome.Filled,
+          ),
+          decision,
+        },
+      ] as const
+    }),
+  )
+  let completionEvidence = false
+  let finished = 0
+  const recovered: string[] = []
+  const store: CycleStoreShape = {
+    acquire: forbidden,
+    read: forbidden,
+    readAuthoritySlot: forbidden,
+    readOldestUnfinished: () => Effect.succeed(Option.some(fixture.boundCycle)),
+    readDecisionDocument: () =>
+      Effect.succeed(
+        Option.some(
+          attachCycleDecisionStoreEvidence(fixture.document, {
+            executionCompletionEvidenceMatches: completionEvidence,
+            executionGenerationIsSuperseded: false,
+          }),
+        ),
+      ),
+    activate: forbidden,
+    bindDecision: forbidden,
+    block: forbidden,
+    finish: (_id, state, observedAt) =>
+      Effect.sync(() => {
+        finished += 1
+        return { cycle: { ...fixture.boundCycle, state, updatedAt: observedAt, terminalAt: observedAt }, changed: true }
+      }),
+  }
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      yield* TestClock.setTime(Date.parse(at))
+      const close = (yield* prepareClosingExecutionCycleDecision({
+        input: fixture.input,
+        preparation: fixture.preparation,
+        policy: fixture.policy,
+        cycle: fixture.boundCycle,
+        entryDocument: fixture.document,
+        reconcile: Effect.succeed(reconciliationResultAt(at, 0, 0, [position])),
+        closeExpiresAt: fixture.boundCycle.window.executionCloseAt,
+      })).document
+      const target = close.targetPlan.intentTargets[0]
+      const risk = close.deltaRisk[0]
+      if (target === undefined || risk === undefined) throw new Error('missing close intent')
+      const intent = yield* planExecutionIntent(
+        {
+          schemaVersion: 'bayn.intent-plan.v3',
+          ...target,
+          notionalLimitMicros: risk.notionalLimitMicros,
+          limitPriceMicros: risk.limitPriceMicros,
+          createdAt: close.createdAt,
+        },
+        {
+          authority: {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            kill: KillState.Clear,
+            version: 1,
+            updatedAt: at,
+          },
+        },
+      )
+      records.set(intent.intentId, {
+        ...storedIntent(
+          { ...intent, riskDecisionId: risk.evaluation.decision.decisionId },
+          IntentState.Acknowledged,
+          at,
+        ),
+        decision: risk.evaluation.decision,
+      })
+      const closure = yield* Effect.fromResult(
+        makeExecutionCycleClosure({
+          schemaVersion: 'bayn.paper-cycle-closure.v1',
+          cycleId: fixture.boundCycle.identity.cycleId,
+          entryDecisionHash: fixture.document.contentHash,
+          document: close,
+          createdAt: close.createdAt,
+          expiresAt: close.expiresAt,
+        }),
+      )
+      const accepted: MutationEvent = {
+        schemaVersion: 'bayn.paper-mutation-event.v1',
+        eventId: '6'.repeat(64),
+        mutationId: '7'.repeat(64),
+        requestHash: Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(orderRequestBody(intent)))),
+        intentId: intent.intentId,
+        sequence: 2,
+        operation: MutationOperation.Submit,
+        eventType: MutationEventType.SubmitAccepted,
+        consistencyDelayMs: 1_000,
+        brokerOrderId: 'filled-close',
+        occurredAt: at,
+      }
+      const order: Order = {
+        schemaVersion: 'bayn.order.v3',
+        accountId,
+        brokerOrderId: 'filled-close',
+        clientOrderId: intent.clientOrderId,
+        intentId: intent.intentId,
+        symbol: intent.symbol,
+        side: intent.side,
+        orderType: intent.orderType,
+        timeInForce: intent.timeInForce,
+        quantityAtoms: intent.quantityAtoms,
+        filledQuantityAtoms: intent.quantityAtoms,
+        limitPriceMicros: intent.limitPriceMicros,
+        status: OrderStatus.Filled,
+        observedAt: at,
+      }
+      const program: ExecutionProgram = {
+        ...sandboxExecutionProgram(),
+        recover: (id, operation) =>
+          Effect.sync(() => {
+            expect(operation).toBe(MutationOperation.Submit)
+            recovered.push(id)
+            records.set(id, {
+              ...storedIntent(
+                { ...intent, riskDecisionId: risk.evaluation.decision.decisionId },
+                IntentState.Terminal,
+                at,
+                TerminalOutcome.Filled,
+              ),
+              decision: risk.evaluation.decision,
+            })
+            return { ...accepted, eventId: '9'.repeat(64), sequence: 3, eventType: MutationEventType.RecoveryFound }
+          }),
+      }
+      const facts = reconciliationResultAt(at, 0, 0, [], [order])
+      const advance = runRecoveryFirstCyclePass(
+        {
+          ...fixture.input,
+          executionCycleClosureStore: {
+            read: () => Effect.succeed(Option.some(closure)),
+            readLatestReplan: () => Effect.succeed(Option.none()),
+            bind: forbidden,
+            bindReplan: forbidden,
+            containsIntent: forbidden,
+          },
+        },
+        fixture.policy,
+        {
+          cycleBindingId: fixture.boundCycle.identity.qualificationRunId,
+          accountId,
+          strategyName: 'jev',
+          strategyProtocolHash: fixture.preparation.strategyProtocolHash,
+          executionPolicy: fixture.preparation.executionPolicy,
+          buildDecision: forbidden,
+          buildDecisionEvidence: forbidden,
+        },
+        { read: Effect.succeed(facts), refresh: Effect.succeed(facts) },
+        { _tag: 'Mutation', executionProgram: program },
+      ).pipe(
+        Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: forbidden,
+          commit: forbidden,
+          commitClosing: forbidden,
+          read: (id) => Effect.succeed(Option.fromUndefinedOr(records.get(id))),
+        }),
+        Effect.provideService(MutationStore, {
+          latest: (id, operation) =>
+            Effect.succeed(id === intent.intentId && operation === MutationOperation.Submit ? accepted : undefined),
+          authorizeSubmit: forbidden,
+          beginSubmit: forbidden,
+          submitAccepted: forbidden,
+          submitRejected: forbidden,
+          submitDenied: forbidden,
+          submitUnknown: forbidden,
+          beginCancel: forbidden,
+          cancelAccepted: forbidden,
+          cancelUnknown: forbidden,
+          recoveryFound: forbidden,
+          recoveryNotFound: forbidden,
+          recoveryUnknown: forbidden,
+        }),
+      )
+      yield* TestClock.adjust(2_000)
+      expect(yield* advance).toMatchObject({ _tag: 'PostMutationReconciliation' })
+      expect(recovered).toEqual([intent.intentId])
+      expect(finished).toBe(0)
+      expect(yield* advance).toMatchObject({ action: 'WAITING', waitReason: 'COMPLETION_EVIDENCE_PENDING' })
+      expect(finished).toBe(0)
+      completionEvidence = true
+      expect(yield* advance).toMatchObject({ action: 'COMPLETED', cycle: { state: CycleState.Completed } })
+      expect(finished).toBe(1)
+      expect(recovered).toEqual([intent.intentId])
+    }).pipe(
+      Effect.provideService(CycleStore, store),
+      Effect.provideService(BrokerEventStore, services.executionStore),
+      Effect.provideService(FillAccountingStore, services.executionStore),
+      Effect.provideService(ValuationStore, services.executionStore),
+      Effect.provideService(ReconciliationStore, services.executionStore),
+      Effect.provideService(AuthorityGenerationStore, services.executionStore),
+      Effect.provideService(AuthorityRestrictionStore, services.executionStore),
+      Effect.provideService(WriterFence, services.writerFence),
+      (effect) => provideDecisionServices(effect, calendarRead([])),
+      Effect.provide(TestClock.layer()),
+    ),
+  )
+})
+
 test('persists the pricing quote event and its full freshness deadline for every entry target', async () => {
   const fixture = await executionLifecycleFixture()
   expect(fixture.document.entryLimitSlippageBps).toBe(10)
@@ -6777,7 +7039,7 @@ test.each([
   )
   if (entry.excess > 0n) {
     expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result))
+    if (Result.isFailure(result)) {
       expect(result.failure).toMatchObject({
         failure: 'not-ready',
         readiness: {
@@ -6785,6 +7047,8 @@ test.each([
           message: expect.stringContaining(entry.reason),
         },
       })
+      expect(result.failure).not.toHaveProperty('readiness.accountProtectionReasons')
+    }
     expect(snapshots).toBe(0)
     expect(batches).toBe(0)
     expect(calendarReads).toBe(0)
@@ -6863,7 +7127,7 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
       }
       const result = protectedAccountAdmission(facts, policy, generationHash, evaluatedAt)
       if (excess === 0n) expect(result).toBeUndefined()
-      else
+      else {
         expect(result).toMatchObject({
           outcome: 'ADMISSION_WAITING',
           readiness: {
@@ -6879,6 +7143,8 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
             validUntil: utcInstantFromEpochMillis(Date.parse(evaluatedAt) + policy.maxBrokerStateAgeMs),
           },
         })
+        expect(result).not.toHaveProperty('readiness.accountProtectionReasons')
+      }
     }
   }
   expect(
@@ -7249,7 +7515,7 @@ test.each(['known', 'unknown', 'filled', 'unaccounted'] as const)(
     const fixture = await executionLifecycleFixture()
     const observedAt = utcInstantFromEpochMillis(Date.parse(fixture.document.createdAt) + 1_000)
     const decision = fixture.document.strategyDecision
-    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v5') throw new Error('Entry fixture required')
+    if (decision?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Entry fixture required')
     const levels = decision.exitPolicy.plans[fixture.intent.symbol]?.levels
     if (levels === undefined) throw new Error('Bound strategy prices required')
     const intent = await Effect.runPromise(

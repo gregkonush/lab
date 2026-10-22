@@ -11,7 +11,7 @@ import {
   researchServingIdentity,
   sealResearchReceipt,
 } from '../research-inference/contract'
-import { fullTokenBudgetStreamFixture, researchFixture } from '../research-inference/test-support'
+import { fullTokenBudgetStreamFixture, editorFixture } from '../research-inference/test-support'
 import { sha256 } from '../hash'
 import { submitResearch } from '../research-inference/submission'
 import { approveResearchRun } from '../research-inference/approval'
@@ -32,14 +32,16 @@ integration('real Restate research Workflow', () => {
     )
       throw new Error('Restate research tests require local endpoints')
     let calls = 0
-    const run = { ...researchFixture(), studyHash: crypto.randomUUID().replaceAll('-', '').repeat(2) }
+    const run = { ...editorFixture(), studyHash: crypto.randomUUID().replaceAll('-', '').repeat(2) }
     const id = Result.getOrThrow(hashResearch(run))
     const approvalKey = Redacted.make('7'.repeat(64))
     const approval = Result.getOrThrow(approveResearchRun(run, approvalKey))
-    const stream = fullTokenBudgetStreamFixture()
+    const responseText = '{"entry":"Assess the supplied complete long plan."}'
+    const stream = fullTokenBudgetStreamFixture(run.policy.model, responseText)
     const retained = Result.getOrThrow(
       sealResearchReceipt(run, {
         runId: id,
+        workerSourceRevision: null,
         requestHash: Result.getOrThrow(hashResearch(researchRequest(run))),
         startedAtMs: 0,
         completedAtMs: 1000,
@@ -49,10 +51,10 @@ integration('real Restate research Workflow', () => {
         servingIdentity: researchServingIdentity(run.policy),
         serverRequestId: 'chatcmpl-synthetic',
         responseHash: sha256(stream),
-        responseText: '<alpha_list>alpha001</alpha_list>',
+        responseText,
         responseBase64: Buffer.from(stream).toString('base64'),
         usage: { prompt_tokens: 10, completion_tokens: 4096, total_tokens: 4106 },
-        factors: ['alpha001'],
+        instructions: { entry: 'Assess the supplied complete long plan.' },
       }),
     )
     expect(Buffer.byteLength(JSON.stringify(retained))).toBeGreaterThan(786432)
