@@ -1107,6 +1107,17 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             const replaceDecision = (patch: Record<string, unknown>) =>
               sql`UPDATE autonomous_cycle_shadow_decisions
                 SET document = ${sql.json({ ...originalDecision.document, ...patch })}`
+            yield* replaceDecision({ createdAt: 'not-a-time' })
+            yield* sql`DO $malformed_created_at$
+              BEGIN
+                PERFORM paper_cycle_completion_evidence_matches('cycle', 'document', '2026-09-08T17:04:00Z');
+                RAISE EXCEPTION 'Completion must reject malformed createdAt';
+              EXCEPTION WHEN SQLSTATE '22007' THEN NULL;
+              END
+            $malformed_created_at$`
+            yield* replaceDecision({})
+            expect(yield* completionMatches(), 'restored after malformed createdAt').toBe(true)
+
             for (const patch of [
               { orderedIntentIds: null },
               { orderedIntentIds: 'intent' },
