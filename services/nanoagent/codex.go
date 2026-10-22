@@ -49,6 +49,7 @@ type codexRPCMessage struct {
 type codexPendingResult struct {
 	result        json.RawMessage
 	err           json.RawMessage
+	localErr      error
 	eventSequence uint64
 }
 
@@ -303,9 +304,9 @@ func (supervisor *codexSupervisor) close() {
 	}
 	supervisor.approvals = make(map[string]codexApproval)
 	supervisor.mu.Unlock()
-	shutdownError, _ := json.Marshal(map[string]string{"message": "Codex app-server is shutting down"})
+	shutdownError := errors.New("Codex app-server is shutting down")
 	for _, response := range pending {
-		response <- codexPendingResult{err: shutdownError}
+		response <- codexPendingResult{localErr: shutdownError}
 	}
 	if command != nil && command.Process != nil {
 		killProcessGroup(command)
@@ -335,6 +336,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		var input struct {
 			ID     string `json:"operationId"`
 			Thread string `json:"threadId"`
+			Turn   string `json:"turnId"`
 		}
 		if json.Unmarshal(params, &input) != nil || !codexOperationID.MatchString(input.ID) {
 			return codexCallResult{}, errors.New("invalid operation identity")
@@ -346,7 +348,8 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 		supervisor.mu.Lock()
 		alive := op.Generation != "" && supervisor.generation.id == op.Generation && supervisor.generation.failure == nil
 		supervisor.mu.Unlock()
-		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State})
+		terminal := supervisor.terminalStatus(input.Thread, input.Turn, op.Generation)
+		raw, err := json.Marshal(map[string]any{"generationAlive": alive, "state": op.State, "terminalStatus": terminal})
 		return codexCallResult{result: raw}, err
 	}
 	if method == "tengri/reconcileOperation" {
@@ -374,7 +377,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 			}
 		}
 		if len(op.Error) != 0 {
-			return codexCallResult{}, codexRPCErrorFromRaw(op.Error)
+			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(op.Error))
 		}
 		return codexCallResult{result: op.Result}, nil
 	}
@@ -513,6 +516,9 @@ func (supervisor *codexSupervisor) request(
 		supervisor.removePending(key)
 		return codexCallResult{}, ctx.Err()
 	case result := <-response:
+		if result.localErr != nil {
+			return codexCallResult{}, result.localErr
+		}
 		if len(result.err) > 0 && string(result.err) != "null" {
 			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
 		}
@@ -637,6 +643,11 @@ func (supervisor *codexSupervisor) handleServerMessage(
 ) {
 	if !supervisor.isCurrentGeneration(generation) {
 		return
+	}
+	if message.Method == "turn/completed" {
+		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
+			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
+		}
 	}
 	if message.Method == "serverRequest/resolved" {
 		var params struct {
@@ -1465,9 +1476,8 @@ func (supervisor *codexSupervisor) failProcess(err error) {
 	supervisor.loginOperation = nil
 	supervisor.loginCompleted = nil
 	supervisor.mu.Unlock()
-	encoded, _ := json.Marshal(map[string]string{"message": err.Error()})
 	for _, channel := range pending {
-		channel <- codexPendingResult{err: encoded}
+		channel <- codexPendingResult{localErr: err}
 	}
 }
 

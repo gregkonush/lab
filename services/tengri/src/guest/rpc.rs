@@ -704,6 +704,10 @@ pub(crate) fn rpc_error(error: Status) -> GuestError {
             if detail.type_url == "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure"
                 && let Ok(failure) = proto::OperationFailure::decode(detail.value.as_slice())
             {
+                if failure.codex_operation_rejected && error.code() == tonic::Code::InvalidArgument
+                {
+                    return GuestError::CodexOperationRejected;
+                }
                 if failure.resource_too_large {
                     status = StatusCode::PAYLOAD_TOO_LARGE;
                 }

@@ -201,4 +201,5 @@ message OperationFailure {
   reserved "http_status";
   string current_revision = 2;
   bool resource_too_large = 3;
+  bool codex_operation_rejected = 4;
 }

@@ -268,6 +268,13 @@ func (server *guestRPCServer) CodexCall(ctx context.Context, req *pb.CodexReques
 	}
 	result, err := server.api.codex.call(ctx, req.Method, req.ParamsJson)
 	if err != nil {
+		if errors.Is(err, errCodexOperationRejected) {
+			failure, detailErr := status.New(codes.InvalidArgument, errCodexOperationRejected.Error()).WithDetails(&pb.OperationFailure{CodexOperationRejected: true})
+			if detailErr != nil {
+				return nil, status.Error(codes.Internal, "encode Codex rejection")
+			}
+			return nil, failure.Err()
+		}
 		if errors.Is(err, errCodexOperationConflict) {
 			return nil, status.Error(codes.AlreadyExists, errCodexOperationConflict.Error())
 		}

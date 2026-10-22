@@ -1055,8 +1055,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         operationKey,
         { threadId: currentThread.id, text, images: inputImages },
         currentThread.activeTurnId || '',
+        optionsRef.current,
       )
       sentOperation = { key: operationKey, id: operation.id }
+      if (!operation.turnId && JSON.stringify(operation.options) !== JSON.stringify(optionsRef.current)) {
+        setSelectionWarning('This retry uses the original message model and reasoning settings.')
+      }
       setSubmittedPrompts((current) =>
         current.map((submitted) =>
           submitted.id === submissionId ? { ...submitted, threadId: currentThread.id } : submitted,
@@ -1081,7 +1085,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           threadId: currentThread.id,
           text,
           images: inputImages,
-          ...optionsRef.current,
+          ...operation.options,
         })
         if (accepted.state.phase === 'rejected') {
           completeCodexOperation(operationKey, operation.id)

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -230,5 +232,99 @@ func TestCodexOperationConcurrentRetriesDispatchOnce(t *testing.T) {
 	case request := <-writer.messages:
 		t.Fatalf("concurrent retries dispatched again: %s", request)
 	default:
+	}
+}
+
+func TestCodexProcessExitRetainsDispatchForAcceptanceReconciliation(t *testing.T) {
+	supervisor, writer := readyCodexSupervisor(t)
+	done := make(chan error, 1)
+	go func() {
+		_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(operationParams))
+		done <- err
+	}()
+	readCodexWireRequest(t, writer)
+	supervisor.failProcess(errors.New("fixture process exited after request write"))
+	if err := <-done; !errors.Is(err, errCodexOperationUnknown) || errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("process exit was treated as a native rejection: %v", err)
+	}
+	receipt, err := readCodexOperation(filepath.Join(supervisor.cwd, ".tengri", "codex-operations", "11111111-1111-4111-8111-111111111111.json"))
+	if err != nil || receipt.State != "dispatching" || len(receipt.Error) != 0 {
+		t.Fatalf("process exit closed acceptance recovery: %+v %v", receipt, err)
+	}
+	supervisor.mu.Lock()
+	supervisor.stdin = writer
+	closeSignal(supervisor.generation.ready)
+	supervisor.mu.Unlock()
+	go func() {
+		_, err := supervisor.call(context.Background(), "tengri/reconcileOperation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1"}`))
+		done <- err
+	}()
+	request := readCodexWireRequest(t, writer)
+	if request.Method != "thread/items/list" {
+		t.Fatalf("recovery resent %s", request.Method)
+	}
+	supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Result: json.RawMessage(`{"data":[{"turnId":"accepted-before-exit","item":{"type":"userMessage","clientId":"11111111-1111-4111-8111-111111111111"}}],"nextCursor":null}`)})
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestCodexNativeRejectionIsDistinctFromAnUncertainServerFailure(t *testing.T) {
+	for _, code := range []int{-32600, -32601, -32602, -32603} {
+		t.Run(fmt.Sprint(code), func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			done := make(chan error, 1)
+			go func() {
+				_, err := supervisor.call(context.Background(), "turn/start", json.RawMessage(operationParams))
+				done <- err
+			}()
+			request := readCodexWireRequest(t, writer)
+			raw, _ := json.Marshal(map[string]any{"code": code, "message": "fixture rejection"})
+			supervisor.resolveResponse(codexRPCMessage{ID: request.ID, Error: raw})
+			err := <-done
+			if code == -32603 {
+				if !errors.Is(err, errCodexOperationUnknown) {
+					t.Fatalf("uncertain native failure was closed: %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, errCodexOperationRejected) {
+				t.Fatalf("definite rejection was lost: %v", err)
+			}
+			_, err = supervisor.call(context.Background(), "turn/start", json.RawMessage(operationParams))
+			if !errors.Is(err, errCodexOperationRejected) {
+				t.Fatalf("rejected retry changed outcome: %v", err)
+			}
+			select {
+			case request := <-writer.messages:
+				t.Fatalf("rejected retry resent %s", request)
+			default:
+			}
+		})
+	}
+}
+
+func TestCodexTerminalReceiptSurvivesGenerationReplacement(t *testing.T) {
+	for _, status := range []string{"failed", "interrupted"} {
+		t.Run(status, func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			acceptOperation(t, supervisor, writer)
+			params, _ := json.Marshal(map[string]any{"threadId": "thread-1", "turn": map[string]string{"id": "turn-1", "status": status}})
+			message := codexRPCMessage{Method: "turn/completed", Params: params}
+			raw, _ := json.Marshal(message)
+			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			replacement := newCodexSupervisor("/usr/bin/false", supervisor.cwd)
+			result, err := replacement.call(context.Background(), "tengri/operation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1","turnId":"turn-1"}`))
+			var value struct {
+				Alive    bool   `json:"generationAlive"`
+				Terminal string `json:"terminalStatus"`
+			}
+			if err != nil || json.Unmarshal(result.result, &value) != nil || value.Alive || value.Terminal != status {
+				t.Fatalf("confirmed outcome was lost: %s %v", result.result, err)
+			}
+			if replacement.terminalStatus("thread-1", "turn-1", replacement.generation.id) != "" {
+				t.Fatal("a new generation inherited an old terminal receipt")
+			}
+		})
 	}
 }

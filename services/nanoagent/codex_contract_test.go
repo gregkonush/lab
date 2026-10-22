@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -85,6 +86,11 @@ stream_max_retries = 0
 	if json.Unmarshal(result.result, &thread) != nil || thread.Thread.ID == "" {
 		t.Fatalf("invalid native thread: %s", result.result)
 	}
+	invalid := strings.Replace(operationParams, "thread-1", "00000000-0000-4000-8000-000000000000", 1)
+	invalid = strings.Replace(invalid, "11111111-1111-4111-8111-111111111111", "99999999-9999-4999-8999-999999999999", 1)
+	if _, err := supervisor.call(ctx, "turn/start", json.RawMessage(invalid)); !errors.Is(err, errCodexOperationRejected) {
+		t.Fatalf("native missing-thread rejection was not classified: %v", err)
+	}
 	params := strings.Replace(operationParams, "thread-1", thread.Thread.ID, 1)
 	accepted, err := supervisor.call(ctx, "turn/start", json.RawMessage(params))
 	if err != nil {
@@ -155,6 +161,12 @@ stream_max_retries = 0
 			if observed.ID == turn.Turn.ID && observed.Status == "interrupted" {
 				select {
 				case <-stopped:
+					for supervisor.terminalStatus(thread.Thread.ID, turn.Turn.ID, receipt.Generation) != "interrupted" {
+						if ctx.Err() != nil {
+							t.Fatal("native terminal notification was not durably recorded")
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
 					return
 				case <-ctx.Done():
 					t.Fatal("turn interrupted but its model request was not cancelled")

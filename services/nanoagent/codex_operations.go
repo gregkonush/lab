@@ -15,6 +15,7 @@ import (
 )
 
 var (
+	errCodexOperationRejected = errors.New("Codex rejected the operation before dispatch")
 	errCodexOperationConflict = errors.New("Codex operation ID already has different input")
 	errCodexOperationUnknown  = errors.New("Codex operation outcome needs reconciliation; the request was not resent")
 	codexOperationID          = regexp.MustCompile(`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`)
@@ -55,15 +56,16 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 	digest := sha256.Sum256(append([]byte(method+"\n"), canonical...))
 	op := codexOperation{Version: 1, ID: input.ID, Digest: hex.EncodeToString(digest[:]), Method: method, Thread: input.Thread, State: "dispatching"}
-	supervisor.mu.Lock()
-	op.Generation = supervisor.generation.id
-	supervisor.mu.Unlock()
-
 	supervisor.operationMu.Lock()
 	defer supervisor.operationMu.Unlock()
 	if err := ctx.Err(); err != nil {
 		return codexCallResult{}, err
 	}
+
+	supervisor.mu.Lock()
+	op.Generation = supervisor.generation.id
+	supervisor.mu.Unlock()
+
 	directory := filepath.Join(supervisor.cwd, ".tengri", "codex-operations")
 	if err := os.MkdirAll(directory, 0700); err != nil {
 		return codexCallResult{}, fmt.Errorf("prepare Codex operation journal: %w", err)
@@ -94,7 +96,7 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 			return codexCallResult{result: recovered.Result}, nil
 		}
 		if len(previous.Error) != 0 {
-			return codexCallResult{}, codexRPCErrorFromRaw(previous.Error)
+			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationRejected, codexRPCErrorFromRaw(previous.Error))
 		}
 		return codexCallResult{result: previous.Result}, nil
 	}
@@ -127,10 +129,11 @@ func (supervisor *codexSupervisor) operation(ctx context.Context, method string,
 	}
 	if requestErr != nil {
 		var rpcError *codexRPCError
-		if !errors.As(requestErr, &rpcError) {
+		if !errors.As(requestErr, &rpcError) || (rpcError.code != -32600 && rpcError.code != -32601 && rpcError.code != -32602) {
 			return codexCallResult{}, fmt.Errorf("%w: %v", errCodexOperationUnknown, requestErr)
 		}
 		op.Error = rpcError.raw
+		requestErr = fmt.Errorf("%w: %v", errCodexOperationRejected, requestErr)
 	} else {
 		op.Result = result.result
 	}
@@ -261,7 +264,11 @@ func readCodexOperation(path string) (codexOperation, error) {
 }
 
 func writeCodexOperation(path string, op codexOperation) error {
-	content, err := json.Marshal(op)
+	return writeCodexReceipt(path, op)
+}
+
+func writeCodexReceipt(path string, value any) error {
+	content, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
@@ -286,4 +293,61 @@ func writeCodexOperation(path string, op codexOperation) error {
 		return err
 	}
 	return errors.Join(directory.Sync(), directory.Close())
+}
+
+type codexTerminalReceipt struct {
+	Version    int    `json:"version"`
+	Thread     string `json:"thread"`
+	Turn       string `json:"turn"`
+	Generation string `json:"generation"`
+	Status     string `json:"status"`
+}
+
+func (supervisor *codexSupervisor) terminalPath(thread, turn, generation string) string {
+	digest := sha256.Sum256([]byte(thread + "\n" + turn + "\n" + generation))
+	return filepath.Join(supervisor.cwd, ".tengri", "codex-operations", fmt.Sprintf("turn-%x.json", digest))
+}
+
+func (supervisor *codexSupervisor) recordTerminal(generation *codexProcessGeneration, params json.RawMessage) error {
+	var input struct {
+		Thread string `json:"threadId"`
+		Turn   struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+		} `json:"turn"`
+	}
+	if json.Unmarshal(params, &input) != nil || input.Thread == "" || input.Turn.ID == "" || len(input.Thread) > 256 || len(input.Turn.ID) > 256 ||
+		(input.Turn.Status != "completed" && input.Turn.Status != "failed" && input.Turn.Status != "interrupted") {
+		return errors.New("invalid native terminal outcome")
+	}
+	path := supervisor.terminalPath(input.Thread, input.Turn.ID, generation.id)
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	return writeCodexReceipt(path, codexTerminalReceipt{Version: 1, Thread: input.Thread, Turn: input.Turn.ID, Generation: generation.id, Status: input.Turn.Status})
+}
+
+func (supervisor *codexSupervisor) terminalStatus(thread, turn, generation string) string {
+	if thread == "" || turn == "" || generation == "" {
+		return ""
+	}
+	path := supervisor.terminalPath(thread, turn, generation)
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > 4096 {
+		return ""
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var receipt codexTerminalReceipt
+	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.Thread != thread || receipt.Turn != turn || receipt.Generation != generation {
+		return ""
+	}
+	switch receipt.Status {
+	case "completed", "failed", "interrupted":
+		return receipt.Status
+	default:
+		return ""
+	}
 }

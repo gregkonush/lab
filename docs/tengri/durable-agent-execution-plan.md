@@ -60,8 +60,8 @@ make a recovery fixture pass.
 - A disposable Restate 1.7.9 accepted and recovered the same workflow after an actual worker `SIGKILL`, rejected
   changed input and a cross-owner query, excluded another workspace run, and accepted Stop after replacement.
   Its guest is sleeping. This proves orchestration recovery, not recovery of an executing shell command.
-- The controller test suite passed 202 tests with 45 environment-dependent tests ignored; the CRD suite passed
-  three tests and the cross-language authorization suite passed 11. All 418 landing tests passed, including 76 BFF transport, input schema, and operation
+- The controller test suite passed 203 tests with 45 environment-dependent tests ignored; the CRD suite passed
+  three tests and the cross-language authorization suite passed 11. All 419 landing tests passed, including 77 BFF transport, input schema, and operation
   identity tests. TypeScript checking and Oxlint passed. The complete desktop browser suite passed 167 tests with two environment-specific skips.
 - Kustomize rendering confirms the controller and Restate worker use the same immutable Tengri digest and the
   worker references the generated paired Nanoagent release ConfigMap.
@@ -114,3 +114,10 @@ The maximum namespace overlap is six slots, three controller Pods including surg
 include sidecars: slots consume 25.5 CPU / 54.75 GiB, controllers 4.5 CPU / 2.25 GiB, and workers 12 CPU / 6 GiB.
 The quota is therefore 42 CPU / 63 GiB; requests remain within 27 CPU / 57 GiB. Controller pools reserve at most
 30 SQL connections during surge, and eight workers use eight more, below the existing controller-role limit of 42.
+
+Review recovery regressions now cover locally synthesized process failure, typed native rejection, and durable native
+terminal receipts bound to the accepting generation. A failed or interrupted history entry reconstructed by a new
+process remains uncertain unless that receipt exists. The pinned Codex fixture verifies native missing-thread rejection,
+held-request interruption, and the terminal notification receipt. Ambiguous browser retries keep their original model
+settings and operation UUID, with an explicit notice if the selection changed. The first Linux desktop workflow,
+including real Chromium/CUA/VS Code acceptance, passed at `e831184c33`; the final source must pass the same gate.

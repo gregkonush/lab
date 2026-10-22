@@ -532,7 +532,13 @@ query, and workspace claims have distinct signing domains. A changed payload und
 guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
 admission or transcript does not grant execution authority.
 
-Nanoagent fsyncs its operation intent before dispatch. Committed receipts return the original result across retries
+Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
+transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
+receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
+notifications are fsynced under their accepting generation, thread and turn before publication, so confirmed failure
+and interruption survive process replacement without trusting a reconstructed interrupted history.
+
+Committed receipts return the original result across retries
 and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
 `clientId` to a single turn. Zero or ambiguous matches keep the operation uncertain and block a fresh submission;
 they never resend the model request. Observation uses bounded metadata pages and the accepting Codex process identity.

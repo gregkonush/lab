@@ -533,6 +533,7 @@ impl TengriAgentRun {
                         result=ctx.promise::<Json<Control>>("stop") => {result?;},
                         result=ctx.sleep(Duration::from_secs(30)) => {result?;}
                     }
+                    reconciliation_attempts = 4;
                 }
             }
             ctx.sleep(Duration::from_secs(2)).await?;
@@ -752,6 +753,13 @@ impl TengriAgentRun {
                             delivered: true,
                             result: value,
                         },
+                        Err(crate::guest::GuestError::CodexOperationRejected) => {
+                            return Err(TerminalError::new_with_code(
+                                422,
+                                "Codex rejected the control before dispatch",
+                            )
+                            .into());
+                        }
                         Err(_) => ControlResult {
                             delivered: false,
                             result: serde_json::json!({}),
@@ -901,6 +909,9 @@ impl ControlPlane {
                     turn_id: turn_id.into(),
                 })
                 .unwrap_or_else(|| state.clone()),
+            Err(crate::guest::GuestError::CodexOperationRejected) => State::Rejected {
+                reason: "Codex rejected the operation before dispatch".into(),
+            },
             Err(_) => state.clone(),
         }
     }
@@ -1042,6 +1053,9 @@ impl ControlPlane {
                     reason: "Codex accepted a request without a turn identity".into(),
                 },
             },
+            Err(crate::guest::GuestError::CodexOperationRejected) => State::Rejected {
+                reason: "Codex rejected the operation before dispatch".into(),
+            },
             Err(_) => State::NeedsReconciliation {
                 reason: "Codex dispatch outcome is uncertain; the request was not resent".into(),
             },
@@ -1076,6 +1090,18 @@ impl ControlPlane {
                 };
             }
         };
+        let operation = guest.codex_call("tengri/operation", serde_json::json!({"threadId":input.thread_id,"operationId":input.id,"turnId":turn_id})).await.ok();
+        if let Some(status) = operation
+            .as_ref()
+            .and_then(|value| value.get("terminalStatus"))
+            .and_then(serde_json::Value::as_str)
+            .filter(|status| matches!(*status, "completed" | "failed" | "interrupted"))
+        {
+            return observed_turn(
+                &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":status}]}}),
+                turn_id,
+            );
+        }
         let metadata = match guest
             .codex_call(
                 "thread/read",
@@ -1118,19 +1144,12 @@ impl ControlPlane {
         ) {
             return recorded;
         }
-        if !guest
-            .codex_call(
-                "tengri/operation",
-                serde_json::json!({"threadId":input.thread_id,"operationId":input.id}),
-            )
-            .await
-            .is_ok_and(|value| {
-                value
-                    .get("generationAlive")
-                    .and_then(serde_json::Value::as_bool)
-                    == Some(true)
-            })
-        {
+        if !operation.as_ref().is_some_and(|value| {
+            value
+                .get("generationAlive")
+                .and_then(serde_json::Value::as_bool)
+                == Some(true)
+        }) {
             return State::NeedsReconciliation {reason:"the Codex process that accepted this turn ended; external effects require reconciliation".into()};
         }
         if !matches!(recorded, State::Running { .. }) {

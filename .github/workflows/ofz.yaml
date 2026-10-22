@@ -38,7 +38,6 @@ on:
       - '.github/actions/setup-nix-toolchain/**'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/workflows/ofz.yaml'
-      - '.github/scripts/install-tengri-chromium.mjs'
       - '.github/workflows/product-nix-images.yml'
       - '.github/workflows/tengri-images.yml'
       - 'apps/landing/**'

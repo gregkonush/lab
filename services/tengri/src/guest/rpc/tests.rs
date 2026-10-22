@@ -893,3 +893,40 @@ async fn image_cleanup_preserves_an_existing_file_rejected_by_create_only_write(
             .is_err()
     );
 }
+
+#[test]
+fn native_rejection_requires_typed_proof_and_the_exact_status() {
+    let details = RpcDetails {
+        details: vec![RpcDetail {
+            type_url: "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure".into(),
+            value: proto::OperationFailure {
+                codex_operation_rejected: true,
+                ..Default::default()
+            }
+            .encode_to_vec(),
+        }],
+    }
+    .encode_to_vec();
+    assert!(matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::InvalidArgument,
+            "rejected",
+            details.clone().into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::with_details(
+            tonic::Code::Unavailable,
+            "rejected",
+            details.into()
+        )),
+        GuestError::CodexOperationRejected
+    ));
+    assert!(!matches!(
+        rpc_error(Status::invalid_argument(
+            "Codex rejected the operation before dispatch"
+        )),
+        GuestError::CodexOperationRejected
+    ));
+}

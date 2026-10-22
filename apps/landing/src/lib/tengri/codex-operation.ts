@@ -1,15 +1,18 @@
 import { z } from 'zod'
+import { codexReasoningEffortSchema, type TengriCodexOptions } from './codex-models'
 
 const pendingOperation = z.strictObject({
   id: z.uuid(),
   fingerprint: z.string().regex(/^[0-9a-f]{64}$/),
   turnId: z.string(),
+  options: z.strictObject({ model: z.string().optional(), reasoningEffort: codexReasoningEffortSchema.optional() }),
 })
 
 export async function prepareCodexOperation(
   key: string,
   input: unknown,
   turnId: string,
+  options: TengriCodexOptions = {},
   storage: Storage = localStorage,
 ) {
   const encoded = new TextEncoder().encode(JSON.stringify(input))
@@ -21,7 +24,7 @@ export async function prepareCodexOperation(
     if (previous.fingerprint === fingerprint) return previous
   }
   const id = crypto.randomUUID()
-  const operation = { id, fingerprint, turnId }
+  const operation = { id, fingerprint, turnId, options }
   storage.setItem(key, JSON.stringify(operation))
   return operation
 }

@@ -6971,8 +6971,15 @@ test('retains pasted images and text after a failed send and supports retry', as
   )
   await expect(prompt).toHaveValue('Inspect this screenshot')
   await expect(page.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  const original = mock.actions.find((action) => action.action === 'send-turn')
+  await selectCodexOption(page, page.getByRole('combobox', { name: 'Reasoning effort' }), 'Medium')
   await page.getByRole('button', { name: 'Send message', exact: true }).click()
   await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(2)
+  const retry = mock.actions.filter((action) => action.action === 'send-turn')[1]
+  expect(retry.operationId).toBe(original?.operationId)
+  expect(retry.model).toBe(original?.model)
+  expect(retry.reasoningEffort).toBe(original?.reasoningEffort)
+  await expect(page.getByText('This retry uses the original message model and reasoning settings.')).toBeVisible()
   await expect(page.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
 })
 

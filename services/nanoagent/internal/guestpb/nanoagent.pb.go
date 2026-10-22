@@ -2069,11 +2069,12 @@ func (x *CodexEvent) GetRawJson() []byte {
 // Operation details preserve revision conflicts and bounded-resource failures
 // without leaking filesystem or credential details.
 type OperationFailure struct {
-	state            protoimpl.MessageState `protogen:"open.v1"`
-	CurrentRevision  string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
-	ResourceTooLarge bool                   `protobuf:"varint,3,opt,name=resource_too_large,json=resourceTooLarge,proto3" json:"resource_too_large,omitempty"`
-	unknownFields    protoimpl.UnknownFields
-	sizeCache        protoimpl.SizeCache
+	state                  protoimpl.MessageState `protogen:"open.v1"`
+	CurrentRevision        string                 `protobuf:"bytes,2,opt,name=current_revision,json=currentRevision,proto3" json:"current_revision,omitempty"`
+	ResourceTooLarge       bool                   `protobuf:"varint,3,opt,name=resource_too_large,json=resourceTooLarge,proto3" json:"resource_too_large,omitempty"`
+	CodexOperationRejected bool                   `protobuf:"varint,4,opt,name=codex_operation_rejected,json=codexOperationRejected,proto3" json:"codex_operation_rejected,omitempty"`
+	unknownFields          protoimpl.UnknownFields
+	sizeCache              protoimpl.SizeCache
 }
 
 func (x *OperationFailure) Reset() {
@@ -2116,6 +2117,13 @@ func (x *OperationFailure) GetCurrentRevision() string {
 func (x *OperationFailure) GetResourceTooLarge() bool {
 	if x != nil {
 		return x.ResourceTooLarge
+	}
+	return false
+}
+
+func (x *OperationFailure) GetCodexOperationRejected() bool {
+	if x != nil {
+		return x.CodexOperationRejected
 	}
 	return false
 }
@@ -2270,10 +2278,11 @@ const file_proompteng_runtime_guest_v1_nanoagent_proto_rawDesc = "" +
 	"\x06method\x18\x02 \x01(\tR\x06method\x12\x1f\n" +
 	"\vapproval_id\x18\x03 \x01(\tR\n" +
 	"approvalId\x12\x19\n" +
-	"\braw_json\x18\x04 \x01(\fR\arawJson\"~\n" +
+	"\braw_json\x18\x04 \x01(\fR\arawJson\"\xb8\x01\n" +
 	"\x10OperationFailure\x12)\n" +
 	"\x10current_revision\x18\x02 \x01(\tR\x0fcurrentRevision\x12,\n" +
-	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLargeJ\x04\b\x01\x10\x02R\vhttp_status2\xcf\r\n" +
+	"\x12resource_too_large\x18\x03 \x01(\bR\x10resourceTooLarge\x128\n" +
+	"\x18codex_operation_rejected\x18\x04 \x01(\bR\x16codexOperationRejectedJ\x04\b\x01\x10\x02R\vhttp_status2\xcf\r\n" +
 	"\x10NanoagentService\x12U\n" +
 	"\aGetInfo\x12\".proompteng.runtime.guest.v1.Empty\x1a&.proompteng.runtime.guest.v1.GuestInfo\x12U\n" +
 	"\n" +

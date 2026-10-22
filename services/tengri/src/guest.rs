@@ -34,6 +34,8 @@ const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
+    #[error("Codex rejected the operation before dispatch")]
+    CodexOperationRejected,
     #[error("Kubernetes API request failed: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("SPIFFE guest transport failed: {0}")]
