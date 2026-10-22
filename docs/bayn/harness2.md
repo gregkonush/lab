@@ -4,10 +4,10 @@ Bayn uses [Google Research Harness2](https://github.com/google-research/harness2
 `1cfe254e8d25b15f37048c3730134686abe60335` to refine the question instructions consumed by its native Jev decision
 path. The former Alpha-R1 factor-selection adapter and its study format are removed.
 
-The [design audit](harness2-design-audit-2026-10-20.md) identifies an unfinished requirement: this runner compares
-native decisions but has no completed independent economic evaluation. It is a candidate-generation and decision-sensitivity
-instrument. The former Alpha-R1 editor role and nine-observation feasibility cohort do not qualify an improvement
-claim. Keep candidate adoption and rollout acceptance blocked on that evaluation boundary.
+The runner generates candidate instructions and compares native decisions. Independent native portfolio evaluation
+measures their economic effect; editor preferences and decision changes do not establish improvement. The
+[design audit](harness2-design-audit-2026-10-20.md#optimizer-recommendation-rechecked-october-22) recommends a
+metric-driven optimizer for the next instruction-search experiment. The active implementation remains Harness2.
 
 ## Model roles and decision ownership
 
@@ -204,6 +204,13 @@ proposal outcome and cannot be scored as a distinct candidate arm.
 Broker operations use the simulated broker. This command acquires no Alpaca trading credential and expands no capital authority.
 
 ## Native economic report comparison
+
+One existing market session is enough for a bounded native comparison. Reuse the same source, calendar, execution
+assumptions and risk code, freeze the question before examining outcomes, and report execution P&L, metered costs,
+drawdown and unresolved evidence. Unknown allocations remain null. The separate prospective-adoption protocol is
+not a prerequisite for this experiment, evaluator delivery or a negative result. A repeated baseline is another run
+of the same session, not a requirement to collect another market date. The three-arm command below includes that
+repeat to expose unchanged-question variation; a two-arm readout cannot attribute its entire delta to wording.
 
 The native command can compare reports from three independent full backtest runs: the unchanged baseline,
 an unchanged-prompt repeat, and the frozen candidate. It reads existing reports; it does not generate candidate
