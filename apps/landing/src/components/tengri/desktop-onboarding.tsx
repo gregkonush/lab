@@ -14,7 +14,6 @@ import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/ten
 import { getDesktopSnapshot, runTengriAction } from './client'
 import { CodeDraftRecoveryNotice } from './code-draft-recovery-notice'
 import { ConfirmationDialog } from './confirmation-dialog'
-import { PasskeyRegistration } from './passkey-registration'
 import {
   clearDeletedDesktopState,
   publishDeletedDesktopState,
@@ -286,13 +285,12 @@ function SignInWindow() {
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Sign in with GitHub and your passkey. Ofz determines which workspaces you can access."
+      detail="First sign in with GitHub. Then use your saved passkey, or create one if this is your first sign-in."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}
       actionLabel="Continue with GitHub"
       onAction={signIn}
-      secondaryAction={<PasskeyRegistration />}
     />
   )
 }

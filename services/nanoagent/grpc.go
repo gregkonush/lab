@@ -17,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = 6
+const guestProtocolVersion = 7
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {

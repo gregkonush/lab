@@ -27,7 +27,8 @@ password managers such as 1Password, a nearby phone through a QR code, and hardw
 authenticators or change credential validation. The browser fixture records real WebAuthn requests and verifies
 fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
 
-Use **Add passkey** on the Tengri sign-in screen or in **Settings > Access** to enroll another credential.
+Sign in through **Continue with GitHub**, then use your saved passkey. First-time sign-in asks you to create one.
+Use **Settings > Access > Add another passkey** to enroll an additional credential.
 The BFF requests Keycloak's `webauthn-register` application-initiated action through the existing PKCE flow.
 GitHub sign-in and a fresh assertion with an existing passkey precede registration. Then choose 1Password on your
 phone, or choose a nearby phone in your computer's passkey dialog and scan its QR code. On iPhone, enable 1Password
