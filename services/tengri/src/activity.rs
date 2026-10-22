@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, Weak},
     time::{Duration, Instant},
 };
 
@@ -99,6 +99,7 @@ pub struct ActivityTracker {
     client: Client,
     namespace: Arc<str>,
     last_write: Arc<Mutex<HashMap<String, Instant>>>,
+    admissions: Arc<Mutex<HashMap<String, Weak<tokio::sync::Mutex<()>>>>>,
 }
 
 impl ActivityTracker {
@@ -107,6 +108,7 @@ impl ActivityTracker {
             client,
             namespace: namespace.into(),
             last_write: Arc::new(Mutex::new(HashMap::new())),
+            admissions: Default::default(),
         }
     }
 
@@ -116,6 +118,22 @@ impl ActivityTracker {
         &self,
         claim: &crate::slot::Claim,
     ) -> Result<DateTime<Utc>, tonic::Status> {
+        // Browser module loads and other parallel controls must not exhaust the
+        // CAS retries by racing each other. Serialize only this workspace's
+        // admission, retaining no idle lock entries or authority between calls.
+        let admission = {
+            let mut admissions = self.admissions.lock().map_err(|_| {
+                tonic::Status::unavailable("workspace control admission unavailable")
+            })?;
+            admissions.retain(|_, lock| lock.strong_count() > 0);
+            let lock = admissions
+                .get(&claim.microvm_uid)
+                .and_then(Weak::upgrade)
+                .unwrap_or_else(|| Arc::new(tokio::sync::Mutex::new(())));
+            admissions.insert(claim.microvm_uid.clone(), Arc::downgrade(&lock));
+            lock
+        };
+        let _admission = admission.lock().await;
         let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         for _ in 0..3 {
             let agent = agents.get(&claim.microvm_id).await.map_err(|_| {

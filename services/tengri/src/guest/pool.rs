@@ -228,16 +228,16 @@ mod tests {
                         let patch: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
                         let mut agent = state.lock().unwrap();
                         assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
-                        assert_eq!(
-                            patch["metadata"]["resourceVersion"],
-                            agent.resource_version().unwrap()
-                        );
                         assert!(
                             patch["metadata"]["annotations"]
                                 [crate::activity::LAST_ACTIVITY_ANNOTATION]
                                 .is_string()
                         );
-                        if mode.swap(0, Ordering::SeqCst) == 1 {
+                        if patch["metadata"]["resourceVersion"] != agent.resource_version().unwrap()
+                        {
+                            status = http::StatusCode::CONFLICT;
+                            json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"activity changed concurrently","code":409})
+                        } else if mode.swap(0, Ordering::SeqCst) == 1 {
                             let sleep_claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
                             agent
                                 .metadata
@@ -263,7 +263,10 @@ mod tests {
                         }
                     } else {
                         assert_eq!(request.method(), http::Method::GET);
-                        json!(*state.lock().unwrap())
+                        let snapshot = json!(*state.lock().unwrap());
+                        // Model overlapping reads during a browser's module fan-out.
+                        tokio::task::yield_now().await;
+                        snapshot
                     }
                 };
                 Ok::<_, std::convert::Infallible>(
@@ -370,6 +373,27 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(calls.load(Ordering::SeqCst), 3);
+        *current.lock().unwrap() = agent.clone();
+        let controls = (0..64).map(|_| async {
+            // Each HTTP module request obtains a fresh authorized client from the pool.
+            let guest = pool
+                .for_microvm(
+                    &agent,
+                    super::super::authorization::GuestAuthority::fixture()
+                        .user(authorization.agent_access(&principal, &agent, "").unwrap()),
+                )
+                .await
+                .unwrap();
+            guest
+                .codex_call("thread/resume", json!({"threadId":"thread-a"}))
+                .await
+        });
+        let outcomes = futures::future::join_all(controls).await;
+        assert!(
+            outcomes.iter().all(Result::is_ok),
+            "concurrent controls must not exhaust admission retries: {outcomes:?}"
+        );
+        assert_eq!(calls.load(Ordering::SeqCst), 67);
         for changed in ["uid", "epoch", "sleeping"] {
             {
                 let mut value = current.lock().unwrap();
@@ -388,7 +412,7 @@ mod tests {
                 "a cached client must not dispatch to a changed or sleeping runtime: {changed}"
             );
         }
-        assert_eq!(calls.load(Ordering::SeqCst), 3);
+        assert_eq!(calls.load(Ordering::SeqCst), 67);
     }
 
     #[tokio::test]
@@ -919,13 +943,16 @@ pub struct GuestPool {
     namespace: Arc<str>,
     identity: WorkloadIdentity,
     bindings: Arc<Mutex<Vec<Binding>>>,
+    activity: crate::activity::ActivityTracker,
 }
 
 impl GuestPool {
     pub fn new(client: Client, namespace: impl Into<Arc<str>>, identity: WorkloadIdentity) -> Self {
+        let namespace = namespace.into();
         Self {
+            activity: crate::activity::ActivityTracker::new(client.clone(), namespace.to_string()),
             client,
-            namespace: namespace.into(),
+            namespace,
             identity,
             bindings: Default::default(),
         }
@@ -957,10 +984,7 @@ impl GuestPool {
         let issuer = authorization
             .bind(microvm)
             .map_err(super::rpc::rpc_error)?
-            .with_activity(crate::activity::ActivityTracker::new(
-                self.client.clone(),
-                self.namespace.to_string(),
-            ));
+            .with_activity(self.activity.clone());
         let certificate = self.identity.certificate_revision()?;
         let now = Instant::now();
         let guest = {
