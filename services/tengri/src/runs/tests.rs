@@ -10,18 +10,50 @@ use std::{
 fn fixture() -> ControlPlane {
     let (service, mut handle) = tower_test::mock::pair::<Request<Body>, Response<Body>>();
     tokio::spawn(async move {
+        let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
+        agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
+        agent.status = Some(crate::crd::MicroVMStatus {
+            phase: crate::crd::MicroVMPhase::Sleeping,
+            ..Default::default()
+        });
+        agent.metadata.resource_version = Some("1".into());
+        let mut version = 1;
         while let Some((request, response)) = handle.next_request().await {
-            assert_eq!(
-                request.method(),
-                http::Method::GET,
-                "sleeping fixture cannot dispatch effects"
-            );
-            let mut agent = crate::grpc::tests::provisional_terminal_test_agent(Utc::now());
-            agent.spec.desired_state = crate::crd::MicroVMDesiredState::Sleeping;
-            agent.status = Some(crate::crd::MicroVMStatus {
-                phase: crate::crd::MicroVMPhase::Sleeping,
-                ..Default::default()
-            });
+            if request.method() == http::Method::PATCH {
+                let patch: serde_json::Value =
+                    serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                        .unwrap();
+                assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                assert_eq!(
+                    patch["metadata"]["resourceVersion"],
+                    agent.resource_version().unwrap()
+                );
+                let annotations = patch["metadata"]["annotations"]
+                    .as_object()
+                    .expect("only the run fence can mutate in this fixture");
+                assert_eq!(annotations.len(), 1);
+                let value = annotations
+                    .get(crate::activity::ACTIVE_RUN_ANNOTATION)
+                    .unwrap();
+                if let Some(value) = value.as_str() {
+                    agent
+                        .annotations_mut()
+                        .insert(crate::activity::ACTIVE_RUN_ANNOTATION.into(), value.into());
+                } else {
+                    assert!(value.is_null());
+                    agent
+                        .annotations_mut()
+                        .remove(crate::activity::ACTIVE_RUN_ANNOTATION);
+                }
+                version += 1;
+                agent.metadata.resource_version = Some(version.to_string());
+            } else {
+                assert_eq!(
+                    request.method(),
+                    http::Method::GET,
+                    "the sleeping fixture cannot dispatch guest effects"
+                );
+            }
             response.send_response(
                 Response::builder()
                     .header("content-type", "application/json")
@@ -620,4 +652,46 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
     drop(process);
+}
+
+#[tokio::test]
+async fn an_accepted_run_is_pinned_before_guest_availability_is_required() {
+    let service = fixture();
+    let input = input();
+    assert!(matches!(
+        service.prepare_durable_run(&principal(), &input).await,
+        State::WaitingForGuest { .. }
+    ));
+    let agents: kube::Api<crate::crd::MicroVM> =
+        kube::Api::namespaced(service.client.clone(), "tengri");
+    let agent = agents.get(&input.agent_id).await.unwrap();
+    assert_eq!(
+        agent
+            .annotations()
+            .get(crate::activity::ACTIVE_RUN_ANNOTATION),
+        Some(&input.id)
+    );
+    assert_eq!(
+        agent.spec.desired_state,
+        crate::crd::MicroVMDesiredState::Sleeping
+    );
+    service.pin_run(&principal(), &input, false).await.unwrap();
+    assert!(
+        !agents
+            .get(&input.agent_id)
+            .await
+            .unwrap()
+            .annotations()
+            .contains_key(crate::activity::ACTIVE_RUN_ANNOTATION)
+    );
+}
+
+#[tokio::test]
+async fn a_dispatch_retry_cannot_report_no_effects_from_unavailable_authority() {
+    let service = fixture();
+    let input = input();
+    assert!(matches!(
+        service.dispatch_durable_run(&principal(), &input).await,
+        State::NeedsReconciliation { .. }
+    ));
 }

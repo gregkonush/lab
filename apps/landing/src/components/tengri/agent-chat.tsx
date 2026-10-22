@@ -1195,6 +1195,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         runId,
         operationId: op.id,
       })
+      completeCodexOperation(`tengri-stop:${runId}`, op.id)
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Turn could not be interrupted')
     } finally {

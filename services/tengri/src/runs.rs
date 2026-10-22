@@ -487,16 +487,7 @@ impl TengriAgentRun {
                 turn_id: String::new(),
             }
         } else {
-            ctx.run(|| async {
-                Ok(Json(
-                    self.service
-                        .dispatch_durable_run(&admission.principal, &admission.input)
-                        .await,
-                ))
-            })
-            .name("dispatch_codex_turn")
-            .await?
-            .into_inner()
+            self.start_run(&ctx, &admission).await?
         };
         if !snapshot.state.terminal() {
             ctx.set("snapshot", Json(snapshot.clone()));
@@ -610,30 +601,31 @@ impl TengriAgentRun {
                     params: serde_json::json!({}),
                 });
             }
-            let changed = ctx
-                .run(|| async {
-                    let next = if let Some(stop) = &stop {
-                        self.service
-                            .stop_durable_run(stop, &admission.input, &snapshot.state)
-                            .await
-                    } else if matches!(snapshot.state, State::WaitingForGuest { .. }) {
-                        self.service
-                            .dispatch_durable_run(&admission.principal, &admission.input)
-                            .await
-                    } else {
-                        self.service
-                            .observe_durable_run(
-                                &admission.principal,
-                                &admission.input,
-                                &snapshot.state,
-                            )
-                            .await
-                    };
-                    Ok(Json((next != snapshot.state).then_some(next)))
-                })
-                .name("observe_codex_turn")
-                .await?
-                .into_inner();
+            let changed =
+                if stop.is_none() && matches!(snapshot.state, State::WaitingForGuest { .. }) {
+                    let next = self.start_run(&ctx, &admission).await?;
+                    (next != snapshot.state).then_some(next)
+                } else {
+                    ctx.run(|| async {
+                        let next = if let Some(stop) = &stop {
+                            self.service
+                                .stop_durable_run(stop, &admission.input, &snapshot.state)
+                                .await
+                        } else {
+                            self.service
+                                .observe_durable_run(
+                                    &admission.principal,
+                                    &admission.input,
+                                    &snapshot.state,
+                                )
+                                .await
+                        };
+                        Ok(Json((next != snapshot.state).then_some(next)))
+                    })
+                    .name("observe_codex_turn")
+                    .await?
+                    .into_inner()
+                };
             if let Some(next) = changed {
                 snapshot.state = next;
                 if !snapshot.state.terminal() {
@@ -845,6 +837,40 @@ impl TengriAgentRun {
             .into());
         }
         Ok(Json(snapshot))
+    }
+}
+
+impl TengriAgentRun {
+    async fn start_run(
+        &self,
+        ctx: &WorkflowContext<'_>,
+        admission: &Admission,
+    ) -> HandlerResult<State> {
+        let prepared = ctx
+            .run(|| async {
+                Ok(Json(
+                    self.service
+                        .prepare_durable_run(&admission.principal, &admission.input)
+                        .await,
+                ))
+            })
+            .name("prepare_codex_dispatch")
+            .await?
+            .into_inner();
+        if !matches!(prepared, State::Accepted) {
+            return Ok(prepared);
+        }
+        Ok(ctx
+            .run(|| async {
+                Ok(Json(
+                    self.service
+                        .dispatch_durable_run(&admission.principal, &admission.input)
+                        .await,
+                ))
+            })
+            .name("dispatch_codex_turn")
+            .await?
+            .into_inner())
     }
 }
 
@@ -1071,7 +1097,21 @@ impl ControlPlane {
             .await
     }
 
-    async fn dispatch_durable_run(&self, principal: &Principal, input: &Input) -> State {
+    async fn prepare_durable_run(&self, principal: &Principal, input: &Input) -> State {
+        if let Err(error) = self.pin_run(principal, input, true).await {
+            return if matches!(
+                error.code(),
+                tonic::Code::PermissionDenied | tonic::Code::Unauthenticated
+            ) {
+                State::Rejected {
+                    reason: "run authority was revoked or expired before dispatch".into(),
+                }
+            } else {
+                State::WaitingForGuest {
+                    reason: "waiting to protect the active run from automatic sleep".into(),
+                }
+            };
+        }
         let guest = match self.run_guest(principal, input).await {
             Ok(guest) => guest,
             Err(error)
@@ -1090,17 +1130,6 @@ impl ControlPlane {
                 };
             }
         };
-        if self.pin_run(principal, input, true).await.is_err() {
-            return State::WaitingForGuest {
-                reason: "waiting to protect the active run from automatic sleep".into(),
-            };
-        }
-        let mut parts = Vec::new();
-        if !input.text.trim().is_empty() {
-            parts.push(
-                serde_json::json!({"type":"text", "text":input.text.trim(), "text_elements":[]}),
-            );
-        }
         for image in &input.images {
             if !guest
                 .read_file(&image.path)
@@ -1111,7 +1140,32 @@ impl ControlPlane {
                     reason: "an accepted image is missing or changed".into(),
                 };
             }
-            parts.push(serde_json::json!({"type":"localImage", "path":image.path}));
+        }
+        State::Accepted
+    }
+
+    async fn dispatch_durable_run(&self, principal: &Principal, input: &Input) -> State {
+        if self.pin_run(principal, input, true).await.is_err() {
+            return State::NeedsReconciliation {
+                reason: "dispatch authority or its sleep fence is unavailable; a previous attempt may already have reached Codex".into(),
+            };
+        }
+        let guest = match self.run_guest(principal, input).await {
+            Ok(guest) => guest,
+            Err(_) => {
+                return State::NeedsReconciliation {
+                    reason: "dispatch authority or transport is unavailable; a previous attempt may already have reached Codex".into(),
+                };
+            }
+        };
+        let mut parts = Vec::new();
+        if !input.text.trim().is_empty() {
+            parts.push(
+                serde_json::json!({"type":"text","text":input.text.trim(),"text_elements":[]}),
+            );
+        }
+        for image in &input.images {
+            parts.push(serde_json::json!({"type":"localImage","path":image.path}));
         }
         let options = match crate::guest::CodexOptions::parse(
             input.model.clone(),

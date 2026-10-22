@@ -7788,4 +7788,10 @@ test('records Stop for an accepted run before a native turn exists', async ({ pa
   const action = mock.actions.find((action) => action.action === 'interrupt-turn')
   expect(action).not.toHaveProperty('turnId')
   expect(action?.operationId).toMatch(/^[0-9a-f-]{36}$/)
+  await expect.poll(() => page.evaluate((id) => localStorage.getItem(`tengri-stop:${id}`), runId)).toBeNull()
+  await expect(stop).toBeEnabled()
+  await stop.click()
+  await expect.poll(() => mock.actions.filter((item) => item.action === 'interrupt-turn').length).toBe(2)
+  const refreshed = mock.actions.filter((item) => item.action === 'interrupt-turn')[1]
+  expect(refreshed.operationId).not.toBe(action?.operationId)
 })

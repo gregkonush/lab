@@ -60,7 +60,7 @@ make a recovery fixture pass.
 - A disposable Restate 1.7.9 accepted and recovered the same workflow after an actual worker `SIGKILL`, rejected
   changed input and a cross-owner query, excluded another workspace run, and accepted Stop after replacement.
   Its guest is sleeping. This proves orchestration recovery, not recovery of an executing shell command.
-- The controller test suite passed 203 tests with 45 environment-dependent tests ignored; the CRD suite passed
+- The controller test suite passed 205 tests with 45 environment-dependent tests ignored; the CRD suite passed
   three tests and the cross-language authorization suite passed 11. All 419 landing tests passed, including 77 BFF transport, input schema, and operation
   identity tests. TypeScript checking and Oxlint passed. The complete desktop browser suite passed 167 tests with two environment-specific skips.
 - Kustomize rendering confirms the controller and Restate worker use the same immutable Tengri digest and the
@@ -133,3 +133,10 @@ so re-running held publication does not collide with an immutable artifact or re
 After enrolling the reviewed guest digest, rerun the original main run's publisher against its unchanged architecture
 artifacts, require successful original build/validation gates and fresh signing, and verify both digests remain exact.
 Never rebuild and silently substitute another guest digest after enrolling the home.
+
+Accepted runs acquire their sleep fence before guest availability is required. Preparation and native dispatch use
+separate durable steps: a replay after possible native acceptance cannot reinterpret a changed image or expired
+authority as proof that no effect occurred. The replay retains an uncertain outcome and reconciles the original
+operation identity. A confirmed Stop acknowledgement clears its browser retry identity so another login can record
+fresh cancellation authority; ambiguous failures retain the identity. Both regressions pass, alongside the full
+205-test Rust suite and the real Restate worker SIGKILL fixture.
