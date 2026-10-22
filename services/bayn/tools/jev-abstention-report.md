@@ -15,13 +15,14 @@ hypothetical profit/loss estimates. Do not commit production evidence.
 The current source must reproduce the decision, including its sealed requests and
 model receipts, before diagnostics are emitted. Unsupported historical contracts or
 tampered evidence fail rather than being silently reinterpreted. Protocol version
-`bayn.jev.protocol.v16` is distinct from input state version
-`bayn.jev-trading-signal-state.v15`; both appear in the report.
+`bayn.jev.protocol.v17` is distinct from input state version
+`bayn.jev-trading-signal-state.v16`; both appear in report v2.
 
 Each requested candidate reports funded-plan count, minimum/maximum target rise from
 the observed bid, minimum/maximum net reward/risk, per-plan estimated gains/losses,
-holding horizon, existing entry economics and fees, bar/trade coverage, chosen action,
-and categorical choice masses. Excluded candidates retain their exclusion reason.
+holding horizon, existing entry economics and fees, bar/trade coverage, chosen setup and action,
+the setup distribution and conditional plan-choice masses. A conditional plan is evaluated under an assumed supported
+setup; the actual setup answer must also support entry. Excluded candidates retain their exclusion reason.
 Missing model answers, unavailable latest-trade age, and empty plan ranges are null,
 not zero. Reported masses remain unnormalized, preserving provider rounding.
 

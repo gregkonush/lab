@@ -149,7 +149,8 @@ describe('Harness2 uses native Jev requests and decision policy', () => {
         ...original?.request.questions['action'],
         instructions: 'Assess the supplied entry evidence and select the applicable action.',
       })
-      expect(Object.keys(request.request.questions)).toEqual(['action'])
+      expect(request.request.questions['setup']).toEqual(original?.request.questions['setup'])
+      expect(Object.keys(request.request.questions)).toEqual(['action', 'setup'])
       expect(request.requestHash).not.toBe(original?.requestHash)
     }
     expect(

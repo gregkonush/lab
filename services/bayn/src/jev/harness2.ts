@@ -72,7 +72,7 @@ export const applyJevInstructions = (request: JevRequest, instructions: JevInstr
         name,
         {
           ...question,
-          instructions: instructions.entry,
+          instructions: name === 'action' ? instructions.entry : question.instructions,
         },
       ]),
     ),
