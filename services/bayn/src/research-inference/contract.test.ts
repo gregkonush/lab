@@ -6,6 +6,7 @@ import {
   hashResearch,
   HarnessPurpose,
   maximumResearchStreamBytes,
+  parseResearchOutput,
   ResearchOutcome,
   researchRequest,
   researchServingIdentity,
@@ -36,6 +37,46 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('constrains prompt edits to the native instruction JSON schema', () => {
+    const current = harnessEditorFixture()
+    expect(researchRequest(current)).toMatchObject({
+      response_format: {
+        type: 'json_schema',
+        json_schema: {
+          strict: true,
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            required: ['entry'],
+            properties: { entry: { type: 'string', maxLength: 2000 } },
+          },
+        },
+      },
+    })
+    expect(
+      Result.isFailure(parseResearchOutput(current, '<harness>{"currentInstructions":{"entry":"Assess"}}</harness>')),
+    ).toBe(true)
+    expect(Result.isFailure(parseResearchOutput(current, '{"currentInstructions":{"entry":"Assess"}}'))).toBe(true)
+    expect(Result.isSuccess(parseResearchOutput(current, '{"entry":"Assess"}'))).toBe(true)
+  })
+  test('preserves the original unconstrained v2 provider request identity for retained receipts', () => {
+    const historical = Result.getOrThrow(
+      decodeResearchRun({
+        ...harnessEditorFixture(),
+        schemaVersion: 'bayn.jev-harness2-editor.v2',
+        promptTemplate: 'Revise only the three Jev instructions using the supplied development evidence.',
+      }),
+    )
+    expect(Result.getOrThrow(hashResearch(researchRequest(historical)))).toBe(
+      'abc0a20675fde2fb65bf6b88218a31c1bb54a03a19f94250129658bc241a65ae',
+    )
+    expect(researchRequest(historical)).not.toHaveProperty('response_format')
+    expect(
+      Result.isSuccess(
+        parseResearchOutput(historical, '<harness>{"currentInstructions":{"entry":"Assess"}}</harness>'),
+      ),
+    ).toBe(true)
+  })
   test('current Jev editor is bound to the general instruction checkpoint and rejects Alpha-R1 substitution', () => {
     const current = harnessEditorFixture()
     expect(researchRequest(current).model).toBe('qwen3-jev-editor-b968826d9c46')
