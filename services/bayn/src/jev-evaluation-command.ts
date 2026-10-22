@@ -52,8 +52,8 @@ export const jevEvaluationCommand = (args: readonly string[]) =>
         manifest.variantBuild.spec.sourceRevision !== embeddedBuildMetadata.sourceRevision
       )
         return yield* new JevContractError({ message: 'Native outcome source differs from the installed evaluator' })
-      if ((yield* fs.stat(manifest.reportPath)).size > 256n * 1024n * 1024n)
-        return yield* new JevContractError({ message: 'Native outcome report exceeds 256 MiB' })
+      if ((yield* fs.stat(manifest.reportPath)).size > 512n * 1024n * 1024n)
+        return yield* new JevContractError({ message: 'Native outcome report exceeds 512 MiB' })
       const raw = yield* fs.readFileString(manifest.reportPath)
       if (sha256(raw) !== manifest.reportSha256)
         return yield* new JevContractError({ message: 'Native outcome report bytes differ' })
@@ -96,7 +96,7 @@ export const jevEvaluationCommand = (args: readonly string[]) =>
         variantBuild: unknown,
       ) =>
         Effect.gen(function* () {
-          const raw = yield* readBounded(artifact.reportPath, 256 * 1024 * 1024)
+          const raw = yield* readBounded(artifact.reportPath, 512 * 1024 * 1024)
           if (sha256(raw) !== artifact.reportSha256)
             return yield* new JevContractError({ message: 'Native report file differs from the manifest digest' })
           return yield* Effect.fromResult(

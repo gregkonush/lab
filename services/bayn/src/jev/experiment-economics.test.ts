@@ -704,22 +704,19 @@ test('unallocated native operating expenses and missing session rows cannot comp
   expect(Result.isFailure(project(report, []))).toBe(true)
 })
 
-test('comparison command reads complete digest-bound native files above 16 MiB without provider credentials', async () => {
+test('comparison command reads complete digest-bound native files above 256 MiB without provider credentials', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped({ prefix: 'bayn-experiment-economics-' })
       const artifact = (name: string, report: unknown) =>
         Effect.gen(function* () {
-          const raw = JSON.stringify(report)
+          const raw = JSON.stringify(report) + (name === 'baseline' ? ' '.repeat(257 * 1024 * 1024) : '')
           const path = `${directory}/${name}.json`
           yield* fs.writeFileString(path, raw)
           return { reportPath: path, reportSha256: sha256(raw), operatingAllocations: allocations }
         })
-      const baseline = yield* artifact(
-        'baseline',
-        reseal({ ...nativeReportFixture(), retainedDiagnosticEvidence: 'x'.repeat(17 * 1024 * 1024) }),
-      )
+      const baseline = yield* artifact('baseline', nativeReportFixture())
       const baselineRepeat = yield* artifact('repeat', nativeReportFixture(jevInstructions, 'b'))
       const candidateReport = nativeReportFixture(candidateInstructions, 'c')
       const buildPath = `${directory}/candidate-build.json`
@@ -771,4 +768,4 @@ test('comparison command reads complete digest-bound native files above 16 MiB w
       expect(yield* fs.exists(`${directory}/tampered.json`)).toBe(false)
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
-})
+}, 15_000)
