@@ -585,7 +585,8 @@ using MicroVM UID and resource-version preconditions.
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
 terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
-Read-only status queries verify the current signature and two-second expiry on every attempt without a durable step.
+Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
+the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
 Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
 Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
 run and control invocations before registering this worker version, and retain earlier versions for pinned history.

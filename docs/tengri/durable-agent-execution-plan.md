@@ -197,9 +197,11 @@ Tempo recorded a 20.535-second send request. Failed status reads exhausted their
 authorization, returning HTTP 503 while the native turn continued.
 
 The repair returns the initial Stop from the workspace claim and removes the redundant call. It retains the final
-Stop check after preparation and before dispatch. Read-only status handlers verify the current signature and expiry
-without a durable step. The private claim response changes require active run and control invocations to drain before
-worker registration. Old pinned versions remain available for retained history.
+Stop check after preparation and before dispatch. Status handlers retain journaled signature and expiry verification.
+An isolated pinned-engine worker-kill probe reproduced a journal mismatch when query expiry was rechecked before
+replaying the state read, so that attempted optimization was rejected. The private claim response changes require
+active run and control invocations to drain before worker registration. Old pinned versions remain available for
+retained history.
 
 The desktop uses concise activity labels and retries transient status failures with a reconnect message. A successful
 read clears that failure. The focused browser regressions and real Restate crash/rotation/expiry fixture pass locally.

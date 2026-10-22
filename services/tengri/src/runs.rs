@@ -753,12 +753,20 @@ impl TengriAgentRun {
         envelope: Json<Envelope>,
     ) -> HandlerResult<Json<Snapshot>> {
         let run_id = ctx.key().to_owned();
-        let query: Query = open(&self.service, "query", &envelope.0)
-            .await
-            .map_err(terminal)?;
-        if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)? || query.run_id != run_id {
-            return Err(TerminalError::new_with_code(401, "run query expired").into());
-        }
+        let query: Query = ctx
+            .run(|| async {
+                let query: Query = open(&self.service, "query", &envelope.0)
+                    .await
+                    .map_err(terminal)?;
+                if query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
+                    || query.run_id != run_id
+                {
+                    return Err(TerminalError::new_with_code(401, "run query expired").into());
+                }
+                Ok(Json(query))
+            })
+            .await?
+            .into_inner();
         let snapshot = ctx
             .get::<Json<Snapshot>>("snapshot")
             .await?
@@ -915,14 +923,18 @@ impl TengriWorkspaceRuns {
         envelope: Json<Envelope>,
     ) -> HandlerResult<Json<Option<String>>> {
         let workspace = ctx.key().to_owned();
-        let query: Query = open(&self.service, "active-query", &envelope.0)
-            .await
-            .map_err(terminal)?;
-        if query.workspace_uid != workspace
-            || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
-        {
-            return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
-        }
+        ctx.run(|| async {
+            let query: Query = open(&self.service, "active-query", &envelope.0)
+                .await
+                .map_err(terminal)?;
+            if query.workspace_uid != workspace
+                || query.expires_at_ms < crate::ofz::now_ms().map_err(terminal)?
+            {
+                return Err(TerminalError::new_with_code(403, "workspace unavailable").into());
+            }
+            Ok(())
+        })
+        .await?;
         Ok(Json(
             ctx.get::<Json<Claim>>("active")
                 .await?
