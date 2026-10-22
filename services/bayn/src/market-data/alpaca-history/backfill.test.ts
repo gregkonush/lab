@@ -21,7 +21,7 @@ test('history acquisition retains sparse coverage and resumes from immutable pag
   const http = HttpClient.make((request) => {
     requests++
     const body = request.url.includes('/calendar')
-      ? [{ session_open: '0930', session_close: '0932', date: '2026-09-11', open: '09:30', close: '09:32' }]
+      ? [{ session_open: '0400', session_close: '2000', date: '2026-09-11', open: '09:30', close: '09:32' }]
       : { bars: { AAPL: [bar(30)], SPY: [bar(30), bar(31)] }, next_page_token: null }
     return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(JSON.stringify(body), { status: 200 })))
   })
@@ -42,6 +42,10 @@ test('history acquisition retains sparse coverage and resumes from immutable pag
       expect(repeated).toEqual(first)
       expect(requests).toBe(2)
       expect(first.records).toBe(3)
+      const dataset = yield* readHistoricalDataset(directory, first.datasetId)
+      expect(dataset.sessions).toEqual([
+        { date: '2026-09-11', openAt: '2026-09-11T13:30:00.000Z', closeAt: '2026-09-11T13:32:00.000Z' },
+      ])
       const coverage = yield* Schema.decodeUnknownEffect(
         Schema.fromJsonString(
           Schema.Array(
