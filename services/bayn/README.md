@@ -119,6 +119,8 @@ Recovery derives duration from the held instruments and processes one market per
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+An abstention waits for another observation only while that lease has enough finalization headroom.
+Equity session hours cannot extend the unused lease or defer its valid no-trade decision until the closing bell.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
 The database retains its row and deferred commit guards when persistence crosses that lease. Only rejection by

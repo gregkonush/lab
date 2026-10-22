@@ -4804,7 +4804,7 @@ describe('OBSERVE runtime composition', () => {
         })
       } else {
         if (Exit.isFailure(result.exit)) throw Cause.squash(result.exit.cause)
-        expect(result.exit.value.targetPlan.status).toBe('NO_TRADE')
+        expect(result.exit.value.targetPlan.status).toBe(TargetPlanStatus.NoTrade)
         expect(result.exit.value.orderedIntentIds).toEqual([])
         expect(result.reconciliationReads).toBe(2)
       }
