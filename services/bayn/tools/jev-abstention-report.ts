@@ -31,7 +31,7 @@ const State = Schema.Struct({
   ),
   candidate: Schema.Struct({
     quote: Schema.Struct({ bid: Schema.Finite.check(Schema.isGreaterThan(0)), ask: Schema.Finite, ageMs: NonNegative }),
-    bars1m: Schema.Array(Schema.Struct({ volume: NonNegative, tradeCount: Schema.String })),
+    bars1m: Schema.Array(Schema.Struct({ volume: NonNegative, tradeCount: Schema.NullOr(Schema.String) })),
     priceWindow: Schema.Struct({ expectedBarCount: NonNegative, observedBarCount: NonNegative }),
     latestTrade: Schema.optionalKey(Schema.Struct({ ageMs: NonNegative })),
     minuteLogReturnVolatilityBps: Schema.NullOr(NonNegative),
@@ -116,7 +116,10 @@ export const reportJevAbstention = (input: unknown) => {
         ...state.candidate.priceWindow,
         suppliedBarCount: state.candidate.bars1m.length,
         zeroVolumeBarCount: state.candidate.bars1m.filter((bar) => bar.volume === 0).length,
-        zeroTradeBarCount: state.candidate.bars1m.filter((bar) => BigInt(bar.tradeCount) === 0n).length,
+        zeroTradeBarCount: state.candidate.bars1m.filter(
+          (bar) => bar.tradeCount !== null && BigInt(bar.tradeCount) === 0n,
+        ).length,
+        unknownTradeCountBarCount: state.candidate.bars1m.filter((bar) => bar.tradeCount === null).length,
         latestTradeAgeMs: state.candidate.latestTrade?.ageMs ?? null,
         quoteAgeMs: state.candidate.quote.ageMs,
         minuteLogReturnVolatilityBps: state.candidate.minuteLogReturnVolatilityBps,
