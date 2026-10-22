@@ -450,6 +450,80 @@ describe('reconciliation pure decisions', () => {
     })
   })
 
+  test('bracket history stays stable across reads while retaining child execution changes', () => {
+    const { filledAveragePriceMicros: _price, ...unfilled } = order(0)
+    const child: BrokerOrder = {
+      ...unfilled,
+      brokerOrderId: 'protective-stop',
+      clientOrderId: 'protective-stop-client',
+      parentBrokerOrderId: unfilled.brokerOrderId,
+      orderClass: OrderClass.Bracket,
+      orderType: BrokerOrderType.StopLimit,
+      side: BrokerSide.Sell,
+      status: BrokerOrderStatus.New,
+      filledQuantityAtoms: '0',
+      limitPriceMicros: '274520000',
+      stopPriceMicros: '274790000',
+    }
+    const { stopPriceMicros: _stop, ...limitChild } = child
+    const profit: BrokerOrder = {
+      ...limitChild,
+      brokerOrderId: 'profit-target',
+      clientOrderId: 'profit-target-client',
+      orderType: BrokerOrderType.Limit,
+      limitPriceMicros: '276740000',
+    }
+    const parent: BrokerOrder = {
+      ...unfilled,
+      orderClass: OrderClass.Bracket,
+      orderType: BrokerOrderType.Limit,
+      status: BrokerOrderStatus.New,
+      filledQuantityAtoms: '0',
+      limitPriceMicros: '275400000',
+      legs: [child, profit],
+    }
+    const before = {
+      orders: { rows: [{ value: parent, evidence: evidence('before-bracket') }], observedAt },
+      fills: [],
+      fees: [],
+    }
+    const readAt = utcInstantFromEpochMillis(1_000)
+    const laterParent: BrokerOrder = {
+      ...parent,
+      observedAt: readAt,
+      legs: [child, profit].map((leg) => ({ ...leg, observedAt: readAt })),
+    }
+    const after = {
+      ...before,
+      orders: { rows: [{ value: laterParent, evidence: evidence('after-bracket') }], observedAt: readAt },
+    }
+    expect(decideStableHistory(before, after)).toEqual(Result.succeed(after))
+    for (const changedChild of [
+      { ...child, observedAt: readAt, status: BrokerOrderStatus.Canceled },
+      { ...child, observedAt: readAt, stopPriceMicros: '274800000' },
+      { ...child, observedAt: readAt, filledQuantityAtoms: '1' },
+      { ...child, observedAt: readAt, submittedAt: readAt },
+    ]) {
+      expect(
+        decideStableHistory(before, {
+          ...after,
+          orders: {
+            ...after.orders,
+            rows: [
+              {
+                value: { ...laterParent, legs: [changedChild, { ...profit, observedAt: readAt }] },
+                evidence: evidence('changed-bracket'),
+              },
+            ],
+          },
+        }),
+      ).toMatchObject({
+        _tag: 'Failure',
+        failure: { failure: { _tag: 'Snapshot', reason: 'HistoryChanged' } },
+      })
+    }
+  })
+
   test('classifies stable history, missing baselines, and containment without effects', () => {
     const emptyHistory = {
       orders: { rows: [], observedAt },

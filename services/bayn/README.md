@@ -336,6 +336,11 @@ native Effect metrics to the existing Mimir gateway. The runbook includes a read
 
 ## Broker observation owner
 
+Stable history compares broker order facts before and after the account read. It excludes
+the local `observedAt` timestamp on both parent orders and bracket children, because each
+HTTP read assigns a new timestamp. Child execution facts, including status, prices,
+filled quantity and submission time, still invalidate a changed snapshot.
+
 Broker position symbols must agree with their asset class before entering
 reconciliation. A canonical crypto pair labeled as an equity, or an equity symbol
 labeled as crypto, fails the read contract without changing the original response evidence.
