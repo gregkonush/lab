@@ -415,8 +415,9 @@ unavailable, restarting or older guests without work metadata defer automatic sl
 activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
 and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
 reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
-admission so delayed requests cannot outlive that activity interval. Metadata work probes do not perform admission.
-Manual sleep remains explicit.
+admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
+perform admission even when no guest control RPC is sent. Metadata work probes and background editor/browser renewals
+do not perform admission. Manual sleep remains explicit.
 Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
