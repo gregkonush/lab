@@ -4,7 +4,7 @@ import { Buffer } from 'node:buffer'
 import { Effect, Exit, FileSystem, Result, Schema } from 'effect'
 
 import { parseEntryTimingExportArgs } from '../../tools/entry-timing-export'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { type ExecutionDecisionDocument } from '../shadow-decision-contract'
@@ -43,7 +43,7 @@ const fixture = (abstain = false) => {
   if (retained === undefined) throw new Error('Native timing fixtures are not prepared')
   const decision = abstain ? retained.abstain : retained.enter
   const target = decision.strategyDecision
-  if (target?.schemaVersion !== 'bayn.jev-entry-target.v2') throw new Error('Missing native entry fixture')
+  if (target?.schemaVersion !== 'bayn.jev-entry-target.v6') throw new Error('Missing native entry fixture')
   const observed = intradayInstantNanos(target.evidence.observation.observedAt)
   const created = intradayInstantNanos(decision.createdAt)
   const commitNanos = created + 1000n * ms + 751_734n
@@ -151,7 +151,7 @@ test.each([false, true])('exports exact native timing and a conservative v1 rece
   expect(result.receipt.spans.commit.endTimeUnixNano).toBe(String(f.commitNanos))
   expect(result.receipt.timing.sha256).toBe(sha256(result.timingText))
   const { receiptHash, ...material } = result.receipt
-  expect(receiptHash).toBe(canonicalHashV1(material))
+  expect(receiptHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
   expect(result.receipt.qualification).toBe('UNQUALIFIED')
   expect(result.receipt.scope).toBe('OBSERVED_ENTRY_TIMING_ONLY')
 })

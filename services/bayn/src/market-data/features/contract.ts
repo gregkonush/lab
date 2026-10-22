@@ -77,7 +77,6 @@ export const RollingMarketFeatureSchema = Schema.Struct({
   producerRevision: Schema.String.check(Schema.isMinLength(1)),
 })
 export type RollingMarketFeature = typeof RollingMarketFeatureSchema.Type
-export type MarketFeatureInput = typeof MarketFeatureInputSchema.Type
 export type RollingMarketValues = typeof RollingMarketValuesSchema.Type
 
 const failure = (reason: MarketFeatureFailure['reason'], message: string, cause?: unknown) =>

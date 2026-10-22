@@ -24,7 +24,6 @@ import {
   type CycleWindow,
   type ExecutionCalendarObservation,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 const decodeSelectedExecutionCalendarSessionResult = Schema.decodeUnknownResult(
   SelectedExecutionCalendarSessionSchema,
@@ -194,7 +193,7 @@ export const makeCycleIdentity = (material: unknown): Result.Result<CycleIdentit
     )
   })
 
-const makeIntradayCycleWindowDataFirst = (
+export const makeIntradayCycleWindow = (
   executionCalendar: unknown,
   executionPolicy: unknown,
 ): Result.Result<CycleWindow, CycleConstructionFailure> =>
@@ -232,9 +231,7 @@ const makeIntradayCycleWindowDataFirst = (
     )
   })
 
-export const makeIntradayCycleWindow = Pipeable.dual(2, makeIntradayCycleWindowDataFirst)
-
-const makeCycleDraftDataFirst = (
+export const makeCycleDraft = (
   identity: unknown,
   window: unknown,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -264,8 +261,6 @@ const makeCycleDraftDataFirst = (
         ),
     )
   })
-
-export const makeCycleDraft = Pipeable.dual(2, makeCycleDraftDataFirst)
 
 export const makeBoundExecutionCalendar = (
   hours: MarketHours,

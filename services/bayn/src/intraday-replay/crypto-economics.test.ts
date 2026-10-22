@@ -1,5 +1,5 @@
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { studyRoundTrip } from './signal-study'
 import { matchedCalendarSessions, MatchedDataRole } from './matched-entry-study'
 import { continuousMarketHours } from '../market-hours'
@@ -130,7 +130,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
         bidPrice: 100,
         askPrice: 100,
       }
-      return { value, sequence: 1, availableAtMs: time, recordHash: canonicalHashV1(value) }
+      return { value, sequence: 1, availableAtMs: time, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
     }
     const result = Result.getOrThrow(
       studyRoundTrip({

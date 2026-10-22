@@ -19,7 +19,6 @@ import type {
   ForwardPerformanceCashYieldEvidence,
   ForwardPerformanceLedgerTotals,
 } from './model'
-import { Pipeable } from '../pipeable'
 
 export class ForwardPerformanceLedgerError extends Data.TaggedError('ForwardPerformanceLedgerError')<{
   readonly operation: 'read'
@@ -205,7 +204,7 @@ const validateCashYieldEvidence = (
     return cashYieldAmount
   })
 
-const readForwardPerformanceLedgerDataFirst = (
+export const readForwardPerformanceLedger = (
   config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
   accountId: string,
   accountPlans: readonly LedgerPlan[],
@@ -235,16 +234,3 @@ const readForwardPerformanceLedgerDataFirst = (
       cashYieldEvidenceRequired: cashYieldResidual > 0n,
     }
   }).pipe(Effect.mapError(ledgerError))
-
-export const readForwardPerformanceLedger = Pipeable.by<
-  (
-    accountId: string,
-    accountPlans: readonly LedgerPlan[],
-    cashYieldEvidence?: ForwardPerformanceCashYieldEvidence,
-    dependencies?: JournalDependencies,
-    generationPlans?: readonly LedgerPlan[],
-  ) => (
-    config: Pick<RuntimeConfig, 'operationTimeoutMs' | 'tigerBeetle'>,
-  ) => ReturnType<typeof readForwardPerformanceLedgerDataFirst>,
-  typeof readForwardPerformanceLedgerDataFirst
->((arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null, readForwardPerformanceLedgerDataFirst)

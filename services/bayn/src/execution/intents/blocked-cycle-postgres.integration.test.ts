@@ -36,7 +36,7 @@ import {
 } from '../../execution/mandate'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { postgresMigrations } from '../../db/postgres-migrations'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
 import { config as fixtureConfig } from '../../testing/runtime-fixtures'
 import { restrictAuthority } from '../../db/reconciliation'
@@ -108,7 +108,7 @@ const makeFixture = (openSession = false) => {
       entryAttemptOrdinal: 1,
       strategyName: 'jev',
       qualificationRunId: planHash,
-      strategyProtocolHash: canonicalHashV1({ strategy: 'jev', version: 2 }),
+      strategyProtocolHash: Result.getOrThrow(canonicalHashV1Result({ strategy: 'jev', version: 2 })),
       accountId,
       executionSessionDate,
       executionCalendarSchemaVersion: calendar.executionCalendarSchemaVersion,
@@ -170,11 +170,11 @@ const makeExpiredNativeFixture = () => {
 }
 
 const seedExecutionAuthority = (sql: PgClient.PgClient, fixture: ReturnType<typeof makeFixture>) => {
-  const observeGenerationHash = canonicalHashV1({ generation: 'observe' })
-  const executionGenerationHash = canonicalHashV1({ generation: 'execution' })
-  const reconciliationId = canonicalHashV1({ reconciliation: 'activation' })
-  const reconciliationHash = canonicalHashV1({ reconciliation: 'activation-content' })
-  const stateHash = canonicalHashV1({ state: 'flat' })
+  const observeGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))
+  const executionGenerationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
+  const reconciliationId = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'activation' }))
+  const reconciliationHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'activation-content' }))
+  const stateHash = Result.getOrThrow(canonicalHashV1Result({ state: 'flat' }))
   const observeActivatedAt = instant(Date.parse(fixture.generationActivatedAt) - 2_000)
   const activationReconciledAt = instant(Date.parse(fixture.generationActivatedAt) - 1_000)
   return Effect.gen(function* () {
@@ -251,19 +251,19 @@ const seedRepairableCycle = (
       INSERT INTO position_snapshots (
         snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
       ) VALUES (
-        ${canonicalHashV1({ positions: 'flat' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
-        ${canonicalHashV1({ positions: 'source' })}, ${fixture.positionsObservedAt}, 0,
-        ${canonicalHashV1({ positions: 'content' })}
+        ${Result.getOrThrow(canonicalHashV1Result({ positions: 'flat' }))}, 'bayn.paper-position-snapshot.v1', ${accountId},
+        ${Result.getOrThrow(canonicalHashV1Result({ positions: 'source' }))}, ${fixture.positionsObservedAt}, 0,
+        ${Result.getOrThrow(canonicalHashV1Result({ positions: 'content' }))}
       )
     `
-    const exactHash = canonicalHashV1({ reconciliation: 'current-flat' })
+    const exactHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'current-flat' }))
     yield* sql`
       INSERT INTO reconciliations (
         reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
         content_hash, status, discrepancies, reconciled_at
       ) VALUES (
-        ${canonicalHashV1({ reconciliation: 'current' })}, 'bayn.paper-reconciliation.v1',
-        ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'current-content' })},
+        ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'current' }))}, 'bayn.paper-reconciliation.v1',
+        ${accountId}, ${exactHash}, ${exactHash}, ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'current-content' }))},
         'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
       )
     `
@@ -406,13 +406,15 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         const sql = yield* PgClient.PgClient
         yield* seedExecutionAuthority(sql, makeFixture())
         const authority = makeAuthorityPostgres(sql)
-        const rows = yield* authority.readGeneration(canonicalHashV1({ generation: 'execution' }))
+        const rows = yield* authority.readGeneration(
+          Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
+        )
         const locked = yield* sql.withTransaction(authority.lockCapitalGrant(accountId))
         return { rows, locked }
       }),
     )
-    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
-    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v13')
+    expect(result.rows[0]?.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v17')
+    expect(result.locked.history.strategy_parameter_schema_version).toBe('bayn.jev.protocol.v17')
     expect(result.locked.current.generationHash).toBe(result.rows[0]?.generation_hash)
   })
 
@@ -432,7 +434,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     'recovers a flat restricted generation through the production coordinator: $scenario / $reason',
     async ({ reason, scenario }) => {
       const fixture = scenario === 'expired-unused-cycle' ? makeExpiredNativeFixture() : makeFixture()
-      const generationHash = canonicalHashV1({ generation: 'execution' })
+      const generationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
       await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
@@ -459,7 +461,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             expect(yield* sql`SELECT count(*)::integer AS count FROM autonomous_forward_performance_receipts`).toEqual([
               { count: 0 },
             ])
-            const exactHash = canonicalHashV1({ reconciliation: 'zero-expiry-current' })
+            const exactHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'zero-expiry-current' }))
             yield* sql`INSERT INTO position_snapshots (
     snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
   ) VALUES (
@@ -531,8 +533,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         yield* seedExecutionAuthority(sql, fixture)
         yield* cycles.acquire(fixture.cycle, fixture.acquiredAt)
         yield* cycles.activate(fixture.cycle.identity.cycleId, fixture.cycleActivatedAt)
-        const snapshotId = canonicalHashV1({ snapshot: 'capital-cutover-existing' })
-        const decisionHash = canonicalHashV1({ decision: 'capital-cutover-existing' })
+        const snapshotId = Result.getOrThrow(canonicalHashV1Result({ snapshot: 'capital-cutover-existing' }))
+        const decisionHash = Result.getOrThrow(canonicalHashV1Result({ decision: 'capital-cutover-existing' }))
         const decisionAt = instant(Date.parse(fixture.cycleActivatedAt) + 1000)
         yield* sql.withTransaction(
           Effect.gen(function* () {
@@ -543,7 +545,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     dispatchable: true,
     bindings: {
       cycleId: fixture.cycle.identity.cycleId,
-      authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+      authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
     },
     contentHash: decisionHash,
     createdAt: decisionAt,
@@ -657,7 +659,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             )
             expect(yield* settle).toMatchObject({
               _tag: 'TerminalGenerationSettled',
-              authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+              authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
               intentCount: 0,
               terminalIntentCount: 0,
             })
@@ -683,7 +685,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             yield* sql`INSERT INTO autonomous_cycle_shadow_decisions
               SELECT ${'f'.repeat(64)}, ${'e'.repeat(64)},
                 jsonb_set(document, '{bindings,authorityGenerationHash}',
-                  to_jsonb(${canonicalHashV1({ generation: 'execution' })}::text))
+                  to_jsonb(${Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))}::text))
               FROM autonomous_cycle_shadow_decisions LIMIT 1`
             expect(yield* settle).toEqual({ _tag: 'NoTerminalGeneration' })
           }),
@@ -726,7 +728,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         reconciledAt: instant(now - 10_000),
         positionsObservedAt: instant(now - 12_000),
       }
-      const generationHash = canonicalHashV1({ generation: 'execution' })
+      const generationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
       await runtime.runPromise(
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
@@ -752,8 +754,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             )
             const draft = value(makeCycleDraft(identity, fixture.cycle.window))
             const cycleId = draft.identity.cycleId
-            const snapshotId = canonicalHashV1({ snapshot: ordinal })
-            const decisionHash = canonicalHashV1({ decision: ordinal })
+            const snapshotId = Result.getOrThrow(canonicalHashV1Result({ snapshot: ordinal }))
+            const decisionHash = Result.getOrThrow(canonicalHashV1Result({ decision: ordinal }))
             const decisionAt = instant(Date.parse(fixture.cycleActivatedAt) + ordinal * 1000)
             const terminalAt = instant(
               Date.parse(fixture.restrictedAt) + (ordinal === 2 && terminalAfterRestriction ? 1000 : -1000),
@@ -853,7 +855,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
   test('recovers a generation restricted before its first cycle only after fresh exact reconciliation', async () => {
     const fixture = makeFixture(true)
-    const successorHash = canonicalHashV1({ generation: 'unused-successor' })
+    const successorHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'unused-successor' }))
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -869,7 +871,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
         expect(settlement).toMatchObject({
           _tag: 'TerminalGenerationSettled',
-          authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+          authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
           blockedCycleCount: 0,
           intentCount: 0,
           terminalIntentCount: 0,
@@ -883,17 +885,17 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         const stale = yield* rotate.pipe(Effect.flip)
         expect(stale.failure).toBe('invariant')
         expect(yield* authority.readAuthorityState).toMatchObject({
-          generationHash: canonicalHashV1({ generation: 'execution' }),
+          generationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
           effective: Authority.Observe,
           kill: KillState.Active,
         })
 
-        const exactHash = canonicalHashV1({ reconciliation: 'unused-generation-exact' })
+        const exactHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'unused-generation-exact' }))
         yield* sql`INSERT INTO reconciliations (
           reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
           content_hash, status, discrepancies, reconciled_at
         ) VALUES (
-          ${canonicalHashV1({ reconciliation: 'unused-generation' })}, 'bayn.paper-reconciliation.v1',
+          ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'unused-generation' }))}, 'bayn.paper-reconciliation.v1',
           ${accountId}, ${exactHash}, ${exactHash}, ${exactHash},
           'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
         )`
@@ -920,17 +922,17 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           yield* seedExecutionAuthority(sql, fixture)
-          const executionHash = canonicalHashV1({ generation: 'execution' })
-          const intentId = canonicalHashV1({ intent: 'prior-trade' })
-          const riskId = canonicalHashV1({ risk: 'prior-trade' })
-          const mutationId = canonicalHashV1({ mutation: 'prior-trade' })
+          const executionHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
+          const intentId = Result.getOrThrow(canonicalHashV1Result({ intent: 'prior-trade' }))
+          const riskId = Result.getOrThrow(canonicalHashV1Result({ risk: 'prior-trade' }))
+          const mutationId = Result.getOrThrow(canonicalHashV1Result({ mutation: 'prior-trade' }))
           const occurredAt = instant(Date.parse(fixture.generationActivatedAt) + 1_000)
           yield* sql`INSERT INTO intents (
           intent_id, schema_version, authority_generation_hash, risk_decision_id, strategy_name, cycle_id,
           decision_hash, policy_hash, account_id, client_order_id, symbol, side, order_type, time_in_force,
           quantity_atoms, notional_limit_micros, limit_price_micros, state, state_version, created_at, updated_at
         ) VALUES (
-          ${intentId}, 'bayn.execution-intent.v4', ${executionHash}, NULL, 'jev',
+          ${intentId}, 'bayn.execution-intent.v5', ${executionHash}, NULL, 'jev',
           ${fixture.cycle.identity.cycleId}, ${'0'.repeat(64)}, ${'7'.repeat(64)}, ${accountId}, 'prior-trade',
           'AAPL', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000000, 1000000000000, 'PLANNED', 1, ${occurredAt}, ${occurredAt}
         )`
@@ -951,14 +953,14 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
           request_hash, consistency_delay_ms, occurred_at
         ) VALUES (
-          ${canonicalHashV1({ event: 1 })}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
+          ${Result.getOrThrow(canonicalHashV1Result({ event: 1 }))}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 1,
           'SUBMIT', 'SUBMIT_STARTED', ${'8'.repeat(64)}, 1000, ${occurredAt}
         )`
           yield* sql`INSERT INTO mutation_events (
           event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
           request_hash, consistency_delay_ms, broker_order_id, request_id, response_status, response_content_hash, occurred_at
         ) VALUES (
-          ${canonicalHashV1({ event: 2 })}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
+          ${Result.getOrThrow(canonicalHashV1Result({ event: 2 }))}, 'bayn.paper-mutation-event.v1', ${mutationId}, ${intentId}, 2,
           'SUBMIT', 'SUBMIT_ACCEPTED', ${'8'.repeat(64)}, 1000, 'prior-order', 'prior-request', 200, ${'9'.repeat(64)}, ${occurredAt}
         )`
           yield* sql`UPDATE intents SET state = 'ACKNOWLEDGED', state_version = 4, updated_at = updated_at + interval '1 millisecond' WHERE intent_id = ${intentId}`
@@ -967,19 +969,19 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           yield* sql`INSERT INTO position_snapshots (
           snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
         ) VALUES (
-          ${canonicalHashV1({ snapshot: 'prior-flat' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+          ${Result.getOrThrow(canonicalHashV1Result({ snapshot: 'prior-flat' }))}, 'bayn.paper-position-snapshot.v1', ${accountId},
           ${'a'.repeat(64)}, ${fixture.positionsObservedAt}, 0, ${'a'.repeat(64)}
         )`
           yield* sql`INSERT INTO reconciliations (
           reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash,
           status, discrepancies, reconciled_at
         ) VALUES (
-          ${canonicalHashV1({ reconciliation: 'prior-flat' })}, 'bayn.paper-reconciliation.v1', ${accountId},
+          ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'prior-flat' }))}, 'bayn.paper-reconciliation.v1', ${accountId},
           ${'a'.repeat(64)}, ${'a'.repeat(64)}, ${'a'.repeat(64)}, 'EXACT', '[]'::jsonb, ${fixture.reconciledAt}
         )`
           const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
           const successor = yield* authority.ensureAuthorityGeneration({
-            generationHash: canonicalHashV1({ generation: 'settled-observe' }),
+            generationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'settled-observe' })),
             maximum: Authority.Observe,
           })
           expect(successor.kill).toBe(KillState.Clear)
@@ -998,7 +1000,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             yield* sql`INSERT INTO position_snapshots (
             snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
           ) VALUES (
-            ${canonicalHashV1({ snapshot: 'still-held' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+            ${Result.getOrThrow(canonicalHashV1Result({ snapshot: 'still-held' }))}, 'bayn.paper-position-snapshot.v1', ${accountId},
             ${'b'.repeat(64)}, clock_timestamp(), 1, ${'b'.repeat(64)}
           )`
           }
@@ -1007,8 +1009,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             event_id, schema_version, mutation_id, intent_id, sequence, operation, event_type,
             request_hash, consistency_delay_ms, broker_order_id, occurred_at
           ) VALUES (
-            ${canonicalHashV1({ event: 3 })}, 'bayn.paper-mutation-event.v1',
-            ${canonicalHashV1({ mutation: 'unknown' })}, ${intentId}, 1,
+            ${Result.getOrThrow(canonicalHashV1Result({ event: 3 }))}, 'bayn.paper-mutation-event.v1',
+            ${Result.getOrThrow(canonicalHashV1Result({ mutation: 'unknown' }))}, ${intentId}, 1,
             'CANCEL', 'CANCEL_STARTED', ${'8'.repeat(64)}, 1000, 'prior-order', clock_timestamp()
           )`
           }
@@ -1017,7 +1019,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
               yield* sql`INSERT INTO position_snapshots (
               snapshot_id, schema_version, account_id, source_hash, observed_at, position_count, content_hash
             ) VALUES (
-              ${canonicalHashV1({ snapshot: 'after-restriction' })}, 'bayn.paper-position-snapshot.v1', ${accountId},
+              ${Result.getOrThrow(canonicalHashV1Result({ snapshot: 'after-restriction' }))}, 'bayn.paper-position-snapshot.v1', ${accountId},
               ${'c'.repeat(64)}, ${evidenceClock}, 0, ${'c'.repeat(64)}
             )`
             }
@@ -1025,7 +1027,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash, content_hash,
             status, discrepancies, reconciled_at
           ) VALUES (
-            ${canonicalHashV1({ reconciliation: 'after-restriction' })}, 'bayn.paper-reconciliation.v1', ${accountId},
+            ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'after-restriction' }))}, 'bayn.paper-reconciliation.v1', ${accountId},
             ${'b'.repeat(64)}, ${'b'.repeat(64)}, ${'b'.repeat(64)}, 'EXACT', '[]'::jsonb, ${evidenceClock}
           )`
           }
@@ -1040,7 +1042,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             brokerIdentity,
           )
           const recovered = yield* recoveryAuthority.ensureAuthorityGeneration({
-            generationHash: canonicalHashV1({ generation: 'recovered-observe' }),
+            generationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'recovered-observe' })),
             maximum: Authority.Observe,
           })
           expect(recovered.kill).toBe(
@@ -1062,7 +1064,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           ])
           expect(
             yield* sql`SELECT observe_recovery_account_settled(
-              ${canonicalHashV1({ generation: 'observe' })}, ${accountId}, ${fixture.reconciledAt}
+              ${Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' }))}, ${accountId}, ${fixture.reconciledAt}
             ) AS settled`,
           ).toEqual([{ settled: false }])
           expect(
@@ -1112,8 +1114,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     legacyExecutionActivationExpiredRestrictionReason,
   ])('retires an unused preopen cycle when a receipted mandate is restricted for %s', async (reason) => {
     const fixture = makeFixture()
-    const generationHash = canonicalHashV1({ generation: 'execution' })
-    const successorHash = canonicalHashV1({ generation: 'retired-successor' })
+    const generationHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' }))
+    const successorHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'retired-successor' }))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1129,21 +1131,21 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
             schemaVersion: 'bayn.forward-performance-receipt-envelope.v1',
             authorityGenerationHash: generationHash,
             cycleId: fixture.cycle.identity.cycleId,
-            contentHash: canonicalHashV1({ performance: 'retired' }),
-            receiptHash: canonicalHashV1({ receipt: 'retired' }),
-            receipt: { receiptHash: canonicalHashV1({ receipt: 'retired' }) },
+            contentHash: Result.getOrThrow(canonicalHashV1Result({ performance: 'retired' })),
+            receiptHash: Result.getOrThrow(canonicalHashV1Result({ receipt: 'retired' })),
+            receipt: { receiptHash: Result.getOrThrow(canonicalHashV1Result({ receipt: 'retired' })) },
             createdAt: fixture.restrictedAt,
           })}, ${fixture.restrictedAt}
         )`
         yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
           reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
-        const exactHash = canonicalHashV1({ reconciliation: 'retired-exact' })
+        const exactHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'retired-exact' }))
         yield* sql`INSERT INTO reconciliations (
           reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
           content_hash, status, discrepancies, reconciled_at
         ) VALUES (
-          ${canonicalHashV1({ reconciliation: 'retired' })}, 'bayn.paper-reconciliation.v1',
-          ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'retired-content' })},
+          ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'retired' }))}, 'bayn.paper-reconciliation.v1',
+          ${accountId}, ${exactHash}, ${exactHash}, ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'retired-content' }))},
           'EXACT', ${sql.json([])}, ${fixture.reconciledAt}
         )`
         const settlement = yield* blocked.settleCurrentTerminalGeneration({
@@ -1216,7 +1218,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
       expect(result.settlement).toEqual({
         _tag: 'TerminalGenerationSettled',
-        authorityGenerationHash: canonicalHashV1({ generation: 'execution' }),
+        authorityGenerationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
         preserveCyclePlanHash: planHash,
         blockedCycleCount: 0,
         blockedIntentCount: 0,
@@ -1267,7 +1269,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     `reconciliation discrepancy ${'8'.repeat(64)}`,
   ])('rotates a generation restricted for %s with an untouched open-session cycle before cutoff', async (reason) => {
     const fixture = makeFixture(true)
-    const successorHash = canonicalHashV1({ generation: 'open-session-successor' })
+    const successorHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'open-session-successor' }))
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1286,16 +1288,16 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         if (settlement._tag !== 'TerminalGenerationSettled') return yield* Effect.die('expected settlement')
         const preserveCyclePlanHash = settlement.preserveCyclePlanHash
         if (preserveCyclePlanHash === undefined) return yield* Effect.die('expected preserved cycle')
-        const exactHash = canonicalHashV1({ reconciliation: 'post-settlement-exact' })
+        const exactHash = Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'post-settlement-exact' }))
         const reconciledAt = instant(Date.parse(fixture.reconciledAt) + 1_000)
         yield* sql`
           INSERT INTO reconciliations (
             reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
             content_hash, status, discrepancies, reconciled_at
           ) VALUES (
-            ${canonicalHashV1({ reconciliation: 'post-settlement' })}, 'bayn.paper-reconciliation.v1',
+            ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'post-settlement' }))}, 'bayn.paper-reconciliation.v1',
             ${accountId}, ${exactHash}, ${exactHash},
-            ${canonicalHashV1({ reconciliation: 'post-settlement-content' })},
+            ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'post-settlement-content' }))},
             'EXACT', ${sql.json([])}, ${reconciledAt}
           )
         `
@@ -1319,7 +1321,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
 
   test('preserves a fee-restricted unused session and refuses rollover until a later exact reconciliation', async () => {
     const fixture = makeFixture()
-    const successorHash = canonicalHashV1({ generation: 'fee-reconciliation-successor' })
+    const successorHash = Result.getOrThrow(canonicalHashV1Result({ generation: 'fee-reconciliation-successor' }))
     const discrepancyId = '8'.repeat(64)
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -1338,7 +1340,7 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           identity: accountId,
           expected: '99939.01',
           observed: '99941.23',
-          evidenceHash: canonicalHashV1({ reconciliation: 'fees-awaiting-broker-cash' }),
+          evidenceHash: Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'fees-awaiting-broker-cash' })),
           firstObservedAt: fixture.restrictedAt,
           lastObservedAt: fixture.reconciledAt,
         }
@@ -1347,8 +1349,8 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           content_hash, status, discrepancies, reconciled_at
         ) VALUES (
           ${discrepancyId}, 'bayn.paper-reconciliation.v1', ${accountId},
-          ${canonicalHashV1({ cash: discrepancy.expected })}, ${canonicalHashV1({ cash: discrepancy.observed })},
-          ${canonicalHashV1(discrepancy)}, 'DISCREPANCY', ${sql.json([discrepancy])},
+          ${Result.getOrThrow(canonicalHashV1Result({ cash: discrepancy.expected }))}, ${Result.getOrThrow(canonicalHashV1Result({ cash: discrepancy.observed }))},
+          ${Result.getOrThrow(canonicalHashV1Result(discrepancy))}, 'DISCREPANCY', ${sql.json([discrepancy])},
           ${fixture.reconciledAt}
         )`
         const settlement = yield* blocked.settleCurrentTerminalGeneration({
@@ -1368,13 +1370,13 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
         const restrictedState =
           yield* sql`SELECT generation_hash, effective, kill_state FROM authority_state WHERE singleton`
         const restrictedCycle = yield* cycles.read(fixture.cycle.identity.cycleId)
-        const exactHash = canonicalHashV1({ cash: discrepancy.expected })
+        const exactHash = Result.getOrThrow(canonicalHashV1Result({ cash: discrepancy.expected }))
         yield* sql`INSERT INTO reconciliations (
           reconciliation_id, schema_version, account_id, expected_hash, observed_hash,
           content_hash, status, discrepancies, reconciled_at
         ) VALUES (
-          ${canonicalHashV1({ reconciliation: 'fees-reflected' })}, 'bayn.paper-reconciliation.v1',
-          ${accountId}, ${exactHash}, ${exactHash}, ${canonicalHashV1({ reconciliation: 'fees-reflected-content' })},
+          ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'fees-reflected' }))}, 'bayn.paper-reconciliation.v1',
+          ${accountId}, ${exactHash}, ${exactHash}, ${Result.getOrThrow(canonicalHashV1Result({ reconciliation: 'fees-reflected-content' }))},
           'EXACT', ${sql.json([])}, ${instant(Date.parse(fixture.reconciledAt) + 1_000)}
         )`
         const rotated = yield* authority.ensureAuthorityGeneration(request)
@@ -1391,7 +1393,11 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
     expect(result.settlement).toMatchObject({ preserveCyclePlanHash: planHash, blockedCycleCount: 0 })
     expect(Result.isFailure(result.inexactRollover)).toBe(true)
     expect(result.restrictedState).toEqual([
-      { generation_hash: canonicalHashV1({ generation: 'execution' }), effective: 'OBSERVE', kill_state: 'ACTIVE' },
+      {
+        generation_hash: Result.getOrThrow(canonicalHashV1Result({ generation: 'execution' })),
+        effective: 'OBSERVE',
+        kill_state: 'ACTIVE',
+      },
     ])
     expect(Option.getOrThrow(result.restrictedCycle).state).toBe(CycleState.Active)
     expect(result.rotated).toMatchObject({
@@ -1588,7 +1594,7 @@ const seedUntouchedExpiry = Effect.gen(function* () {
   yield* sql`CREATE TABLE intents (
     intent_id text PRIMARY KEY, authority_generation_hash text, cycle_id text, account_id text, policy_hash text,
     strategy_name text, side text, state text, terminal_outcome text, state_version integer,
-    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric, limit_price_micros numeric
+    updated_at timestamptz, risk_decision_id text, client_order_id text, symbol text, order_type text, time_in_force text, quantity_atoms numeric, notional_limit_micros numeric, limit_price_micros numeric, protection jsonb
   )`
   yield* sql`CREATE TABLE risk_decisions (
     decision_id text PRIMARY KEY, intent_id text, outcome text, decided_at timestamptz, expires_at timestamptz
@@ -1659,18 +1665,20 @@ const reserveExpiryIntent = Effect.gen(function* () {
   return yield* makeMutationStartPostgres(sql, fence, makeMutationEventPostgres(sql)).begin(
     MutationOperation.Submit,
     expiryFixture.intentIds[0],
-    canonicalHashV1(
-      Result.getOrThrow(
-        orderRequestBody({
-          clientOrderId: 'b1_' + 'A'.repeat(43),
-          symbol: 'AAPL',
-          side: OrderSide.Buy,
-          orderType: OrderType.Limit,
-          timeInForce: TimeInForce.Day,
-          quantityAtoms: '1000000000',
-          notionalLimitMicros: '100000000',
-          limitPriceMicros: '100000000',
-        }),
+    Result.getOrThrow(
+      canonicalHashV1Result(
+        Result.getOrThrow(
+          orderRequestBody({
+            clientOrderId: 'b1_' + 'A'.repeat(43),
+            symbol: 'AAPL',
+            side: OrderSide.Buy,
+            orderType: OrderType.Limit,
+            timeInForce: TimeInForce.Day,
+            quantityAtoms: '1000000000',
+            notionalLimitMicros: '100000000',
+            limitPriceMicros: '100000000',
+          }),
+        ),
       ),
     ),
     1_000,
@@ -1737,7 +1745,7 @@ describePostgres('PostgreSQL untouched approval expiry safety', () => {
       denial_reason: SubmissionDenialReason.ExpiredRiskDecision,
     })
     const { eventId, ...material } = denied
-    expect(eventId).toBe(canonicalHashV1(material))
+    expect(eventId).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
     expect(first.orders).toEqual([])
     expect(first.fills).toEqual([])
     expect(await contender.runPromise(deny(SubmissionDenialReason.ExpiredRiskDecision))).toEqual(denied)

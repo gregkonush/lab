@@ -458,10 +458,6 @@ fn request_target(method: &str, body: &[u8]) -> anyhow::Result<String> {
             canonical::<proto::CodexRequest>(body)?;
             String::new()
         }
-        "ResolveCodexApproval" => {
-            canonical::<proto::CodexApproval>(body)?;
-            String::new()
-        }
         "WatchCodexEvents" => {
             canonical::<proto::CodexWatch>(body)?;
             String::new()

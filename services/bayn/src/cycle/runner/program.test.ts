@@ -1,12 +1,13 @@
+import { strictParseOptions } from '../../schemas'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Option, Result } from 'effect'
+import { Effect, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { BrokerRead, type BrokerReadShape, type MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
-import { CycleState, CycleTerminalReason, decodeAutonomousCycle, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle, AutonomousCycleSchema } from '../model'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
 import { makeInitialCycle } from '../store/decisions'
 import { makeIntradayCycleDraft } from './calendar-decisions'
@@ -56,7 +57,10 @@ const blockedAt = '2026-09-18T13:05:00.000Z'
 const rearmAt = '2026-09-18T14:06:00.000Z'
 const blockedCycle = (ordinal = 1, overrides: Record<string, unknown> = {}): AutonomousCycle =>
   Effect.runSync(
-    decodeAutonomousCycle({
+    Schema.decodeUnknownEffect(
+      AutonomousCycleSchema,
+      strictParseOptions,
+    )({
       ...Result.getOrThrow(makeIntradayCycleDraft(context, calendar, session, ordinal)),
       state: CycleState.Blocked,
       bindings: {},

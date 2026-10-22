@@ -1,3 +1,13 @@
+import setupAndPlan from '../../migrations/0137_setup_and_plan'
+import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
+import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
+import completePlanChoice from '../../migrations/0133_complete_plan_choice'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
+import jevHarness2 from '../../migrations/0132_jev_harness2'
+import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
+import harness2Research from '../../migrations/0129_harness2_research'
+import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
 import currentJevCycles from '../../migrations/0127_current_jev_cycles'
 import entryBoundExits from '../../migrations/0126_entry_bound_exits'
 import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
@@ -129,8 +139,18 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '137_setup_and_plan': setupAndPlan,
+  '136_current_authority_writes': currentAuthorityWrites,
+  '134_remove_unused_schema': removeUnusedSchema,
   '127_current_jev_cycles': currentJevCycles,
   '126_entry_bound_exits': entryBoundExits,
+  '128_strategy_native_protection': strategyNativeProtection,
+  '135_jev_editor_identity': jevEditorIdentity,
+  '132_jev_harness2': jevHarness2,
+  '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '133_complete_plan_choice': completePlanChoice,
+  '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
   '123_setup_action_protocol': setupActionProtocol,
   '124_focused_jev_judgments': focusedJevJudgments,
   '125_market_management_judgment': marketManagementJudgment,

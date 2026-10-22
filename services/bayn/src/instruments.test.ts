@@ -1,13 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import {
-  decodeInstrument,
-  InstrumentSymbolSchema,
-  instrumentOrderQuantity,
-  MarketKind,
-  validateInstrumentOrder,
-} from './instruments'
+import { decodeInstrument, InstrumentSymbolSchema, MarketKind, validateInstrumentOrder } from './instruments'
 
 test('the same instrument contract admits equities and all supported crypto pairs', () => {
   for (const symbol of ['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])
@@ -24,7 +18,6 @@ test('the same instrument contract admits equities and all supported crypto pair
     }),
   )
   expect(equity.market).toBe(MarketKind.Equity)
-  expect(instrumentOrderQuantity(equity, 1_900_000_000n)).toBe(1_000_000_000n)
   for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
     const crypto = Result.getOrThrow(
       decodeInstrument({
@@ -37,7 +30,6 @@ test('the same instrument contract admits equities and all supported crypto pair
     )
     expect(crypto.market).toBe(MarketKind.Crypto)
     expect(crypto.minimumQuantityAtoms).toBe(12_150n)
-    expect(instrumentOrderQuantity(crypto, 12_151n)).toBe(12_151n)
   }
 })
 

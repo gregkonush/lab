@@ -11,7 +11,6 @@ export const QualificationBindingSchema = Schema.Struct({
   lockId: Sha256Schema,
   resultHash: Sha256Schema,
 })
-export type QualificationBinding = typeof QualificationBindingSchema.Type
 
 export const QualifiedCapitalGrantSchema = Schema.TaggedStruct('Qualified', {
   qualification: QualificationBindingSchema,

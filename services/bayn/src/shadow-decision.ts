@@ -1,8 +1,5 @@
-import {
-  executionIntentSchemaVersion,
-  intentPlanSchemaVersion,
-  referenceIntentSchemaVersion,
-} from './execution/contracts'
+import { entryBracketProtection } from './execution/position-protection'
+import { intentPlanSchemaVersion } from './execution/contracts'
 import { canonicalHashV1Result } from './hash'
 import { instrumentMarket } from './instruments'
 import { cashSpotLimitTimeInForce } from './execution/order-terms'
@@ -18,10 +15,9 @@ import { Data, Effect, Result, Schema } from 'effect'
 
 import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle/model'
 import {
-  intentIdForPlan,
-  clientOrderIdForIntentId,
-  executionIntentIdForDecodedPlan,
   IntentPlanSchema,
+  makeReferenceIntentResult,
+  makeExecutionIntentFromDecodedPlan,
   type IntentPlan,
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
@@ -30,11 +26,8 @@ import type { PersistedIntradaySnapshotRows } from './market-data/intraday/verif
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
   Authority,
-  IntentSchema,
-  IntentState,
   OrderSide,
   OrderType,
-  ReferenceIntentSchema,
   RiskOutcome,
   type Intent,
   type Position,
@@ -48,7 +41,6 @@ import {
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   reconciledPositionLiquidationBindingSchemaVersion,
-  type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
@@ -328,7 +320,7 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v2'
+  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v6'
   const intradayClose = isFlatExecutionTarget(decision)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
@@ -341,7 +333,7 @@ const validateBindings = (
       : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
   if (intradayEntry) {
     const expected =
-      decision.schemaVersion === 'bayn.jev-entry-target.v2' && decisionMarketData !== undefined
+      decision.schemaVersion === 'bayn.jev-entry-target.v6' && decisionMarketData !== undefined
         ? canonicalHashV1Result(decisionMarketData.calendar)
         : Result.succeed(cycle.window.executionCalendarHash)
     if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
@@ -422,7 +414,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
+    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
       ? jevPlanningTargetWeights(input.compiledDecision)
       : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
@@ -477,7 +469,7 @@ const validateRiskState = (
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
       state.entryQuote.maximumAgeMs !==
-        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v2'
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
           ? jevEntryQuoteMaximumAgeMs(
               input.compiledDecision,
               state.entryQuote.eventAt,
@@ -541,53 +533,11 @@ const makeRiskIntent = (
     error('contract', 'shadow target delta could not form a valid risk intent', cause),
   )
   if (Result.isFailure(decodedPlan)) return Result.fail(decodedPlan.failure)
-  const identityResult: Result.Result<string, ShadowDecisionError> =
-    authorityGenerationHash === undefined
-      ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
-          error('contract', 'shadow target delta identity is not canonicalizable', cause),
-        )
-      : Result.mapError(executionIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
-          error('contract', 'execution target delta identity is not canonicalizable', cause),
-        )
-  const identity = Result.mapError(
-    Result.map(identityResult, (intentId) => ({
-      intentId,
-      clientOrderId: clientOrderIdForIntentId(intentId),
-    })),
-    (cause) => cause,
-  )
-  if (Result.isFailure(identity)) return Result.fail(identity.failure)
-  const decoded = decodedPlan.success
-  return Result.mapError(
-    Schema.decodeUnknownResult(
-      authorityGenerationHash === undefined ? ReferenceIntentSchema : IntentSchema,
-      strictParseOptions,
-    )({
-      schemaVersion:
-        authorityGenerationHash === undefined ? referenceIntentSchemaVersion : executionIntentSchemaVersion,
-      ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
-      intentId: identity.success.intentId,
-      strategyName: decoded.strategyName,
-      cycleId: decoded.cycleId,
-      decisionHash: decoded.decisionHash,
-      policyHash: decoded.policyHash,
-      accountId: decoded.accountId,
-      clientOrderId: identity.success.clientOrderId,
-      symbol: decoded.symbol,
-      side: decoded.side,
-      orderType: decoded.orderType,
-      timeInForce: decoded.timeInForce,
-      quantityAtoms: decoded.quantityAtoms,
-      notionalLimitMicros: decoded.notionalLimitMicros,
-      limitPriceMicros: decoded.limitPriceMicros,
-      ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
-        ? {}
-        : { replanGenerationHash: decoded.replanGenerationHash }),
-      state: IntentState.Planned,
-      createdAt: decoded.createdAt,
-    }),
-    (cause) => error('contract', 'shadow target delta could not form a valid risk intent', cause),
-  )
+  const invalidIntent = (cause: unknown) =>
+    error('contract', 'shadow target delta could not form a valid risk intent', cause)
+  return authorityGenerationHash === undefined
+    ? Result.mapError(makeReferenceIntentResult(decodedPlan.success), invalidIntent)
+    : Result.mapError(makeExecutionIntentFromDecodedPlan(decodedPlan.success, authorityGenerationHash), invalidIntent)
 }
 
 interface ShadowReduction {
@@ -617,12 +567,21 @@ const reduceShadowDelta = (
   if (provided === undefined) {
     return Result.fail(error('binding', 'planned target delta is missing its risk input'))
   }
+  const protection = entryBracketProtection(
+    targetIntent.symbol,
+    targetIntent.quantityAtoms,
+    targetIntent.createdAt,
+    context.input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+      ? context.input.compiledDecision.exitPolicy.plans[targetIntent.symbol]
+      : undefined,
+  )
   const intent = makeRiskIntent(
     {
       schemaVersion: intentPlanSchemaVersion,
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
       limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
@@ -665,6 +624,7 @@ const reduceShadowDelta = (
     {
       notionalLimitMicros: provided.notionalLimitMicros,
       limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.authority === Authority.Execution
         ? {
             facts: {
@@ -1063,5 +1023,3 @@ export const buildExecutionDecision = (
       ),
     ),
   ).pipe(withObservedStage('bayn.execution.decision-build', { operation: Authority.Execution }))
-
-export type DurableCycleDecisionDocument = CycleDecisionDocument

@@ -98,7 +98,7 @@ test('property: DAY partial fills conserve the account across quote retries, can
             }
             let broker = yield* makeReplayBroker(config)
             const order: Intent = {
-              schemaVersion: 'bayn.execution-intent.v4',
+              schemaVersion: 'bayn.execution-intent.v5',
               intentId: '1'.repeat(64),
               riskDecisionId: '6'.repeat(64),
               authorityGenerationHash: '2'.repeat(64),

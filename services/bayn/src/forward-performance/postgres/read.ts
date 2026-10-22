@@ -16,7 +16,7 @@ import type {
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
-import { Pipeable } from '../../pipeable'
+
 import {
   ForwardPerformancePostgresError,
   ReconciliationRow,
@@ -47,7 +47,7 @@ import {
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
-export const readForwardPerformanceUnclosedCycleCountDataFirst = (
+export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -68,7 +68,9 @@ export const readForwardPerformanceUnclosedCycleCountDataFirst = (
       -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
       -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
       AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
+      -- A cycle can be materialized before its eventual authority activation. Its durable decision
+      -- or intent binding must keep unfinished work in the same generation as completed-cycle reads.
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
       -- A standing mandate may materialize the next cycle before its submission window opens. Ignore
       -- only that unopened, never-started cycle at this reconciliation boundary. A bound decision
       -- or intent is durable evidence; intents are also the root of mutation and execution facts.
@@ -191,7 +193,7 @@ export const readForwardPerformanceStrategyRows = (
   SELECT * FROM research_strategy
 `.pipe(Effect.flatMap(decodeStrategy))
 
-export const readForwardPerformancePostgresDataFirst = (
+export const readForwardPerformancePostgres = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -706,7 +708,7 @@ export const readForwardPerformancePostgresDataFirst = (
             COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
         `.pipe(Effect.flatMap(decodeDurableExecutions))
 
-        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCount(
           sql,
           accountId,
           authorityGenerationHash,
@@ -1051,12 +1053,3 @@ export const readForwardPerformancePostgresDataFirst = (
       }),
     )
     .pipe(Effect.mapError(postgresError))
-
-export const readForwardPerformancePostgres = Pipeable.by<
-  (
-    accountId: string,
-    authorityGenerationHash?: string,
-    writerFence?: WriterFenceService,
-  ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
-  typeof readForwardPerformancePostgresDataFirst
->((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

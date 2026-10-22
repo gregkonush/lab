@@ -1,8 +1,8 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { makeRuntimeProvenance, makeStrategyProtocolHashResult } from '../contracts'
-import { canonicalHashV1 } from '../hash'
+import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
+import { canonicalHashV1Result } from '../hash'
 import { makeJevDefinition } from '../jev/decision'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
 import type { StrategyRuntime } from '../strategy'
@@ -19,31 +19,41 @@ const prepare = (strategy: StrategyRuntime) =>
     strategy,
   })
 
-test('autonomous startup admits the exact source-selected momentum-first identity', () => {
-  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v13')
+test('autonomous startup admits the exact source-selected model trade-plan identity', () => {
+  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v17')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('b58904422ea4b1e53026d6bbb28bd1b0eae5468b60175ecfc639d43db3a6fba8')
+  expect(result.strategyProtocolHash).toBe('682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {
-  for (const schemaVersion of ['bayn.jev.protocol.v1', 'bayn.jev.protocol.v2']) {
+  for (const schemaVersion of [
+    'bayn.jev.protocol.v1',
+    'bayn.jev.protocol.v2',
+    'bayn.jev.protocol.v13',
+    'bayn.jev.protocol.v15',
+  ]) {
     expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
   }
 })
 
-test('a rehashed custom momentum protocol cannot substitute for the approved active document', () => {
+test('a rehashed custom trade-plan protocol cannot substitute for the approved active document', () => {
   const protocol = Result.getOrThrow(
-    decodeJevProtocol({ ...fixtureRuntime.definition.parameters, profitTargetNetBps: 101 }),
+    decodeJevProtocol({ ...fixtureRuntime.definition.parameters, maximumSymbolWeight: 0.19 }),
   )
   const changed: StrategyRuntime = {
     definition: makeJevDefinition(protocol),
-    provenance: makeRuntimeProvenance({
-      ...fixtureRuntime.provenance,
-      strategy: { ...fixtureRuntime.provenance.strategy, parameterHash: canonicalHashV1(protocol) },
-    }),
+    provenance: Result.getOrThrow(
+      makeRuntimeProvenanceResult({
+        ...fixtureRuntime.provenance,
+        strategy: {
+          ...fixtureRuntime.provenance.strategy,
+          parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
+        },
+      }),
+    ),
   }
   expect(Result.isFailure(prepare(changed))).toBe(true)
 })

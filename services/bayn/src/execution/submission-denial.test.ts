@@ -1,15 +1,15 @@
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 import { invalidRequest, MutationOperation } from '../broker/alpaca-mutations/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { decideSubmitFailure } from './coordinator-decisions'
 import { IntentState, TerminalOutcome } from './contracts'
 import { decodeOutcomeInput, decideMutationOutcome, makeEventResult, mutationIdResult } from './mutations/decisions'
 import { MutationEventType, OutcomeInputSchema } from './mutations/model'
 import { SubmissionDenialReason, SubmissionDenialReasonSchema, submissionDenialReason } from './submission-denial'
 
-const intentId = canonicalHashV1({ fixture: 'denial-intent' })
-const requestHash = canonicalHashV1({ fixture: 'denial-request' })
+const intentId = Result.getOrThrow(canonicalHashV1Result({ fixture: 'denial-intent' }))
+const requestHash = Result.getOrThrow(canonicalHashV1Result({ fixture: 'denial-request' }))
 const startedAt = '2026-10-13T14:00:00.000Z'
 const occurredAt = '2026-10-13T14:00:01.000Z'
 const started = Result.getOrThrow(
@@ -77,7 +77,7 @@ describe('durable submission denial reasons', () => {
     expect(recorded._tag).toBe('AppendMutation')
     expect(recorded.event.denialReason).toBe(SubmissionDenialReason.ExpiredRiskDecision)
     const { eventId, ...material } = recorded.event
-    expect(eventId).toBe(canonicalHashV1(material))
+    expect(eventId).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
     const terminal = { state: IntentState.Terminal, terminalOutcome: TerminalOutcome.Rejected }
     expect(Result.getOrThrow(decideMutationOutcome(input, definition, recorded.event, terminal))).toEqual({
       _tag: 'ReplayMutation',
@@ -99,7 +99,7 @@ describe('durable submission denial reasons', () => {
     ).event
     expect(old).not.toHaveProperty('denialReason')
     const { eventId, ...material } = old
-    expect(eventId).toBe(canonicalHashV1(material))
+    expect(eventId).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
     expect(
       Result.getOrThrow(
         decideMutationOutcome(input, definition, old, {

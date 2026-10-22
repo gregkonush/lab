@@ -66,9 +66,6 @@ export const decodeInstrument = (input: {
     return { symbol: input.symbol, market, minimumQuantityAtoms, quantityIncrementAtoms, priceIncrementAtoms }
   })
 
-export const instrumentOrderQuantity = (instrument: Instrument, requested: bigint): bigint =>
-  (requested / instrument.quantityIncrementAtoms) * instrument.quantityIncrementAtoms
-
 export const instrumentQuantityTerms = (instrument: Instrument, fractionable: boolean) =>
   instrument.market === MarketKind.Equity && fractionable
     ? { minimumQuantityAtoms: 1n, quantityIncrementAtoms: 1n }

@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
@@ -5,7 +6,7 @@ import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { config } from '../testing/runtime-fixtures'
@@ -122,14 +123,16 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v4',
+      schemaVersion: 'bayn.backtest.v5',
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
       inference: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v12',
+        inputDefinition: 'bayn.jev-trading-signal-state.v16',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
@@ -163,5 +166,14 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       },
     },
   }
-  return { input, body, receipt, receiptText, source, calendar, protocol, inputHash: canonicalHashV1(input) }
+  return {
+    input,
+    body,
+    receipt,
+    receiptText,
+    source,
+    calendar,
+    protocol,
+    inputHash: Result.getOrThrow(canonicalHashV1Result(input)),
+  }
 }

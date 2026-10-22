@@ -19,25 +19,24 @@ import (
 const _ = grpc.SupportPackageIsVersion9
 
 const (
-	NanoagentService_GetInfo_FullMethodName              = "/proompteng.runtime.guest.v1.NanoagentService/GetInfo"
-	NanoagentService_OpenEditor_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/OpenEditor"
-	NanoagentService_OpenBrowser_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/OpenBrowser"
-	NanoagentService_ListFiles_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/ListFiles"
-	NanoagentService_ReadFile_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile"
-	NanoagentService_WriteFile_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/WriteFile"
-	NanoagentService_CreateDirectory_FullMethodName      = "/proompteng.runtime.guest.v1.NanoagentService/CreateDirectory"
-	NanoagentService_MoveFile_FullMethodName             = "/proompteng.runtime.guest.v1.NanoagentService/MoveFile"
-	NanoagentService_DeleteFile_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/DeleteFile"
-	NanoagentService_SearchFiles_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/SearchFiles"
-	NanoagentService_WatchFiles_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/WatchFiles"
-	NanoagentService_CreateTerminal_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/CreateTerminal"
-	NanoagentService_ListTerminals_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/ListTerminals"
-	NanoagentService_TerminateTerminal_FullMethodName    = "/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal"
-	NanoagentService_AttachTerminal_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/AttachTerminal"
-	NanoagentService_CodexCall_FullMethodName            = "/proompteng.runtime.guest.v1.NanoagentService/CodexCall"
-	NanoagentService_CodexLogin_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/CodexLogin"
-	NanoagentService_ResolveCodexApproval_FullMethodName = "/proompteng.runtime.guest.v1.NanoagentService/ResolveCodexApproval"
-	NanoagentService_WatchCodexEvents_FullMethodName     = "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents"
+	NanoagentService_GetInfo_FullMethodName           = "/proompteng.runtime.guest.v1.NanoagentService/GetInfo"
+	NanoagentService_OpenEditor_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/OpenEditor"
+	NanoagentService_OpenBrowser_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/OpenBrowser"
+	NanoagentService_ListFiles_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/ListFiles"
+	NanoagentService_ReadFile_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/ReadFile"
+	NanoagentService_WriteFile_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/WriteFile"
+	NanoagentService_CreateDirectory_FullMethodName   = "/proompteng.runtime.guest.v1.NanoagentService/CreateDirectory"
+	NanoagentService_MoveFile_FullMethodName          = "/proompteng.runtime.guest.v1.NanoagentService/MoveFile"
+	NanoagentService_DeleteFile_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/DeleteFile"
+	NanoagentService_SearchFiles_FullMethodName       = "/proompteng.runtime.guest.v1.NanoagentService/SearchFiles"
+	NanoagentService_WatchFiles_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/WatchFiles"
+	NanoagentService_CreateTerminal_FullMethodName    = "/proompteng.runtime.guest.v1.NanoagentService/CreateTerminal"
+	NanoagentService_ListTerminals_FullMethodName     = "/proompteng.runtime.guest.v1.NanoagentService/ListTerminals"
+	NanoagentService_TerminateTerminal_FullMethodName = "/proompteng.runtime.guest.v1.NanoagentService/TerminateTerminal"
+	NanoagentService_AttachTerminal_FullMethodName    = "/proompteng.runtime.guest.v1.NanoagentService/AttachTerminal"
+	NanoagentService_CodexCall_FullMethodName         = "/proompteng.runtime.guest.v1.NanoagentService/CodexCall"
+	NanoagentService_CodexLogin_FullMethodName        = "/proompteng.runtime.guest.v1.NanoagentService/CodexLogin"
+	NanoagentService_WatchCodexEvents_FullMethodName  = "/proompteng.runtime.guest.v1.NanoagentService/WatchCodexEvents"
 )
 
 // NanoagentServiceClient is the client API for NanoagentService service.
@@ -65,7 +64,6 @@ type NanoagentServiceClient interface {
 	AttachTerminal(ctx context.Context, opts ...grpc.CallOption) (grpc.BidiStreamingClient[TerminalInput, TerminalOutput], error)
 	CodexCall(ctx context.Context, in *CodexRequest, opts ...grpc.CallOption) (*CodexResult, error)
 	CodexLogin(ctx context.Context, in *Empty, opts ...grpc.CallOption) (*CodexLoginState, error)
-	ResolveCodexApproval(ctx context.Context, in *CodexApproval, opts ...grpc.CallOption) (*Empty, error)
 	WatchCodexEvents(ctx context.Context, in *CodexWatch, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CodexEvent], error)
 }
 
@@ -259,16 +257,6 @@ func (c *nanoagentServiceClient) CodexLogin(ctx context.Context, in *Empty, opts
 	return out, nil
 }
 
-func (c *nanoagentServiceClient) ResolveCodexApproval(ctx context.Context, in *CodexApproval, opts ...grpc.CallOption) (*Empty, error) {
-	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
-	out := new(Empty)
-	err := c.cc.Invoke(ctx, NanoagentService_ResolveCodexApproval_FullMethodName, in, out, cOpts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *nanoagentServiceClient) WatchCodexEvents(ctx context.Context, in *CodexWatch, opts ...grpc.CallOption) (grpc.ServerStreamingClient[CodexEvent], error) {
 	cOpts := append([]grpc.CallOption{grpc.StaticMethod()}, opts...)
 	stream, err := c.cc.NewStream(ctx, &NanoagentService_ServiceDesc.Streams[2], NanoagentService_WatchCodexEvents_FullMethodName, cOpts...)
@@ -313,7 +301,6 @@ type NanoagentServiceServer interface {
 	AttachTerminal(grpc.BidiStreamingServer[TerminalInput, TerminalOutput]) error
 	CodexCall(context.Context, *CodexRequest) (*CodexResult, error)
 	CodexLogin(context.Context, *Empty) (*CodexLoginState, error)
-	ResolveCodexApproval(context.Context, *CodexApproval) (*Empty, error)
 	WatchCodexEvents(*CodexWatch, grpc.ServerStreamingServer[CodexEvent]) error
 	mustEmbedUnimplementedNanoagentServiceServer()
 }
@@ -375,9 +362,6 @@ func (UnimplementedNanoagentServiceServer) CodexCall(context.Context, *CodexRequ
 }
 func (UnimplementedNanoagentServiceServer) CodexLogin(context.Context, *Empty) (*CodexLoginState, error) {
 	return nil, status.Error(codes.Unimplemented, "method CodexLogin not implemented")
-}
-func (UnimplementedNanoagentServiceServer) ResolveCodexApproval(context.Context, *CodexApproval) (*Empty, error) {
-	return nil, status.Error(codes.Unimplemented, "method ResolveCodexApproval not implemented")
 }
 func (UnimplementedNanoagentServiceServer) WatchCodexEvents(*CodexWatch, grpc.ServerStreamingServer[CodexEvent]) error {
 	return status.Error(codes.Unimplemented, "method WatchCodexEvents not implemented")
@@ -691,24 +675,6 @@ func _NanoagentService_CodexLogin_Handler(srv interface{}, ctx context.Context, 
 	return interceptor(ctx, in, info, handler)
 }
 
-func _NanoagentService_ResolveCodexApproval_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(CodexApproval)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(NanoagentServiceServer).ResolveCodexApproval(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: NanoagentService_ResolveCodexApproval_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(NanoagentServiceServer).ResolveCodexApproval(ctx, req.(*CodexApproval))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _NanoagentService_WatchCodexEvents_Handler(srv interface{}, stream grpc.ServerStream) error {
 	m := new(CodexWatch)
 	if err := stream.RecvMsg(m); err != nil {
@@ -786,10 +752,6 @@ var NanoagentService_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CodexLogin",
 			Handler:    _NanoagentService_CodexLogin_Handler,
-		},
-		{
-			MethodName: "ResolveCodexApproval",
-			Handler:    _NanoagentService_ResolveCodexApproval_Handler,
 		},
 	},
 	Streams: []grpc.StreamDesc{

@@ -1,11 +1,12 @@
+import { strictParseOptions } from '../../schemas'
 import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 
 import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy } from '../construction'
-import { CycleState, decodeAutonomousCycle } from '../model'
+import { CycleState, AutonomousCycleSchema } from '../model'
 import {
   intradayEntryRearmDelayMs,
   makeIntradayCycleDraft,
@@ -109,7 +110,10 @@ describe('intraday calendar decisions', () => {
     const secondDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 2))
     const terminalAt = '2026-11-30T15:30:00.000Z'
     const first = Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...firstDraft,
         state: CycleState.Completed,
         bindings: { snapshotId: '4'.repeat(64), decisionHash: '5'.repeat(64) },
@@ -128,7 +132,10 @@ describe('intraday calendar decisions', () => {
     expect(nextIntradayEntryAttemptOrdinal(first, atRearm, first.window.submissionCutoffAt)).toBe(2)
 
     const second = Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...secondDraft,
         state: CycleState.Completed,
         bindings: { snapshotId: '6'.repeat(64), decisionHash: '7'.repeat(64) },

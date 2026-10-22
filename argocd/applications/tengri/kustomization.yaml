@@ -8,6 +8,7 @@ resources:
 - service-account.yaml
 - rbac.yaml
 - deployment.yaml
+- run-worker.yaml
 - services.yaml
 - ingressroute.yaml
 - resource-quota.yaml
@@ -18,9 +19,9 @@ resources:
 configMapGenerator:
 - name: tengri-release
   literals:
-  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:52ed43558dba8b73b565f0ab94bf2d6cbdfdfea21aab8a694e8ff9228ce2c9df
+  - NANOAGENT_IMAGE=registry.ide-newton.ts.net/lab/nanoagent@sha256:56147d078c6191a3f7569f4b26491f7a14af4e44bd481dcdd89c3d550c15d4cd
 configurations:
 - kustomizeconfig.yaml
 images:
 - name: registry.ide-newton.ts.net/lab/tengri
-  digest: sha256:108b6e3f96efc45252d9ef6a896b7805ad0a5076600cde08e37820ee9f1ccdf6
+  digest: sha256:d75c7099310e2d5c866237d2e658c7c4677d4b2149e3d7b523004a83e2d12a6c
