@@ -1,11 +1,39 @@
 import { expect, test } from 'bun:test'
-import { Effect, Redacted } from 'effect'
-import { parseBacktestArgs, validateReplayDatabaseTargets } from './backtest-command'
+import { createHash } from 'node:crypto'
+import { NodeServices } from '@effect/platform-node'
+import { Effect, FileSystem, Redacted } from 'effect'
+import { hashBacktestPassLog, parseBacktestArgs, validateReplayDatabaseTargets } from './backtest-command'
 const config = {
   operationTimeoutMs: 1000,
   postgres: { url: Redacted.make('postgresql://test:test@127.0.0.1:55432/bayn_replay'), tls: false, caPath: '/unused' },
   tigerBeetle: { clusterId: 20912n, ledger: 70912, replicaAddresses: ['127.0.0.1:53000'] },
 }
+test('pass-log hash preserves exact UTF-8 bytes across stream chunks', async () => {
+  await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        const path = `${directory}/passes.ndjson`
+        const text = `${'x'.repeat(65535)}é\n${'y'.repeat(131073)}\n`
+        yield* fs.writeFileString(path, text)
+        expect(yield* hashBacktestPassLog(path)).toBe(createHash('sha256').update(text).digest('hex'))
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  )
+})
+test('pass-log read failure cannot produce a successful digest', async () => {
+  const result = await Effect.runPromiseExit(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem
+        const directory = yield* fs.makeTempDirectoryScoped()
+        return yield* hashBacktestPassLog(`${directory}/missing.ndjson`)
+      }),
+    ).pipe(Effect.provide(NodeServices.layer)),
+  )
+  expect(result._tag).toBe('Failure')
+})
 test('session command requires source, input and a separate output directory', () => {
   expect(parseBacktestArgs(['--help'])._tag).toBe('Help')
   expect(

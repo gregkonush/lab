@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
@@ -93,6 +94,13 @@ const print = (value: string) =>
   Effect.gen(function* () {
     const stdio = yield* Stdio.Stdio
     yield* Stream.run(Stream.make(`${value}\n`), stdio.stdout())
+  })
+export const hashBacktestPassLog = (filePath: string) =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem
+    const hash = createHash('sha256')
+    yield* fs.stream(filePath).pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))))
+    return hash.digest('hex')
   })
 const main = Effect.scoped(
   Effect.gen(function* () {
@@ -203,12 +211,12 @@ const main = Effect.scoped(
         }),
       ),
     )
-    const passText = yield* fs.readFileString(passesPath)
+    const passHash = yield* hashBacktestPassLog(passesPath)
     const { reportHash: _reportHash, ...reportBody } = report
     const material = {
       ...reportBody,
       executableSha256: sha256(yield* fs.readFile(yield* path.fromFileUrl(new URL(import.meta.url)))),
-      passLog: { file: 'passes.ndjson', sha256: sha256(passText), records: report.schedule.passCount },
+      passLog: { file: 'passes.ndjson', sha256: passHash, records: report.schedule.passCount },
     }
     const output = yield* Effect.fromResult(
       canonicalJsonV1Result({
