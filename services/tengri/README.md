@@ -532,7 +532,9 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 6 requires canonical UUID operation identities for every submission and control. `SendCodexInput` returns a
+Guest API 7 requires canonical UUID operation identities for every submission and control, plus confirmed native
+command cleanup before reporting cancellation. Old guests require a fenced cold replacement on their retained home.
+`SendCodexInput` returns a
 durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
 after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
@@ -550,8 +552,11 @@ admission or transcript does not grant execution authority.
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
 receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
-notifications are fsynced under their accepting generation, thread and turn before publication, so confirmed failure
-and interruption survive process replacement without trusting a reconstructed interrupted history.
+notifications are fsynced under their accepting generation, thread and turn. Version 2 interrupted receipts additionally
+require confirmed termination of that turn's native command sessions. Nanoagent tracks command item IDs before
+interruption, inventories and terminates only those background terminals, and verifies their absence before writing
+the receipt. Other turns' background commands remain running. Cleanup retries cannot target a replacement process.
+Confirmed failure and interruption survive process replacement without trusting reconstructed interrupted history.
 
 Committed receipts return the original result across retries
 and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
@@ -567,7 +572,8 @@ admission deadline, so a new login can replace an expired cancellation context. 
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
 Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
-an exact terminal turn. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
+the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
+and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
 runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
 displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a

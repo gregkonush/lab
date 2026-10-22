@@ -66,8 +66,9 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 5. API version 5
-requires canonical `/workspace` paths for file operations, file events, and terminal working directories. The BFF
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
+requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+for file operations, file events, and terminal working directories. The BFF
 requires that version in the controller's existing authenticated audience response before signing a request. The signed
 target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
 directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
@@ -122,6 +123,15 @@ captured atomically when its app-server response is received, so thread snapshot
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
+from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
+inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
+confirms their absence. Earlier turns' intentional background commands remain running. Cleanup retries stay bound
+to the accepting generation. Missing ownership or an ended generation requires reconciliation and never authorizes
+cleanup against a replacement process. Terminal receipt version 2 records `processesStopped: true` only after this
+confirmation; old receipts and unconfirmed interrupted history cannot release a durable run's workspace or sleep pin.
+
 Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
 requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
 generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive

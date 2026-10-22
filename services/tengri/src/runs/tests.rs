@@ -122,6 +122,15 @@ fn history_requires_the_exact_accepted_turn_and_an_explicit_outcome() {
 }
 
 #[test]
+fn interrupted_history_cannot_release_the_run_without_command_cleanup() {
+    let value = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"interrupted"}]}});
+    assert!(matches!(
+        observed_turn(&value, "accepted"),
+        State::Cancelling { turn_id: Some(id), .. } if id == "accepted"
+    ));
+}
+
+#[test]
 fn changed_input_changes_the_durable_identity_digest() {
     let first = input();
     let mut changed = first.clone();
