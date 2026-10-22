@@ -309,10 +309,15 @@ func TestCodexTerminalReceiptSurvivesGenerationReplacement(t *testing.T) {
 		t.Run(status, func(t *testing.T) {
 			supervisor, writer := readyCodexSupervisor(t)
 			acceptOperation(t, supervisor, writer)
+			emitCodexServerEvent(t, supervisor, "turn/started", map[string]any{"threadId": "thread-1", "turn": map[string]string{"id": "turn-1"}})
 			params, _ := json.Marshal(map[string]any{"threadId": "thread-1", "turn": map[string]string{"id": "turn-1", "status": status}})
 			message := codexRPCMessage{Method: "turn/completed", Params: params}
 			raw, _ := json.Marshal(message)
 			supervisor.handleServerMessage(supervisor.generation, message, raw)
+			deadline := time.Now().Add(time.Second)
+			for supervisor.terminalStatus("thread-1", "turn-1", supervisor.generation.id) == "" && time.Now().Before(deadline) {
+				time.Sleep(time.Millisecond)
+			}
 			replacement := newCodexSupervisor("/usr/bin/false", supervisor.cwd)
 			result, err := replacement.call(context.Background(), "tengri/operation", json.RawMessage(`{"operationId":"11111111-1111-4111-8111-111111111111","threadId":"thread-1","turnId":"turn-1"}`))
 			var value struct {

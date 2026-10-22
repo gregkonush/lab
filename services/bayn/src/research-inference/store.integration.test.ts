@@ -1,3 +1,4 @@
+import structuredEditorMigration from '../../migrations/0138_jev_editor_structured_output'
 import jevEditorMigration from '../../migrations/0135_jev_editor_identity'
 import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
@@ -31,6 +32,11 @@ integration('research attempt durability with real PostgreSQL', () => {
   )
   const retainedId = Result.getOrThrow(hashResearch(retainedEditor))
   let retainedBytes = ''
+  const unconstrained = Result.getOrThrow(
+    decodeResearchRun({ ...harnessEditorFixture(), schemaVersion: 'bayn.jev-harness2-editor.v2' }),
+  )
+  const unconstrainedId = Result.getOrThrow(hashResearch(unconstrained))
+  let unconstrainedBytes = ''
   let runtime: ManagedRuntime.ManagedRuntime<
     PgClient.PgClient | SqlClient.SqlClient | import('effect/http/HttpClient').HttpClient,
     unknown
@@ -62,11 +68,40 @@ integration('research attempt durability with real PostgreSQL', () => {
         if (row === undefined) throw new Error('Missing retained registration fixture')
         retainedBytes = row.payload
         yield* jevEditorMigration
+        yield* makeResearchStore(sql).claim(unconstrainedId, unconstrained)
+        const [unconstrainedRow] = yield* sql<{
+          payload: string
+        }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${unconstrainedId}`
+        if (unconstrainedRow === undefined) throw new Error('Missing unconstrained registration fixture')
+        unconstrainedBytes = unconstrainedRow.payload
+        yield* structuredEditorMigration
       }),
     )
   })
   afterAll(async () => {
     if (runtime !== undefined) await runtime.dispose()
+  })
+  test('structured output migration preserves the unconstrained v2 registration without permitting new inference', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const [row] = yield* sql<{
+          payload: string
+        }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${unconstrainedId}`
+        expect(row?.payload).toBe(unconstrainedBytes)
+        let calls = 0
+        const http = HttpClient.make((request) => {
+          calls++
+          return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('unreachable')))
+        })
+        const runner = yield* makeResearchRunner(makeResearchStore(sql), 'http://fixture.invalid').pipe(
+          Effect.provideService(HttpClient.HttpClient, http),
+        )
+        const result = yield* Effect.result(runner.run(unconstrained))
+        expect(Result.isFailure(result)).toBe(true)
+        expect(calls).toBe(0)
+      }),
+    )
   })
   test('the identity migration preserves old registration bytes while the runner refuses new Alpha-R1 inference', async () => {
     let calls = 0
@@ -116,7 +151,7 @@ integration('research attempt durability with real PostgreSQL', () => {
   })
   test('claims and replays a harness proposal through the same immutable store', async () => {
     let calls = 0
-    const text = '<harness>{"entry":"Assess complete entry plans"}</harness>'
+    const text = '{"entry":"Assess complete entry plans"}'
     const model = Bun.serve({
       port: 0,
       fetch: () => {
@@ -172,15 +207,12 @@ integration('research attempt durability with real PostgreSQL', () => {
       port: 0,
       fetch: () => {
         calls++
-        return new Response(
-          fullTokenBudgetStreamFixture(harnessEditorFixture().policy.model, '<harness>{"entry":"Assess"}</harness>'),
-          {
-            headers: {
-              'content-type': 'text/event-stream',
-              'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
-            },
+        return new Response(fullTokenBudgetStreamFixture(harnessEditorFixture().policy.model, '{"entry":"Assess"}'), {
+          headers: {
+            'content-type': 'text/event-stream',
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
           },
-        )
+        })
       },
     })
     try {
@@ -224,7 +256,7 @@ integration('research attempt durability with real PostgreSQL', () => {
     const model = Bun.serve({
       port: 0,
       fetch: () =>
-        new Response(streamFixture('<harness>{"entry":"Assess"}</harness>', harnessEditorFixture().policy.model), {
+        new Response(streamFixture('{"entry":"Assess"}', harnessEditorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
             'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),

@@ -29,6 +29,19 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Live market-data reference verification retains a bounded fingerprint of each fully verified captured snapshot.
+An exact match across the manifest, bars, quotes, trades and latest quotes reuses that capture's source proof without
+reconstructing it again after entry pricing. Changed data still requires full replay verification; unobserved cuts
+also require an exact committed database reference. Retained and returned references have separate manifest copies.
+Quote age, inference expiry, current authority, risk evaluation and durable decision guards remain independent checks.
+
+Jev batch admission detaches the selected source observation before reproducing it once, then carries that private
+verified graph into persistence. Mutating a caller or database-result alias during an awaited read cannot change the
+verified bytes or their sealed hash. The writer still checks the cycle, authority generation, exact reconciliation
+and portfolio sources in its transaction before
+recording the observation and request claims. Admission keeps its original deadline checks before and after that work;
+reusing the verified observation does not extend the inference window or authorize an incomplete batch.
+
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
@@ -61,6 +74,11 @@ the execution-session status and metric report `BLOCKED`, not an input outage. I
 abstention or a risk-approved order. Position management and reducing exits continue
 through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
 research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
+
+Durable pass readers and public status support optional typed `accountProtectionReasons`:
+`DAILY_LOSS_EXCEEDED`, `DRAWDOWN_EXCEEDED`, or both. Historical observations without this field remain readable.
+This reader-first rollout keeps both entry writers on their existing shape; enable the field only after the
+updated readers are deployed, so older status pods can decode shared controller evidence during the transition.
 
 After unfinished work is recovered or an expired unused lease is terminalized, an exact flat reconciliation
 preflight can hold entry admission before creating another cycle. The existing daily-loss and drawdown comparisons
@@ -123,6 +141,13 @@ unfinished bound cycles or unresolved mutations before installing the new write 
 same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
 reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
 Recovery derives duration from the held instruments and processes one market per pass. There is no MARKET submission path; GTC is restricted to strategy-bound crypto protective stops.
+SELL STOP_LIMIT protection uses the same minimum-proceeds floor as SELL LIMIT orders, including fractional inventory
+after crypto fees. Conservative order-risk ceilings remain separate from that floor. When a native protection check
+observes a flat account, the controller still settles any committed close intents before requesting cycle completion.
+Flat inventory cannot bypass durable terminal-intent and accounting completion evidence.
+Final instrument admission accepts crypto SELL STOP_LIMIT/GTC only through close-only submission, with positive,
+broker-aligned stop and limit prices and a sell limit no higher than its stop. Ordinary LIMIT durations and price
+increments remain enforced; held inventory, current authority and account risk checks still apply before transmission.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
@@ -326,6 +351,15 @@ catalog evidence, dashboard panels and alerts. The API reuses its existing metri
 native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
 
 ## Broker observation owner
+
+Stable history compares broker order facts before and after the account read. It excludes
+the local `observedAt` timestamp on both parent orders and bracket children, because each
+HTTP read assigns a new timestamp. Child execution facts, including status, prices,
+filled quantity and submission time, still invalidate a changed snapshot.
+
+Alpaca's nested order history counts bracket children toward the requested page limit.
+Pagination counts both parent rows and their children before deciding that history is complete.
+A page containing 498 parents and two children therefore continues to older orders at a 500-order limit.
 
 Broker position symbols must agree with their asset class before entering
 reconciliation. A canonical crypto pair labeled as an equity, or an equity symbol
@@ -614,10 +648,12 @@ quantity caps and final submission deadlines still apply. This entry check never
 Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
 headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
 limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
-deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
-still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
-final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
-freshness limits are unchanged; the preparation ordering does not guarantee submission.
+deadline expires, the unbound entry waits for fresh evidence. Changed authority or expired broker facts still require
+reconciliation. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. The controller's reconciliation cadence schedules
+preflights; it does not expire broker-valid facts during one serialized preparation. The pass rechecks authority on
+every reuse and discards its cache before post-mutation continuation. Quote and broker freshness limits are unchanged;
+the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
@@ -1481,6 +1517,11 @@ retrying promotion. Recovery uses the previous reviewed image through Kargo; ret
 codecs remain available to historical performance reporting, and the write constraint continues to reject retired cycles.
 
 ## Replay and backtesting
+
+Native simulated broker state uses `bayn.simulated-broker-state.v7`. Fill activity IDs include a zero-padded global
+execution ordinal before the order ID, so same-millisecond buys and protective sells retain their execution order
+during accounting and checkpoint recovery. Earlier v6 checkpoints require their original executable; new runs and
+restores accept v7 only. Production broker activity IDs and accounting ordering are unchanged.
 
 `bayn-gap-recovery` is an offline, original-receipt decision replay command built by
 `bun run --filter @proompteng/bayn build:research`. Run it with

@@ -1,6 +1,7 @@
 import { Schema } from 'effect'
 
 import { UtcInstantSchema } from '../../schemas'
+import { Reason as RiskReason } from '../../risk'
 import { RequiredMarketFeatureSchema } from '../../market-data/features/contract'
 import type { IntradaySnapshotFailure } from '../../market-data/intraday/model'
 
@@ -20,6 +21,13 @@ export enum DecisionReadinessReason {
 export const DecisionReadinessSchema = Schema.Struct({
   reason: Schema.Enum(DecisionReadinessReason),
   message: Schema.NonEmptyString,
+  accountProtectionReasons: Schema.optionalKey(
+    Schema.Array(Schema.Literals([RiskReason.DailyLossExceeded, RiskReason.DrawdownExceeded])).check(
+      Schema.isMinLength(1),
+      Schema.isMaxLength(2),
+      Schema.isUnique(),
+    ),
+  ),
   availableAt: Schema.optionalKey(UtcInstantSchema),
   symbol: Schema.optionalKey(Schema.NonEmptyString),
   eventAt: Schema.optionalKey(UtcInstantSchema),
@@ -31,7 +39,14 @@ export const DecisionReadinessSchema = Schema.Struct({
       symbols: Schema.Array(Schema.NonEmptyString),
     }),
   ),
-})
+}).check(
+  Schema.makeFilter(
+    (readiness) =>
+      readiness.accountProtectionReasons === undefined ||
+      readiness.reason === DecisionReadinessReason.AccountProtection,
+    { expected: 'account limit reasons belong only to account protection readiness' },
+  ),
+)
 
 export type DecisionReadiness = typeof DecisionReadinessSchema.Type
 

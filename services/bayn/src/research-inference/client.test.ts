@@ -13,10 +13,9 @@ import {
 import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
 
 const fixture = researchFixture()
-const id = Result.getOrThrow(hashResearch(fixture))
 const activeFixture = harnessEditorFixture()
 const activeId = Result.getOrThrow(hashResearch(activeFixture))
-const activeStream = () => streamFixture('<harness>{"entry":"Assess"}</harness>', activeFixture.policy.model)
+const activeStream = () => streamFixture('{"entry":"Assess"}', activeFixture.policy.model)
 const encode = (text: string) => new TextEncoder().encode(text)
 const finalUsageFrame = `data: ${JSON.stringify({
   id: 'chatcmpl-synthetic',
@@ -25,14 +24,17 @@ const finalUsageFrame = `data: ${JSON.stringify({
   usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
 })}\n\n`
 describe('bounded native inference stream', () => {
-  test('retired factor registrations cannot transmit even when invoked directly', async () => {
+  test.each([
+    fixture,
+    Result.getOrThrow(decodeResearchRun({ ...activeFixture, schemaVersion: 'bayn.jev-harness2-editor.v2' })),
+  ])('retired registrations cannot transmit even when invoked directly %#', async (retired) => {
     let calls = 0
     const http = HttpClient.make((request) => {
       calls++
       return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
     })
     const result = await Effect.runPromise(
-      inferResearch(fixture, id, 'http://fixture.invalid').pipe(
+      inferResearch(retired, Result.getOrThrow(hashResearch(retired)), 'http://fixture.invalid').pipe(
         Effect.provideService(HttpClient.HttpClient, http),
         Effect.result,
       ),

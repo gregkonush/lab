@@ -98,11 +98,7 @@ class NativeCLI:
                     **study()["baseline"],
                     "entry": "Judge entry from the supplied evidence and horizon.",
                 }
-                text = (
-                    "<harness>"
-                    + json.dumps(candidate)
-                    + "</harness><notes>Clarified the time horizon.</notes>"
-                )
+                text = json.dumps(candidate)
             else:
                 text = "<edits>component: instructions.json\nobserved: explicit horizon</edits>NO_ENTRY"
             content = {"responseText": text}
@@ -119,6 +115,15 @@ class NativeCLI:
 
 
 class RunnerTests(unittest.TestCase):
+    def test_unicode_instruction_hash_matches_native_canonical_hash(self):
+        instructions = {
+            "entry": "Use café’s observed price; never invent future returns."
+        }
+        self.assertEqual(
+            identity(instructions),
+            "e176b22edf1f1e10ea18c07e01f5db63a0713feb294cc7070b38424114c0e583",
+        )
+
     def test_editor_summary_preserves_native_requests(self):
         receipt = {
             "excludedCandidates": [],
@@ -380,7 +385,7 @@ class RunnerTests(unittest.TestCase):
             )
             self.assertTrue(
                 all(
-                    run["schemaVersion"] == "bayn.jev-harness2-editor.v2"
+                    run["schemaVersion"] == "bayn.jev-harness2-editor.v3"
                     for run in editors
                 )
             )
@@ -411,8 +416,7 @@ class RunnerTests(unittest.TestCase):
                 receipt = json.loads(output.read_bytes())
                 run = json.loads(Path(args[1]).read_bytes())
                 receipt["responseText"] = (
-                    "<harness>" + json.dumps(study()["baseline"]) + "</harness>"
-                    "<notes>The revised instruction makes the horizon explicit.</notes>"
+                    json.dumps(study()["baseline"])
                     if run["purpose"] == "prompt-edit"
                     else "<edits>component: entry\nchange: No change\n"
                     "observed: wait became avoid\nverdict: helped</edits>"

@@ -128,7 +128,7 @@ export interface ReplayBrokerOrder {
   readonly order: ReplayOrder
 }
 export interface ReplayBrokerState {
-  readonly schemaVersion: 'bayn.simulated-broker-state.v6'
+  readonly schemaVersion: 'bayn.simulated-broker-state.v7'
   readonly createdAt: string
   readonly runId: string
   readonly accountId: string
@@ -280,7 +280,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
     const ledger = yield* Effect.fromResult(createReplayLedger<ReplayBrokerFill>(config.openingCashMicros))
     const state = yield* SynchronizedRef.make<ReplayBrokerState>(
       restored?.state ?? {
-        schemaVersion: 'bayn.simulated-broker-state.v6',
+        schemaVersion: 'bayn.simulated-broker-state.v7',
         createdAt: accountCreatedAt,
         runId: config.runId,
         accountId,
@@ -627,7 +627,7 @@ export const makeReplayBroker = (config: ReplayBrokerConfig) =>
                 }
                 fills.push({
                   accountId,
-                  activityId: `fill::${brokerOrderId}::${executionIndex}`,
+                  activityId: `fill::${String(fills.length).padStart(16, '0')}::${brokerOrderId}::${executionIndex}`,
                   cumulativeQuantityAtoms: order.filledQuantityAtoms,
                   leavesQuantityAtoms: (BigInt(previous.quantityAtoms) - totalQuantity).toString(),
                   priceAtoms: (outcome.fillPriceMicros * 1000n).toString(),

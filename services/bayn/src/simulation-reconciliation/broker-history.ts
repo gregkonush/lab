@@ -157,7 +157,8 @@ export const decideOrderPage = (
   )
   if (Result.isFailure(pageResult)) return Result.fail(pageResult.failure)
   const pageRows = Chunk.toReadonlyArray(pageResult.success.rows)
-  if (page.value.length < limit)
+  const pageOrderCount = page.value.reduce((count, order) => count + 1 + (order.legs?.length ?? 0), 0)
+  if (pageOrderCount < limit)
     return Result.succeed({ _tag: 'Complete', read: { rows: [...state.rows, ...pageRows], observedAt } })
   // Alpaca orders pages descend by submission time; exclusive `until` excludes every sibling at its timestamp.
   // Defer the entire oldest group so the next page can enumerate hidden siblings before retaining that group.
@@ -319,8 +320,11 @@ const historyHashResult = (history: BrokerHistory): Result.Result<string, Histor
           .sort((left, right) => left.activityId.localeCompare(right.activityId)),
         orders: history.orders.rows
           .map(({ value }) => {
-            const { observedAt: _observedAt, ...material } = value
-            return material
+            const { observedAt: _observedAt, legs, ...material } = value
+            return {
+              ...material,
+              ...(legs === undefined ? {} : { legs: legs.map(({ observedAt: _legObservedAt, ...leg }) => leg) }),
+            }
           })
           .sort((left, right) => left.brokerOrderId.localeCompare(right.brokerOrderId)),
         fills: history.fills

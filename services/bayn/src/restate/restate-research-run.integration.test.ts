@@ -36,7 +36,7 @@ integration('real Restate research Workflow', () => {
     const id = Result.getOrThrow(hashResearch(run))
     const approvalKey = Redacted.make('7'.repeat(64))
     const approval = Result.getOrThrow(approveResearchRun(run, approvalKey))
-    const responseText = '<harness>{"entry":"Assess the supplied complete long plan."}</harness>'
+    const responseText = '{"entry":"Assess the supplied complete long plan."}'
     const stream = fullTokenBudgetStreamFixture(run.policy.model, responseText)
     const retained = Result.getOrThrow(
       sealResearchReceipt(run, {
