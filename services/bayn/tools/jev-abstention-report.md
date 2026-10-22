@@ -34,12 +34,27 @@ authority, or admission guards, and does not supply a model rationale or prove e
 
 ## Exact-plan quote paths
 
+```sh
+bun tools/jev-abstention-report.ts /private/decision.json /private/assumptions.json /private/native-bundle.json
+```
+
+The optional two-file extension invokes `auditNativeArrivalCoverage` directly on
+the original bundle bytes. It does not trust a supplied audit report, quote array,
+or completeness flag. Bundle bytes must match the manifest SHA256; the validated
+consumer epoch must match the sealed snapshot, the audited interval must exactly
+match the declared window, and in-window projection sequences must follow the
+sealed snapshot cut. Unknown assumption fields and foreign evidence fail closed.
+See `native-arrival-coverage.md` for the private bundle format and bounded capture
+validation. Its controller and commit-acknowledgement unknowns are retained in the
+output. This is a repository-checkout tool, not a deployed trading command.
+
 The research-only `reportJevPlanPath` function reproduces the sealed decision and
 describes original quote deliveries against one explicitly declared funded plan.
 It does not replace the original model choice. The assumption manifest binds the
 decision hash and source-bundle SHA256, plan choice, quantity, instrument rules,
 entry latency, fee stress, and observation or hypothetical first-fill clock.
 Quantities must fit the sealed funded maximum and declared instrument increments.
+Instrument rules are declared assumptions, not independently verified broker terms.
 Fee multipliers below the existing fee basis are rejected. The multiplier is only
 a declared research assumption: no fees or cash flows are calculated or applied.
 

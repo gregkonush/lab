@@ -1,14 +1,29 @@
 import { expect, test } from 'bun:test'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
 
 import { decideJevEntry } from '../src/jev/decision'
 import { nativeJevDecisionEvidence } from '../src/jev/native.test-support'
 import { jevObservationForSnapshot } from '../src/jev/native.test-support'
 import { cryptoMarketFixture } from '../src/testing/crypto-market-fixture'
 import { nativeJevFixture } from '../src/jev/native.test-support'
-import { canonicalHashV1Result } from '../src/hash'
+import { canonicalHashV1Result, sha256 } from '../src/hash'
+import {
+  makeNativeArrivalChunk,
+  nativeArrival,
+  nativeArrivalCaptureId,
+} from '../src/market-data/streaming/native-arrival'
+import {
+  nativeArrivalEpochFixture,
+  nativeArrivalObservationFixture,
+} from '../src/market-data/streaming/native-arrival.test-support'
 import { replayTestInstruments } from '../src/testing/replay-instruments'
-import { reportJevAbstention, reportJevPlanPath, summarizeJevChoiceMass } from './jev-abstention-report'
+import {
+  reportAuditedJevPlanPath,
+  reportJevAbstention,
+  reportJevPlanPath,
+  summarizeJevChoiceMass,
+} from './jev-abstention-report'
 
 const documentFor = (action = 'wait') => {
   const evidence = nativeJevDecisionEvidence(undefined, action)
@@ -70,6 +85,114 @@ const pathFixture = () => {
   }
 }
 
+const auditedPathFixture = (change: 'none' | 'epoch' | 'interval' | 'sequence' = 'none') => {
+  const f = pathFixture()
+  const manifest = Result.getOrThrow(
+    Schema.decodeUnknownResult(StrategySnapshotManifestSchema)(
+      f.document.strategyDecision.evidence.observation.manifest,
+    ),
+  )
+  if (manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1') throw new Error('Expected streaming fixture')
+  const original = f.quote(0, 1, f.target).value
+  const bootstrap = {
+    ...manifest.streaming.bootstrap,
+    epoch: change === 'epoch' ? 'foreign-epoch' : manifest.streaming.bootstrap.epoch,
+  }
+  const sources = [
+    {
+      universeId: manifest.universeId,
+      universeSymbolHash: manifest.universeSymbolHash,
+      symbols: ['AAPL'],
+      topics: { ...manifest.sourceTopics, features: 'torghut.market-features.v1' },
+    },
+  ] as const
+  const build = nativeArrivalEpochFixture.build
+  const epoch = {
+    ...nativeArrivalEpochFixture,
+    bootstrap,
+    sources,
+    captureId: Result.getOrThrow(nativeArrivalCaptureId(build, bootstrap, sources)),
+  }
+  const arrivals = [-1, 100, 900001].map((delay, index) => {
+    const at = new Date(f.at + delay).toISOString()
+    const value = JSON.stringify({
+      provider: 'alpaca',
+      feed: original.feed,
+      delayClass: original.delayClass,
+      marketSession: original.marketSession,
+      channel: 'quotes',
+      seq: index + 1,
+      symbol: 'AAPL',
+      version: 2,
+      eventTs: at,
+      ingestTs: at,
+      payload: {
+        T: 'q',
+        S: 'AAPL',
+        t: at,
+        bp: f.target,
+        bs: 100,
+        ap: f.target + 0.01,
+        as: 100,
+        bx: 'V',
+        ax: 'V',
+        c: [],
+        z: 'C',
+      },
+    })
+    const observation = nativeArrivalObservationFixture(index + 1, value)
+    return nativeArrival(epoch, {
+      ...observation,
+      record: { ...observation.record, topic: manifest.sourceTopics.quotes, timestampMs: f.at + delay },
+      availableAtMs: f.at + delay,
+      projectionSequence: manifest.streaming.sequence + index - (change === 'sequence' ? 1 : 0),
+    })
+  })
+  const chunk = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, arrivals))
+  const bundle = {
+    epoch: { epoch, contentHash: Result.getOrThrow(canonicalHashV1Result(epoch)) },
+    headers: [{ contentHash: chunk.contentHash, header: chunk.header }],
+    chunks: [
+      {
+        contentHash: chunk.contentHash,
+        header: chunk.header,
+        compressedBase64: Buffer.from(chunk.compressed).toString('base64'),
+      },
+    ],
+    end: null,
+    interval: { startMs: f.at, endMs: f.at + 900000 - (change === 'interval' ? 1 : 0) },
+    symbols: ['AAPL'],
+  }
+  const sourceBundle = Buffer.from(JSON.stringify(bundle))
+  return {
+    decisionDocument: f.document,
+    assumptions: { ...f.assumptions, sourceEvidenceSha256: sha256(sourceBundle) },
+    sourceBundle,
+  }
+}
+
+test('audited bytes preserve unknown controller coverage and exact plan observations', () => {
+  const report = reportAuditedJevPlanPath(auditedPathFixture())
+  expect(report.observedOrder).toBe('TARGET_OBSERVED_FIRST')
+  expect(report.sourceAudit.controllerCoverage).toBe('UNKNOWN')
+  expect(report.status).toBe('INCOMPLETE')
+  expect(report.netEconomicPnlMicros).toBeNull()
+})
+
+for (const change of ['epoch', 'interval', 'sequence'] as const)
+  test(`audited source rejects foreign ${change}`, () => {
+    expect(() => reportAuditedJevPlanPath(auditedPathFixture(change))).toThrow(
+      change === 'sequence' ? 'does not follow the sealed observation sequence' : 'differs from the sealed observation',
+    )
+  })
+
+test('audited source rejects changed bytes despite a supplied source hash', () => {
+  const input = auditedPathFixture()
+  expect(() =>
+    reportAuditedJevPlanPath({ ...input, sourceBundle: Buffer.concat([input.sourceBundle, Buffer.from(' ')]) }),
+  ).toThrow('bytes differ')
+})
+
 test('actual plan thresholds and causal delivery order remain descriptives, never PnL', () => {
   const f = pathFixture()
   const original = JSON.stringify(f.document)
@@ -118,6 +241,7 @@ for (const patch of [
   { entryLatencyMs: 60000 },
   { choice: 'plan_999' },
   { fillAssumption: 'FILLED' },
+  { unsupportedExecutionAssumption: 'instant-fill' },
 ])
   test(`assumptions reject ${Object.keys(patch)[0]}`, () => {
     const f = pathFixture()

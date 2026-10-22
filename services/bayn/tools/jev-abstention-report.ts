@@ -1,19 +1,21 @@
 import { readFileSync } from 'node:fs'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1Result } from '../src/hash'
+import { canonicalHashV1Result, sha256 } from '../src/hash'
 import { decideJevEntry, JevEntryTargetSchema } from '../src/jev/decision'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
 import { JevFundedExitPlanSchema } from '../src/jev/strategy-exit-plan'
-import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema } from '../src/schemas'
+import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../src/schemas'
 import { jevProtectiveStopCrossed } from '../src/jev/exit'
 import { jevMarketForSymbol } from '../src/jev/markets'
 import { replayQuoteRejection } from '../src/intraday-replay/broker-execution-evidence'
 import { replayInstrument, ReplayInstrumentsSchema } from '../src/intraday-replay/execution-core'
 import type { IntradayQuote } from '../src/market-data/intraday/model'
 import type { ObservedMarketValue } from '../src/market-data/streaming/projection'
+import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/manifest-schema'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
+import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
 
 const Document = Schema.Struct({
   bindings: Schema.Struct({ cycleId: Sha256Schema }),
@@ -176,7 +178,9 @@ export const reportJevPlanPath = (input: {
 }) => {
   const abstention = reportJevAbstention(input.decisionDocument)
   const { strategyDecision: target } = Result.getOrThrow(Schema.decodeUnknownResult(Document)(input.decisionDocument))
-  const assumptions = Result.getOrThrow(Schema.decodeUnknownResult(JevPlanPathAssumptionsSchema)(input.assumptions))
+  const assumptions = Result.getOrThrow(
+    Schema.decodeUnknownResult(JevPlanPathAssumptionsSchema, strictParseOptions)(input.assumptions),
+  )
   const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
   if (hash(target) !== assumptions.decisionHash || input.sourceEvidenceSha256 !== assumptions.sourceEvidenceSha256)
     throw new Error('Plan path evidence binding differs from its assumptions')
@@ -258,6 +262,8 @@ export const reportJevPlanPath = (input: {
   largestGapMs = Math.max(largestGapMs, endMs - (lastAt ?? startMs))
   return {
     schemaVersion: 'bayn.jev-plan-path-diagnostic.v1' as const,
+    protocol: abstention.protocol,
+    inputDefinition: abstention.inputDefinition,
     diagnosticOnly: true,
     status: 'INCOMPLETE' as const,
     qualification: 'UNQUALIFIED' as const,
@@ -266,6 +272,7 @@ export const reportJevPlanPath = (input: {
     netEconomicPnlMicros: null,
     feeStressApplied: false,
     fillsSimulated: false,
+    instrumentTermsIndependentlyVerified: false,
     assumptionManifest: assumptions,
     assumptionManifestHash: hash(assumptions),
     plan,
@@ -290,9 +297,63 @@ export const reportJevPlanPath = (input: {
   }
 }
 
+/** Public file boundary: never accepts a caller-supplied audit report or quote array. */
+export const reportAuditedJevPlanPath = (input: {
+  readonly decisionDocument: unknown
+  readonly assumptions: unknown
+  readonly sourceBundle: Uint8Array
+}) => {
+  if (input.sourceBundle.byteLength > nativeCoverageMaximumInputBytes)
+    throw new Error('Native source bundle exceeds byte limit')
+  const assumptions = Result.getOrThrow(
+    Schema.decodeUnknownResult(JevPlanPathAssumptionsSchema, strictParseOptions)(input.assumptions),
+  )
+  const sourceEvidenceSha256 = sha256(input.sourceBundle)
+  if (sourceEvidenceSha256 !== assumptions.sourceEvidenceSha256)
+    throw new Error('Native source bundle bytes differ from declared hash')
+  const audited = Result.getOrThrowWith(
+    auditNativeArrivalCoverage(JSON.parse(Buffer.from(input.sourceBundle).toString('utf8'))),
+    (error) => error,
+  )
+  const path = reportJevPlanPath({ ...input, quotes: audited.quotes, sourceEvidenceSha256 })
+  const { strategyDecision: target } = Result.getOrThrow(Schema.decodeUnknownResult(Document)(input.decisionDocument))
+  const manifest = Result.getOrThrow(
+    Schema.decodeUnknownResult(StrategySnapshotManifestSchema)(target.evidence.observation.manifest),
+  )
+  const startMs = Date.parse(assumptions.windowStartAt)
+  const endMs = Date.parse(path.windowEndAt)
+  if (
+    manifest.schemaVersion !== 'bayn.streaming-market-snapshot.v1' ||
+    audited.report.consumerEpoch !== manifest.streaming.bootstrap.epoch ||
+    audited.report.interval.startMs !== startMs ||
+    audited.report.interval.endMs !== endMs ||
+    !audited.report.symbols.some((value) => value.symbol === assumptions.symbol)
+  )
+    throw new Error('Native source epoch, interval or symbol differs from the sealed observation and declared window')
+  for (const quote of audited.quotes) {
+    if (quote.availableAtMs >= startMs && quote.availableAtMs <= endMs && quote.sequence <= manifest.streaming.sequence)
+      throw new Error('Native future quote does not follow the sealed observation sequence')
+  }
+  return { ...path, sourceAudit: audited.report }
+}
+
 if (import.meta.main) {
   const path = process.argv[2]
   if (path === undefined) throw new Error('Usage: bun tools/jev-abstention-report.ts <private-decision.json>')
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
-  console.log(JSON.stringify(reportJevAbstention(raw)))
+  const assumptionsPath = process.argv[3]
+  const sourcePath = process.argv[4]
+  if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
+    throw new Error('Provide both an assumption manifest and native source bundle, or neither')
+  console.log(
+    JSON.stringify(
+      assumptionsPath === undefined || sourcePath === undefined
+        ? reportJevAbstention(raw)
+        : reportAuditedJevPlanPath({
+            decisionDocument: raw,
+            assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
+            sourceBundle: readFileSync(sourcePath),
+          }),
+    ),
+  )
 }
