@@ -26,9 +26,9 @@ export const researchCommand = (args: readonly string[]) =>
       yield* fs.readFileString(path),
     )
     const run = yield* Effect.fromResult(decodeResearchRun(input))
-    if (run.schemaVersion !== 'bayn.jev-harness2-editor.v3')
+    if (run.schemaVersion !== 'bayn.jev-editor.v1')
       return yield* new ResearchError({
-        message: 'Retired editor and factor inference cannot be submitted; use the current Jev Harness2 contract',
+        message: 'Retired editor and factor inference cannot be submitted; use the current typed Jev editor contract',
       })
     const runId = yield* Effect.fromResult(hashResearch(run))
     if (args[0] === '--validate') return yield* print(JSON.stringify({ runId, qualification: 'UNQUALIFIED' }))

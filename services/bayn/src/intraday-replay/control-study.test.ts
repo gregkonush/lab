@@ -757,7 +757,8 @@ const frozenControlFixture = () => {
   }
   const { verification: _verification, ...build } = config.build
   const input = {
-    schemaVersion: 'bayn.control-study-input.v8',
+    schemaVersion: 'bayn.control-study-input.v9',
+    costObjective: 'ALL_COSTS',
     entry: 'DETERMINISTIC',
     turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
     management: ControlManagementMode.Mechanical,
@@ -824,6 +825,22 @@ test('net control comparisons require a priced data allocation', () => {
   ).toBe(true)
 })
 
+test('an explicit known-cost diagnostic retains unknown data allocation without admitting all-cost profit', () => {
+  const { input, receipt } = frozenControlFixture()
+  const prepared = Result.getOrThrow(
+    prepareControlStudy(
+      {
+        ...input,
+        costObjective: 'KNOWN_COST_DIAGNOSTIC',
+        backtest: { ...input.backtest, allocatedDataCostPerSessionMicros: null },
+      },
+      receipt,
+    ),
+  )
+  expect(prepared.dataCostMicros).toBeNull()
+  expect(prepared.input.costObjective).toBe('KNOWN_COST_DIAGNOSTIC')
+})
+
 test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(
@@ -835,7 +852,7 @@ test('active-build frozen-source control runner produces reproducible hashed inc
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       const repeated = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
       expect(repeated.reportHash).toBe(report.reportHash)
-      expect(report.schemaVersion).toBe('bayn.control-study-report.v6')
+      expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
       expect(report.sessions).toHaveLength(6)
       expect(report.definition).toMatchObject({
         ...controlStudyDefinition,
