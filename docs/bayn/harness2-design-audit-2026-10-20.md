@@ -251,3 +251,14 @@ base image and strategy identities, then binds the receipt into the terminal com
 that the previous consumer accepted a changed candidate with no build receipt. These checks establish consistency
 with the producer artifact. They do not authenticate an unsigned producer or replace independent source and binary
 verification.
+
+The final review also found that a clean Git checkout could contain modified ignored dependencies. The Nix image
+now records the bundled dependency bytes and package metadata. The variant compiler verifies every byte passed to
+Bun against that image receipt and rejects a changed import graph; the economic registration binds the same receipt.
+Native evaluation must execute inside the exact verified base image so external runtime adapters use its pinned
+closure. These checks still require trusted image provenance and do not authenticate an arbitrary unsigned producer.
+
+Model replacement retires other real checkpoint-revision directories before download. The dedicated deployment's
+`Recreate` strategy stops the old server before its init process touches the cache. Runtime caches are preserved,
+checkpoint symlinks fail, and missing payload bytes plus 2 GiB headroom must fit before any network fetch. Regression
+tests cover retirement ordering, symlink refusal and low-space failure. Rollback re-downloads the former locked model.

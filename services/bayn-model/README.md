@@ -50,7 +50,11 @@ into `model-lock.json`; review checkpoint changes together. The init container d
 token, verifies every cached or downloaded file, and atomically publishes each download. A corrupt existing file
 fails closed and remains available for inspection. The vLLM container loads only that local verified checkpoint and
 runs with offline Hugging Face access. A 32 GiB local-NVMe claim stores the approximately 15.3 GiB weights and runtime
-cache. Provisioning is sequential and uses no GPU.
+cache. Provisioning is sequential and uses no GPU. The PVC belongs to this single model deployment. Its `Recreate`
+strategy terminates the previous server before provisioning starts. The init process removes other real checkpoint
+directories named by a full revision hash before downloading the replacement, preserves the separate runtime cache,
+and refuses checkpoint symlinks. It requires space for all missing locked files plus 2 GiB of runtime headroom.
+A rollback re-downloads the former pinned checkpoint; it does not depend on a retained obsolete copy.
 
 The provisioner image contains the lock, launch profile and small admission middleware. Kargo promotes that image;
 the reviewed Deployment pins the upstream vLLM runtime. This avoids rebuilding CUDA or duplicating its roughly

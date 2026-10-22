@@ -9,7 +9,7 @@ import { canonicalHashV1Result } from '../src/hash'
 import { JevRequestSchema } from '../src/jev/contract'
 import { jevInstructions } from '../src/jev/instructions'
 import { JevInstructionsSchema } from '../src/jev/instructions-contract'
-import { buildJevHarnessVariant, jevInstructionsBuildPlugin } from './build-jev-harness-variant'
+import { buildJevHarnessVariant, jevInstructionsBuildPlugin } from './jev-harness-variant'
 
 const root = resolve(import.meta.dir, '../../..')
 const instructionModule = join(root, 'services/bayn/src/jev/instructions.ts')
@@ -91,14 +91,16 @@ test('the frozen compiler rejects an unverified source revision before creating 
     const result = await Effect.runPromiseExit(
       buildJevHarnessVariant(
         {
-          schemaVersion: 'bayn.jev-harness2-variant.v1',
+          schemaVersion: 'bayn.jev-harness2-variant.v2',
           sourceRevision: '0'.repeat(40),
           imageRepository: 'registry.ide-newton.ts.net/lab/bayn',
           baseImageDigest: `sha256:${'a'.repeat(64)}`,
           instructions: jevInstructions,
+          dependencyReceiptSha256: 'd'.repeat(64),
         },
         root,
         join(directory, 'never-built'),
+        '{}',
       ).pipe(
         // @effect-diagnostics-next-line strictEffectProvide:off -- test entry point owns the source-check process
         Effect.provide(NodeServices.layer),

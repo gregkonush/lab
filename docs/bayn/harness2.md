@@ -139,27 +139,37 @@ Create a private specification:
 
 ```json
 {
-  "schemaVersion": "bayn.jev-harness2-variant.v1",
+  "schemaVersion": "bayn.jev-harness2-variant.v2",
   "sourceRevision": "<exact reviewed source revision>",
   "imageRepository": "registry.ide-newton.ts.net/lab/bayn",
   "baseImageDigest": "sha256:<runtime image digest>",
-  "instructions": { "entry": "..." }
+  "instructions": { "entry": "..." },
+  "dependencyReceiptSha256": "<exact image dependency-receipt SHA-256>"
 }
 ```
 
 Compile from the repository root:
 
 ```sh
-bun services/bayn/tools/build-jev-harness-variant.ts --spec /tmp/variant.json --output /tmp/new-variant
-node /tmp/new-variant/backtest.js --instructions
+bun services/bayn/tools/build-jev-harness-variant.ts --spec /tmp/variant.json --dependencies /tmp/image-dependencies.json --output /tmp/new-variant
 ```
 
 `build.json` binds the specification, baseline and candidate instruction hashes, source revision, compiler version,
 unchanged strategy hashes and exact executable SHA-256. It is evidence from the compiler invocation, not a signed
 attestation. Verify its bytes and trusted producer independently. The base image requires deployed runtime readback;
-a successful local compilation does not establish that image's publication or execution. The local output links
-to the checkout's native dependencies. When moving the artifact to its verified runtime image, bind `node_modules`
-to that image's `/app/services/bayn/node_modules`, preserving the executable bytes and recorded digest.
+a successful local compilation does not establish that image's publication or execution. The Nix build records every bundled dependency file and its package metadata in
+`/app/services/bayn/dist/jev-compiler-dependencies.json`. Extract that exact file from the verified base image and
+freeze its raw SHA-256 in the specification and economic registration. The public build command first bundles its
+own implementation against the image's separate `compilerFiles` inventory, then imports only that verified bundle.
+It loads no local Effect dependency before this check. The compiler hashes the exact bytes supplied
+to Bun's loader, rejects changed or missing dependencies, and requires the same complete import graph. A clean Git
+status alone does not establish dependency identity.
+
+The compiler does not link the checkout's runtime dependencies into its output. Execute every arm inside the exact
+verified base image, with the compiled executable copied unchanged into a private temporary directory and
+`node_modules` linked to that image's `/app/services/bayn/node_modules`. Use isolated local replay stores and retain
+the running container's image identity. This keeps the external native adapter closure pinned as well as the bundled
+JavaScript inputs. A host dependency tree is not an accepted execution environment.
 
 The normal image installs `bayn-backtest` for the reviewed baseline. Candidate executables use the same native
 command arguments. Each arm needs its own empty local PostgreSQL replay database, local TigerBeetle target,
@@ -193,9 +203,9 @@ bayn-harness2-probe --compare /tmp/economic-manifest.json --output /tmp/new-comp
 ```
 
 The manifest uses `bayn.jev-harness2-economic-manifest.v2`. Its `registration` contains `studyId`,
-`evaluatorSourceRevision`, `registeredAt`, the `baseline` and `candidate` instruction documents, ordered
+`evaluatorSourceRevision`, `compilerDependencyReceiptSha256`, `registeredAt`, the `baseline` and `candidate` instruction documents, ordered
 `sessionDates`, and `maximumDrawdownMicros`, with registration schema
-`bayn.jev-harness2-economic-registration.v1`. Each of `baseline`, `baselineRepeat` and `candidate` contains a
+`bayn.jev-harness2-economic-registration.v2`. Each of `baseline`, `baselineRepeat` and `candidate` contains a
 `reportPath`, its exact file `reportSha256`, and ordered `operatingAllocations`. Each allocation names its
 `sessionDate` and separate `infrastructure` and `research` entries: either null, or `{costMicros, evidenceHash}`.
 Unknown allocations remain null. A zero allocation requires evidence just as a nonzero allocation does.

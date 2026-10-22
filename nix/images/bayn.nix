@@ -83,7 +83,7 @@ let
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     "bun --cwd=services/bayn run build ${buildDefines}"
-    "bun build services/bayn/src/backtest-command.ts --target=node --external tigerbeetle-node --external @platformatic/kafka --outfile services/bayn/dist/backtest-command.js ${buildDefines}"
+    "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/harness2-command.js --help"
@@ -104,6 +104,7 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/harness2"
     cp "$TMPDIR/work/services/bayn/harness2/runner.py" "$out/app/services/bayn/harness2/runner.py"

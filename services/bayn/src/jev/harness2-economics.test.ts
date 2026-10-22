@@ -30,9 +30,10 @@ const dates = Array.from({ length: 8 }, (_, i) =>
   Schema.decodeUnknownSync(IsoDateSchema)(`2026-09-${String(i + 1).padStart(2, '0')}`),
 )
 const registration = () => ({
-  schemaVersion: 'bayn.jev-harness2-economic-registration.v1',
+  schemaVersion: 'bayn.jev-harness2-economic-registration.v2',
   studyId: 'a'.repeat(64),
   evaluatorSourceRevision: 'b'.repeat(40),
+  compilerDependencyReceiptSha256: 'd'.repeat(64),
   registeredAt: '2026-08-31T00:00:00.000Z',
   baseline: jevInstructions,
   candidate: candidateInstructions,
@@ -45,6 +46,7 @@ const outcome = (run: string, net: readonly (string | null)[], candidate = false
   reportHash: run.repeat(64),
   executableSha256: (candidate ? 'c' : 'a').repeat(64),
   variantBuildReceiptHash: candidate ? 'e'.repeat(64) : null,
+  compilerDependencyReceiptSha256: candidate ? 'd'.repeat(64) : null,
   instructionsHash: hash(candidate ? candidateInstructions : jevInstructions),
   contextHash: 'd'.repeat(64),
   providerRequests: 8,
@@ -67,6 +69,21 @@ const compare = (next: readonly (string | null)[], baseline = flat('1000'), repe
       candidate: outcome('c', next, true),
     }),
   )
+
+test('candidate dependency receipt must match the frozen image dependency registration', () => {
+  expect(
+    Result.isFailure(
+      compareJevHarnessEconomics(
+        { ...registration(), compilerDependencyReceiptSha256: '0'.repeat(64) },
+        {
+          baseline: outcome('a', flat('1000')),
+          baselineRepeat: outcome('b', flat('1000')),
+          candidate: outcome('c', flat('1500'), true),
+        },
+      ),
+    ),
+  ).toBe(true)
+})
 
 test('paired session net gain can be positive or negative without changing the opportunity count', () => {
   const positive = compare(flat('1500'))
@@ -378,13 +395,14 @@ const project = (report: unknown, operatingAllocations: unknown = allocations) =
   jevHarnessBacktestOutcome({ report, instructions: jevInstructions, operatingAllocations, variantBuild: null })
 const compilerBuildFixture = (report: ReturnType<typeof nativeReportFixture>, instructions = candidateInstructions) => {
   const material = {
-    schemaVersion: 'bayn.jev-harness2-variant-build.v1',
+    schemaVersion: 'bayn.jev-harness2-variant-build.v2',
     spec: {
-      schemaVersion: 'bayn.jev-harness2-variant.v1',
+      schemaVersion: 'bayn.jev-harness2-variant.v2',
       sourceRevision: report.build.sourceRevision,
       imageRepository: report.build.imageRepository,
       baseImageDigest: report.build.declaredImageDigest,
       instructions,
+      dependencyReceiptSha256: 'd'.repeat(64),
     },
     baselineInstructionsHash: hash(jevInstructions),
     instructionsHash: hash(instructions),
@@ -394,6 +412,7 @@ const compilerBuildFixture = (report: ReturnType<typeof nativeReportFixture>, in
     bunVersion: '1.4.2',
     replacedSourceModule: 'services/bayn/src/jev/instructions.ts',
     sourceVerification: 'CLEAN_COMMITTED_BUILD_INPUTS',
+    dependencyVerification: 'PINNED_IMAGE_INPUT_BYTES',
     baseImageVerification: 'REQUIRES_RUNTIME_READBACK',
     qualification: 'UNQUALIFIED',
   }

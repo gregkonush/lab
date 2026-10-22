@@ -80,9 +80,10 @@ const CostAllocationSchema = Schema.NullOr(
   Schema.Struct({ costMicros: UnsignedMicrosSchema, evidenceHash: Sha256Schema }),
 )
 export const JevHarnessEconomicRegistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-registration.v1'),
+  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-registration.v2'),
   studyId: Sha256Schema,
   evaluatorSourceRevision: GitSourceRevisionSchema,
+  compilerDependencyReceiptSha256: Sha256Schema,
   registeredAt: UtcInstantSchema,
   baseline: JevInstructionsSchema,
   candidate: JevInstructionsSchema,
@@ -311,6 +312,7 @@ export const jevHarnessBacktestOutcome = (input: {
       runId: report.runId,
       executableSha256: report.executableSha256,
       variantBuildReceiptHash: variantBuild?.receiptHash ?? null,
+      compilerDependencyReceiptSha256: variantBuild?.spec.dependencyReceiptSha256 ?? null,
       instructionsHash: yield* hash(instructions),
       contextHash: yield* hash({
         comparisonInputHash: report.comparisonInputHash,
@@ -373,6 +375,8 @@ export const compareJevHarnessEconomics = (
       candidate.variantBuildReceiptHash === null
     )
       return yield* invalid('Candidate requires changed instructions and a distinct compiled executable')
+    if (candidate.compilerDependencyReceiptSha256 !== registration.compilerDependencyReceiptSha256)
+      return yield* invalid('Candidate compiler dependencies differ from the registered pinned image receipt')
     const expectedDates = registration.sessionDates
     if (expectedDates.join() !== [...expectedDates].sort().join())
       return yield* invalid('Economic sessions must be registered in chronological order')
