@@ -233,11 +233,17 @@ idle limit can therefore require normal sign-in again. Reuse the saved passkey, 
 workspace when it is prepared. This expiry does not require another passkey enrollment or a home reset.
 
 [PR #15215](https://github.com/proompteng/lab/pull/15215) is included in the deployed cohort. Its entry point is
-**Settings → Access → Add passkey**. The Keycloak theme is deployed. The virtual Keycloak/browser/Ofz fixture passed
+**Settings → Access → Add another passkey**. The Keycloak theme is deployed. The virtual Keycloak/browser/Ofz fixture passed
 165 assertions. The owner saved the additional passkey in 1Password. Subsequent same-identity sign-in through that
 saved passkey passed against the deployed product. Keep the original credentials, GitHub subject, broker links, RP ID,
 and WebAuthn verification policy. No further enrollment is needed. The merged sign-in cleanup in
 [PR #15269](https://github.com/proompteng/lab/pull/15269) is included in the deployed API 7 cohort.
+
+Verification leaves credential selection to the browser or password manager. The page omits the noninteractive
+inventory of opaque credential labels and transport names. While verification is pending, its disabled button says
+"Check your passkey dialog". The hidden credential allow-list and one-click request protection remain intact.
+The real Keycloak fixture rejects the old inventory, verifies the pending state and reload recovery with two saved
+credentials, and retains its exact-challenge failover, identity, enrollment, and mobile accessibility checks.
 
 ## Observed limits
 

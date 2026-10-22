@@ -1689,7 +1689,7 @@ identityTest(
     await page.locator('#authenticateWebAuthnButton').click()
     await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
     await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false })
-    await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    const { authenticatorId: platformAuthenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
         transport: 'internal',
@@ -1716,6 +1716,28 @@ identityTest(
     await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await browserExpect(page.getByText('Available Passkeys', { exact: true })).toHaveCount(0)
+    await browserExpect(page.getByText(/Passkey \(/)).toHaveCount(0)
+    await browserExpect(page.getByText('Internal', { exact: true })).toHaveCount(0)
+    await browserExpect(page.locator('#authn_select input[name="authn_use_chk"]')).toHaveCount(
+      credentialsBeforeAddition.length + 1,
+    )
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-two-passkeys.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: false,
+    })
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: true,
+    })
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
     await page.locator('#authenticateWebAuthnButton').click()
     await page.waitForURL(base + '/')
     const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
