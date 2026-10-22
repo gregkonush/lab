@@ -158,8 +158,18 @@ integration('research attempt durability with real PostgreSQL', () => {
             )
             const outcome = yield* Fiber.join(migrating)
             expect(Result.isFailure(outcome)).toBe(lockFirst)
-            if (Result.isFailure(outcome))
-              expect(JSON.stringify(outcome.failure)).toContain('Let in-flight research registrations finish')
+            if (Result.isFailure(outcome)) {
+              // PostgreSQL Error.message is non-enumerable and is omitted by JSON.stringify.
+              const failure = yield* Schema.decodeUnknownEffect(
+                Schema.Struct({
+                  reason: Schema.Struct({ cause: Schema.Struct({ code: Schema.String, message: Schema.String }) }),
+                }),
+              )(outcome.failure)
+              expect(failure.reason.cause).toEqual({
+                code: 'P0001',
+                message: 'Let in-flight research registrations finish before the Jev editor hard migration',
+              })
+            }
             yield* sql.withTransaction(
               Effect.gen(function* () {
                 yield* sql`SET LOCAL search_path TO ${sql(schema)}`
