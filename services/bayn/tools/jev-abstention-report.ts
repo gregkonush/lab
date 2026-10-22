@@ -6,7 +6,14 @@ import { decideJevEntry, JevEntryTargetSchema } from '../src/jev/decision'
 import { JevCandidatePlanStatus, JevCandidateResultStatus } from '../src/jev/batch'
 import { JevOutcome } from '../src/jev/evidence'
 import { JevFundedExitPlanSchema } from '../src/jev/strategy-exit-plan'
-import { Sha256Schema } from '../src/schemas'
+import { PositiveMicrosSchema, Sha256Schema, UtcInstantSchema } from '../src/schemas'
+import { jevProtectiveStopCrossed } from '../src/jev/exit'
+import { jevMarketForSymbol } from '../src/jev/markets'
+import { replayQuoteRejection } from '../src/intraday-replay/broker-execution-evidence'
+import { replayInstrument, ReplayInstrumentsSchema } from '../src/intraday-replay/execution-core'
+import type { IntradayQuote } from '../src/market-data/intraday/model'
+import type { ObservedMarketValue } from '../src/market-data/streaming/projection'
+import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 
 const Document = Schema.Struct({
   bindings: Schema.Struct({ cycleId: Sha256Schema }),
@@ -140,6 +147,146 @@ export const reportJevAbstention = (input: unknown) => {
     inputDefinition: target.evidence.observation.protocol.inputDefinition,
     selectedSymbols: target.selectedSymbols,
     candidates,
+  }
+}
+
+const Integer = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
+export const JevPlanPathAssumptionsSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-plan-path-assumptions.v1'),
+  decisionHash: Sha256Schema,
+  sourceEvidenceSha256: Sha256Schema,
+  symbol: Schema.NonEmptyString,
+  choice: Schema.String.check(Schema.isPattern(/^plan_[0-9]+$/)),
+  windowAnchor: Schema.Literals(['OBSERVATION', 'HYPOTHETICAL_FIRST_FILL']),
+  windowStartAt: UtcInstantSchema,
+  entryLatencyMs: Integer.check(Schema.isLessThanOrEqualTo(60_000)),
+  quantityAtoms: PositiveMicrosSchema,
+  feeMultiplierPpm: Integer.check(Schema.isGreaterThanOrEqualTo(1_000_000), Schema.isLessThanOrEqualTo(10_000_000)),
+  instruments: ReplayInstrumentsSchema,
+  fillAssumption: Schema.Literal('NOT_SIMULATED'),
+})
+
+/** Describes original quote deliveries, never an executed or simulated trade.
+ * The caller must obtain quotes from the native arrival auditor, not reconstruct bars. */
+export const reportJevPlanPath = (input: {
+  readonly decisionDocument: unknown
+  readonly assumptions: unknown
+  readonly quotes: readonly ObservedMarketValue<IntradayQuote>[]
+  readonly sourceEvidenceSha256: string
+}) => {
+  const abstention = reportJevAbstention(input.decisionDocument)
+  const { strategyDecision: target } = Result.getOrThrow(Schema.decodeUnknownResult(Document)(input.decisionDocument))
+  const assumptions = Result.getOrThrow(Schema.decodeUnknownResult(JevPlanPathAssumptionsSchema)(input.assumptions))
+  const hash = (value: unknown) => Result.getOrThrow(canonicalHashV1Result(value))
+  if (hash(target) !== assumptions.decisionHash || input.sourceEvidenceSha256 !== assumptions.sourceEvidenceSha256)
+    throw new Error('Plan path evidence binding differs from its assumptions')
+  const candidate = target.evidence.batchPlan.candidates.find((value) => value.symbol === assumptions.symbol)
+  if (candidate?.status !== JevCandidatePlanStatus.Requested)
+    throw new Error('Plan path requires a requested candidate')
+  const question = candidate.request.request.questions['action']
+  if (question?.type !== 'choice') throw new Error('Plan path requires the original complete-plan choice')
+  const { plan } = Result.getOrThrow(
+    Schema.decodeUnknownResult(Schema.Struct({ plan: JevFundedExitPlanSchema }))(question.criteria[assumptions.choice]),
+  )
+  const quantity = BigInt(assumptions.quantityAtoms)
+  const instrument = Result.getOrThrow(replayInstrument(assumptions.symbol, assumptions.instruments))
+  if (
+    plan.levels.symbol !== assumptions.symbol ||
+    quantity > BigInt(plan.maximumQuantityAtoms) ||
+    quantity < instrument.minimumQuantityAtoms ||
+    quantity % instrument.quantityIncrementAtoms !== 0n
+  )
+    throw new Error('Declared quantity or symbol violates its sealed plan and instrument')
+  const observedMs = Date.parse(target.observedAt)
+  const entryArrivalMs = observedMs + assumptions.entryLatencyMs
+  const startMs = Date.parse(assumptions.windowStartAt)
+  if (
+    entryArrivalMs >= Date.parse(candidate.request.expiresAt) ||
+    (assumptions.windowAnchor === 'OBSERVATION'
+      ? startMs !== observedMs
+      : startMs < entryArrivalMs || startMs >= Date.parse(candidate.request.expiresAt))
+  )
+    throw new Error('Declared clock is outside the sealed request or differs from its anchor')
+  const endMs = startMs + plan.levels.maximumHoldingMinutes * 60_000
+  type Crossing = { availableAtMs: number; sequence: number; recordHash: string; bidMicros: string }
+  let firstTarget: Crossing | null = null
+  let firstStop: Crossing | null = null
+  let previousAt = -Infinity
+  let previousSequence = -1
+  let accepted = 0
+  let inWindow = 0
+  const rejected: Record<string, number> = {}
+  let firstAt: number | null = null
+  let lastAt: number | null = null
+  let largestGapMs = 0
+  for (const quote of input.quotes) {
+    if (
+      !Number.isSafeInteger(quote.availableAtMs) ||
+      !Number.isSafeInteger(quote.sequence) ||
+      quote.availableAtMs < previousAt ||
+      quote.sequence <= previousSequence ||
+      !Schema.is(Sha256Schema)(quote.recordHash)
+    )
+      throw new Error('Native quote delivery clock, sequence or identity is invalid')
+    previousAt = quote.availableAtMs
+    previousSequence = quote.sequence
+    if (quote.value.symbol !== assumptions.symbol || quote.availableAtMs < startMs || quote.availableAtMs > endMs)
+      continue
+    inWindow++
+    const reason = replayQuoteRejection(quote, assumptions.symbol, quote.availableAtMs, {
+      ...target.evidence.observation.protocol,
+      ...jevMarketForSymbol(assumptions.symbol),
+    })
+    if (reason !== null) {
+      rejected[reason] = (rejected[reason] ?? 0) + 1
+      continue
+    }
+    accepted++
+    firstAt ??= quote.availableAtMs
+    largestGapMs = Math.max(largestGapMs, quote.availableAtMs - (lastAt ?? startMs))
+    lastAt = quote.availableAtMs
+    const bid = Result.getOrThrow(priceNumberToMicros(quote.value.bidPrice, 'path.bid', 'DOWN'))
+    const crossing = {
+      availableAtMs: quote.availableAtMs,
+      sequence: quote.sequence,
+      recordHash: quote.recordHash,
+      bidMicros: bid.toString(),
+    }
+    if (firstStop === null && jevProtectiveStopCrossed(bid, plan.levels)) firstStop = crossing
+    if (firstTarget === null && bid >= BigInt(plan.levels.profitLimitPriceMicros)) firstTarget = crossing
+  }
+  largestGapMs = Math.max(largestGapMs, endMs - (lastAt ?? startMs))
+  return {
+    schemaVersion: 'bayn.jev-plan-path-diagnostic.v1' as const,
+    diagnosticOnly: true,
+    status: 'INCOMPLETE' as const,
+    qualification: 'UNQUALIFIED' as const,
+    actualExecutionProven: false,
+    profitableEdgeProven: false,
+    netEconomicPnlMicros: null,
+    feeStressApplied: false,
+    fillsSimulated: false,
+    assumptionManifest: assumptions,
+    assumptionManifestHash: hash(assumptions),
+    plan,
+    originalSelectedSymbols: abstention.selectedSymbols,
+    hypotheticalEntryArrivalAt: new Date(entryArrivalMs).toISOString(),
+    windowEndAt: new Date(endMs).toISOString(),
+    firstTarget,
+    firstStop,
+    observedOrder:
+      firstTarget === null && firstStop === null
+        ? 'NO_THRESHOLD_OBSERVED'
+        : firstStop === null || (firstTarget !== null && firstTarget.sequence < firstStop.sequence)
+          ? 'TARGET_OBSERVED_FIRST'
+          : 'STOP_OBSERVED_FIRST',
+    coverage: { inWindowQuotes: inWindow, acceptedQuotes: accepted, rejected, firstAt, lastAt, largestGapMs },
+    unsupported: [
+      'NATIVE_GTC_AND_CONTROLLER_REPLAY',
+      'ACTUAL_FIRST_FILL_AND_CAPACITY',
+      'FULL_SOURCE_AND_CONTROLLER_COMPLETENESS',
+      'OPERATING_COST_ALLOCATION',
+    ],
   }
 }
 

@@ -31,3 +31,32 @@ value and excludes unmodeled operating costs. Choice mass is not a calibrated pr
 probability. Summed plan mass can exceed the largest individual option without
 changing the provider's argmax. This report never changes selection, fees, horizons,
 authority, or admission guards, and does not supply a model rationale or prove edge.
+
+## Exact-plan quote paths
+
+The research-only `reportJevPlanPath` function reproduces the sealed decision and
+describes original quote deliveries against one explicitly declared funded plan.
+It does not replace the original model choice. The assumption manifest binds the
+decision hash and source-bundle SHA256, plan choice, quantity, instrument rules,
+entry latency, fee stress, and observation or hypothetical first-fill clock.
+Quantities must fit the sealed funded maximum and declared instrument increments.
+Fee multipliers below the existing fee basis are rejected. The multiplier is only
+a declared research assumption: no fees or cash flows are calculated or applied.
+
+An observation-anchored window is not an actual holding period. A hypothetical
+first-fill anchor must follow declared entry arrival and precede request expiry;
+it remains an assumption, not proof of an executable entry. Native holding time
+starts at actual first fill. Original quote delivery order is preserved, including
+same-millisecond sequence ordering. Quote freshness uses the sealed protocol and
+the existing native replay validity predicate. Targets use the exact plan limit;
+stops use the existing protective-stop predicate. The tool never substitutes the
+mechanical control's fixed target/stop distances.
+
+Every path is permanently `INCOMPLETE` and `UNQUALIFIED`, with null economic P&L.
+The report includes first observed threshold crossings, quote rejection counts,
+and leading, internal, and trailing delivery gaps. These are observations, not
+fills, a target-before-stop execution outcome, or a win rate. Missing quotes do
+not become zero returns. GTC order/controller parity, entry capacity and partial
+fills, actual first-fill timing, full capture/controller completeness, and
+operating-cost allocation are not established by quote crossings. Neither a
+STOPPED capture nor matching durable counts proves controller completion.
