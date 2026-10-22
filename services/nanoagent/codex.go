@@ -95,9 +95,10 @@ type codexApproval struct {
 }
 
 type codexProcessGeneration struct {
-	id      string
-	ready   chan struct{}
-	failure error
+	id       string
+	ready    chan struct{}
+	failure  error
+	commands map[codexTurnIdentity]map[string]struct{}
 }
 
 type codexSupervisor struct {
@@ -155,7 +156,7 @@ func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 }
 
 func newCodexProcessGeneration() *codexProcessGeneration {
-	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{})}
+	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{}), commands: make(map[codexTurnIdentity]map[string]struct{})}
 }
 
 func randBytes() []byte {
@@ -249,7 +250,6 @@ func (supervisor *codexSupervisor) runProcess() error {
 	if err != nil {
 		return err
 	}
-	command.Stderr = io.Discard
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -274,7 +274,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		},
 	})
 	if err == nil {
-		_, err = supervisor.request(ctx, "initialize", initialize, false)
+		_, err = supervisor.request(ctx, "initialize", initialize, false, nil)
 	}
 	cancel()
 	if err != nil {
@@ -290,6 +290,10 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	closeSignal(generation.ready)
 	supervisor.mu.Unlock()
+	supervisor.publish("tengri/runtimeReady", "", map[string]any{
+		"method": "tengri/runtimeReady",
+		"params": map[string]string{"generationId": generation.id},
+	})
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
 	if waitErr != nil {
@@ -395,7 +399,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
 		return supervisor.operation(ctx, method, params)
 	}
-	return supervisor.request(ctx, method, params, true)
+	return supervisor.request(ctx, method, params, true, nil)
 }
 
 func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
@@ -422,7 +426,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true)
+		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true, nil)
 		cancel()
 		if cancelErr != nil {
 			return codexCallResult{}, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
@@ -433,7 +437,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		}
 		supervisor.mu.Unlock()
 	}
-	result, err := supervisor.request(ctx, "account/login/start", params, true)
+	result, err := supervisor.request(ctx, "account/login/start", params, true, nil)
 	if err != nil {
 		return codexCallResult{}, err
 	}
@@ -484,12 +488,14 @@ func (supervisor *codexSupervisor) request(
 	method string,
 	params json.RawMessage,
 	waitReady bool,
+	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
-	var generation *codexProcessGeneration
 	if waitReady {
-		supervisor.mu.Lock()
-		generation = supervisor.generation
-		supervisor.mu.Unlock()
+		if generation == nil {
+			supervisor.mu.Lock()
+			generation = supervisor.generation
+			supervisor.mu.Unlock()
+		}
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
 			return codexCallResult{}, err
 		}
@@ -671,6 +677,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	supervisor.observeCommands(generation, message)
 	if message.Method == "turn/completed" {
 		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
 			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})

@@ -30,9 +30,23 @@ const result = await Bun.build({
 if (!result.success || result.outputs.length !== 1 || result.outputs[0] === undefined)
   throw Error(JSON.stringify(result.logs))
 await writeFile(output, new Uint8Array(await result.outputs[0].arrayBuffer()))
+const controlDependencies = compilerDependencyBytes(null)
+const controls = await Bun.build({
+  entrypoints: [resolve('services/bayn/src/control-study-command.ts')],
+  target: 'node',
+  external: ['tigerbeetle-node', '@platformatic/kafka'],
+  define,
+  plugins: [controlDependencies.plugin],
+})
+if (!controls.success || controls.outputs.length !== 1 || controls.outputs[0] === undefined)
+  throw Error(JSON.stringify(controls.logs))
+await writeFile(
+  join(dirname(output), 'control-study-command.js'),
+  new Uint8Array(await controls.outputs[0].arrayBuffer()),
+)
 const compilerDependencies = compilerDependencyBytes(null)
 const compiler = await Bun.build({
-  entrypoints: [resolve('services/bayn/tools/jev-harness-variant.ts')],
+  entrypoints: [resolve('services/bayn/tools/jev-instruction-variant.ts')],
   target: 'bun',
   plugins: [compilerDependencies.plugin],
   define: { __BAYN_VARIANT_SOURCE_ROOT__: JSON.stringify(process.cwd()) },
@@ -41,10 +55,11 @@ if (!compiler.success || compiler.outputs.length !== 1) throw Error(JSON.stringi
 await writeFile(
   join(dirname(output), 'jev-compiler-dependencies.json'),
   JSON.stringify({
-    schemaVersion: 'bayn.jev-compiler-dependencies.v1',
+    schemaVersion: 'bayn.jev-compiler-dependencies.v2',
     sourceRevision,
     bunVersion: '1.4.2',
     files: dependencies.files(),
+    controlFiles: controlDependencies.files(),
     compilerFiles: compilerDependencies.files(),
   }),
 )

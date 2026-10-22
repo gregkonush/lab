@@ -153,7 +153,10 @@ spire-server:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: tengri
-              app.kubernetes.io/component: control-plane
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
           workloadSelectorTemplates:
             - k8s:sa:tengri
             - k8s:container-name:tengri
@@ -198,8 +201,11 @@ spire-server:
           podSelector:
             matchLabels:
               app.kubernetes.io/name: tengri
-              app.kubernetes.io/component: control-plane
               spiffe.io/spire-managed-identity: "true"
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [control-plane, run-worker]
           workloadSelectorTemplates:
             - k8s:sa:tengri
             - k8s:container-name:istio-proxy

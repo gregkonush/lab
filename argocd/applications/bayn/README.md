@@ -36,8 +36,8 @@ command is **not** run automatically from the trading service at startup.
 
 ## Isolated Jev instruction research
 
-The same immutable image includes `bayn-harness2` for bounded prompt refinement. Use the
-[Harness2 runbook](../../../docs/bayn/harness2.md) for frozen manifests, durable object-store evidence, restart behavior,
+The same immutable image includes `bayn-gepa` for bounded native Jev question optimization. Use the
+[Jev optimization runbook](../../../docs/bayn/jev-optimization.md) for frozen manifests, durable object-store evidence, restart behavior,
 and deployed verification. It uses the worker's existing research API and storage identity. It needs no broker access
 or additional network/database grants.
 
@@ -79,7 +79,7 @@ without the identity header is rejected; research cannot fall back to alias-only
 provisioner restarts only the independent model endpoint and re-verifies the cached checkpoint.
 
 Original-session eligibility, preparation expenses and comparison requirements are described in the
-[research contract](../../../docs/bayn/harness2.md). Invalidated or unsealed captures cannot establish
+[research contract](../../../docs/bayn/jev-optimization.md). Invalidated or unsealed captures cannot establish
 complete original coverage; do not manufacture descriptions or later outcomes to make old captures eligible.
 
 Kargo writes activation Job and pod version labels as `sha-<12-character revision>`. The prefix keeps numeric and

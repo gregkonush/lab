@@ -79,10 +79,10 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
     }
     if (
       receipt.outcome === 'COMPLETE' &&
-      JSON.stringify(receipt.factors) !== JSON.stringify(yield* parseResearchOutput(run, receipt.responseText))
+      JSON.stringify(receipt.instructions) !== JSON.stringify(yield* parseResearchOutput(run, receipt.responseText))
     )
       return yield* Result.fail(
-        new ResearchError({ message: 'Research receipt factors differ from its retained response' }),
+        new ResearchError({ message: 'Research receipt instructions differ from its retained response' }),
       )
     return receipt
   })

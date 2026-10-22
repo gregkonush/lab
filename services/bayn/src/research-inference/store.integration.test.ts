@@ -1,3 +1,4 @@
+import gepaEditorMigration from '../../migrations/0139_jev_gepa_editor'
 import structuredEditorMigration from '../../migrations/0138_jev_editor_structured_output'
 import jevEditorMigration from '../../migrations/0135_jev_editor_identity'
 import jevHarnessMigration from '../../migrations/0132_jev_harness2'
@@ -6,37 +7,21 @@ import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { NodeHttpClient } from '@effect/platform-node'
 import { SqlClient } from 'effect/sql'
-import { HttpClient, HttpClientResponse } from 'effect/http'
 
 import migration from '../../migrations/0093_research_inference'
 import harnessMigration from '../../migrations/0129_harness2_research'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
-import { decodeResearchRun, hashResearch, HarnessPurpose, ResearchOutcome, researchServingIdentity } from './contract'
-import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
+import { decodeResearchRun, hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
+import { fullTokenBudgetStreamFixture, editorFixture, streamFixture } from './test-support'
 import { makeResearchStore, projectResearchExpenses, researchExpensePlan, verifyResearchReceipt } from './store'
 import { makeResearchRunner } from './runner'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
 
 const integration = baynTestPostgresUrl === undefined ? describe.skip : describe
 integration('research attempt durability with real PostgreSQL', () => {
-  const historical = researchFixture()
-  const { maximumFactors: _retiredLimit, ...historicalPolicy } = historical.policy
-  const retainedEditor = Result.getOrThrow(
-    decodeResearchRun({
-      ...historical,
-      schemaVersion: 'bayn.jev-harness2-editor.v1',
-      purpose: HarnessPurpose.PromptEdit,
-      policy: historicalPolicy,
-      context: { memory: historical.context.memory },
-    }),
-  )
+  const retainedEditor = { ...editorFixture(), schemaVersion: 'bayn.jev-harness2-editor.v3' }
   const retainedId = Result.getOrThrow(hashResearch(retainedEditor))
   let retainedBytes = ''
-  const unconstrained = Result.getOrThrow(
-    decodeResearchRun({ ...harnessEditorFixture(), schemaVersion: 'bayn.jev-harness2-editor.v2' }),
-  )
-  const unconstrainedId = Result.getOrThrow(hashResearch(unconstrained))
-  let unconstrainedBytes = ''
   let runtime: ManagedRuntime.ManagedRuntime<
     PgClient.PgClient | SqlClient.SqlClient | import('effect/http/HttpClient').HttpClient,
     unknown
@@ -61,54 +46,22 @@ integration('research attempt durability with real PostgreSQL', () => {
         yield* migration
         yield* harnessMigration
         yield* jevHarnessMigration
-        yield* makeResearchStore(sql).claim(retainedId, retainedEditor)
+        yield* jevEditorMigration
+        yield* structuredEditorMigration
+        yield* sql`INSERT INTO research_inference_runs (run_id, payload) VALUES (${retainedId}, ${sql.json(retainedEditor)})`
         const [row] = yield* sql<{
           payload: string
         }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${retainedId}`
-        if (row === undefined) throw new Error('Missing retained registration fixture')
+        if (row === undefined) throw new Error('Missing retained registration')
         retainedBytes = row.payload
-        yield* jevEditorMigration
-        yield* makeResearchStore(sql).claim(unconstrainedId, unconstrained)
-        const [unconstrainedRow] = yield* sql<{
-          payload: string
-        }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${unconstrainedId}`
-        if (unconstrainedRow === undefined) throw new Error('Missing unconstrained registration fixture')
-        unconstrainedBytes = unconstrainedRow.payload
-        yield* structuredEditorMigration
+        yield* gepaEditorMigration
       }),
     )
   })
   afterAll(async () => {
     if (runtime !== undefined) await runtime.dispose()
   })
-  test('structured output migration preserves the unconstrained v2 registration without permitting new inference', async () => {
-    await runtime.runPromise(
-      Effect.gen(function* () {
-        const sql = yield* PgClient.PgClient
-        const [row] = yield* sql<{
-          payload: string
-        }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${unconstrainedId}`
-        expect(row?.payload).toBe(unconstrainedBytes)
-        let calls = 0
-        const http = HttpClient.make((request) => {
-          calls++
-          return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('unreachable')))
-        })
-        const runner = yield* makeResearchRunner(makeResearchStore(sql), 'http://fixture.invalid').pipe(
-          Effect.provideService(HttpClient.HttpClient, http),
-        )
-        const result = yield* Effect.result(runner.run(unconstrained))
-        expect(Result.isFailure(result)).toBe(true)
-        expect(calls).toBe(0)
-      }),
-    )
-  })
-  test('the identity migration preserves old registration bytes while the runner refuses new Alpha-R1 inference', async () => {
-    let calls = 0
-    const http = HttpClient.make((request) => {
-      calls++
-      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response('{}')))
-    })
+  test('hard migration preserves retained bytes and rejects new retired registrations', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -116,28 +69,28 @@ integration('research attempt durability with real PostgreSQL', () => {
           payload: string
         }>`SELECT payload::text AS payload FROM research_inference_runs WHERE run_id = ${retainedId}`
         expect(row?.payload).toBe(retainedBytes)
-        const runner = yield* makeResearchRunner(makeResearchStore(sql), 'http://fixture.invalid')
-        const result = yield* runner.run(retainedEditor).pipe(Effect.result)
-        expect(Result.isFailure(result)).toBe(true)
-        if (Result.isFailure(result)) {
-          expect(result.failure._tag).toBe('ResearchError')
-          if (result.failure._tag === 'ResearchError')
-            expect(result.failure.message).toContain('Retired research registrations')
-        }
-        expect(calls).toBe(0)
-      }).pipe(Effect.provideService(HttpClient.HttpClient, http)),
+        const changed = { ...retainedEditor, attempt: 1 }
+        const changedId = Result.getOrThrow(hashResearch(changed))
+        expect(
+          Result.isFailure(
+            yield* sql`INSERT INTO research_inference_runs (run_id, payload) VALUES (${changedId}, ${sql.json(changed)})`.pipe(
+              Effect.result,
+            ),
+          ),
+        ).toBe(true)
+      }),
     )
   })
   test('rejects a receipt inserted as already expense-verified', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
-        const run = { ...researchFixture(), attempt: 3 }
+        const run = { ...editorFixture(), attempt: 3 }
         const runId = Result.getOrThrow(hashResearch(run))
         yield* makeResearchStore(sql).claim(runId, run)
         const receiptHash = '9'.repeat(64)
         const payload = {
-          schemaVersion: 'bayn.research-receipt.v1',
+          schemaVersion: 'bayn.research-receipt.v2',
           runId,
           receiptHash,
           qualification: 'UNQUALIFIED',
@@ -149,17 +102,17 @@ integration('research attempt durability with real PostgreSQL', () => {
       }),
     )
   })
-  test('claims and replays a harness proposal through the same immutable store', async () => {
+  test('claims and replays an instruction proposal through the same immutable store', async () => {
     let calls = 0
     const text = '{"entry":"Assess complete entry plans"}'
     const model = Bun.serve({
       port: 0,
       fetch: () => {
         calls++
-        return new Response(streamFixture(text, harnessEditorFixture().policy.model), {
+        return new Response(streamFixture(text, editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -169,9 +122,9 @@ integration('research attempt durability with real PostgreSQL', () => {
         Effect.gen(function* () {
           const sql = yield* PgClient.PgClient
           const store = makeResearchStore(sql)
-          const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`)
+          const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`, () => ({}), 'b'.repeat(40))
           const now = new Date().toISOString()
-          const fixture = harnessEditorFixture()
+          const fixture = editorFixture()
           const run = Result.getOrThrow(
             decodeResearchRun({
               ...fixture,
@@ -184,7 +137,16 @@ integration('research attempt durability with real PostgreSQL', () => {
           const first = yield* runner.run(run)
           expect(first.outcome).toBe(ResearchOutcome.Complete)
           expect(first.responseText).toBe(text)
-          expect(first.factors).toEqual([])
+          expect(first.instructions).toEqual({ entry: 'Assess complete entry plans' })
+          expect(first.workerSourceRevision).toBe('b'.repeat(40))
+          expect(run.sourceRevision).toBe('a'.repeat(40))
+          const replacedWorker = yield* makeResearchRunner(
+            store,
+            `${model.url}v1/chat/completions`,
+            () => ({}),
+            'c'.repeat(40),
+          )
+          expect(yield* replacedWorker.run(run)).toEqual(first)
           expect(yield* runner.run(run)).toEqual(first)
           expect(calls).toBe(1)
           const forged = { ...run, purpose: 'trade' }
@@ -207,10 +169,10 @@ integration('research attempt durability with real PostgreSQL', () => {
       port: 0,
       fetch: () => {
         calls++
-        return new Response(fullTokenBudgetStreamFixture(harnessEditorFixture().policy.model, '{"entry":"Assess"}'), {
+        return new Response(fullTokenBudgetStreamFixture(editorFixture().policy.model, '{"entry":"Assess"}'), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -223,7 +185,7 @@ integration('research attempt durability with real PostgreSQL', () => {
           const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`)
           const now = new Date().toISOString()
           const run = {
-            ...harnessEditorFixture(),
+            ...editorFixture(),
             featureCutoff: now,
             registeredAt: now,
             deadlineAt: new Date(Date.now() + 30_000).toISOString(),
@@ -256,10 +218,10 @@ integration('research attempt durability with real PostgreSQL', () => {
     const model = Bun.serve({
       port: 0,
       fetch: () =>
-        new Response(streamFixture('{"entry":"Assess"}', harnessEditorFixture().policy.model), {
+        new Response(streamFixture('{"entry":"Assess"}', editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(harnessEditorFixture().policy)),
+            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         }),
     })
@@ -272,14 +234,14 @@ integration('research attempt durability with real PostgreSQL', () => {
             const runner = yield* makeResearchRunner(store, `${model.url}v1/chat/completions`)
             const now = new Date().toISOString()
             const run = {
-              ...harnessEditorFixture(),
+              ...editorFixture(),
               attempt: 2,
               studyHash: crypto.randomUUID().replaceAll('-', '').repeat(2),
               featureCutoff: now,
               registeredAt: now,
               deadlineAt: new Date(Date.now() + 30_000).toISOString(),
               costBasis: {
-                ...researchFixture().costBasis,
+                ...editorFixture().costBasis,
                 sourceEvidenceHash: '4'.repeat(64),
                 effectiveFrom: '2026-01-01T00:00:00.000Z',
                 effectiveUntil: '2027-01-01T00:00:00.000Z',
