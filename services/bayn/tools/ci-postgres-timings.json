@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "files": {
+    "src/db/forward-performance-receipt.integration.test.ts": 889,
+    "src/db/jev-batch-postgres.integration.test.ts": 97223,
+    "src/db/broker-observations.integration.test.ts": 37999,
+    "src/db/continuous-cash-spot.integration.test.ts": 5646,
+    "src/db/execution-store.integration.test.ts": 35163,
+    "src/db/execution-controller-status-postgres.integration.test.ts": 5800,
+    "src/db/current-jev-cycle-migration.integration.test.ts": 4638,
+    "src/db/explicit-limit-decision-migration.integration.test.ts": 89,
+    "src/db/explicit-limit-migration.integration.test.ts": 516
+  }
+}

@@ -1789,6 +1789,13 @@ bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
 
+CI partitions the complete unit suite into four duration-balanced Bun shards with two isolated workers per shard.
+Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
+four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
+runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
+the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+The release gate requires every shard and integration job to pass.
+
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
 `bun run --filter @proompteng/bayn test:ledger`. CI uses the same command. It covers native Jev entry,
