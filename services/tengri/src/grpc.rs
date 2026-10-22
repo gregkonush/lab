@@ -235,9 +235,6 @@ impl ControlPlane {
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
-        if crate::authz::is_control(principal.action) {
-            self.activity.touch(id);
-        }
         Ok((guest, access))
     }
 

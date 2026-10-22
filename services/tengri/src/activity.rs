@@ -110,6 +110,61 @@ impl ActivityTracker {
         }
     }
 
+    // Control admission and idle sleep contend on the same resource version.
+    // Record activity before issuing guest authority, including on cached clients.
+    pub(crate) async fn admit_control(
+        &self,
+        claim: &crate::slot::Claim,
+    ) -> Result<DateTime<Utc>, tonic::Status> {
+        let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
+        for _ in 0..3 {
+            let agent = agents.get(&claim.microvm_id).await.map_err(|_| {
+                tonic::Status::unavailable("workspace control admission unavailable")
+            })?;
+            if agent.uid().as_deref() != Some(&claim.microvm_uid)
+                || agent.spec.runtime_epoch != claim.runtime_epoch
+                || agent.metadata.deletion_timestamp.is_some()
+                || agent.spec.desired_state != crate::crd::MicroVMDesiredState::Running
+                || agent
+                    .metadata
+                    .annotations
+                    .as_ref()
+                    .and_then(|a| a.get(ACTIVE_RUN_ANNOTATION))
+                    .is_some_and(|value| is_idle_sleep_claim(value))
+            {
+                return Err(tonic::Status::failed_precondition(
+                    "workspace is sleeping or unavailable; resume it explicitly",
+                ));
+            }
+            let version = agent.resource_version().ok_or_else(|| {
+                tonic::Status::unavailable("workspace control admission has no resource version")
+            })?;
+            let now = Utc::now();
+            let mut patch = activity_metadata_patch(now);
+            patch["metadata"]["uid"] = json!(claim.microvm_uid);
+            patch["metadata"]["resourceVersion"] = json!(version);
+            match agents
+                .patch(
+                    &claim.microvm_id,
+                    &PatchParams::default(),
+                    &Patch::Merge(patch),
+                )
+                .await
+            {
+                Ok(_) => return Ok(now),
+                Err(kube::Error::Api(error)) if error.code == 409 => continue,
+                Err(_) => {
+                    return Err(tonic::Status::unavailable(
+                        "workspace control activity could not be recorded",
+                    ));
+                }
+            }
+        }
+        Err(tonic::Status::unavailable(
+            "workspace control admission changed concurrently; retry",
+        ))
+    }
+
     pub async fn touch_now(&self, agent_id: &str, now: DateTime<Utc>) -> Result<(), kube::Error> {
         let agents: Api<MicroVM> = Api::namespaced(self.client.clone(), &self.namespace);
         agents
