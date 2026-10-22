@@ -28,7 +28,7 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
-  HARNESS2_RESULT: 'success',
+  GEPA_RESULT: 'success',
   UNIT_RESULT: 'success',
   ARCHIVE_RESULT: 'success',
   LEDGER_RESULT: 'success',
@@ -120,8 +120,8 @@ test('market-data fixture runs for Bayn changes and participates in the existing
   expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
   expect(required.needs).toContain('market-data-replay')
   expect(gate.env?.MARKET_DATA_REPLAY_RESULT).toBe('${{ needs.market-data-replay.result }}')
-  expect(required.needs).toContain('harness2')
-  expect(gate.env?.HARNESS2_RESULT).toBe('${{ needs.harness2.result }}')
+  expect(required.needs).toContain('gepa')
+  expect(gate.env?.GEPA_RESULT).toBe('${{ needs.gepa.result }}')
   for (const [job, result] of [
     ['unit-tests', 'UNIT_RESULT'],
     ['archive-integration', 'ARCHIVE_RESULT'],
@@ -135,7 +135,7 @@ test('market-data fixture runs for Bayn changes and participates in the existing
 
 test.each([
   'MARKET_DATA_REPLAY_RESULT',
-  'HARNESS2_RESULT',
+  'GEPA_RESULT',
   'UNIT_RESULT',
   'ARCHIVE_RESULT',
   'LEDGER_RESULT',

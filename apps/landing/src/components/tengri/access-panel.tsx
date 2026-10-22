@@ -371,7 +371,9 @@ export function AccessPanel({ workspaceUid, active = true }: { workspaceUid?: st
           size="sm"
           variant="outline"
           disabled={busy || Boolean(pending)}
-          onClick={() => void startTengriSignIn(true).catch(() => setError('Passkey verification could not start'))}
+          onClick={() =>
+            void startTengriSignIn('step-up').catch(() => setError('Passkey verification could not start'))
+          }
         >
           Verify passkey
         </Button>

@@ -7,7 +7,7 @@ import { JevError, type JevClient } from '../jev/client'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { utcInstantFromEpochMillis } from '../time'
 import { ReplayBrokerFailure } from './broker'
-import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeBoundedReplayJevProvider, makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 
 const request = (symbol: string) =>
   Result.getOrThrow(
@@ -24,6 +24,73 @@ const response: JevResponse = {
 }
 const providerAt = Date.parse('2026-09-21T12:00:00.000Z')
 const marketAt = Date.parse('2026-09-04T14:00:02.000Z')
+
+test('a frozen replay budget bounds concurrent provider dispatches and does not refund failed calls', async () => {
+  let providerCalls = 0
+  const prepared = request('AAPL')
+  const bounded = makeBoundedReplayJevProvider(
+    {
+      evaluate: () =>
+        Effect.suspend(() => {
+          providerCalls++
+          return providerCalls === 1
+            ? Effect.fail(new JevError({ failure: JevFailure.Transport, message: 'Fixture transport failure' }))
+            : Effect.succeed({
+                requestHash: prepared.requestHash,
+                responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                startedAt: utcInstantFromEpochMillis(providerAt),
+                completedAt: utcInstantFromEpochMillis(providerAt),
+                response,
+              })
+        }),
+    },
+    2,
+  )
+  const outcomes = await Effect.runPromise(
+    Effect.all(
+      Array.from({ length: 10 }, () => bounded.provider.evaluate(prepared.request).pipe(Effect.result)),
+      { concurrency: 'unbounded' },
+    ),
+  )
+  expect(providerCalls).toBe(2)
+  expect(bounded.dispatchCount()).toBe(2)
+  expect(outcomes.filter(Result.isSuccess)).toHaveLength(1)
+  expect(outcomes.filter(Result.isFailure).map((result) => result.failure.failure)).toEqual([
+    JevFailure.Transport,
+    ...Array.from({ length: 8 }, () => JevFailure.NotDispatched),
+  ])
+})
+
+test('interrupting a provider stops it and retains its consumed replay budget', async () => {
+  await Effect.runPromise(
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>()
+      let stopped = false
+      const bounded = makeBoundedReplayJevProvider(
+        {
+          evaluate: () =>
+            Deferred.succeed(started, undefined).pipe(
+              Effect.andThen(Effect.never),
+              Effect.ensuring(
+                Effect.sync(() => {
+                  stopped = true
+                }),
+              ),
+            ),
+        },
+        1,
+      )
+      const first = yield* bounded.provider.evaluate(request('AAPL').request).pipe(Effect.forkChild)
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(first)
+      const next = yield* bounded.provider.evaluate(request('AMD').request).pipe(Effect.result)
+      expect(stopped).toBe(true)
+      expect(bounded.dispatchCount()).toBe(1)
+      expect(next._tag).toBe('Failure')
+      if (Result.isFailure(next)) expect(next.failure.failure).toBe(JevFailure.NotDispatched)
+    }),
+  )
+})
 
 const fixture = Effect.gen(function* () {
   const providerClock = yield* TestClock.make()

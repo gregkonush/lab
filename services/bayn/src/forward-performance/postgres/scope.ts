@@ -10,7 +10,6 @@ export const INTEGER_PATTERN = /^(?:0|-[1-9][0-9]*|[1-9][0-9]*)$/
 
 export type GenerationScopeTarget =
   | 'cycle'
-  | 'unclosed-cycle'
   | 'intent'
   | 'transaction'
   | 'reconciliation'
@@ -76,24 +75,6 @@ export const generationScope = (
                   AND cycle.created_at >= next_generation.activated_at
               )
             )
-          )
-      )`
-    case 'unclosed-cycle':
-      return sql`EXISTS (
-        SELECT 1
-        FROM authority_generations AS scope_generation
-        LEFT JOIN authority_generations AS next_generation
-          ON next_generation.previous_generation_hash = scope_generation.generation_hash
-        WHERE scope_generation.generation_hash = ${authorityGenerationHash}
-          AND scope_generation.maximum = 'PAPER'
-          AND scope_generation.account_id = ${accountId}
-          AND COALESCE(scope_generation.qualification_run_id, scope_generation.research_plan_hash)
-            = cycle.qualification_run_id
-          AND cycle.account_id = scope_generation.account_id
-          AND cycle.created_at >= scope_generation.activated_at
-          AND (
-            next_generation.activated_at IS NULL
-            OR cycle.created_at < next_generation.activated_at
           )
       )`
     case 'intent':
