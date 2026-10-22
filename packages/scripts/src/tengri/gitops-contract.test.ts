@@ -166,7 +166,7 @@ test('the namespace quota covers six slots at the accepted native memory limit',
   expect(mib(quota.getIn(['spec', 'hard', 'requests.memory']))).toBeGreaterThanOrEqual(required)
 })
 
-test('the namespace can admit all six slot leases and the controller election lease', () => {
+test('the namespace can admit six slot leases with rolling-upgrade headroom', () => {
   const quota = manifest('argocd/applications/tengri/resource-quota.yaml')
   const source = readFileSync(new URL('../../../../services/tengri/src/controller.rs', import.meta.url), 'utf8')
   const slots = /const SLOT_COUNT: usize = (\d+);/.exec(source)
@@ -308,6 +308,7 @@ test('the controller reaches prepared slots without preserving an old guest netw
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
+    'tengri-run-worker',
     'tengri-slots',
   ])
   for (const policy of policies) {
