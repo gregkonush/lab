@@ -12,6 +12,7 @@ on:
       - 'services/tengri/**'
       - 'bun.lock'
       - '.github/workflows/tengri.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
   workflow_dispatch:
 
 concurrency:

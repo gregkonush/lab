@@ -7,8 +7,8 @@ spec:
   hard:
     count/leases.coordination.k8s.io: "7"
     count/microvms.runtime.proompteng.ai: "6"
-    limits.cpu: "38"
-    limits.memory: 61Gi
+    limits.cpu: "42"
+    limits.memory: 63Gi
     persistentvolumeclaims: "6"
     pods: "17"
     requests.cpu: "27"

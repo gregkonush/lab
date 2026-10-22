@@ -23,7 +23,7 @@ pass authenticated live acceptance. Source, fixtures, merge, deployment, and pro
 | 3    | Route approvals, steering, and cancellation through identified durable controls. Retain exact generation and scope. Obtain fresh Ofz decisions for effects.                                                                                                      | Duplicate and stale control, restart, policy denial, and verified cancellation tests.                                 | Locally verified |
 | 4    | Recover run state in the desktop. Retain submission identity across retries and reloads. Keep active work awake without overriding explicit sleep, removal, or revocation.                                                                                       | Browser reload/retry and controller idle-boundary regression tests.                                                   | Locally verified |
 | 5    | Remove displaced direct dispatch and retry paths. Configure immutable worker registration, paired release, network isolation, and bounded retention through existing GitOps.                                                                                     | Consumer search, rendered manifests, component checks, and replay across a worker version change.                     | Locally verified |
-| 6    | Review, commit, push, required CI, automatic review fixes, merge, image publication, Kargo, Argo, and authenticated acceptance.                                                                                                                                  | Exact commit, image, promotion, workload, and real product receipts.                                                  | Pending          |
+| 6    | Review, commit, push, required CI, automatic review fixes, merge, image publication, Kargo, Argo, and authenticated acceptance.                                                                                                                                  | Exact commit, image, promotion, workload, and real product receipts.                                                  | In progress      |
 
 ## Design constraints
 
@@ -109,3 +109,8 @@ set now pass 25 Ofz inventory tests and 54 kube-router tests locally. Linux brow
 hostname failure before testing; the installer uses the exact Playwright-planned Chrome and headless-shell versions
 from the official Chrome for Testing storage endpoint with normal HTTPS verification. Required CI and live acceptance
 remain open.
+
+The maximum namespace overlap is six slots, three controller Pods including surge, and eight worker Pods. Limits
+include sidecars: slots consume 25.5 CPU / 54.75 GiB, controllers 4.5 CPU / 2.25 GiB, and workers 12 CPU / 6 GiB.
+The quota is therefore 42 CPU / 63 GiB; requests remain within 27 CPU / 57 GiB. Controller pools reserve at most
+30 SQL connections during surge, and eight workers use eight more, below the existing controller-role limit of 42.

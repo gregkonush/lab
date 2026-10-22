@@ -341,6 +341,31 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         );
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
+    let stale_steer = Control {
+        id: Uuid::new_v4().to_string(),
+        run_id: input.id.clone(),
+        agent_id: input.agent_id.clone(),
+        principal: principal(),
+        method: "turn/steer".into(),
+        params: serde_json::json!({"threadId":input.thread_id,"expectedTurnId":"not-started"}),
+    };
+    let stale_client =
+        TengriRunControlIngressClient::from_client(ingress.clone(), stale_steer.id.clone());
+    let error = match control_receipt(
+        &stale_client,
+        seal(&service, "control", &stale_steer).await.unwrap(),
+    )
+    .await
+    {
+        Ok(_) => panic!("an unstarted run cannot receive native steering"),
+        Err(error) => error,
+    };
+    let rejected_status = client_error(error);
+    assert_eq!(rejected_status.code(), tonic::Code::FailedPrecondition);
+    assert_eq!(
+        rejected_status.message(),
+        "Codex control was not dispatched"
+    );
     let query = Query {
         run_id: String::new(),
         owner_hash: owner.clone(),
