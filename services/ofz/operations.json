@@ -128,6 +128,16 @@
   },
   {
     "surface": "controller",
+    "operation": "GetCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetActiveCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "SteerCodexInput",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -250,11 +260,6 @@
   {
     "surface": "guest",
     "operation": "CodexLogin",
-    "action": "ACTION_CODEX_CONTROL"
-  },
-  {
-    "surface": "guest",
-    "operation": "ResolveCodexApproval",
     "action": "ACTION_CODEX_CONTROL"
   },
   {

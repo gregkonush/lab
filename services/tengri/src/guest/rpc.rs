@@ -571,46 +571,6 @@ impl RpcClient {
             started_at: result.started_at,
         })
     }
-    pub async fn answer_codex_input(
-        &self,
-        approval_id: &str,
-        response_json: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.call(
-            "ResolveCodexApproval",
-            "",
-            proto::CodexApproval {
-                approval_id: approval_id.into(),
-                response_json,
-                ..Default::default()
-            },
-            Some(GUEST_UNARY_TIMEOUT),
-            |mut client, request| async move { client.resolve_codex_approval(request).await },
-        )
-        .await
-        .map_err(rpc_error)?;
-        Ok(())
-    }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.call(
-            "ResolveCodexApproval",
-            "",
-            proto::CodexApproval {
-                approval_id: approval_id.into(),
-                decision: decision.into(),
-                ..Default::default()
-            },
-            Some(GUEST_UNARY_TIMEOUT),
-            |mut client, request| async move { client.resolve_codex_approval(request).await },
-        )
-        .await
-        .map_err(rpc_error)?;
-        Ok(())
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,

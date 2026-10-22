@@ -393,22 +393,6 @@ impl GuestClient {
             event_sequence: response.event_sequence,
         })
     }
-    pub async fn answer_codex_input(
-        &self,
-        approval_id: &str,
-        response_json: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.rpc
-            .answer_codex_input(approval_id, response_json)
-            .await
-    }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.rpc.resolve_codex_approval(approval_id, decision).await
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,

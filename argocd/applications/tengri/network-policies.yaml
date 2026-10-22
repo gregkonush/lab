@@ -10,6 +10,16 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: restate
+          podSelector:
+            matchLabels:
+              app: restate
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: glitchtip
           podSelector:
             matchLabels:
@@ -224,6 +234,10 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/component: control-plane
+              app.kubernetes.io/name: tengri
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/component: run-worker
               app.kubernetes.io/name: tengri
       ports:
         - port: 8443

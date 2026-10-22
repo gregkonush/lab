@@ -25,7 +25,6 @@ service NanoagentService {
   rpc AttachTerminal(stream TerminalInput) returns (stream TerminalOutput);
   rpc CodexCall(CodexRequest) returns (CodexResult);
   rpc CodexLogin(Empty) returns (CodexLoginState);
-  rpc ResolveCodexApproval(CodexApproval) returns (Empty);
   rpc WatchCodexEvents(CodexWatch) returns (stream CodexEvent);
 }
 
@@ -184,11 +183,6 @@ message CodexLoginState {
   bool active = 1;
   bytes result_json = 2;
   string started_at = 3;
-}
-message CodexApproval {
-  string approval_id = 1;
-  string decision = 2;
-  bytes response_json = 3;
 }
 message CodexWatch {
   uint64 after = 1;
