@@ -110,7 +110,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
       const observation = storedObservation === undefined ? suppliedObservation : storedObservation.payload
       if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash)
         return yield* persistError('Jev batch observation bytes differ from their stored hash')
-      const reproduced = yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(observation, plan))
+      // Decoding can retain source aliases. Keep the verified graph private while
+      // admission awaits existing evidence and transactional source checks.
+      const ownedObservation = yield* Effect.try(() => structuredClone(observation))
+      const reproduced = yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(ownedObservation, plan))
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')

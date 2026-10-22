@@ -6,6 +6,7 @@ import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
+import { canonicalHashV1Result } from '../hash'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
@@ -17,11 +18,15 @@ import { makeJevBatchStore } from './jev-batch-postgres'
 import * as observations from '../jev/observation'
 
 test.each([
-  { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2 },
-  { cycleMatches: false, portfolioMatches: true, admitted: false, checks: 1 },
-  { cycleMatches: true, portfolioMatches: false, admitted: false, checks: 2 },
-])('admission reproduces once with cycle=$cycleMatches portfolio=$portfolioMatches', async (scenario) => {
+  { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'stored', mutate: false },
+  { cycleMatches: false, portfolioMatches: true, admitted: false, checks: 1, source: 'stored', mutate: false },
+  { cycleMatches: true, portfolioMatches: false, admitted: false, checks: 2, source: 'stored', mutate: false },
+  { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'supplied', mutate: true },
+  { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'stored', mutate: true },
+])('admission $source mutate=$mutate cycle=$cycleMatches portfolio=$portfolioMatches', async (scenario) => {
   const fixture = nativeJevFixture()
+  const suppliedObservation = structuredClone(fixture.observation.payload)
+  const storedObservation = structuredClone(fixture.observation.payload)
   const observed = Date.parse(fixture.observation.payload.observedAt)
   const plan = Result.getOrThrow(
     makeJevTradingSignalBatch({
@@ -50,9 +55,17 @@ test.each([
               const [query, parameters] = statement.compile()
               statements.push(query)
               if (query.includes('SELECT payload FROM intraday_candidate_observations'))
-                return Effect.succeed([{ payload: fixture.observation.payload }])
-              if (query.includes('SELECT plan.payload AS plan'))
+                return Effect.succeed(scenario.source === 'stored' ? [{ payload: storedObservation }] : [])
+              if (query.includes('SELECT plan.payload AS plan')) {
+                if (!admitted && scenario.mutate) {
+                  // The source owner can change its graph while admission awaits this read.
+                  const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
+                  const quote = selected.rows.quotes[0]
+                  if (typeof quote !== 'object' || quote === null) throw new Error('Expected a fixture quote to mutate')
+                  Object.assign(quote, { ask_price: 999999 })
+                }
                 return Effect.succeed(admitted ? [{ plan, result: null }] : [])
+              }
               if (query.includes('AS matches')) {
                 const matches = sourceChecks === 0 ? scenario.cycleMatches : scenario.portfolioMatches
                 sourceChecks += 1
@@ -79,7 +92,7 @@ test.each([
           }) as PgClient.PgClient
           yield* TestClock.setTime(observed)
           const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
-          const saved = yield* store.begin(plan, fixture.observation.payload).pipe(Effect.result)
+          const saved = yield* store.begin(plan, suppliedObservation).pipe(Effect.result)
           expect(Result.isSuccess(saved)).toBe(scenario.admitted)
           if (Result.isSuccess(saved))
             expect(saved.success.dispatches).toHaveLength(
@@ -91,6 +104,13 @@ test.each([
     expect(reproduce).toHaveBeenCalledTimes(1)
     expect(admitted).toBe(scenario.admitted)
     expect(recordedObservation).toEqual(scenario.admitted ? fixture.observation.payload : undefined)
+    if (scenario.admitted) {
+      expect(Result.getOrThrow(canonicalHashV1Result(recordedObservation))).toBe(plan.observationHash)
+      if (scenario.mutate) {
+        const selected = scenario.source === 'stored' ? storedObservation : suppliedObservation
+        expect(Result.getOrThrow(canonicalHashV1Result(selected))).not.toBe(plan.observationHash)
+      }
+    }
     expect(statements.filter((query) => query.includes('AS matches'))).toHaveLength(scenario.checks)
   } finally {
     reproduce.mockRestore()
