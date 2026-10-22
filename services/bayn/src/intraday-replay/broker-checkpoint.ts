@@ -101,7 +101,7 @@ export const ReplayBrokerCheckpointSchema = Schema.Struct({
   sourceManifestHash: Sha256Schema,
   observedAt: UtcInstantSchema,
   state: Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v6'),
+    schemaVersion: Schema.Literal('bayn.simulated-broker-state.v7'),
     createdAt: UtcInstantSchema,
     runId: Sha256Schema,
     accountId: StrictNonEmptyStringSchema,
@@ -376,7 +376,7 @@ export const restoreReplayBrokerCheckpoint = (input: unknown, config: ReplayBrok
       const complete = totalQuantity === quantityAtFill
       expectedFills.push({
         accountId: state.accountId,
-        activityId: `fill::${fill.brokerOrderId}::${fill.executionIndex}`,
+        activityId: `fill::${String(expectedFills.length).padStart(16, '0')}::${fill.brokerOrderId}::${fill.executionIndex}`,
         cumulativeQuantityAtoms: totalQuantity.toString(),
         leavesQuantityAtoms: (quantityAtFill - totalQuantity).toString(),
         priceAtoms: (BigInt(fill.priceMicros) * 1000n).toString(),

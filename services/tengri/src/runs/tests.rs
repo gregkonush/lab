@@ -122,6 +122,15 @@ fn history_requires_the_exact_accepted_turn_and_an_explicit_outcome() {
 }
 
 #[test]
+fn interrupted_history_cannot_release_the_run_without_command_cleanup() {
+    let value = serde_json::json!({"thread":{"turns":[{"id":"accepted","status":"interrupted"}]}});
+    assert!(matches!(
+        observed_turn(&value, "accepted"),
+        State::Cancelling { turn_id: Some(id), .. } if id == "accepted"
+    ));
+}
+
+#[test]
 fn changed_input_changes_the_durable_identity_digest() {
     let first = input();
     let mut changed = first.clone();
@@ -214,10 +223,7 @@ impl StopAuthorityProof {
             .into());
         }
         workspace
-            .latest_stop(Json(StopQuery {
-                claim: input.0.claim,
-                known_id: String::new(),
-            }))
+            .claim(Json(input.0.claim))
             .call()
             .await
             .map_err(Into::into)
@@ -569,6 +575,43 @@ async fn restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill()
         .unwrap()
         .into_inner();
     assert_eq!(active, Some(input.id.clone()));
+    let expired = Query {
+        run_id: input.id.clone(),
+        owner_hash: owner.clone(),
+        workspace_uid: query.workspace_uid.clone(),
+        digest: None,
+        expires_at_ms: crate::ofz::now_ms().unwrap().saturating_sub(1),
+    };
+    assert_eq!(
+        client
+            .status(Json(seal(&service, "query", &expired).await.unwrap()))
+            .call()
+            .await
+            .unwrap()
+            .into_body()
+            .err()
+            .expect("expired status query must fail")
+            .response()
+            .unwrap()
+            .status(),
+        401
+    );
+    assert_eq!(
+        workspace
+            .active(Json(
+                seal(&service, "active-query", &expired).await.unwrap()
+            ))
+            .call()
+            .await
+            .unwrap()
+            .into_body()
+            .err()
+            .expect("expired active query must fail")
+            .response()
+            .unwrap()
+            .status(),
+        403
+    );
     let claim = Claim {
         workspace_uid: query.workspace_uid,
         run_id: input.id.clone(),

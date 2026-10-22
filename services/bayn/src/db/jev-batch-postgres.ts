@@ -20,12 +20,12 @@ import {
   JevResolutionStatus,
   type JevEvaluationEvidence,
 } from '../jev/resolution'
-import { reproduceJevTradingSignalBatch } from '../jev/trading-signals'
+import { reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import { Sha256Schema, SymbolSchema, strictParseOptions } from '../schemas'
 import { utcInstantFromEpochMillis } from '../time'
 import { withObservedStage } from '../telemetry'
 import { readJevEvaluationEvidence } from './jev-evaluation-read'
-import { recordCandidateObservation } from './candidate-observation-postgres'
+import { recordReproducedJevObservation } from './candidate-observation-postgres'
 import type { JevObservation } from '../jev/observation'
 
 const StoredRow = Schema.Struct({ plan: Schema.Unknown, result: Schema.NullOr(Schema.Unknown) })
@@ -110,7 +110,10 @@ export const makeJevBatchStore = Effect.gen(function* () {
       const observation = storedObservation === undefined ? suppliedObservation : storedObservation.payload
       if ((yield* Effect.fromResult(canonicalHashV1Result(observation))) !== plan.observationHash)
         return yield* persistError('Jev batch observation bytes differ from their stored hash')
-      yield* Effect.fromResult(reproduceJevTradingSignalBatch(observation, plan))
+      // Decoding can retain source aliases. Keep the verified graph private while
+      // admission awaits existing evidence and transactional source checks.
+      const ownedObservation = yield* Effect.try(() => structuredClone(observation))
+      const reproduced = yield* Effect.fromResult(reproduceJevTradingSignalBatchEvidence(ownedObservation, plan))
       const existing = yield* read(plan.batchId)
       if (existing !== null) {
         yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'recorded')
@@ -140,7 +143,7 @@ export const makeJevBatchStore = Effect.gen(function* () {
       yield* checkWindow
       const dispatches = yield* sql.withTransaction(
         Effect.gen(function* () {
-          yield* recordCandidateObservation(sql, { contentHash: plan.observationHash, payload: suppliedObservation })
+          yield* recordReproducedJevObservation(sql, reproduced.observation)
           const checkedAt = yield* checkWindow
           yield* Effect.annotateCurrentSpan('bayn.jev.admission.status', 'new')
           if (plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)) {

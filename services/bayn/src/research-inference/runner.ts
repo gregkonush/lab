@@ -28,7 +28,7 @@ export const makeResearchRunner = (
         yield* Metric.update(researchReplayCounter, 1)
         return yield* Effect.fromResult(verifyResearchReceipt(input, previous))
       }
-      if (input.schemaVersion !== 'bayn.jev-harness2-editor.v2')
+      if (input.schemaVersion !== 'bayn.jev-harness2-editor.v3')
         return yield* new ResearchError({
           message: 'Retired research registrations are readable but cannot be executed',
         })
