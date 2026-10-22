@@ -204,7 +204,8 @@ integration('current authority write cutover', () => {
   test.each([
     { strategy_name: null, strategy_parameter_schema_version: 'bayn.jev.protocol.v16' },
     { strategy_name: 'jev', strategy_parameter_schema_version: null },
-  ])('rejects partially null strategy identity %j', async (identity) => {
+    { strategy_name: null, strategy_parameter_schema_version: null },
+  ])('rejects missing PAPER strategy identity %j', async (identity) => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -219,6 +220,33 @@ integration('current authority write cutover', () => {
           FROM authority_generations g WHERE generation_hash=${retained}`.pipe(Effect.result)
         expect(Result.isFailure(rejected)).toBe(true)
         if (Result.isFailure(rejected)) expect(rejected.failure.reason.cause).toMatchObject({ code: '23514' })
+      }),
+    )
+  })
+
+  test('rejects PAPER with a null activation schema', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* migrate
+        const { ensure } = yield* makeStore
+        yield* ensure({ generationHash: original, maximum: Authority.Observe })
+        yield* reconcile('missing-activation')
+        yield* insertResearch(retained, original, 2, 'jev', 'bayn.jev.protocol.v16', 'missing-activation')
+        const changed = {
+          activation_schema_version: null,
+          generation_hash: hash('missing-activation-rejected'),
+          authority_version: 3,
+        }
+        const rejected = yield* sql`INSERT INTO authority_generations
+          SELECT (jsonb_populate_record(NULL::authority_generations,to_jsonb(g)||${sql.json(changed)})).*
+          FROM authority_generations g WHERE generation_hash=${retained}`.pipe(Effect.result)
+        expect(Result.isFailure(rejected)).toBe(true)
+        if (Result.isFailure(rejected))
+          expect(rejected.failure.reason.cause).toMatchObject({
+            code: '23514',
+            constraint: 'authority_generations_activation_schema_version_check',
+          })
       }),
     )
   })

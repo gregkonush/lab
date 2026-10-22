@@ -12,7 +12,8 @@ export default Effect.gen(function* () {
     DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
     DROP CONSTRAINT authority_generations_strategy_contract_check,
     ADD CONSTRAINT authority_generations_activation_schema_version_check CHECK (
-      activation_schema_version = 'bayn.paper-authority-generation.v3'
+      ((maximum = 'OBSERVE' AND activation_schema_version IS NULL)
+      OR (maximum = 'PAPER' AND activation_schema_version = 'bayn.paper-authority-generation.v3')) IS TRUE
     ) NOT VALID,
     ADD CONSTRAINT authority_generations_strategy_name_check CHECK (
       strategy_name = 'jev'
@@ -21,7 +22,8 @@ export default Effect.gen(function* () {
       strategy_parameter_schema_version = 'bayn.jev.protocol.v16'
     ) NOT VALID,
     ADD CONSTRAINT authority_generations_strategy_contract_check CHECK (
-      ((strategy_name IS NULL AND strategy_parameter_schema_version IS NULL)
-      OR (strategy_name = 'jev' AND strategy_parameter_schema_version = 'bayn.jev.protocol.v16')) IS TRUE
+      ((maximum = 'OBSERVE' AND strategy_name IS NULL AND strategy_parameter_schema_version IS NULL)
+      OR (maximum = 'PAPER' AND strategy_name = 'jev'
+        AND strategy_parameter_schema_version = 'bayn.jev.protocol.v16')) IS TRUE
     ) NOT VALID`
 })
