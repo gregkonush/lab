@@ -1,0 +1,14 @@
+apiVersion: eventing.knative.dev/v1alpha1
+kind: KafkaSink
+metadata:
+  name: agents-codex-github-events-dlq
+  namespace: agents
+spec:
+  bootstrapServers:
+    - kafka-kafka-bootstrap.kafka:9092
+  topic: agents.codex.github.events.dlq
+  contentMode: structured
+  auth:
+    secret:
+      ref:
+        name: agents-codex-github-events-kafka-auth

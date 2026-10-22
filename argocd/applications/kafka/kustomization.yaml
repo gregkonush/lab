@@ -35,6 +35,7 @@ resources:
   - ingressroute-kafka-ui-k8s-private.yaml
   - strimzi-kafka-cluster.yaml
   - kafka-codex-username-secret.yaml
+  - agents-codex-github-events-dlq-topic.yaml
   - karapace.yaml
   - torghut-ws-kafkauser.yaml
   - bayn-kafkauser.yaml
