@@ -7039,7 +7039,7 @@ test.each([
   )
   if (entry.excess > 0n) {
     expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result))
+    if (Result.isFailure(result)) {
       expect(result.failure).toMatchObject({
         failure: 'not-ready',
         readiness: {
@@ -7047,6 +7047,8 @@ test.each([
           message: expect.stringContaining(entry.reason),
         },
       })
+      expect(result.failure).not.toHaveProperty('readiness.accountProtectionReasons')
+    }
     expect(snapshots).toBe(0)
     expect(batches).toBe(0)
     expect(calendarReads).toBe(0)
@@ -7125,7 +7127,7 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
       }
       const result = protectedAccountAdmission(facts, policy, generationHash, evaluatedAt)
       if (excess === 0n) expect(result).toBeUndefined()
-      else
+      else {
         expect(result).toMatchObject({
           outcome: 'ADMISSION_WAITING',
           readiness: {
@@ -7141,6 +7143,8 @@ test('flat admission protection preserves exact limit boundaries and resumes fro
             validUntil: utcInstantFromEpochMillis(Date.parse(evaluatedAt) + policy.maxBrokerStateAgeMs),
           },
         })
+        expect(result).not.toHaveProperty('readiness.accountProtectionReasons')
+      }
     }
   }
   expect(
