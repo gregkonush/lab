@@ -1,6 +1,6 @@
 # Tengri durable agent execution
 
-Status: Implementation in progress. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
+Status: Main migration merged; image qualification and retained-home cutover pending. Goal `01a15d3d-a9f2-7320-a38a-473615e3425c`.
 
 The scope is the execution gaps identified in [the research](durable-agent-execution-research.md). It includes lost
 submission responses, interrupted Codex processes, pending controls, workspace concurrency, active-run sleep,
@@ -153,3 +153,25 @@ without consuming its run or control UUID; a freshly signed retry can recover th
 workflow and claim calls do not revalidate an old envelope against a newly projected key. The real fixture queues old
 signed attempts with both worker versions stopped, rotates their mounted key, restarts the workers, and verifies
 freshly signed retries under the original operation UUIDs.
+
+## Delivery receipts and remaining gates
+
+PR #15241 merged as `7fc2916a11d882b22225bc20006a093d52aafc64`. Required PR checks and the Linux
+Chromium/CUA/VS Code workflow passed, including the same browser workflow on that merged source. The main
+[native image run](https://github.com/proompteng/lab/actions/runs/39709766558) failed its AMD64 KVM gate:
+the first resume took 3,119.74 ms against the unchanged 1,000 ms limit; the next two took 510.31 and 496.39 ms.
+ARM64 passed. Both platforms' diagnostics are retained as run artifacts. Paired publication was withheld. The
+latency cause remains unproven; a later successful run cannot establish that this failure was fixed.
+
+Browser regression coverage also reproduced approval and question retries reusing a terminally rejected control ID,
+and auto-approval dispatch before an accepted run had a native turn. Retire the browser identity only for the exact
+`control_not_dispatched` response, retain it after ambiguous failures, and wait for a running, approval-waiting, or
+recovering run before auto-approval. The three defect cases failed before the change; all five focused cases pass
+after it. The complete local browser suite passes 172 tests with two environment skips; all 419 unit tests,
+TypeScript checking, formatting, and lint pass.
+
+The release hold remains closed. Qualify a complete four-image cohort from the final reviewed source against the
+unchanged native gates before enrolling the retained home. Owner passkey sign-in is still pending, so authenticated
+legacy-work reconciliation and product acceptance remain unverified. Complete safe quiescence and fencing, enroll
+the exact qualified API 6 guest digest without replacing the home, release through Kargo and Argo, and exercise
+disconnect/recovery, approval, cancellation, worker replacement, and the active-run sleep fence before closing the goal.

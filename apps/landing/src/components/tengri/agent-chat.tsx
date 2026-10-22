@@ -164,6 +164,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const mountedRef = useRef(true)
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
+  const runCanAcceptApprovals =
+    runMatchesThread &&
+    (run?.state.phase === 'running' || run?.state.phase === 'waiting_for_approval' || run?.state.phase === 'recovering')
   const canStartTurn =
     runRecovered &&
     Boolean(selectedOptions) &&
@@ -889,7 +892,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
   }, [currentSubmissions, livePromptMatches, threadId])
   useEffect(() => {
-    if (approvalMode !== 'auto' || !runRecovered || !runMatchesThread) return
+    if (approvalMode !== 'auto' || !runRecovered || !runCanAcceptApprovals) return
     const pendingIds = new Set(renderedEvents.map(({ event }) => event.approvalId))
     for (const id of autoApprovalAttempts.current) if (!pendingIds.has(id)) autoApprovalAttempts.current.delete(id)
     for (const { event } of renderedEvents) {
@@ -904,7 +907,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       autoApprovalAttempts.current.add(event.approvalId)
       void resolveApproval(event, decision)
     }
-  }, [approvalMode, renderedEvents, resolvingApprovals, resolveApproval, runRecovered, runId, runMatchesThread])
+  }, [approvalMode, renderedEvents, resolvingApprovals, resolveApproval, runRecovered, runId, runCanAcceptApprovals])
   for (const { prompt, beforeItemId } of pendingPrompts) {
     const index = transcriptCards.findIndex((item) => item.id === beforeItemId)
     transcriptCards.splice(index < 0 ? transcriptCards.length : index, 0, {
@@ -1140,13 +1143,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   async function resolveApproval(event: TengriCodexEvent, decision: CodexApprovalDecision) {
     if (!event.approvalId || resolvingApprovals.has(event.approvalId)) return
+    const key = `tengri-control:${runId}:${event.approvalId}`
+    let operationId: string | undefined
     setResolvingApprovals((current) => new Set(current).add(event.approvalId))
     setError('')
     try {
       if (!runMatchesThread)
         throw new Error('This approval has no durable run identity. Sleep the workspace before starting new work.')
-      const key = `tengri-control:${runId}:${event.approvalId}`
       const op = await prepareCodexOperation(key, { decision }, '')
+      operationId = op.id
       await runTengriAction({
         action: 'resolve-approval',
         agentId,
@@ -1159,6 +1164,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       retainedEvents.current = retainedEvents.current.filter((candidate) => candidate.approvalId !== event.approvalId)
       setEvents((current) => current.filter((candidate) => candidate.approvalId !== event.approvalId))
     } catch (cause) {
+      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId)
+        completeCodexOperation(key, operationId)
       setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
     } finally {
       setResolvingApprovals((current) => {
