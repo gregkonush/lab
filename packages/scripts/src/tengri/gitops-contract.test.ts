@@ -308,6 +308,7 @@ test('the controller reaches prepared slots without preserving an old guest netw
   expect(policies.map((policy) => policy.metadata?.name).sort()).toEqual([
     'tengri-control-plane',
     'tengri-default-deny',
+    'tengri-run-worker',
     'tengri-slots',
   ])
   for (const policy of policies) {

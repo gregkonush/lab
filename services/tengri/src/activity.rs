@@ -4,6 +4,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use anyhow::Context;
 use chrono::{DateTime, Utc};
 use kube::{
     Api, Client,
@@ -17,6 +18,37 @@ use crate::crd::MicroVM;
 const ACTIVITY_WRITE_INTERVAL: Duration = Duration::from_secs(20);
 pub const LAST_ACTIVITY_ANNOTATION: &str = "runtime.proompteng.ai/last-activity-at";
 pub const RESUME_STARTED_AT_ANNOTATION: &str = "runtime.proompteng.ai/resume-started-at";
+pub const ACTIVE_RUN_ANNOTATION: &str = "runtime.proompteng.ai/active-run";
+const IDLE_SLEEP_PREFIX: &str = "idle-sleep/";
+
+pub fn has_idle_sleep_claim(microvm: &MicroVM) -> bool {
+    microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .and_then(|a| a.get(ACTIVE_RUN_ANNOTATION))
+        .is_some_and(|claim| claim == &format!("{IDLE_SLEEP_PREFIX}{}", microvm.spec.runtime_epoch))
+}
+
+pub fn is_idle_sleep_claim(value: &str) -> bool {
+    value.starts_with(IDLE_SLEEP_PREFIX)
+}
+
+pub async fn claim_idle_sleep(
+    client: Client,
+    namespace: &str,
+    microvm: &MicroVM,
+) -> anyhow::Result<MicroVM> {
+    use kube::ResourceExt;
+    let api: Api<MicroVM> = Api::namespaced(client, namespace);
+    let uid = microvm
+        .uid()
+        .context("MicroVM UID required for idle sleep")?;
+    let version = microvm
+        .resource_version()
+        .context("MicroVM resource version required for idle sleep")?;
+    Ok(api.patch(&microvm.name_any(),&PatchParams::default(),&Patch::Merge(json!({"metadata":{"uid":uid,"resourceVersion":version,"annotations":{ACTIVE_RUN_ANNOTATION:format!("{IDLE_SLEEP_PREFIX}{}",microvm.spec.runtime_epoch)}}}))).await?)
+}
 
 #[derive(Clone)]
 pub struct ActivityTracker {
@@ -99,6 +131,14 @@ pub fn last_activity_at(microvm: &MicroVM) -> Option<String> {
 }
 
 pub fn idle_deadline_passed(microvm: &MicroVM, now: DateTime<Utc>) -> bool {
+    if microvm
+        .metadata
+        .annotations
+        .as_ref()
+        .is_some_and(|values| values.contains_key(ACTIVE_RUN_ANNOTATION))
+    {
+        return false;
+    }
     effective_idle_deadline_at(microvm).is_some_and(|deadline| deadline <= now)
 }
 
@@ -280,6 +320,73 @@ mod tests {
             &microvm,
             now + chrono::Duration::days(10)
         ));
+    }
+
+    #[test]
+    fn an_active_run_survives_idle_expiry_and_worker_outage() {
+        let now = Utc::now();
+        let mut microvm = test_microvm(now);
+        microvm.metadata.annotations.get_or_insert_default().insert(
+            ACTIVE_RUN_ANNOTATION.into(),
+            "11111111-1111-4111-8111-111111111111".into(),
+        );
+        assert!(!idle_deadline_passed(
+            &microvm,
+            now + chrono::Duration::days(2)
+        ));
+        microvm
+            .metadata
+            .annotations
+            .as_mut()
+            .unwrap()
+            .remove(ACTIVE_RUN_ANNOTATION);
+        assert!(idle_deadline_passed(
+            &microvm,
+            now + chrono::Duration::days(2)
+        ));
+    }
+
+    #[tokio::test]
+    async fn a_stale_idle_decision_cannot_overwrite_a_concurrent_run_pin() {
+        let (service, mut handle) =
+            tower_test::mock::pair::<Request<KubeBody>, Response<KubeBody>>();
+        let mut agent = test_microvm(Utc::now());
+        agent.metadata.uid = Some("11111111-1111-4111-8111-111111111111".into());
+        agent.metadata.resource_version = Some("11".into());
+        let claim = tokio::spawn(async move {
+            claim_idle_sleep(Client::new(service, "tengri"), "tengri", &agent).await
+        });
+        let (request, response) = handle.next_request().await.unwrap();
+        let patch: serde_json::Value =
+            serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap()).unwrap();
+        assert_eq!(
+            patch["metadata"]["uid"],
+            "11111111-1111-4111-8111-111111111111"
+        );
+        assert_eq!(patch["metadata"]["resourceVersion"], "11");
+        assert!(
+            patch["metadata"]["annotations"][ACTIVE_RUN_ANNOTATION]
+                .as_str()
+                .unwrap()
+                .starts_with(IDLE_SLEEP_PREFIX)
+        );
+        response.send_response(Response::builder().status(StatusCode::CONFLICT).header("content-type","application/json").body(KubeBody::from(br#"{"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"resource version changed","code":409}"#.to_vec())).unwrap());
+        let error = claim.await.unwrap().unwrap_err();
+        assert!(
+            matches!(error.downcast_ref::<kube::Error>(),Some(kube::Error::Api(error)) if error.code==409)
+        );
+    }
+
+    #[test]
+    fn idle_sleep_claims_survive_controller_replacement_and_bind_the_runtime_epoch() {
+        let mut agent = test_microvm(Utc::now());
+        agent.metadata.annotations.get_or_insert_default().insert(
+            ACTIVE_RUN_ANNOTATION.into(),
+            format!("{IDLE_SLEEP_PREFIX}{}", agent.spec.runtime_epoch),
+        );
+        assert!(has_idle_sleep_claim(&agent));
+        agent.spec.runtime_epoch = "another-runtime".into();
+        assert!(!has_idle_sleep_claim(&agent));
     }
 
     #[test]

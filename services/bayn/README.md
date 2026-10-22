@@ -119,6 +119,8 @@ Recovery derives duration from the held instruments and processes one market per
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
+An abstention waits for another observation only while that lease has enough finalization headroom.
+Equity session hours cannot extend the unused lease or defer its valid no-trade decision until the closing bell.
 A still-current inference batch cannot extend the admission; expiry follows normal waiting and recovery instead of
 constructing a decision that the durable contract must reject.
 The database retains its row and deferred commit guards when persistence crosses that lease. Only rejection by
@@ -1793,6 +1795,14 @@ bun run --filter @proompteng/bayn tsc
 bun run --filter @proompteng/bayn lint:oxlint
 bun run --filter @proompteng/bayn build
 ```
+
+CI partitions the complete unit suite into four duration-balanced Bun shards with two isolated workers per shard.
+The CI default test budget is 15 seconds for full research fixtures on shared runners; explicit test budgets still apply.
+Effect compatibility and broker sandbox tests run in this suite with broker credentials removed. PostgreSQL uses
+four sequential shards, each with its own disposable database; `bun run --filter @proompteng/bayn test:postgres 1/4`
+runs one shard locally. Omitting the shard runs the complete PostgreSQL suite. Never run concurrent shards against
+the same database. ClickHouse/Java archive checks and PostgreSQL/TigerBeetle ledger checks run in separate jobs.
+The release gate requires every shard and integration job to pass.
 
 With `BAYN_TEST_POSTGRES_URL` pointing to a disposable `bayn_test` database and
 `BAYN_TEST_TIGERBEETLE_ADDRESS` pointing to an isolated TigerBeetle instance, run
