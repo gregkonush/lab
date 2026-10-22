@@ -1281,6 +1281,11 @@ impl ControlPlane {
             .and_then(serde_json::Value::as_str)
             .filter(|status| matches!(*status, "completed" | "failed" | "interrupted"))
         {
+            if status == "interrupted" {
+                return State::Cancelled {
+                    turn_id: turn_id.into(),
+                };
+            }
             return observed_turn(
                 &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":status}]}}),
                 turn_id,
@@ -1495,8 +1500,9 @@ fn observed_turn(value: &serde_json::Value, turn_id: &str) -> State {
             turn_id: turn_id.into(),
             reason: "Codex reported a failed turn".into(),
         },
-        Some("interrupted") => State::Cancelled {
-            turn_id: turn_id.into(),
+        Some("interrupted") => State::Cancelling {
+            turn_id: Some(turn_id.into()),
+            reason: "waiting for the interrupted turn's command cleanup receipt".into(),
         },
         Some("inProgress") => State::Running {
             turn_id: turn_id.into(),

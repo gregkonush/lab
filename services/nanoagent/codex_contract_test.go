@@ -1,22 +1,35 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) {
+	for _, process := range []bool{false, true} {
+		name := "model request"
+		if process {
+			name = "running command"
+		}
+		t.Run(name, func(t *testing.T) { testPinnedCodexRecoversAcceptance(t, process) })
+	}
+}
+
+func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
 	if binary == "" {
 		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.159.2 binary")
@@ -31,6 +44,14 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 	t.Cleanup(cancel)
 	started := make(chan struct{}, 1)
 	stopped := make(chan struct{}, 1)
+	listener, err := net.ListenTCP("tcp", &net.TCPAddr{IP: net.ParseIP("127.0.0.1")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = listener.Close() })
+	deadline, _ := ctx.Deadline()
+	_ = listener.SetDeadline(deadline)
+	var requests atomic.Int32
 	provider := httptest.NewServer(http.HandlerFunc(func(response http.ResponseWriter, request *http.Request) {
 		if request.Method != "POST" || !strings.HasSuffix(request.URL.Path, "/responses") {
 			response.WriteHeader(http.StatusNotFound)
@@ -39,6 +60,21 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 		_, _ = io.Copy(io.Discard, request.Body)
 		response.Header().Set("Content-Type", "text/event-stream")
 		response.WriteHeader(http.StatusOK)
+		if process && requests.Add(1) == 1 {
+			command := fmt.Sprintf(`exec python3 -c 'import os,socket,time; s=socket.create_connection(("127.0.0.1",%d)); s.sendall(str(os.getpid()).encode()+bytes([10])); time.sleep(30)'`, listener.Addr().(*net.TCPAddr).Port)
+			arguments, _ := json.Marshal(map[string]any{"cmd": command, "yield_time_ms": 1_000, "max_output_tokens": 100})
+			item := map[string]any{"id": "command-stop", "type": "function_call", "call_id": "call_stop", "name": "exec_command", "arguments": string(arguments)}
+			for _, event := range []map[string]any{
+				{"type": "response.created", "response": map[string]any{"id": "response-stop"}},
+				{"type": "response.output_item.added", "output_index": 0, "item": item},
+				{"type": "response.output_item.done", "output_index": 0, "item": item},
+				{"type": "response.completed", "response": map[string]any{"id": "response-stop", "status": "completed", "output": []any{item}}},
+			} {
+				encoded, _ := json.Marshal(event)
+				_, _ = fmt.Fprintf(response, "event: %s\ndata: %s\n\n", event["type"], encoded)
+			}
+			return
+		}
 		response.(http.Flusher).Flush()
 		select {
 		case started <- struct{}{}:
@@ -134,6 +170,23 @@ stream_max_retries = 0
 		time.Sleep(50 * time.Millisecond)
 	}
 	interrupt, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID, "turnId": turn.Turn.ID, "clientUserMessageId": "22222222-2222-4222-8222-222222222222"})
+	var connection net.Conn
+	if process {
+		connection, err = listener.Accept()
+		if err != nil {
+			t.Fatal("native foreground command did not start", err)
+		}
+		t.Cleanup(func() { _ = connection.Close() })
+		if _, err := bufio.NewReader(connection).ReadString('\n'); err != nil {
+			t.Fatal("native command did not report its PID", err)
+		}
+		t.Cleanup(func() {
+			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			params, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID})
+			_, _ = supervisor.request(cleanup, "thread/backgroundTerminals/clean", params, true, nil)
+		})
+	}
 	select {
 	case <-started:
 	case <-ctx.Done():
@@ -166,6 +219,12 @@ stream_max_retries = 0
 							t.Fatal("native terminal notification was not durably recorded")
 						}
 						time.Sleep(10 * time.Millisecond)
+					}
+					if connection != nil {
+						_ = connection.SetReadDeadline(time.Now().Add(2 * time.Second))
+						if _, err := connection.Read(make([]byte, 1)); err != io.EOF {
+							t.Fatalf("cancelled native turn left its command running: %v", err)
+						}
 					}
 					return
 				case <-ctx.Done():

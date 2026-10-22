@@ -208,7 +208,7 @@ func TestCodexBlockedWriteDoesNotHoldSupervisorStateLock(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false)
+		_, err := supervisor.request(ctx, "account/read", json.RawMessage(`{}`), false, nil)
 		done <- err
 	}()
 	select {
