@@ -17,6 +17,7 @@ import { StrategySnapshotManifestSchema } from '../src/market-data/streaming/man
 import { NativeArrivalEpochSchema } from '../src/market-data/streaming/native-arrival'
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
+import { historicalFeeProvenance, hypotheticalCryptoFeeSensitivity } from './jev-fee-sensitivity'
 
 const Document = Schema.Struct({
   bindings: Schema.Struct({ cycleId: Sha256Schema }),
@@ -66,7 +67,7 @@ export const summarizeJevChoiceMass = (probabilities: Readonly<Record<string, nu
 const range = (values: readonly number[]) =>
   values.length === 0 ? null : { minimum: Math.min(...values), maximum: Math.max(...values) }
 
-export const reportJevAbstention = (input: unknown) => {
+export const reportJevAbstention = (input: unknown, historicalMatchedFees?: unknown) => {
   const document = Result.getOrThrowWith(
     Schema.decodeUnknownResult(Document)(input),
     () =>
@@ -80,6 +81,14 @@ export const reportJevAbstention = (input: unknown) => {
   const reproduced = Result.getOrThrow(decideJevEntry(target.evidence))
   if (Result.getOrThrow(canonicalHashV1Result(reproduced)) !== Result.getOrThrow(canonicalHashV1Result(target)))
     throw new Error('Persisted decision does not reproduce from sealed evidence')
+  const feeProvenance =
+    historicalMatchedFees === undefined
+      ? undefined
+      : historicalFeeProvenance(
+          historicalMatchedFees,
+          target.evidence.observation.portfolio.brokerState.account.accountId,
+          target.evidence.observation.observedAt,
+        )
 
   const candidates = target.evidence.batchPlan.candidates.map((candidate) => {
     if (candidate.status === JevCandidatePlanStatus.Excluded)
@@ -133,6 +142,20 @@ export const reportJevAbstention = (input: unknown) => {
       horizonMinutes: state.task.horizonMinutes,
       entryEconomics: state.entryEconomics,
       fees: state.execution,
+      ...(feeProvenance === undefined || state.entryEconomics === null || !candidate.symbol.endsWith('/USD')
+        ? {}
+        : {
+            feeSensitivity: hypotheticalCryptoFeeSensitivity({
+              symbol: candidate.symbol,
+              protocol: target.evidence.observation.protocol,
+              economics: Result.getOrThrow(
+                Schema.decodeUnknownResult(Schema.Struct({ entryEconomics: Schema.Unknown }))(request.state),
+              ).entryEconomics,
+              bidMicros: Result.getOrThrow(
+                priceNumberToMicros(state.candidate.quote.bid, 'sealed sensitivity bid', 'DOWN'),
+              ),
+            }),
+          }),
       coverage: {
         ...state.candidate.priceWindow,
         suppliedBarCount: state.candidate.bars1m.length,
@@ -160,6 +183,7 @@ export const reportJevAbstention = (input: unknown) => {
     protocol: target.evidence.observation.protocol.schemaVersion,
     inputDefinition: target.evidence.observation.protocol.inputDefinition,
     selectedSymbols: target.selectedSymbols,
+    ...(feeProvenance === undefined ? {} : { feeProvenance }),
     candidates,
   }
 }
