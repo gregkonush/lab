@@ -338,7 +338,7 @@ export const jevBacktestOutcome = (input: {
       unresolvedModelCalls: costs.unresolvedCallCount,
       dataCostMicros: report.dataCostMicros,
       remainingPositions: ledger.positions.length,
-      issues: report.issues,
+      issues: [...new Set([...report.issues, ...report.sessions.flatMap((session) => session.issues)])],
       knownNetPnlMicros:
         ledger.netRealizedPnlAfterCostsMicros === null || ledger.positions.length !== 0
           ? null
