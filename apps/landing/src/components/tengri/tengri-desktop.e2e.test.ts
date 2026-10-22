@@ -7795,3 +7795,112 @@ test('records Stop for an accepted run before a native turn exists', async ({ pa
   const refreshed = mock.actions.filter((item) => item.action === 'interrupt-turn')[1]
   expect(refreshed.operationId).not.toBe(action?.operationId)
 })
+
+test.describe('durable control retries', () => {
+  for (const control of ['approval', 'question'] as const) {
+    for (const outcome of ['not dispatched', 'unknown'] as const) {
+      const behavior =
+        outcome === 'not dispatched'
+          ? 'replaces a rejected operation on retry'
+          : 'retains an uncertain operation on retry'
+      test(`${control} ${behavior}`, async ({ page }) => {
+        const mock = await mockTengri(page, {
+          resumeThreadRawJson: JSON.stringify({
+            thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+          }),
+        })
+        await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-active'))
+        const operationIds: string[] = []
+        const actionName = control === 'approval' ? 'resolve-approval' : 'answer-questions'
+        await page.route('**/api/tengri', async (route) => {
+          if (route.request().method() !== 'POST') return route.fallback()
+          const action = route.request().postDataJSON()
+          if (action.action !== actionName) return route.fallback()
+          operationIds.push(String(action.operationId))
+          if (operationIds.length === 1 || (outcome === 'not dispatched' && action.operationId === operationIds[0]))
+            return route.fulfill({
+              status: outcome === 'not dispatched' ? 409 : 503,
+              json: {
+                error: 'The control response failed',
+                ...(outcome === 'not dispatched' ? { code: 'control_not_dispatched' } : {}),
+              },
+            })
+          return route.fallback()
+        })
+        await page.goto('/')
+        const tengri = page.getByRole('region', { name: 'Tengri window' })
+        await expect
+          .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+          .toBeGreaterThan(0)
+        await emitCodexEvent(page, {
+          sequence: 1,
+          kind: 'approval',
+          method: control === 'approval' ? 'item/commandExecution/requestApproval' : 'item/tool/requestUserInput',
+          threadId: 'thread-active',
+          turnId: 'turn-active',
+          itemId: '',
+          approvalId: 'control-retry',
+          text: 'Confirm the check',
+          rawJson:
+            control === 'question'
+              ? JSON.stringify({ params: { questions: [{ id: 'notes', question: 'Any notes?' }] } })
+              : '{}',
+        })
+        const card = tengri.getByRole('article', { name: control === 'approval' ? 'Codex approval' : 'Agent question' })
+        if (control === 'question')
+          await card.getByRole('textbox', { name: 'Any notes?', exact: true }).fill('Keep the files')
+        const button = card.getByRole('button', {
+          name: control === 'approval' ? 'Approve once' : 'Submit answers',
+          exact: true,
+        })
+        await button.click()
+        await expect(tengri.getByText('The control response failed', { exact: true })).toBeVisible()
+        await button.click()
+        await expect.poll(() => operationIds.length).toBe(2)
+        expect(operationIds[0]).toMatch(/^[0-9a-f-]{36}$/)
+        if (outcome === 'not dispatched') expect(operationIds[1]).not.toBe(operationIds[0])
+        else expect(operationIds[1]).toBe(operationIds[0])
+        await expect(card).toHaveCount(0)
+      })
+    }
+  }
+
+  test('auto-approval waits for the durable native turn', async ({ page }) => {
+    const run: TengriCodexRun = {
+      runId: '44444444-4444-4444-8444-444444444444',
+      agentId: 'microvm-ada',
+      threadId: 'thread-active',
+      state: { phase: 'accepted' },
+    }
+    const mock = await mockTengri(page, {
+      durableRun: run,
+      resumeThreadRawJson: JSON.stringify({
+        thread: { turns: [{ id: 'turn-active', status: 'inProgress', items: [] }] },
+      }),
+    })
+    await page.addInitScript(() => {
+      localStorage.setItem('tengri-thread:microvm-ada', 'thread-active')
+      localStorage.setItem('tengri-approval-mode:microvm-ada', 'auto')
+    })
+    await page.goto('/')
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'codex-run').length).toBeGreaterThan(0)
+    const before = mock.actions.filter((action) => action.action === 'codex-run').length
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'approval',
+      method: 'item/commandExecution/requestApproval',
+      threadId: 'thread-active',
+      turnId: 'turn-active',
+      itemId: '',
+      approvalId: 'early-approval',
+      text: 'Run the check?',
+      rawJson: '{}',
+    })
+    await expect
+      .poll(() => mock.actions.filter((action) => action.action === 'codex-run').length)
+      .toBeGreaterThan(before)
+    expect(mock.actions.filter((action) => action.action === 'resolve-approval')).toHaveLength(0)
+    run.state = { phase: 'running', turnId: 'turn-active' }
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length).toBe(1)
+  })
+})
