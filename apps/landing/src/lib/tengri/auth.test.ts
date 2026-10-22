@@ -65,17 +65,20 @@ describe('Ofz-backed browser authentication boundary', () => {
       expect(await getTengriIdentity(new Headers({ cookie: value }))).toBeNull()
     }
   })
-  test('cross-origin login is denied before issuing OAuth state', async () => {
-    const response = await handleTengriAuth(
-      new Request('https://proompteng.ai/api/auth/login', {
-        method: 'POST',
-        headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
-      }),
-    )
-    expect(response.status).toBe(403)
-    expect(response.headers.getSetCookie()).toEqual([])
-    expect(await response.text()).not.toContain('fixture-oidc-client-secret')
-  })
+  test.each(['login', 'step-up', 'add-passkey'])(
+    'cross-origin %s is denied before issuing OAuth state',
+    async (action) => {
+      const response = await handleTengriAuth(
+        new Request(`https://proompteng.ai/api/auth/${action}`, {
+          method: 'POST',
+          headers: { host: 'proompteng.ai', origin: 'https://untrusted.invalid', 'sec-fetch-site': 'cross-site' },
+        }),
+      )
+      expect(response.status).toBe(403)
+      expect(response.headers.getSetCookie()).toEqual([])
+      expect(await response.text()).not.toContain('fixture-oidc-client-secret')
+    },
+  )
   test('callback requires a full random state and code', async () => {
     const response = await handleTengriAuth(
       new Request('https://proompteng.ai/api/auth/callback?state=guess&code=code', {

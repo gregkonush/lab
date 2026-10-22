@@ -4345,6 +4345,38 @@ for (const recoveredState of ['sleeping', 'signed out'] as const) {
   })
 }
 
+for (const surface of ['sign-in', 'settings'] as const) {
+  test(`adds a passkey from ${surface} and retries a failed start`, async ({ page }, testInfo) => {
+    await mockTengri(page, { authenticated: surface === 'settings' })
+    let attempts = 0
+    await page.route('**/api/auth/add-passkey', async (route) => {
+      expect(route.request().method()).toBe('POST')
+      attempts += 1
+      await route.fulfill({
+        status: attempts === 1 ? 503 : 200,
+        json:
+          attempts === 1
+            ? { error: 'Passkey setup is unavailable' }
+            : { url: 'https://auth.proompteng.ai/passkey-fixture' },
+      })
+    })
+    await page.route('https://auth.proompteng.ai/passkey-fixture', (route) => route.fulfill({ body: 'Passkey setup' }))
+    if (surface === 'sign-in') await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/')
+    if (surface === 'settings') {
+      await page.getByRole('button', { name: 'Open Settings', exact: true }).click()
+      await page.getByRole('button', { name: 'Access', exact: true }).click()
+    }
+    await expect(page.getByRole('button', { name: 'Add passkey', exact: true })).toBeInViewport()
+    await page.screenshot({ path: testInfo.outputPath(`passkey-${surface}.png`) })
+    await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
+    await expect(page.getByRole('alert').filter({ hasText: 'Passkey setup is unavailable' })).toBeVisible()
+    await page.getByRole('button', { name: 'Add passkey', exact: true }).click()
+    await page.waitForURL('https://auth.proompteng.ai/passkey-fixture')
+    expect(attempts).toBe(2)
+  })
+}
+
 test('shows native-feeling unauthenticated and create-agent states', async ({ page }) => {
   await mockTengri(page, { authenticated: false })
   await page.goto('/')
