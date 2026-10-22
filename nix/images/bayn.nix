@@ -34,36 +34,47 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
   '';
-  harnessProbeCommand = pkgs.writeShellScriptBin "bayn-harness2-probe" ''
+  evaluationCommand = pkgs.writeShellScriptBin "bayn-jev-evaluate" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
   '';
   backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
   '';
-  harnessPython = pkgs.python312.withPackages (ps: [
+  controlCommand = pkgs.writeShellScriptBin "bayn-control-study" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
+  '';
+  gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
-      pname = "harness2";
-      version = "0.1.0";
+      pname = "gepa";
+      version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/google-research/harness2/archive/1cfe254e8d25b15f37048c3730134686abe60335.tar.gz";
-        hash = "sha256-Izf5G3GhMOBV2N+5nq0mZ6Rgh8Kd+TnU1PCjw1e1dI8=";
+        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
-      build-system = [ ps.setuptools ps.wheel ];
-      pythonImportsCheck = [ "harness2.core.schedule" ];
+      build-system = [ ps.setuptools ps.wheel ps.build ];
+      pythonImportsCheck = [ "gepa.optimize_anything" ];
       doCheck = false;
     })
   ]);
-  harnessCommand = pkgs.writeShellScriptBin "bayn-harness2" ''
+  gepaCommand = pkgs.writeShellScriptBin "bayn-gepa" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     export PATH="$root/bin:$PATH"
-    exec ${harnessPython}/bin/python "$root/app/services/bayn/harness2/runner.py" "$@"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/runner.py" "$@"
+  '';
+  gepaNativeCommand = pkgs.writeShellScriptBin "bayn-gepa-native" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/native.py" "$@"
   '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
   buildDefines = lib.concatStringsSep " " [
@@ -86,8 +97,9 @@ let
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
-    "node services/bayn/dist/harness2-command.js --help"
+    "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
+    "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -106,8 +118,8 @@ let
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
-    mkdir -p "$out/app/services/bayn/harness2"
-    cp "$TMPDIR/work/services/bayn/harness2/runner.py" "$out/app/services/bayn/harness2/runner.py"
+    mkdir -p "$out/app/services/bayn/gepa"
+    cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -156,10 +168,14 @@ import ./bun-workspace-service.nix {
     forwardPerformanceCommand
     inferenceCostCommand
     researchCommand
-    harnessCommand
-    harnessProbeCommand
+    gepaCommand
+    gepaNativeCommand
+    bun
+    pkgs.git
+    evaluationCommand
     backtestCommand
-    harnessPython
+    controlCommand
+    gepaPython
   ];
   exposedPorts = {
     "8080/tcp" = { };
