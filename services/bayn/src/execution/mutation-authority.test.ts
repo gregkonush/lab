@@ -393,6 +393,43 @@ const failureTag = (exit: Awaited<ReturnType<typeof runLiveSubmit>>['exit']): st
   return failure?.cause?.['tag']
 }
 
+test('final submission admits a covered crypto protective stop through all capital and instrument checks', async () => {
+  const scenario: ScenarioInput = {
+    proposedIntent: intent({
+      symbol: 'BTC/USD',
+      side: OrderSide.Sell,
+      orderType: OrderType.StopLimit,
+      timeInForce: TimeInForce.GoodUntilCanceled,
+      quantityAtoms: '1500000',
+      limitPriceMicros: '81016592310',
+      notionalLimitMicros: '121524888',
+      protection: { _tag: 'StopLimit', stopPriceMicros: '81097690000', entryDecisionHash: '8'.repeat(64) },
+    }),
+    closeOnly: true,
+    brokerAccount: account({ cryptoStatus: 'ACTIVE', nonMarginableBuyingPowerMicros: '1000000000' }),
+    positions: [
+      position({
+        symbol: 'BTC/USD',
+        assetClass: AssetClass.Crypto,
+        exchange: AssetExchange.Crypto,
+        quantityAtoms: '1500000',
+        averageEntryPriceMicros: '81143760000',
+        costBasisMicros: '121715640',
+        marketPriceMicros: '81100000000',
+        marketValueMicros: '121650000',
+      }),
+    ],
+  }
+  const result = await runLiveSubmit(scenario)
+  expect(result.submits).toBe(1)
+  expect(Exit.isSuccess(result.exit)).toBe(true)
+  for (const changed of [{ positions: [] }, { assetOverrides: { tradable: false } }, { persisted: undefined }]) {
+    const denied = await runLiveSubmit({ ...scenario, ...changed })
+    expect(denied.submits, Object.keys(changed).join(',')).toBe(0)
+    expect(Exit.isFailure(denied.exit)).toBe(true)
+  }
+})
+
 describe('final broker mutation authority', () => {
   test('property: native fractional BUY and SELL orders obey the exact final money ceiling', async () => {
     await checkAsyncProperty(

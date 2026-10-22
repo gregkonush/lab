@@ -3098,65 +3098,45 @@ data:
               summary: Bayn broker egress proxy is below its replica target
               description: Bayn has lost broker-proxy redundancy for two minutes while the Deployment still expects multiple replicas.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
-          - alert: BaynExecutionWorkerUnavailable
+          # Count updated workers only, never the retained ReplicaSet pool.
+          # Missing/stale or inconsistent generations are UNKNOWN, not zero.
+          - record: bayn:execution_worker_observed_ready_replicas
             expr: |
-              (
-                (
-                  sum(
-                    kube_replicaset_status_ready_replicas{
-                      namespace="bayn",
-                      replicaset=~"bayn-execution-controller-.*"
-                    }
-                  ) or vector(0)
-                ) < 1
+              min by (namespace, restate_deployment) (
+                (kube_restate_deployment_status_ready_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"} >= 0)
+                and on(job, instance, namespace, restate_deployment) (kube_restate_deployment_spec_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"} >= 0)
+                and on(job, instance, namespace, restate_deployment) (kube_restate_deployment_status_observed_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"} == on(job, instance, namespace, restate_deployment) kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"})
+                and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_status_ready_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
+                and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_spec_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
+                and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
+                and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_status_observed_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
+                and on(job, instance) (up{job="kube-state-metrics"} == 1)
+                and on(job, instance) (time() - timestamp(up{job="kube-state-metrics"}) < 90)
               )
-              and on()
+              and on(namespace, restate_deployment)
               (
-                max(
-                  kube_restate_deployment_spec_replicas{
-                    namespace="bayn",
-                    restate_deployment="bayn-execution-controller"
-                  }
-                ) > 0
-              )
-            for: 1m
-            labels:
-              severity: critical
-              team: trading
-              service: bayn-execution-controller
-              notify: email
-            annotations:
-              summary: Bayn has no ready execution worker
-              description: The Restate-managed Bayn execution ReplicaSets expect a worker, but none has been Ready for one minute.
-              runbook_url: docs/runbooks/bayn-cycle-operations.md
-          - alert: BaynExecutionWorkerReplicaTargetMissed
-            expr: |
-              (
-                (
-                  sum(
-                    kube_replicaset_status_ready_replicas{
-                      namespace="bayn",
-                      replicaset=~"bayn-execution-controller-.*"
-                    }
-                  ) or vector(0)
+                min by (namespace, restate_deployment) (
+                  kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}
+                  and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
                 )
-                <
-                max(
-                  kube_restate_deployment_spec_replicas{
-                    namespace="bayn",
-                    restate_deployment="bayn-execution-controller"
-                  }
+                ==
+                max by (namespace, restate_deployment) (
+                  kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}
+                  and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_metadata_generation{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
                 )
               )
-              and on()
-              (
-                max(
-                  kube_restate_deployment_spec_replicas{
-                    namespace="bayn",
-                    restate_deployment="bayn-execution-controller"
-                  }
-                ) > 1
+          - record: bayn:execution_worker_observed_desired_replicas
+            expr: |
+              max by (namespace, restate_deployment) (
+                (kube_restate_deployment_spec_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"} >= 0)
+                and on(job, instance, namespace, restate_deployment) (time() - timestamp(kube_restate_deployment_spec_replicas{job="kube-state-metrics", namespace="bayn", restate_deployment="bayn-execution-controller"}) < 90)
+                and on(job, instance) (up{job="kube-state-metrics"} == 1)
+                and on(job, instance) (time() - timestamp(up{job="kube-state-metrics"}) < 90)
               )
+              and on(namespace, restate_deployment) bayn:execution_worker_observed_ready_replicas
+          - alert: BaynExecutionWorkerObservationUnavailable
+            expr: |
+              absent(bayn:execution_worker_observed_ready_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"})
             for: 2m
             labels:
               severity: warning
@@ -3164,8 +3144,41 @@ data:
               service: bayn-execution-controller
               notify: email
             annotations:
-              summary: Bayn execution worker pool is below its replica target
-              description: Bayn has lost execution-worker failover capacity for two minutes while the Restate-managed ReplicaSets expect multiple workers.
+              summary: Bayn current execution-worker readiness is unknown
+              description: Current-generation readiness could not be established for two minutes. Check the RestateDeployment observed generation and kube-state-metrics/Alloy telemetry; retained workers do not prove current readiness. This is not a measured zero-worker count.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerUnavailable
+            expr: |
+              (bayn:execution_worker_observed_ready_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"} < 1)
+              and on(namespace, restate_deployment)
+              (bayn:execution_worker_observed_desired_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"} > 0)
+            for: 1m
+            labels:
+              severity: critical
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn has no ready current-revision execution worker
+              description: Fresh current-generation RestateDeployment status reports zero ready workers for one minute while the desired count is positive. Retained revisions cannot satisfy the current worker target.
+              runbook_url: docs/runbooks/bayn-cycle-operations.md
+          - alert: BaynExecutionWorkerReplicaTargetMissed
+            expr: |
+              (
+                bayn:execution_worker_observed_ready_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"}
+                < bayn:execution_worker_observed_desired_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"}
+              )
+              and on(namespace, restate_deployment)
+              (bayn:execution_worker_observed_desired_replicas{namespace="bayn", restate_deployment="bayn-execution-controller"} > 1)
+            for: 2m
+            labels:
+              severity: warning
+              team: trading
+              service: bayn-execution-controller
+              notify: email
+            annotations:
+              summary: Bayn current execution revision is below its replica target
+              description: Fresh current-generation RestateDeployment status has remained below the desired worker count for two minutes. Retained revisions do not supply current-revision failover capacity.
               runbook_url: docs/runbooks/bayn-cycle-operations.md
           - alert: BaynExecutionControllerOverdue
             expr: |

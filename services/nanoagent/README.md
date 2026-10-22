@@ -66,8 +66,9 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 5. API version 5
-requires canonical `/workspace` paths for file operations, file events, and terminal working directories. The BFF
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
+requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+for file operations, file events, and terminal working directories. The BFF
 requires that version in the controller's existing authenticated audience response before signing a request. The signed
 target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
 directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
@@ -111,13 +112,30 @@ time are revalidated, and the signal is sent through that descriptor so PID reus
 development hosts retain process-group cleanup when Linux process identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
-ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence
+ready, and restarts failed processes with bounded backoff. Successful initialization publishes a replayable
+`tengri/runtimeReady` event with the process generation. The chat clears earlier restart notices on this event,
+without requiring another user turn. Its authenticated `GetInfo` metadata reports whether Codex
+is working across any conversation and the monotonic time since work ended. Starts and steering remain active while
+awaiting a response even if the caller disconnects; turn/status notifications and process generations settle work state.
+Pending approvals also inhibit automatic sleep. No event subscriber is required, and metadata probes do not reset the
+idle timer. Incomplete work state is reported as unavailable so Tengri defers automatic sleep. Every Codex call response includes the event sequence
 captured atomically when its app-server response is received, so thread snapshots can be reconciled with independently
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
+from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
+inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
+confirms their absence. Earlier turns' intentional background commands remain running. Cleanup retries stay bound
+to the accepting generation. Missing ownership or an ended generation requires reconciliation and never authorizes
+cleanup against a replacement process. Terminal receipt version 2 records `processesStopped: true` only after this
+confirmation; old receipts and unconfirmed interrupted history cannot release a durable run's workspace or sleep pin.
+
 Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
-requests. `ResolveCodexApproval.response_json` delivers explicit answers using the same generation-fenced reply path.
+requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
+generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive
+an approval card after process replacement.
 The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
 replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
 Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.

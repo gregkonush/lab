@@ -867,12 +867,21 @@ const makeCycleObservability = Effect.gen(function* () {
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
                   'targetPlanReason', CASE
                     WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
-                      AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v5'
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
                       AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
-                    THEN CASE WHEN EXISTS (
-                      SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
-                      WHERE reason.value IN ('MODEL_WAIT', 'MODEL_AVOID')
-                    ) THEN 'JEV_MODEL_ABSTAINED' ELSE 'JEV_NO_FUNDED_CANDIDATES' END
+                    THEN CASE
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IS NULL OR reason.value NOT IN (
+                          'MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED', 'NO_FUNDED_CANDIDATES'
+                        )
+                      ) THEN NULL
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IN ('MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED')
+                      ) THEN 'JEV_MODEL_ABSTAINED'
+                      ELSE 'JEV_NO_FUNDED_CANDIDATES'
+                    END
                     ELSE decision.document #>> '{targetPlan,reason}'
                   END,
                   'targetCount', (

@@ -34,6 +34,8 @@ const GUEST_UNARY_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Debug, Error)]
 pub enum GuestError {
+    #[error("Codex rejected the operation before dispatch")]
+    CodexOperationRejected,
     #[error("Kubernetes API request failed: {0}")]
     Kubernetes(#[from] kube::Error),
     #[error("SPIFFE guest transport failed: {0}")]
@@ -286,6 +288,10 @@ impl GuestTransport {
 }
 
 impl GuestClient {
+    pub async fn codex_activity(&self) -> Result<rpc::proto::CodexActivity, GuestError> {
+        self.rpc.codex_activity().await
+    }
+
     pub fn base_url(&self) -> &str {
         &self.base_url
     }
@@ -393,22 +399,6 @@ impl GuestClient {
             event_sequence: response.event_sequence,
         })
     }
-    pub async fn answer_codex_input(
-        &self,
-        approval_id: &str,
-        response_json: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.rpc
-            .answer_codex_input(approval_id, response_json)
-            .await
-    }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.rpc.resolve_codex_approval(approval_id, decision).await
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,
@@ -471,6 +461,7 @@ mod tests {
                                 Ok(rpc::proto::GuestInfo {
                                     microvm_id: "33333333-3333-4333-8333-333333333333".into(),
                                     protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                                    ..Default::default()
                                 })
                             })),
                             ..Default::default()

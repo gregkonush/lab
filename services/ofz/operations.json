@@ -128,6 +128,16 @@
   },
   {
     "surface": "controller",
+    "operation": "GetCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetActiveCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "SteerCodexInput",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -254,11 +264,6 @@
   },
   {
     "surface": "guest",
-    "operation": "ResolveCodexApproval",
-    "action": "ACTION_CODEX_CONTROL"
-  },
-  {
-    "surface": "guest",
     "operation": "WatchCodexEvents",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -321,6 +326,31 @@
   {
     "surface": "codex",
     "operation": "turn/interrupt",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/read",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/operation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/pending",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/reconcileOperation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/resolveApproval",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -431,6 +461,16 @@
   {
     "surface": "bff",
     "operation": "resume-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "active-codex-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-run",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1004,6 +1044,12 @@
     "operation": "POST /api/auth/step-up",
     "public": true,
     "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/add-passkey",
+    "public": true,
+    "dispatch": "GitHub and an existing passkey authorize Keycloak credential enrollment; Ofz establishes a session only after verified identity and active membership."
   },
   {
     "surface": "bff_auth",

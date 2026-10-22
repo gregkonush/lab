@@ -151,6 +151,9 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
       : {
           readiness: {
             reason: pass.readiness.reason,
+            ...(pass.readiness.accountProtectionReasons === undefined
+              ? {}
+              : { accountProtectionReasons: pass.readiness.accountProtectionReasons }),
             ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
             ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
             ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),

@@ -6,7 +6,7 @@ use tonic::{Request, Status, metadata::MetadataValue, transport::Channel};
 use super::*;
 
 #[cfg(test)]
-pub(super) mod test_server;
+pub(crate) mod test_server;
 #[cfg(test)]
 mod tests;
 
@@ -207,6 +207,24 @@ impl RpcClient {
         };
         self.issuer.recheck(fence).await?;
         Ok(response)
+    }
+
+    pub async fn codex_activity(&self) -> Result<proto::CodexActivity, GuestError> {
+        let info = self
+            .call(
+                "GetInfo",
+                "",
+                proto::Empty {},
+                Some(GUEST_UNARY_TIMEOUT),
+                |mut client, request| async move { client.get_info(request).await },
+            )
+            .await
+            .map_err(rpc_error)?
+            .into_inner();
+        info.codex_activity.ok_or_else(|| GuestError::Api {
+            status: StatusCode::SERVICE_UNAVAILABLE,
+            message: "Agent work state cannot be confirmed; automatic sleep deferred".into(),
+        })
     }
 
     pub async fn verify_identity(&self, pod_uid: &str) -> Result<(), GuestError> {
@@ -571,46 +589,6 @@ impl RpcClient {
             started_at: result.started_at,
         })
     }
-    pub async fn answer_codex_input(
-        &self,
-        approval_id: &str,
-        response_json: Vec<u8>,
-    ) -> Result<(), GuestError> {
-        self.call(
-            "ResolveCodexApproval",
-            "",
-            proto::CodexApproval {
-                approval_id: approval_id.into(),
-                response_json,
-                ..Default::default()
-            },
-            Some(GUEST_UNARY_TIMEOUT),
-            |mut client, request| async move { client.resolve_codex_approval(request).await },
-        )
-        .await
-        .map_err(rpc_error)?;
-        Ok(())
-    }
-    pub async fn resolve_codex_approval(
-        &self,
-        approval_id: &str,
-        decision: &str,
-    ) -> Result<(), GuestError> {
-        self.call(
-            "ResolveCodexApproval",
-            "",
-            proto::CodexApproval {
-                approval_id: approval_id.into(),
-                decision: decision.into(),
-                ..Default::default()
-            },
-            Some(GUEST_UNARY_TIMEOUT),
-            |mut client, request| async move { client.resolve_codex_approval(request).await },
-        )
-        .await
-        .map_err(rpc_error)?;
-        Ok(())
-    }
     pub async fn watch_codex_events(
         &self,
         after: u64,
@@ -744,6 +722,10 @@ pub(crate) fn rpc_error(error: Status) -> GuestError {
             if detail.type_url == "type.googleapis.com/proompteng.runtime.guest.v1.OperationFailure"
                 && let Ok(failure) = proto::OperationFailure::decode(detail.value.as_slice())
             {
+                if failure.codex_operation_rejected && error.code() == tonic::Code::InvalidArgument
+                {
+                    return GuestError::CodexOperationRejected;
+                }
                 if failure.resource_too_large {
                     status = StatusCode::PAYLOAD_TOO_LARGE;
                 }

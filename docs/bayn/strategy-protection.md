@@ -1,15 +1,21 @@
 # Jev-selected trade plans and broker protection
 
-Jev selects a complete entry, stop loss and take profit before execution. Protocol v16 / signal state v15,
-batch v6, entry/exit targets v5 and position-exit policy v4 replace the earlier executable contracts.
+Jev judges the current setup and conditionally selects a complete entry, stop loss and take profit before execution.
+Protocol v17 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
 
-Jev returns typed judgments over supplied state. One `action` Choice selects a complete funded plan, `wait` or `avoid`.
+Jev returns two typed judgments over the same supplied state in one request. The `setup` Choice classifies the current
+observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice assumes a supported long setup and
+selects the complete funded plan that fits the observed structure, movement scale and net reward versus risk, or abstains.
 A plan option contains its stop, stop-limit, take-profit, immutable funded quantity ceiling and estimated net loss/profit.
-The model judges support for the whole plan within the holding horizon. No independent protection answer can disagree
-with an entry answer. No `enter` option exists without a complete funded plan. Management still asks whether to hold or exit.
+Code admits an entry only when the actual setup answer is `upward` and the conditional answer selects a supplied plan.
+An adverse or unclear setup rejects even a selected conditional plan. A supported setup cannot override `wait` or `avoid`.
+Missing or malformed answers fail closed. No `enter` option exists without a complete funded plan.
+Candidates are ranked by the upward setup probability, whose three alternatives are the same for every candidate;
+conditional plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
+Management still asks whether to hold or exit.
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 [System One programming model](https://docs.typesafe.ai/concepts/system-one).
 
@@ -85,8 +91,8 @@ make its remaining children disappear. Unknown submissions are recovered by thei
 
 ## Hard cutover
 
-Migration 133 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v16, and accepts only current batch and
+Migration 137 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v17, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects

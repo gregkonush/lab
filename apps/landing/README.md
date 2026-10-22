@@ -139,6 +139,10 @@ Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
+Consecutive tools appear in compact, collapsible groups. Each row keeps its command or connector action and target;
+expanding it shows arguments and results. Terminal output removes ANSI controls and decodes JSON string wrappers while
+preserving columns. Conversation and tool-output scrollbars use a thin thumb with a transparent track.
+
 Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
 appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
@@ -176,7 +180,7 @@ and preserves the local draft.
 
 Finder, chat file links, image attachments, terminal working directories, and the Code bridge use canonical
 `/workspace` paths. The signed request retains that path until the guest validates it and resolves it inside the
-retained home. The BFF requires guest API version 5 in the controller's authenticated audience response before
+retained home. The BFF requires guest API version 7 in the controller's authenticated audience response before
 signing a request. The controller verifies that version in the guest's identity response before forwarding operations.
 Mixed release versions fail closed. The older virtual file
 namespace is removed; upgrade retained guests with a fenced cold replacement before verifying this release.
@@ -264,6 +268,10 @@ workspace and automatically resolves advertised action confirmations while the c
 native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+
+Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
+stay out of these activity labels. Failed status reads show a reconnect message, retry, and clear their own error
+after a successful read. Authentication and permission failures keep their original errors.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.

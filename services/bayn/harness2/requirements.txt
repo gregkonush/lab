@@ -1,2 +1,0 @@
-harness2 @ https://github.com/google-research/harness2/archive/1cfe254e8d25b15f37048c3730134686abe60335.tar.gz#sha256=2337f91b71a130e055d8dfb99ead2667a46087c29df939d4d4f0a3c357b5748f
-boto3==1.43.115
