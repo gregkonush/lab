@@ -341,6 +341,10 @@ the local `observedAt` timestamp on both parent orders and bracket children, bec
 HTTP read assigns a new timestamp. Child execution facts, including status, prices,
 filled quantity and submission time, still invalidate a changed snapshot.
 
+Alpaca's nested order history counts bracket children toward the requested page limit.
+Pagination counts both parent rows and their children before deciding that history is complete.
+A page containing 498 parents and two children therefore continues to older orders at a 500-order limit.
+
 Broker position symbols must agree with their asset class before entering
 reconciliation. A canonical crypto pair labeled as an equity, or an equity symbol
 labeled as crypto, fails the read contract without changing the original response evidence.

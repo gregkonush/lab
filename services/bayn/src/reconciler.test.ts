@@ -426,6 +426,48 @@ describe('reconciliation pure decisions', () => {
     )
   })
 
+  test('nested bracket children consume the page limit without ending older order history', () => {
+    const state = {
+      rows: [],
+      ids: HashSet.empty<string>(),
+      cursor: undefined,
+      previousSubmittedAt: undefined,
+      observedAt: undefined,
+    }
+    const newest: BrokerOrder = {
+      ...order(3),
+      orderClass: OrderClass.Bracket,
+      legs: [order(4), order(5)],
+    }
+    const middle = order(2)
+    const deferred = order(1)
+    const older = order(0)
+    const pageEvidence = evidence('nested-order-page')
+    const page = { value: [newest, middle, deferred], evidence: pageEvidence }
+    const next = Result.getOrThrow(decideOrderPage(state, 5, page))
+    expect(next._tag).toBe('Continue')
+    if (next._tag !== 'Continue') return
+    expect(next.state.rows.map(({ value }) => value.brokerOrderId)).toEqual([
+      newest.brokerOrderId,
+      middle.brokerOrderId,
+    ])
+    expect(next.state.cursor).toBe(middle.submittedAt)
+    expect(HashSet.has(next.state.ids, deferred.brokerOrderId)).toBe(false)
+    expect(decideOrderPage(next.state, 5, { value: [deferred, older], evidence: pageEvidence })).toMatchObject({
+      _tag: 'Success',
+      success: {
+        _tag: 'Complete',
+        read: {
+          rows: [newest, middle, deferred, older].map((value) => ({ value, evidence: pageEvidence })),
+        },
+      },
+    })
+    expect(decideOrderPage(state, 6, page)).toMatchObject({
+      _tag: 'Success',
+      success: { _tag: 'Complete' },
+    })
+  })
+
   test('validates the entire order page against the row budget before deferring its boundary', () => {
     const pageEvidence = evidence('order-row-budget')
     const existing = Array.from({ length: 9_999 }, (_, index) => ({
