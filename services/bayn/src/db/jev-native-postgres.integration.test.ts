@@ -790,7 +790,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
                   apply(target, receiver, argumentsList) {
                     const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
                     const [query] = statement.compile()
-                    if (!query.includes('FROM jev_batch_plans') || !query.includes('FOR UPDATE')) return statement
+                    if (!query.includes('FROM jev_batch_plans') || !/\bFOR (?:NO KEY )?UPDATE\b/.test(query))
+                      return statement
                     return Effect.gen(function* () {
                       if (!leader) {
                         const rows = yield* target<{ pid: number }>`SELECT pg_backend_pid()::integer AS pid`
@@ -930,8 +931,8 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
           yield* Deferred.succeed(release, undefined)
           yield* Fiber.join(holder)
           const saved = yield* finishing.finish(plan.batchId)
-          expect(monitored.transactionCount()).toBe(3)
-          expect(monitored.queries).toHaveLength(22)
+          expect(monitored.transactionCount()).toBe(2)
+          expect(monitored.queries).toHaveLength(18)
           if (saved.result === null) throw new Error('Multi-request batch did not finalize')
           expect(Result.getOrThrow(usableJevBatchInferences(plan, saved.result, observed))).toHaveLength(2)
         }),

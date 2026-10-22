@@ -1,21 +1,111 @@
 import { expect, spyOn, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Result } from 'effect'
+import { Clock, Effect, Result } from 'effect'
 import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { TestClock } from 'effect/testing'
 
 import { canonicalHashV1Result } from '../hash'
-import { JevBatchPlanVersion, JevCandidatePlanStatus } from '../jev/batch'
+import { JevBatchPlanVersion, JevCandidatePlanStatus, usableJevBatchInferences } from '../jev/batch'
 import { evaluateJevBatch, JevBatchStore } from '../jev/batch-evaluation'
 import { JevClient } from '../jev/client'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { nativeJevFixture } from '../jev/native.test-support'
+import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { utcInstantFromEpochMillis } from '../time'
 import { makeJevBatchStore } from './jev-batch-postgres'
 import * as observations from '../jev/observation'
+
+test.each([
+  { commitDelayMs: 0, sourceMatches: true, usable: true },
+  { commitDelayMs: 2000, sourceMatches: true, usable: false },
+  { commitDelayMs: 0, sourceMatches: false, usable: false },
+])(
+  'recorded batch finalization preserves freshness with $commitDelayMs ms commit and source=$sourceMatches',
+  async (scenario) => {
+    const fixture = nativeJevFixture()
+    const { batchPlan: plan, batchResult } = nativeJevDecisionEvidence(fixture)
+    const observed = Date.parse(plan.observedAt)
+    const requests = plan.candidates.flatMap((candidate) =>
+      candidate.status === JevCandidatePlanStatus.Requested ? [candidate.request] : [],
+    )
+    const rows = requests.map((request) => {
+      const candidate = batchResult.candidates.find(
+        (candidate) => 'requestId' in candidate && candidate.requestId === request.requestId,
+      )
+      if (candidate === undefined || !('receipt' in candidate)) throw new Error('Missing committed fixture evidence')
+      return { request_id: request.requestId, request, receipt: candidate.receipt, resolution: candidate.resolution }
+    })
+    let persisted: unknown = null
+    await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const client = yield* SqlClient.make({
+            acquirer: Effect.die('The finalization contract must not connect to PostgreSQL'),
+            compiler: PgClient.makeCompiler(undefined, false),
+            spanAttributes: [],
+          })
+          const sql = new Proxy(client, {
+            apply(target, receiver, argumentsList) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+              const [query, parameters] = statement.compile()
+              if (query.startsWith('observation.cycle_id =')) return statement
+              if (query.includes('SELECT plan.payload AS plan')) return Effect.succeed([{ plan, result: persisted }])
+              if (query.includes('SELECT batch_id FROM jev_batch_plans'))
+                return Effect.succeed([{ batch_id: plan.batchId }])
+              if (query.includes('SELECT payload FROM intraday_candidate_observations'))
+                return Effect.succeed([{ payload: fixture.observation.payload }])
+              if (query.includes('AS matching_request_ids') || query.includes('AS matching_symbols'))
+                return Effect.succeed([
+                  {
+                    content_hash: scenario.sourceMatches ? plan.observationHash : 'f'.repeat(64),
+                    payload: fixture.observation.payload,
+                    ...(query.includes('AS matching_request_ids')
+                      ? { matching_request_ids: requests.map((request) => request.requestId) }
+                      : { matching_symbols: requests.map((request) => request.symbol) }),
+                  },
+                ])
+              if (query.includes('FROM jev_evaluation_requests')) return Effect.succeed(rows)
+              if (query.includes('INSERT INTO jev_batch_results')) {
+                const encoded = parameters.at(-1)
+                if (typeof encoded !== 'string') throw new Error('Expected the parameterized result JSON')
+                return TestClock.adjust(scenario.commitDelayMs).pipe(
+                  Effect.andThen(
+                    Effect.sync(() => {
+                      persisted = JSON.parse(encoded)
+                      return [{ payload: persisted }]
+                    }),
+                  ),
+                )
+              }
+              throw new Error(`Unexpected finalization query: ${query}`)
+            },
+            get(target, property, receiver) {
+              if (property === 'withTransaction')
+                return <A, E, R>(effect: Effect.Effect<A, E, R>) => TestClock.adjust(2000).pipe(Effect.andThen(effect))
+              if (property === 'json') return (value: unknown) => client`${JSON.stringify(value)}::jsonb`
+              return Reflect.get(target, property, receiver)
+            },
+          }) as PgClient.PgClient
+          yield* TestClock.setTime(observed + 9000)
+          const store = yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, sql))
+          const finalized = yield* store.finish(plan.batchId).pipe(Effect.result)
+          expect(Result.isSuccess(finalized)).toBe(scenario.sourceMatches)
+          if (Result.isSuccess(finalized)) {
+            expect(finalized.success.result).not.toBeNull()
+            if (finalized.success.result === null) throw new Error('Committed receipts must produce a complete result')
+            expect(
+              Result.isSuccess(
+                usableJevBatchInferences(plan, finalized.success.result, yield* Clock.currentTimeMillis),
+              ),
+            ).toBe(scenario.usable)
+          } else expect(persisted).toBeNull()
+        }),
+      ).pipe(Effect.provide(TestClock.layer()), Effect.provide(Reactivity.layer)),
+    )
+  },
+)
 
 test.each([
   { cycleMatches: true, portfolioMatches: true, admitted: true, checks: 2, source: 'stored', mutate: false },
