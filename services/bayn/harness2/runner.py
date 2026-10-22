@@ -628,6 +628,43 @@ class Editor(Proposer):
             for task in self.adapter.tasks()
             if self.adapter.task_prompt(task) == task_text
         )
+        baseline_path = context / "base_harness" / "instructions.json"
+        if not kwargs.get("harvest") and baseline_path.is_file():
+            baseline_hash = identity(validate_instructions(read_json(baseline_path)))
+            paths = [context / "harness" / "instructions.json"] + sorted(
+                (context / "pool").glob("*/harness/instructions.json")
+            )
+            compared = {
+                str(path.relative_to(context)): identity(
+                    validate_instructions(read_json(path))
+                )
+                for path in paths
+            }
+            unchanged = all(value == baseline_hash for value in compared.values())
+            (context / "instruction-comparison.json").write_bytes(
+                encode(
+                    {
+                        "schemaVersion": "bayn.jev-harness2-reflection-identity.v1",
+                        "baselineInstructionsHash": baseline_hash,
+                        "comparedInstructions": compared,
+                        "change": "NO_INSTRUCTION_CHANGE"
+                        if unchanged
+                        else "INSTRUCTION_CHANGES_PRESENT",
+                    }
+                )
+            )
+            if unchanged:
+                reply = Reply(
+                    label=label,
+                    text="<edits>\ncomponent: entry\nchange: No instruction change\n"
+                    "observed: All compared instruction documents equal the baseline. "
+                    "Provider output differences cannot be attributed to an instruction edit.\n"
+                    "verdict: confounded\n</edits>\nNO_ENTRY",
+                    ok=True,
+                    attempts=0,
+                )
+                self._calls.append(reply)
+                return reply
         evidence = editor_evidence(
             (str(path.relative_to(context)), path.read_text())
             for path in sorted(context.rglob("*"))
