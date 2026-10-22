@@ -13,7 +13,7 @@ import {
   marketSourceForTopic,
   RawMarketEventKind,
 } from '../src/market-data/streaming/raw-events'
-import { CaptureDisposition } from '../src/market-data/streaming/transport-evidence'
+import { CaptureDisposition, restoreKafkaTransportTimestamp } from '../src/market-data/streaming/transport-evidence'
 import type { ObservedMarketValue } from '../src/market-data/streaming/projection'
 import type { IntradayQuote } from '../src/market-data/intraday/model'
 import { NonNegativeIntegerSchema, Sha256Schema, SymbolSchema, strictParseOptions } from '../src/schemas'
@@ -136,7 +136,13 @@ export const auditNativeArrivalCoverage = (input: unknown) =>
           continue
         }
         if (record.record.topic !== source.topics.quotes) continue
-        const decoded = yield* decodeRawMarketRecord(record.record, source)
+        const timestampMs = restoreKafkaTransportTimestamp(record.originalTransport)
+        const decoded = yield* decodeRawMarketRecord(
+          { ...record.record, ...(timestampMs === undefined ? {} : { timestampMs }) },
+          source,
+        )
+        if (decoded.kind === RawMarketEventKind.Ignored)
+          return yield* fail('Accepted original arrival no longer reproduces its decoder disposition')
         if (decoded.kind !== RawMarketEventKind.Quote || !request.symbols.includes(decoded.value.symbol)) continue
         const recordHash = record.receipt.rawValueSha256
         if (recordHash === null) return yield* fail('Original quote has no raw value identity')

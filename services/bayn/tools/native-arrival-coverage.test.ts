@@ -7,7 +7,7 @@ import {
   nativeArrivalEpochFixture,
   nativeArrivalObservationFixture,
 } from '../src/market-data/streaming/native-arrival.test-support'
-import { CaptureDisposition } from '../src/market-data/streaming/transport-evidence'
+import { captureKafkaTransport, CaptureDisposition } from '../src/market-data/streaming/transport-evidence'
 import { auditNativeArrivalCoverage } from './native-arrival-coverage'
 
 const epoch = nativeArrivalEpochFixture
@@ -218,6 +218,49 @@ test('ignored deliveries preserve global continuity without becoming observed pr
   const result = Result.getOrThrow(auditNativeArrivalCoverage(input))
   expect(result.report).toMatchObject({ verifiedRecords: 4, ignoredRecords: 1 })
   expect(result.quotes.map((quote) => quote.sequence)).toEqual([1, 3, 4])
+})
+
+test.each([NaN, Infinity, -Infinity, 900.5, 10_000])(
+  'rejects resealed accepted deliveries with invalid or mismatched original producer clock %s',
+  (timestampMs) => {
+    const changed = records.map((record, index) =>
+      index === 1 ? { ...record, originalTransport: captureKafkaTransport(timestampMs) } : record,
+    )
+    const result = auditNativeArrivalCoverage(fixture(changed))
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain('producer clock contract')
+  },
+)
+
+test.each([undefined, 910])('preserves the shared decoder treatment of original timestamp %s', (timestampMs) => {
+  const changed = records.map((record, index) =>
+    index === 1 ? { ...record, originalTransport: captureKafkaTransport(timestampMs) } : record,
+  )
+  expect(Result.getOrThrow(auditNativeArrivalCoverage(fixture(changed))).quotes).toHaveLength(4)
+})
+
+test('rejects a resealed accepted delivery that the native decoder ignores', () => {
+  const changed = records.map((record, index) => {
+    if (index !== 1) return record
+    const at = new Date(910).toISOString()
+    const value = JSON.stringify({
+      provider: 'alpaca',
+      feed: 'us',
+      delayClass: 'real_time_crypto',
+      marketSession: 'continuous',
+      channel: 'orderbooks',
+      seq: 2,
+      symbol: 'BTC/USD',
+      version: 2,
+      eventTs: at,
+      ingestTs: at,
+      payload: { T: 'o', S: 'BTC/USD', t: at },
+    })
+    return nativeArrival(epoch, { ...nativeArrivalObservationFixture(2, value), availableAtMs: record.availableAtMs })
+  })
+  const result = auditNativeArrivalCoverage(fixture(changed))
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) expect(String(result.failure.cause)).toContain('decoder disposition')
 })
 
 test('a configured symbol without quotes stays empty, not synthetic or zero-priced', () => {
