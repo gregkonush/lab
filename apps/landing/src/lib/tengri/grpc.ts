@@ -1051,7 +1051,7 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
     case grpc.status.PERMISSION_DENIED:
       return new TengriUnavailableError('Tengri request is not permitted', 403)
     case grpc.status.NOT_FOUND:
-      if (methodName === 'resumeCodexThread' && isMissingCodexConversation(error.details)) {
+      if (methodName === 'resumeCodexThread' && error.details === 'Codex conversation could not be found') {
         return new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found')
       }
       return new TengriUnavailableError('Tengri resource was not found', 404)
@@ -1105,20 +1105,6 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       return new TengriUnavailableError('Tengri request timed out', 504)
     default:
       return new TengriUnavailableError('Tengri control plane is unavailable', 503)
-  }
-}
-
-function isMissingCodexConversation(details: string) {
-  try {
-    const payload: unknown = JSON.parse(details)
-    return (
-      typeof payload === 'object' &&
-      payload !== null &&
-      'error' in payload &&
-      payload.error === 'Codex conversation could not be found'
-    )
-  } catch {
-    return false
   }
 }
 

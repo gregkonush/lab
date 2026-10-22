@@ -394,6 +394,7 @@ export function codexEventIsRuntimeError(event: TengriCodexEvent) {
 
 export function codexEventConfirmsRuntimeReady(event: TengriCodexEvent) {
   return (
+    event.method === 'tengri/runtimeReady' ||
     (event.method === 'turn/started' && Boolean(event.turnId)) ||
     (event.method === 'thread/started' && Boolean(event.threadId))
   )

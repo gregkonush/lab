@@ -208,6 +208,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (!account?.authenticated) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
+    let lastRecoveryFailure: Error | undefined
     setRunRecovered(false)
     async function recover() {
       try {
@@ -217,6 +218,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         )
         if (controller.signal.aborted) return
         if (active && active.agentId !== agentId) throw new Error('Active run belongs to another workspace')
+        const recoveredFailure = lastRecoveryFailure
+        setError((current) => (current === recoveredFailure ? '' : current))
         setWorkspaceRun(active)
         if (active && ((!threadId && recoverInitialRun.current) || active.threadId === threadId)) {
           if (!threadId) {
@@ -231,7 +234,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (active && active.threadId !== threadId) timer = setTimeout(() => void recover(), 2000)
       } catch (cause) {
         if (controller.signal.aborted) return
-        setError(cause instanceof Error ? cause.message : 'Active run recovery failed')
+        lastRecoveryFailure = cause instanceof Error ? cause : new Error('Active run recovery failed')
+        setError(lastRecoveryFailure)
         timer = setTimeout(() => void recover(), 3000)
       }
     }
@@ -246,6 +250,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     if (!runId || !threadId) return
     const controller = new AbortController()
     let timer: ReturnType<typeof setTimeout> | undefined
+    let lastRecoveryFailure: Error | undefined
     async function refresh() {
       try {
         const next = await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, controller.signal)
@@ -253,6 +258,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         if (next.threadId !== threadId || next.agentId !== agentId || next.runId !== runId) {
           throw new Error('Agent run recovery returned a different conversation')
         }
+        const recoveredFailure = lastRecoveryFailure
+        setError((current) => (current === recoveredFailure ? '' : current))
         setRun(next)
         if (next.state.phase === 'waiting_for_approval') {
           for (const approval of next.state.approvals) {
@@ -292,7 +299,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         }
       } catch (cause) {
         if (controller.signal.aborted) return
-        setError(cause instanceof Error ? cause.message : 'Agent run could not be recovered')
+        lastRecoveryFailure = cause instanceof Error ? cause : new Error('Agent run could not be recovered')
+        setError(lastRecoveryFailure)
       }
       timer = setTimeout(() => void refresh(), 2000)
     }
