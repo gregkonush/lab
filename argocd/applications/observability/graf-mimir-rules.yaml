@@ -66,6 +66,22 @@ data:
               summary: Bayn research costs lack complete verified coverage
               description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
               runbook_url: services/bayn/README.md#independent-alpha-r1-research
+      - name: flamingo.rules
+        rules:
+          - alert: FlamingoModelUnavailable
+            expr: |
+              (up{job="flamingo"} == 0 or absent(up{job="flamingo"}))
+              and on()
+              (kube_deployment_spec_replicas{namespace="flamingo",deployment="flamingo"} > 0)
+            for: 15m
+            labels:
+              severity: warning
+              team: platform
+              service: flamingo
+            annotations:
+              summary: Shared Flamingo model is unavailable
+              description: The model metrics endpoint has been unavailable for fifteen minutes while the deployment is enabled. Inspect readiness, startup logs and shared GPU capacity before inference.
+              runbook_url: argocd/applications/flamingo/README.md
       - name: bayn-model.rules
         rules:
           - alert: BaynModelUnavailable
