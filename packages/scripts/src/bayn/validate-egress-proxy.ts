@@ -2,6 +2,7 @@ const requiredHosts = new Set([
   'paper-api.alpaca.markets',
   'api.alpaca.markets',
   'data.alpaca.markets',
+  'api.openai.com',
   'api.typesafe.ai',
   'www.sec.gov',
   'data.sec.gov',
@@ -44,7 +45,7 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
     allowedHosts.some((host) => !requiredHosts.has(host))
   ) {
     throw new Error(
-      'destination-domain ACL must contain exactly the Alpaca, TypeSafe, SEC, BLS and Federal Reserve hosts',
+      'destination-domain ACL must contain exactly the Alpaca, OpenAI, TypeSafe, SEC, BLS and Federal Reserve hosts',
     )
   }
 
