@@ -131,11 +131,11 @@ The editor uses Flamingo's `qwen36-flamingo`, backed by `unsloth/Qwen3.6-35B-A3B
 and the matching model name in the stream. The registered policy enables thinking with a 4,096-token output cap,
 temperature 0.6, top-p 0.95 and top-k 20. The complete wire response and actual usage remain in the immutable receipt.
 
-New editor requests use only Flamingo, with no model fallback. The former dedicated deployment is retired after the new worker is verified. Shared GPU contention can affect proposal latency. Existing
+New editor requests use only Flamingo, with no model fallback. The former dedicated deployment, server code, image workflow and release enrollment are removed. Shared GPU contention can affect proposal latency. Existing
 worker deadlines, single-attempt reservations and cost-coverage limits still apply. A failed or truncated proposal
 is retained and cannot trigger an automatic paid retry. Jev inference and trading execution do not call Flamingo.
 The protected cache PVC of the removed dedicated service remains retained; it consumes no GPU allocation.
 
 Retained old-policy registrations remain readable only for receipt verification and expense recovery. Current
-admission and inference still accept only the Flamingo policy. The cutover is delivered after shared Flamingo
-serving identity is ready; dedicated model deployment and release enrollment are removed in a final change.
+admission and inference still accept only the Flamingo policy. The cutover follows shared Flamingo
+serving-identity verification and a successful worker proposal receipt before dedicated-service retirement.

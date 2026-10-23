@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo shares Turin's Blackwell GPU with Bayn's Jev instruction editor and Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
+Flamingo serves Bayn's GEPA instruction editor alongside coding agents and shares Turin's Blackwell GPU with Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
 
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
@@ -39,7 +39,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target remains full 262K server context. Bayn's Jev instruction editor has a 24% VRAM budget on the same Blackwell, so the earlier standalone 85% Flamingo allocation cannot coexist with it. The 60% budget leaves memory for research, Plex, and transient allocations. Validate startup, long-context inference, and both services' GPU memory before treating this shared profile as accepted. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target remains full 262K server context. Bayn's GEPA editor uses this shared model; it has no separate GPU allocation. The 60% budget leaves memory for Plex and transient allocations. Validate startup, long-context inference, research latency, and actual GPU memory before tuning this shared profile. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
 
 NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
 that Turin's GPU-to-NUMA topology was not detected automatically and exited with
@@ -141,7 +141,7 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 Expected:
 
 - `nvidia.com/gpu` allocatable is non-zero.
-- `flamingo`, `bayn-model`, and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
+- `flamingo` and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
