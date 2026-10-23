@@ -41,9 +41,10 @@ ID and ordinal, so a repeated valid header is already rejected by the primary ke
 
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
-Compression batches yield to Node I/O; the writer groups up to 1 MiB or 16 chunks into one atomic database append.
-Smaller appends bound database work during bootstrap replay. An individual valid chunk above the append byte target
-is written whole under the existing chunk and queue bounds.
+Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Within that transaction, PostgreSQL inserts at most 1 MiB or 16 chunks per statement. This bounds each SQL statement
+while sharing one synchronous durable commit across the append. A failed statement rolls back the whole append.
+An individual valid chunk above the SQL byte target is written whole under the existing chunk and queue bounds.
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
