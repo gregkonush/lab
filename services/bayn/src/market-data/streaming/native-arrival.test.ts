@@ -593,6 +593,95 @@ test('failed persistence leaves the epoch unsealed and cannot claim a durable de
   expect(capture.status()).toMatchObject({ status: 'INCOMPLETE', durableConsumerSequence: 0 })
 })
 
+for (const termination of ['defect', 'interruption'] as const) {
+  test(`unexpected append ${termination} cannot leave a recording journal without a writer`, async () => {
+    const { store } = memoryStore()
+    const during = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const terminated = yield* Deferred.make<void>()
+          let calls = 0
+          const capture = yield* makeNativeArrivalJournal(
+            epoch,
+            {
+              ...store,
+              append: (chunks) =>
+                Effect.suspend(() => {
+                  calls++
+                  if (calls > 1) return store.append(chunks)
+                  return (termination === 'defect' ? Effect.die('synthetic writer defect') : Effect.interrupt).pipe(
+                    Effect.ensuring(Deferred.succeed(terminated, undefined)),
+                  )
+                }),
+            },
+            { chunkBytes: 1, queueBytes: 1_500 },
+          )
+          yield* capture.observe(observation(1))
+          yield* Deferred.await(terminated)
+          yield* Effect.yieldNow
+          return capture.status()
+        }),
+      ),
+    )
+    expect(during).toMatchObject({ status: 'INCOMPLETE', durableConsumerSequence: 0 })
+  })
+}
+
+for (const termination of ['defect', 'interruption'] as const) {
+  test(`post-commit ${termination} releases backpressure without acknowledging an uncertain suffix`, async () => {
+    const { chunks, ends, store } = memoryStore()
+    const { capture, during } = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const committed = yield* Deferred.make<void>()
+          const terminate = yield* Deferred.make<void>()
+          let calls = 0
+          const capture = yield* makeNativeArrivalJournal(
+            epoch,
+            {
+              ...store,
+              append: (batch) =>
+                Effect.gen(function* () {
+                  calls++
+                  if (calls > 1) {
+                    expect(batch).toEqual(chunks)
+                    return
+                  }
+                  yield* store.append(batch)
+                  yield* Deferred.succeed(committed, undefined)
+                  yield* Deferred.await(terminate)
+                  return yield* termination === 'defect' ? Effect.die('synthetic post-commit defect') : Effect.interrupt
+                }),
+            },
+            { chunkBytes: 1, queueBytes: 700 },
+          )
+          yield* capture.observe(observation(1))
+          yield* Deferred.await(committed)
+          const producer = yield* capture.observe(observation(2)).pipe(Effect.forkChild)
+          yield* Effect.yieldNow
+          expect(capture.status()).toMatchObject({ observedConsumerSequence: 2, durableConsumerSequence: 0 })
+          yield* Deferred.succeed(terminate, undefined)
+          yield* Fiber.join(producer)
+          return { capture, during: capture.status() }
+        }),
+      ),
+    )
+    expect(during).toMatchObject({ status: 'INCOMPLETE', observedConsumerSequence: 2, durableConsumerSequence: 0 })
+    expect(chunks).toHaveLength(1)
+    expect(Result.getOrThrow(decodeNativeArrivalChunk(chunks[0] ?? expect.unreachable()))).toEqual([
+      nativeArrival(epoch, observation(1)),
+    ])
+    expect(capture.status()).toMatchObject({ status: 'INCOMPLETE', durableConsumerSequence: 1 })
+    expect(ends).toHaveLength(1)
+    expect(ends[0]).toMatchObject({
+      status: 'INCOMPLETE',
+      observedConsumerSequence: 2,
+      durableConsumerSequence: 1,
+      lastChunkHash: chunks[0]?.contentHash,
+    })
+  })
+}
+
 test('a failed epoch opening cannot start a writer or fabricate retained deliveries', async () => {
   const { chunks, ends, store } = memoryStore()
   const exit = await Effect.runPromiseExit(
