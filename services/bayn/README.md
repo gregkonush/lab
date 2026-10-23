@@ -4,6 +4,9 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+The optional [OHLCV + image dual-signal shadow command](../../docs/bayn/dual-signal-shadow.md) compares Jev and
+OpenAI Decisions over correlated views of the same market data without changing order authority.
+
 The [October 20 system cleanup](../../docs/bayn/system-cleanup-2026-10-20.md) records the database and
 observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
 event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.
@@ -54,10 +57,10 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v18 / signal state v16. Jev separately judges the current setup and whether an actual
+The source selects `jev` protocol v19 / signal state v16. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
-setup. Code supplies bounded hypothetical order scenarios and observed price context,
+setup. Code supplies a bounded menu containing the minimum fee-covering target, hypothetical order scenarios and observed price context,
 labels the scenarios explicitly, and validates/funds every candidate before inference. A price above a recent high is
 an order proposal, never fabricated market history. The stop and target remain one complete plan, with no default
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection

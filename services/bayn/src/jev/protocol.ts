@@ -17,7 +17,7 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v18'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v19'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
   entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
@@ -90,7 +90,7 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v18',
+  schemaVersion: 'bayn.jev.protocol.v19',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entrySelectionPolicy: 'supported-setup-and-economic-plan',
   maximumEntryQuoteDriftBps: 10,
@@ -129,4 +129,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.market-anchored-economic-plan.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.funded-plan-coverage.behavior.v1')

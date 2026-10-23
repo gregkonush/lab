@@ -7,15 +7,19 @@ import { defaultJevProtocolDocument } from './protocol'
 import { JevFundedExitPlanSchema } from './strategy-exit-plan'
 import { jevTradePlanQuestion } from './trade-plan-choices'
 
-const plansForRange = (rangeUsd: number, capitalMicros = '100000000000') => {
-  const symbol = 'ETH/USD'
+const plansForRange = (
+  rangeUsd: number,
+  capitalMicros = '100000000000',
+  priceUsd = 100,
+  symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD' = 'ETH/USD',
+) => {
   const { snapshot } = cryptoMarketFixture(symbol)
   const economics = Result.getOrThrow(
     jevEntryEconomics({
       protocol: defaultJevProtocolDocument,
       symbol,
-      bidMicros: 100_000_000n,
-      askMicros: 100_010_000n,
+      bidMicros: BigInt(Math.round(priceUsd * 1_000_000)),
+      askMicros: BigInt(Math.round((priceUsd + 0.01) * 1_000_000)),
       capitalMicros,
     }),
   )
@@ -29,9 +33,14 @@ const plansForRange = (rangeUsd: number, capitalMicros = '100000000000') => {
       economics,
       snapshot: {
         ...snapshot,
-        latestQuotes: { ...snapshot.latestQuotes, [symbol]: { ...quote, bidPrice: 100, askPrice: 100.01 } },
+        latestQuotes: {
+          ...snapshot.latestQuotes,
+          [symbol]: { ...quote, bidPrice: priceUsd, askPrice: priceUsd + 0.01 },
+        },
         bars: snapshot.bars.map((bar) =>
-          bar.symbol === symbol ? { ...bar, open: 100, high: 100, low: 100 - rangeUsd, close: 100 } : bar,
+          bar.symbol === symbol
+            ? { ...bar, open: priceUsd, high: priceUsd, low: priceUsd - rangeUsd, close: priceUsd }
+            : bar,
         ),
       },
     }),
@@ -44,10 +53,33 @@ const plansForRange = (rangeUsd: number, capitalMicros = '100000000000') => {
   return { question, plans, economics }
 }
 
-test.each([0, 0.1, 0.25])('a %s USD observed range cannot manufacture targets above the crypto fee floor', (range) => {
+test.each([0, 0.1, 0.25])('a %s USD observed range retains a fee-covering hypothetical plan', (range) => {
   const { plans, question, economics } = plansForRange(range)
   expect(economics.breakEvenExitBidUsd).toBeGreaterThan(100.5)
-  expect(plans).toHaveLength(0)
+  expect(plans.length).toBeGreaterThan(0)
+  expect(Object.keys(question.criteria)).toContain('wait')
+  expect(Object.keys(question.criteria)).toContain('avoid')
+  for (const plan of plans) {
+    expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
+    expect(BigInt(plan.estimatedStopNetMicros)).toBeLessThan(BigInt(plan.acquisitionCostMicros))
+    expect(Number(plan.levels.profitLimitPriceMicros) / 1_000_000).toBeGreaterThanOrEqual(economics.breakEvenExitBidUsd)
+    expect(plan.levels.maximumHoldingMinutes).toBe(15)
+  }
+})
+
+test('a sub-unit BTC allocation has strictly positive funded proceeds despite price and cash rounding', () => {
+  const { plans, economics } = plansForRange(0, '94321650000', 80_000, 'BTC/USD')
+  expect(Number(economics.receivedQuantityAtoms)).toBeLessThan(1_000_000_000)
+  expect(plans.length).toBeGreaterThan(0)
+  for (const plan of plans)
+    expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
+})
+
+test('missing allocation economics still supplies only abstention', () => {
+  const { snapshot } = cryptoMarketFixture()
+  const question = Result.getOrThrow(
+    jevTradePlanQuestion({ snapshot, symbol: 'BTC/USD', economics: null, protocol: defaultJevProtocolDocument }),
+  )
   expect(Object.keys(question.criteria).sort()).toEqual(['avoid', 'wait'])
 })
 
@@ -59,8 +91,10 @@ test('funded targets retain their market-price anchors when position size change
       expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
       expect(BigInt(plan.estimatedStopNetMicros)).toBeLessThan(BigInt(plan.acquisitionCostMicros))
     }
-    return [...new Set(plans.map((plan) => plan.levels.profitLimitPriceMicros))]
+    return [...new Set(plans.map((plan) => plan.levels.profitLimitPriceMicros))].filter(
+      (price) => Number(price) / 1_000_000 >= 101,
+    )
   }
-  expect(targetPrices('100000000000')).toEqual(['101000000', '102000000', '104000000', '108000000'])
+  expect(targetPrices('100000000000')).toEqual(['101000000', '102000000', '108000000'])
   expect(targetPrices('1000000000000')).toEqual(targetPrices('100000000000'))
 })
