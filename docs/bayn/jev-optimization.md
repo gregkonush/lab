@@ -37,7 +37,7 @@ Kubernetes credential. A protected PVC holds native session history and exclusiv
 The worker's `BAYN_RESEARCH_INFERENCE_POLICIES` contains the exact admitted Flamingo and OpenCode policies. Select
 one policy in each frozen study; neither endpoint falls back to the other. OpenCode admits only
 `glm-5.3-flash-free`, with one hosted model call, 32 KiB of actual provider input and 4,096 completion tokens per
-proposal. The native agent keeps one deterministic session per study, with read access limited to that study's
+proposal. The native agent keeps one native-generated session per study, with an exclusive retained mapping, with read access limited to that study's
 frozen feedback files. Title, summary, compaction, sharing, updates, warming and other agents are disabled. Native
 configuration is hashed into the policy. No Console login or paid key is required for this path.
 

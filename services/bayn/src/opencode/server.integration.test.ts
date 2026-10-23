@@ -22,6 +22,7 @@ nativeTest(
     if (binary === undefined) throw new Error('Explicit pinned OpenCode binary required')
     const handles: ChildProcessSpawner.ChildProcessHandle[] = []
     let providerCalls = 0
+    let nativeSessionCreations = 0
     await Effect.runPromise(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem
@@ -68,9 +69,17 @@ nativeTest(
             )
           }),
         )
+        const nativeClient = HttpClient.make((request) =>
+          Effect.suspend(() => {
+            if (request.method === 'POST' && request.url === `http://127.0.0.1:${locations.nativePort}/api/session`)
+              nativeSessionCreations += 1
+            return client.execute(request)
+          }),
+        )
         const sourceRevision = 'a'.repeat(40)
         const server = serveOpenCode({ sourceRevision, proxy: 'http://127.0.0.1:9', binary }, upstream, locations).pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
+          Effect.provideService(HttpClient.HttpClient, nativeClient),
           Effect.provide(NodeHttpServer.layer(createServer, { host: '127.0.0.1', port })),
         )
         let fiber = yield* server.pipe(Effect.forkScoped)
@@ -140,10 +149,19 @@ nativeTest(
         expect(second.outcome).toBe(ResearchOutcome.Complete)
         yield* Effect.fromResult(verifyResearchReceipt(secondRun, second))
         expect(providerCalls).toBe(2)
+        expect(nativeSessionCreations).toBe(1)
+        const ambiguousStudy = { ...run, studyHash: 'e'.repeat(64) }
+        yield* fs.writeFileString(`${directory}/studies/${ambiguousStudy.studyHash}.claim.json`, '{}', { flag: 'wx' })
+        const ambiguousCreation = yield* post(ambiguousStudy)
+        expect(ambiguousCreation.status).toBe(503)
+        expect(nativeSessionCreations).toBe(1)
+        expect(providerCalls).toBe(2)
+        const sessionId = first.harnessEvidence?.sessionId
+        if (sessionId === undefined) return yield* Effect.fail(new Error('Native session identity missing'))
         for (const attempt of [run, { ...run, attempt: 1 }]) {
           const id = yield* Effect.fromResult(hashResearch(attempt))
           const record = yield* fs.readFileString(`${directory}/attempts/${id}.session.json`)
-          expect(record).toContain(`ses_bayn_${run.studyHash}`)
+          expect(record).toContain(sessionId)
         }
         expect(first.harnessEvidence?.sessionId).toBe(second.harnessEvidence?.sessionId)
         const cutoff = yield* Clock.currentTimeMillis

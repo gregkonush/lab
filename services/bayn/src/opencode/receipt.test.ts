@@ -49,7 +49,8 @@ const envelope = () => ({
   harnessEvidence: {
     firstTokenAtMs: 0,
     serverSourceRevision: run.sourceRevision,
-    sessionId: `ses_bayn_${run.studyHash}`,
+    sessionId: 'ses_nativefixture',
+    studyHash: run.studyHash,
     configurationHash: Result.getOrThrow(openCodeConfigurationHash),
     modelCalls: 1,
     providerCostUsd: 0,
@@ -89,7 +90,7 @@ test('hosted native receipts retain and verify actual provider input and raw SSE
 
 test('another study, hidden extra call, paid usage, different feedback and changed source are rejected', async () => {
   for (const evidence of [
-    { ...envelope().harnessEvidence, sessionId: 'ses_other' },
+    { ...envelope().harnessEvidence, studyHash: 'e'.repeat(64) },
     { ...envelope().harnessEvidence, modelCalls: 2 },
     { ...envelope().harnessEvidence, providerCostUsd: 0.01 },
     {

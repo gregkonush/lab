@@ -301,7 +301,7 @@ export const verifyOpenCodeEvidence = (
     if (
       evidence === undefined ||
       evidence.configurationHash !== run.policy.configurationHash ||
-      evidence.sessionId !== `ses_bayn_${run.studyHash}`
+      evidence.studyHash !== run.studyHash
     )
       return yield* Result.fail(
         new ResearchError({ message: 'OpenCode evidence differs from the registered study or configuration' }),

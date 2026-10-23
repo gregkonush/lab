@@ -45,6 +45,9 @@ const ProposalSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.opencode-proposal.v1'),
   registration: Schema.Unknown,
 })
+const SessionMappingSchema = Schema.Struct({
+  sessionId: Schema.String.check(Schema.isMaxLength(128), Schema.isPattern(/^ses_[A-Za-z0-9]+$/)),
+})
 const InfoSchema = Schema.Struct({ version: Schema.Literal(openCodeVersion) })
 const SessionSchema = Schema.Struct({
   data: Schema.Struct({
@@ -113,7 +116,7 @@ export const serveOpenCode = (
     const configurationHash = yield* Effect.fromResult(hashResearch(configuration))
     const password = randomBytes(32).toString('hex')
     const auth = `Basic ${Buffer.from(`opencode:${password}`).toString('base64')}`
-    for (const dir of ['config/opencode', 'data', 'cache', 'state', 'workspace', 'attempts'])
+    for (const dir of ['config/opencode', 'data', 'cache', 'state', 'workspace', 'attempts', 'studies'])
       yield* fs.makeDirectory(`${directory}/${dir}`, { recursive: true, mode: 0o700 })
     yield* fs.writeFileString(`${directory}/config/opencode/opencode.json`, JSON.stringify(configuration), {
       mode: 0o600,
@@ -245,8 +248,6 @@ export const serveOpenCode = (
       const base = `${directory}/attempts/${runId}`
       // A retained claim without a complete response stays ambiguous after a crash.
       yield* fs.writeFileString(`${base}.claim.json`, JSON.stringify(run), { flag: 'wx', mode: 0o600 })
-      const sessionId = `ses_bayn_${run.studyHash}`
-      const sessionPath = `/api/session/${sessionId}`
       const studyDirectory = `${directory}/workspace/${run.studyHash}`
       yield* fs.makeDirectory(studyDirectory, { recursive: true, mode: 0o700 })
       const permissions = [
@@ -254,22 +255,44 @@ export const serveOpenCode = (
         { action: 'read', resource: `${studyDirectory}/*`, effect: 'allow' },
       ]
       const metadata = { studyHash: run.studyHash, sourceRevision: run.sourceRevision, configurationHash }
-      const interrupt = native('POST', `${sessionPath}/interrupt?resume=false`, {}).pipe(
-        Effect.asVoid,
-        Effect.timeout('2 seconds'),
-        Effect.ignore,
-      )
       const execute = Effect.gen(function* () {
-        let session = yield* native('GET', sessionPath)
-        if (session.status === 404)
-          session = yield* native('POST', '/api/session', {
-            id: sessionId,
+        const mappingPath = `${directory}/studies/${run.studyHash}.json`
+        let sessionId: string
+        if (yield* fs.exists(mappingPath)) {
+          if ((yield* fs.stat(mappingPath)).size > 4096n)
+            return yield* new ResearchError({ message: 'OpenCode study mapping exceeds its bound' })
+          const mapping = yield* Schema.decodeUnknownEffect(
+            Schema.fromJsonString(SessionMappingSchema),
+            strictParseOptions,
+          )(yield* fs.readFileString(mappingPath))
+          sessionId = mapping.sessionId
+        } else {
+          // An unknown session-creation outcome cannot create a second session for the study.
+          yield* fs.writeFileString(`${directory}/studies/${run.studyHash}.claim.json`, JSON.stringify(metadata), {
+            flag: 'wx',
+            mode: 0o600,
+          })
+          const created = yield* native('POST', '/api/session', {
             title: `Bayn GEPA ${run.studyHash}`,
             agent: 'build',
             model: { id: openCodeModel, providerID: 'opencode' },
             metadata,
             permissions,
           })
+          if (created.status !== 200)
+            return yield* new ResearchError({ message: 'OpenCode native study session creation failed' })
+          const info = yield* Schema.decodeUnknownEffect(SessionSchema)(yield* created.json)
+          const mapping = yield* Schema.decodeUnknownEffect(SessionMappingSchema)({ sessionId: info.data.id })
+          yield* fs.writeFileString(mappingPath, JSON.stringify(mapping), { flag: 'wx', mode: 0o600 })
+          sessionId = mapping.sessionId
+        }
+        const sessionPath = `/api/session/${sessionId}`
+        const interrupt = native('POST', `${sessionPath}/interrupt?resume=false`, {}).pipe(
+          Effect.asVoid,
+          Effect.timeout('2 seconds'),
+          Effect.ignore,
+        )
+        const session = yield* native('GET', sessionPath)
         if (session.status !== 200)
           return yield* new ResearchError({ message: 'OpenCode study session could not be acquired' })
         const sessionValue = yield* session.json
@@ -362,6 +385,7 @@ export const serveOpenCode = (
                   harnessEvidence: {
                     firstTokenAtMs: response.firstTokenAtMs,
                     serverSourceRevision: config.sourceRevision,
+                    studyHash: run.studyHash,
                     sessionId,
                     configurationHash,
                     modelCalls: 1,

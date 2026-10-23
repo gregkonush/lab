@@ -246,7 +246,8 @@ const Base64Schema = Schema.String.check(
 export const OpenCodeEvidenceSchema = Schema.Struct({
   firstTokenAtMs: NonNegativeIntegerSchema,
   serverSourceRevision: GitSourceRevisionSchema,
-  sessionId: StrictNonEmptyStringSchema.check(Schema.isMaxLength(128)),
+  sessionId: StrictNonEmptyStringSchema.check(Schema.isMaxLength(128), Schema.isPattern(/^ses_[A-Za-z0-9]+$/)),
+  studyHash: Sha256Schema,
   configurationHash: Sha256Schema,
   modelCalls: Schema.Literal(1),
   providerCostUsd: Schema.Literal(0),
