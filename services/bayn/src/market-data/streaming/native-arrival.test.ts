@@ -206,6 +206,92 @@ test('a full compressed queue backpressures deliveries and resumes the exact pre
   expect(capture.status()).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 100, queuedCompressedBytes: 0 })
 })
 
+test.each([
+  { name: 'many short chunks', count: 96, value: sha256('bootstrap-batch') },
+  {
+    name: 'large compressed chunks',
+    count: 12,
+    value: Array.from({ length: 8_192 }, (_, index) => sha256(String(index))).join(''),
+  },
+])('a bootstrap backlog preserves every delivery with bounded writes for $name', async ({ count, value }) => {
+  const { chunks, ends, store } = memoryStore()
+  const inputs = Array.from({ length: count }, (_, index) => observation(index + 1, value))
+  const capture = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const writing = yield* Deferred.make<void>()
+        const resume = yield* Deferred.make<void>()
+        const capture = yield* makeNativeArrivalJournal(
+          epoch,
+          {
+            ...store,
+            append: (batch) =>
+              Deferred.succeed(writing, undefined).pipe(
+                Effect.andThen(Deferred.await(resume)),
+                Effect.andThen(
+                  Effect.suspend(() =>
+                    batch.length > 16 ||
+                    batch.reduce((bytes, chunk) => bytes + chunk.compressed.byteLength, 0) > 1_024 * 1_024
+                      ? Effect.fail(
+                          new NativeArrivalCaptureError({
+                            message: 'synthetic persistence statement exceeded its budget',
+                          }),
+                        )
+                      : store.append(batch),
+                  ),
+                ),
+              ),
+          },
+          { chunkBytes: 1, queueBytes: 64 * 1_024 * 1_024 },
+        )
+        for (const input of inputs) yield* capture.observe(input)
+        yield* Deferred.await(writing)
+        yield* Deferred.succeed(resume, undefined)
+        while (capture.status().status === 'RECORDING' && capture.status().durableConsumerSequence < count)
+          yield* Effect.yieldNow
+        return capture
+      }),
+    ),
+  )
+  expect(capture.status()).toMatchObject({
+    status: 'STOPPED',
+    durableConsumerSequence: count,
+    queuedCompressedBytes: 0,
+  })
+  expect(ends).toHaveLength(1)
+  expect(ends[0]).toMatchObject({ status: 'STOPPED', observedConsumerSequence: count, durableConsumerSequence: count })
+  expect(chunks.flatMap((chunk) => Result.getOrThrow(decodeNativeArrivalChunk(chunk)))).toEqual(
+    inputs.map((input) => nativeArrival(epoch, input)),
+  )
+  expect(chunks.map((chunk) => chunk.header.previousHash)).toEqual(
+    chunks.map((_, index) => (index === 0 ? null : chunks[index - 1]?.contentHash)),
+  )
+})
+
+test('a valid individual chunk above the append byte target still persists whole', async () => {
+  const { chunks, ends, store } = memoryStore()
+  const input = observation(1, Array.from({ length: 10_000 }, (_, index) => sha256(String(index))).join(''))
+  const expected = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, input)]))
+  expect(expected.compressed.byteLength).toBeGreaterThan(1_024 * 1_024)
+  expect(expected.header.uncompressedBytes).toBeLessThan(4 * 1_024 * 1_024)
+  const capture = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const capture = yield* makeNativeArrivalJournal(epoch, store)
+        yield* capture.observe(input)
+        return capture
+      }),
+    ),
+  )
+  expect(capture.status()).toMatchObject({ status: 'STOPPED', durableConsumerSequence: 1, queuedCompressedBytes: 0 })
+  expect(chunks).toHaveLength(1)
+  expect(chunks[0]?.contentHash).toBe(expected.contentHash)
+  expect(Result.getOrThrow(decodeNativeArrivalChunk(chunks[0] ?? expect.unreachable()))).toEqual([
+    nativeArrival(epoch, input),
+  ])
+  expect(ends[0]).toMatchObject({ status: 'STOPPED', observedConsumerSequence: 1, durableConsumerSequence: 1 })
+})
+
 test('a persistence failure releases a backpressured producer without claiming a durable suffix', async () => {
   const { chunks, ends, store } = memoryStore()
   const capture = await Effect.runPromise(
