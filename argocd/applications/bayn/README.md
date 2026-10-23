@@ -178,16 +178,16 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v17`, `bayn.jev.setup-and-plan.behavior.v1`,
-trading-signal state v16, batch v6 and pinned `jev-1.13.0`. Jev separately classifies the current setup and conditionally selects a complete funded entry/stop/target plan. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
+The implementation uses `bayn.jev.protocol.v18`, `bayn.jev.market-anchored-economic-plan.behavior.v1`,
+trading-signal state v16, batch v6 and pinned `jev-1.13.0`. Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
 separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 137 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 140 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21`.
-The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v17 image is
+history. The strategy protocol hash is `03d49555af1590514bd756099f8da95495faad7645a00b4081532edf4bf0793a`.
+The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v18 image is
 published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
 together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
 account losses, peak equity and turnover history remain in place.
@@ -408,10 +408,10 @@ immutable history rewrite; readiness and native authority still require complete
 
 The first reviewed promotion has no capital activation request: all three runtimes use read-only broker access and
 no capital authority. The migration clamps the previous PAPER authority. After the native handoff, verify migrations
-97 and 137, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
+97 and 140, fresh exact reconciliation, zero positions and unresolved mutations, and the immutable promoted source/image.
 Activate a new PAPER mandate for the same verified sandbox account, authored against a reviewed published image
-containing this migration and the current Jev v17 strategy/risk identities. Its sealed request and PR may be prepared
-while the OBSERVE rollout finishes; hold the activation merge until migration 137, the source-bound controller plan v3
+containing this migration and the current Jev v18 strategy/risk identities. Its sealed request and PR may be prepared
+while the OBSERVE rollout finishes; hold the activation merge until migration 140, the source-bound controller plan v3
 handoff and flat, fresh exact reconciliation are verified. Restore the request, its identity annotation, all three
 build lineages and the Kargo lineage assignments together through reviewed GitOps. The existing native activation hook grants
 PAPER authority only after validating the complete binding.
@@ -572,8 +572,8 @@ at the first completed minute plus two seconds. Crypto uses its current complete
 up to 30 minutes of actual context, expose gaps, and require fresh quotes and the latest completed bar.
 
 Migration 108 introduced the available-history cutover with terminal mutation cycles, fee-net flat inventory,
-settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 137 and the [v17 activation procedure](#jev-protocol-activation)
-own the current setup-and-plan cutover. Retired feature and strategy contracts cannot authorize execution.
+settled orders, fresh exact reconciliation and complete fill accounting. Later migrations preserve those safeguards. Migration 140 and the [v18 activation procedure](#jev-protocol-activation)
+own the current economic-plan cutover. Retired feature and strategy contracts cannot authorize execution.
 The broker account and order-risk limits remain the same.
 
 Migration 109 introduced capital-weighted sizing. Equities use LIMIT/DAY extended-hours orders and crypto uses
@@ -581,8 +581,8 @@ LIMIT/IOC through the shared planner, coordinator and generic completion proof. 
 entry spreads at 5 bps and crypto spreads at 25 bps. A canceled partial entry can complete only after an exact flat
 reconciliation consumes the same timestamped broker cut. Its trusted flat observation must remain strictly newer
 than entry terminalization, with complete fills and settled orders. Quantities follow the approved capital weight
-and instrument precision. Current PAPER authority requires a new mandate bound to the published v17 strategy after
-the migration-137 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
+and instrument precision. Current PAPER authority requires a new mandate bound to the published v18 strategy after
+the migration-140 OBSERVE cutover proves flat inventory, settled orders and fresh exact reconciliation. The 20%
 target weight and broker risk limits remain enforced. Broker fills, fee-net inventory, ledger transfers and exact
 reconciliation remain required runtime evidence.
 
@@ -594,9 +594,9 @@ Unavailable reconciliation retains the restriction. The old PAPER generation and
 
 ### Jev-selected trade-plan cutover
 
-Protocol v17, signal state v16, batch v6, entry target v6 and exit target v5 require an upward current setup and a
-conditionally selected complete funded plan. Either judgment can abstain. The stop and target remain one complete plan. Hypothetical order prices remain distinct from observed market evidence.
-Migration 137 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
+Protocol v18, signal state v16, batch v6, entry target v6 and exit target v5 require an upward current setup and a
+supported complete economic trade. Either judgment can abstain. The stop and target remain one complete plan. Hypothetical order prices remain distinct from observed market evidence.
+Migration 140 requires flat, settled and fully accounted inventory with fresh exact reconciliation before
 retiring the prior PAPER generation. The initial source rollout carries no capital mandate. After the
 published image and OBSERVE cutover are verified, restore the same-account PAPER mandate through the
 existing sealed GitOps path with the new exact strategy and image bindings. Preserve the existing account,
