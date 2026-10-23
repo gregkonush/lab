@@ -292,6 +292,47 @@ test('a valid large individual chunk still persists whole', async () => {
   expect(ends[0]).toMatchObject({ status: 'STOPPED', observedConsumerSequence: 1, durableConsumerSequence: 1 })
 })
 
+test.each(['interruption', 'defect'] as const)(
+  'an unexpected writer %s releases the producer and invalidates capture before shutdown',
+  async (mode) => {
+    const { store } = memoryStore()
+    const beforeShutdown = await Effect.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const writing = yield* Deferred.make<void>()
+          const capture = yield* makeNativeArrivalJournal(
+            epoch,
+            {
+              ...store,
+              append: () =>
+                Deferred.succeed(writing, undefined).pipe(
+                  Effect.andThen(mode === 'interruption' ? Effect.interrupt : Effect.die('synthetic writer defect')),
+                ),
+            },
+            { chunkBytes: 1, queueBytes: 1_500 },
+          )
+          const producer = yield* Effect.forEach(
+            Array.from({ length: 100 }, (_, index) => index + 1),
+            (sequence) => capture.observe(observation(sequence)),
+            { discard: true },
+          ).pipe(Effect.forkChild)
+          yield* Deferred.await(writing)
+          for (let turn = 0; turn < 200; turn++) yield* Effect.yieldNow
+          const result = capture.status()
+          yield* Fiber.interrupt(producer)
+          return result
+        }),
+      ),
+    )
+    expect(beforeShutdown).toMatchObject({
+      status: 'INCOMPLETE',
+      observedConsumerSequence: 100,
+      durableConsumerSequence: 0,
+    })
+    expect(beforeShutdown.failure).not.toBeNull()
+  },
+)
+
 test('a persistence failure releases a backpressured producer without claiming a durable suffix', async () => {
   const { chunks, ends, store } = memoryStore()
   const capture = await Effect.runPromise(
