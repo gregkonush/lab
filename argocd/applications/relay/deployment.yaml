@@ -1,0 +1,132 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: relay
+spec:
+  replicas: 2
+  revisionHistoryLimit: 3
+  strategy:
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: tengri-connector-broker
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: tengri-connector-broker
+        spiffe.io/spire-managed-identity: "true"
+      annotations:
+        sidecar.istio.io/inject: "false"
+    spec:
+      serviceAccountName: tengri-connector-broker
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      affinity:
+        podAntiAffinity:
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  app.kubernetes.io/name: tengri-connector-broker
+      containers:
+        - name: relay
+          image: registry.ide-newton.ts.net/lab/relay:unpromoted
+          args: [serve]
+          env:
+            - name: RELAY_DISPATCH_ENABLED
+              value: "false"
+            - name: RELAY_DATABASE_DSN
+              value: host=ofz-db-rw.ofz.svc.cluster.local port=5432 dbname=relay_control user=relay_runtime sslmode=require
+            - name: RELAY_DATABASE_PASSWORD_FILE
+              value: /var/run/relay/database/password
+            - name: RELAY_DATABASE_CA_FILE
+              value: /var/run/relay/database-ca/ca.crt
+            - name: RELAY_KEY_FILE
+              value: /var/run/relay/vault/keyring.json
+            - name: RELAY_CATALOG_FILE
+              value: /var/run/relay/catalog/providers.json
+            - name: RELAY_OAUTH_CALLBACK
+              value: https://proompteng.ai/api/tengri/connectors/callback
+            - name: OFZ_GRPC_ENDPOINT
+              value: ofz-api.ofz.svc.cluster.local:9443
+            - name: SPIFFE_ENDPOINT_SOCKET
+              value: unix:///spiffe-workload-api/spire-agent.sock
+          ports:
+            - name: https
+              containerPort: 8443
+            - name: health
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            failureThreshold: 60
+            periodSeconds: 2
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: health
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: health
+            periodSeconds: 15
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: database
+              mountPath: /var/run/relay/database
+              readOnly: true
+            - name: database-ca
+              mountPath: /var/run/relay/database-ca
+              readOnly: true
+            - name: vault
+              mountPath: /var/run/relay/vault
+              readOnly: true
+            - name: catalog
+              mountPath: /var/run/relay/catalog
+              readOnly: true
+            - name: workload-api
+              mountPath: /spiffe-workload-api
+              readOnly: true
+      volumes:
+        - name: database
+          secret:
+            secretName: relay-runtime-db-auth
+            defaultMode: 288
+        - name: database-ca
+          secret:
+            secretName: ofz-database-ca
+            defaultMode: 288
+        - name: vault
+          secret:
+            secretName: relay-keyring
+            defaultMode: 288
+        - name: catalog
+          configMap:
+            name: relay-catalog
+        - name: workload-api
+          csi:
+            driver: csi.spiffe.io
+            readOnly: true

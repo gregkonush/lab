@@ -1115,5 +1115,138 @@
     "operation": "OPTIONS /api/auth/[...all]",
     "public": true,
     "dispatch": "Bounded dispatch to the separately classified authentication endpoints; unknown paths are rejected."
+  },
+  {
+    "surface": "relay_http",
+    "operation": "GET /livez",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Private process/database/authority probes; no connector dispatch"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "HEAD /livez",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Private process/database/authority probes; no connector dispatch"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "GET /readyz",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Private process/database/authority probes; no connector dispatch"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "HEAD /readyz",
+    "public": true,
+    "internal_only": true,
+    "dispatch": "Private process/database/authority probes; no connector dispatch"
+  },
+  {
+    "surface": "relay_http",
+    "operation": "POST /v1/request",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "internal_only": true,
+    "dispatch": "Exact BFF SPIFFE mTLS and default-off dispatch gate; human or proof-bound agent command authorization"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Providers",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "List",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Create",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "ConnectToken",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "OAuthStart",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "OAuthFinish",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "ConnectClient",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Bind",
+    "action": "ACTION_GRANTS_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Disconnect",
+    "action": "ACTION_CONNECTOR_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "AckCleanup",
+    "action": "ACTION_PLATFORM_ADMIT",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "StageGrant",
+    "action": "ACTION_GRANTS_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "SetGrantStatus",
+    "action": "ACTION_GRANTS_MANAGE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "Invoke",
+    "action": "ACTION_CONNECTOR_EXECUTE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
+  },
+  {
+    "surface": "relay_command",
+    "operation": "AgentInvoke",
+    "action": "ACTION_CONNECTOR_EXECUTE",
+    "internal_only": true,
+    "dispatch": "Explicit command authorization in Relay; Ofz owns current permission and runtime decisions"
   }
 ]

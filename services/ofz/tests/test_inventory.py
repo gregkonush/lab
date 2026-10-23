@@ -10,6 +10,22 @@ import inventory
 
 
 class InventoryTests(unittest.TestCase):
+    def test_new_relay_routes_and_commands_require_classification(self):
+        read_text = Path.read_text
+        for suffix, before, after in [
+            ("relay/src/main.rs", '.route("/v1/request", post(request))', '.route("/secret", post(request)).route("/v1/request", post(request))'),
+            ("relay/src/service.rs", "    Providers,", "    ExportCredentials,\n    Providers,"),
+        ]:
+            with self.subTest(suffix=suffix):
+                def inject(path, *args, **kwargs):
+                    content = read_text(path, *args, **kwargs)
+                    return content.replace(before, after, 1) if str(path).endswith(suffix) else content
+
+                with patch.object(Path, "read_text", inject):
+                    with self.assertRaises(AssertionError):
+                        inventory.main()
+
+
     def test_current_services_are_completely_classified(self):
         with contextlib.redirect_stdout(io.StringIO()):
             inventory.main()

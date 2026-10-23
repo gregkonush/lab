@@ -1,0 +1,30 @@
+- op: add
+  path: /spec/managed/roles/-
+  value:
+    name: relay_migrator
+    ensure: present
+    login: true
+    inherit: false
+    superuser: false
+    createdb: false
+    createrole: false
+    replication: false
+    bypassrls: false
+    connectionLimit: 2
+    passwordSecret:
+      name: relay-migrator-db-auth
+- op: add
+  path: /spec/managed/roles/-
+  value:
+    name: relay_runtime
+    ensure: present
+    login: true
+    inherit: false
+    superuser: false
+    createdb: false
+    createrole: false
+    replication: false
+    bypassrls: false
+    connectionLimit: 16
+    passwordSecret:
+      name: relay-runtime-db-auth

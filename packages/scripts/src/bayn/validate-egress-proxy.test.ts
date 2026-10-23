@@ -11,6 +11,7 @@ describe('Bayn egress proxy contract', () => {
       aclName: 'trading_api',
       allowedHosts: [
         'api.alpaca.markets',
+        'api.openai.com',
         'api.typesafe.ai',
         'data.alpaca.markets',
         'data.sec.gov',
@@ -26,6 +27,8 @@ describe('Bayn egress proxy contract', () => {
     ['wildcard domain', deployedConfig.replace('api.alpaca.markets', '.alpaca.markets')],
     ['unrelated domain', deployedConfig.replace('api.alpaca.markets', 'example.com')],
     ['wildcard TypeSafe domain', deployedConfig.replace('api.typesafe.ai', '.typesafe.ai')],
+    ['wildcard OpenAI domain', deployedConfig.replace('api.openai.com', '.openai.com')],
+    ['unrelated AI domain', deployedConfig.replace('api.openai.com', 'example.com')],
     ['duplicate replacing TypeSafe', deployedConfig.replace('api.typesafe.ai', 'api.alpaca.markets')],
     ['wildcard SEC domain', deployedConfig.replace('www.sec.gov', '.sec.gov')],
     ['unrelated research domain', deployedConfig.replace('www.bls.gov', 'example.com')],

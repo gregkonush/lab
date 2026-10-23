@@ -52,6 +52,11 @@ source change; a unit test or healthy image is not production acceptance.
 
 ## Later stages
 
+The stage 2 private gateway and its prepared infrastructure are described in the
+[Relay rollout runbook](../../argocd/applications/relay/README.md). Its storage
+overlay and ApplicationSet/Kargo enrollment remain held until the vault inputs
+and storage prerequisites are qualified; connector dispatch remains disabled.
+
 Stage 2 supplies the private Relay database and runtime role, encryption keyring,
 reviewed versioned provider catalog, SPIFFE registration, network policies and
 Kargo/Argo enrollment. Resolve queued provider revocation across catalog changes

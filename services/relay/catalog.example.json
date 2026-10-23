@@ -1,0 +1,40 @@
+[
+  {
+    "id": "github-api",
+    "version": "v1",
+    "name": "GitHub API",
+    "endpoint": "https://api.github.com",
+    "authentication": { "kind": "bearer" },
+    "operations": {
+      "list_issues": {
+        "description": "List issues in a selected repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": { "owner": { "type": "string", "minLength": 1 }, "repo": { "type": "string", "minLength": 1 } },
+          "required": ["owner", "repo"],
+          "additionalProperties": false
+        },
+        "readOnly": true,
+        "requiredScopes": [],
+        "transport": { "kind": "http", "method": "GET", "path": "/repos/{owner}/{repo}/issues" }
+      },
+      "create_issue": {
+        "description": "Create an issue in a selected repository",
+        "inputSchema": {
+          "type": "object",
+          "properties": {
+            "owner": { "type": "string", "minLength": 1 },
+            "repo": { "type": "string", "minLength": 1 },
+            "title": { "type": "string", "minLength": 1, "maxLength": 256 },
+            "body": { "type": "string", "maxLength": 65536 }
+          },
+          "required": ["owner", "repo", "title"],
+          "additionalProperties": false
+        },
+        "readOnly": false,
+        "requiredScopes": [],
+        "transport": { "kind": "http", "method": "POST", "path": "/repos/{owner}/{repo}/issues" }
+      }
+    }
+  }
+]

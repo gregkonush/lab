@@ -162,6 +162,21 @@ spire-server:
             - k8s:container-name:tengri
           ttl: 2m
           fallback: false
+        tengri-connector-broker:
+          enabled: true
+          spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/sa/tengri-connector-broker
+          namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: tengri
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tengri-connector-broker
+              spiffe.io/spire-managed-identity: "true"
+          workloadSelectorTemplates:
+            - k8s:sa:tengri-connector-broker
+            - k8s:container-name:relay
+          ttl: 2m
+          fallback: false
         tengri-slot:
           enabled: true
           spiffeIDTemplate: spiffe://{{ .TrustDomain }}/ns/tengri/slot/pod/{{ .PodMeta.UID }}

@@ -159,6 +159,14 @@ const productImageCommonInputs = [
 ] as const
 
 const expected = {
+  relay: {
+    creationCriteria: 'image-revision',
+    requiresBuildReceipt: true,
+    tagRegex: runQualifiedTagRegex,
+    images: [imageRepo('relay')],
+    apps: ['relay'],
+    includePaths: [],
+  },
   ofz: {
     creationCriteria: 'image-revision',
     requiresBuildReceipt: true,
@@ -804,8 +812,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
   it('points every enrolled Argo Application at its exact authorized Kargo branch', () => {
     const applications = new Map(applicationSetElements.map((element) => [element.name as string, element]))
-    const expectedApplications = Object.values(expected)
-      .flatMap((contract) => contract.apps)
+    const expectedApplications = Object.entries(expected)
+      .filter(([stageName]) => stageName !== 'relay')
+      .flatMap(([, contract]) => contract.apps)
       .sort()
     const kargoApplications = applicationSetElements
       .filter((element) => element.enabled === 'true' && String(element.targetRevision ?? '').startsWith('kargo/'))
@@ -821,6 +830,31 @@ describe('Kargo direct-push GitOps contract', () => {
         )
       }
     }
+  })
+
+  it('holds private Relay enrollment before credential and storage qualification', () => {
+    const relay = applicationSetElements.find((element) => element.name === 'relay')
+    expect(relay?.enabled).toBe('false')
+    expect(relay?.namespace).toBe('tengri')
+    expect(applicationSetElements.find((element) => element.name === 'ofz')?.path).toBe('argocd/applications/ofz')
+    const deployment = YAML.parse(readRepoFile('argocd/applications/relay/deployment.yaml')) as Manifest
+    const pod = deployment.spec?.template.spec
+    expect(pod.automountServiceAccountToken).toBe(false)
+    expect(
+      pod.containers[0].env.find((entry: { name: string }) => entry.name === 'RELAY_DISPATCH_ENABLED')?.value,
+    ).toBe('false')
+    expect(
+      pod.volumes.some(
+        (volume: { secret?: { secretName: string } }) => volume.secret?.secretName === 'relay-migrator-db-auth',
+      ),
+    ).toBe(false)
+    expect(JSON.parse(readRepoFile('argocd/applications/relay/providers.json'))).toEqual([])
+    expect(readRepoFile('argocd/applications/proompteng/deployment.yaml')).not.toContain('RELAY_ENDPOINT')
+    expect(readRepoFile('argocd/applications/proompteng/network-policy.yaml')).not.toContain('tengri-connector-broker')
+    const workflow = YAML.parse(readRepoFile('.github/workflows/relay-images.yml')) as Record<string, any>
+    expect(workflow.jobs.build.if).toBe("github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
+    expect(workflow.jobs.build.needs).toBe('validate')
+    expect(workflow.jobs.build.with.kargo_tag_include_run_id).toBe(true)
   })
 
   it('defines automatic Warehouses with a shared Ofz release cohort', () => {
@@ -1010,7 +1044,9 @@ describe('Kargo direct-push GitOps contract', () => {
 
     const projectPolicies = projectConfig.spec?.promotionPolicies as Array<Record<string, any>>
     expect(projectPolicies.map((policy) => policy.stageSelector?.name).sort()).toEqual(expectedStageNames)
-    expect(projectPolicies.every((policy) => policy.autoPromotionEnabled === true)).toBe(true)
+    for (const policy of projectPolicies) {
+      expect(policy.autoPromotionEnabled).toBe(policy.stageSelector?.name !== 'relay')
+    }
 
     for (const stageName of expectedStageNames) {
       const contract = expected[stageName as keyof typeof expected]

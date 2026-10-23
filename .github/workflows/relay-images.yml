@@ -1,0 +1,93 @@
+name: Relay connectors
+
+on:
+  pull_request:
+    paths:
+      - 'services/relay/**'
+      - 'argocd/applications/relay/**'
+      - 'argocd/applications/ofz-relay-stage2/**'
+      - 'argocd/applications/spire-server/values.yaml'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'argocd/applications/kargo/**'
+      - 'nix/packages.nix'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - '.github/actions/setup-nix-toolchain/**'
+      - 'services/nanoagent/relay-client*'
+      - 'proto/proompteng/authz/**'
+      - 'nix/images/relay.nix'
+      - '.github/workflows/relay-images.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+  push:
+    branches: [main]
+    paths:
+      - 'services/relay/**'
+      - 'argocd/applications/relay/**'
+      - 'argocd/applications/ofz-relay-stage2/**'
+      - 'argocd/applications/spire-server/values.yaml'
+      - 'argocd/applicationsets/platform.yaml'
+      - 'argocd/applications/kargo/**'
+      - 'nix/packages.nix'
+      - 'nix/oci-push.sh'
+      - 'nix/oci-release-contract.sh'
+      - '.github/actions/setup-nix-toolchain/**'
+      - 'services/nanoagent/relay-client*'
+      - 'proto/proompteng/authz/**'
+      - 'nix/images/relay.nix'
+      - '.github/workflows/relay-images.yml'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - 'flake.nix'
+      - 'flake.lock'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: relay-connectors-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  validate:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: '1.90.0'
+          components: clippy,rustfmt
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: relay-connectors
+          workspaces: services/relay -> target
+      - name: Install fixture dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes --no-install-recommends build-essential cmake protobuf-compiler postgresql openssl
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24.11.1'
+      - name: Validate gateway and agent client
+        run: |
+          cargo fmt --manifest-path services/relay/Cargo.toml --check
+          cargo clippy --manifest-path services/relay/Cargo.toml --locked --all-targets -- -D warnings
+          cargo test --manifest-path services/relay/Cargo.toml --locked --all-targets
+          node --test services/nanoagent/relay-client.test.mjs
+          bash services/relay/test-integration.sh
+  build:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: validate
+    uses: ./.github/workflows/nix-oci-build-common.yml
+    with:
+      image_name: relay
+      package_attr: relay-image
+      source_revision: ${{ github.sha }}
+      tag: sha-${{ github.sha }}
+      pr_number: ${{ github.event.pull_request.number && format('{0}', github.event.pull_request.number) || '' }}
+      publish_kargo_tag: true
+      kargo_tag_include_run_id: true
+      release_artifact_name: relay-image-release
+    secrets: inherit
