@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo shares Turin's Blackwell GPU with Bayn's Alpha-R1 research server and Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
+Flamingo shares Turin's Blackwell GPU with Bayn's Jev instruction editor and Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
 
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
@@ -39,7 +39,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target remains full 262K server context. Bayn's Alpha-R1 research server has a 24% VRAM budget on the same Blackwell, so the earlier standalone 85% Flamingo allocation cannot coexist with it. The 60% budget leaves memory for research, Plex, and transient allocations. Validate startup, long-context inference, and both services' GPU memory before treating this shared profile as accepted. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target remains full 262K server context. Bayn's Jev instruction editor has a 24% VRAM budget on the same Blackwell, so the earlier standalone 85% Flamingo allocation cannot coexist with it. The 60% budget leaves memory for research, Plex, and transient allocations. Validate startup, long-context inference, and both services' GPU memory before treating this shared profile as accepted. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
 
 NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
 that Turin's GPU-to-NUMA topology was not detected automatically and exited with
@@ -470,3 +470,16 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 - [Unsloth Qwen3.6-35B-A3B-NVFP4](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
+
+## Serving identity and availability
+
+Model and tokenizer revisions are pinned to `739af1e7aac320af1682ed1e0cce369af4c5265d`.
+The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
+tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
+research clients to verify the shared model before accepting generated instructions.
+
+The central Alloy scrapes the shared `/metrics` endpoint every fifteen seconds. `FlamingoModelUnavailable` warns
+when the model is unavailable for fifteen minutes while its deployment remains enabled. Model failure has no
+trading authority effect. Check readiness and shared GPU pressure before submitting a research request.
+
+Run `python3 -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v` to validate the middleware.

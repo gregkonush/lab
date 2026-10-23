@@ -819,6 +819,8 @@ export function ReadyDesktop({
               ) : desktopWindow.app === 'chrome' ? (
                 <MemoizedChromeApp
                   agentId={agent.id}
+                  desktopId={desktopId}
+                  windowId={desktopWindow.id}
                   onFocus={() => dispatch({ type: 'focus', id: desktopWindow.id })}
                   previewGatewayOrigin={previewGatewayOrigin}
                 />

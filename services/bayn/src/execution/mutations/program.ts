@@ -1,7 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer } from 'effect'
 
-import { MutationOperation } from '../../broker/alpaca-mutations'
+import { MutationOperation } from '../../broker/alpaca-mutations/model'
 import { storeError } from './decisions'
 import { MutationStore, MutationStoreError, type MutationStoreShape } from './model'
 import { makeMutationEventPostgres } from './postgres/events'

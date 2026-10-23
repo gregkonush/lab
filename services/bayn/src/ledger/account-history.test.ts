@@ -96,6 +96,12 @@ const reader = (overrides: Partial<TigerBeetleClient> = {}) => {
         queries.push(filter)
         return queryPage(fixture.transfers, filter)
       },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => {
         closed += 1
       },

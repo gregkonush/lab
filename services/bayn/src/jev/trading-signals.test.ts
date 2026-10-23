@@ -7,7 +7,7 @@ import technicalFixture from '../market-data/features/fixtures/technical-indicat
 import { decodeTechnicalMarketFeature, TechnicalReadiness } from '../market-data/features/technical-contract'
 import { featureBarContentHash } from '../market-data/features/contract'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { incorporateMarketRecord } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot, constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 import { streamingFixture } from '../testing/streaming-market-fixture'
@@ -59,7 +59,7 @@ const snapshotWithTechnical = (candidateTradeMissing = false) => {
   const feature = Result.getOrThrow(
     decodeTechnicalMarketFeature({
       material,
-      featureId: canonicalHashV1(material),
+      featureId: Result.getOrThrow(canonicalHashV1Result(material)),
       producerRevision: 'jev-signal-fixture',
       computedAtMs: observed,
     }),
@@ -146,7 +146,11 @@ describe('Jev trading signal input', () => {
     expect(state.candidate.eligible).toBeUndefined()
     expect(state.candidate.rank).toBeUndefined()
     expect(state.news).toBeUndefined()
-    expect(request.request.questions['setup_quality']?.type).toBe('score')
+    expect(Object.keys(request.request.questions)).toEqual(['action', 'setup'])
+    expect(request.request.questions['action']?.type).toBe('choice')
+    expect(state.task.horizonMinutes).toBe(15)
+    expect(state.relativeSignals.lookbackMinutes).toBeGreaterThan(0)
+    expect(state.relativeSignals.horizonMinutes).toBeUndefined()
   })
 
   test('retains contradictory signals for Jev instead of filtering through the old momentum policy', () => {
@@ -209,7 +213,7 @@ describe('Jev trading signal input', () => {
     ]) {
       const changedValue = {
         ...changed,
-        value: { ...changed.value, featureId: canonicalHashV1(changed.value.material) },
+        value: { ...changed.value, featureId: Result.getOrThrow(canonicalHashV1Result(changed.value.material)) },
       }
       const input = {
         ...snapshot,

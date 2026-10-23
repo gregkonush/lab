@@ -1,4 +1,4 @@
-import { equityMarketProfile } from '../jev/markets'
+import { jevMarketForSymbol } from '../jev/markets'
 import { Result } from 'effect'
 
 import { OrderSide } from '../execution/contracts'
@@ -78,7 +78,10 @@ export const stepMatchedLifecycle = (
         return problem('entry-event-order')
       if (atMs + terms.assumptions.latencyMs >= terms.cutoffMs)
         return { ...state, entry: { status: 'SKIPPED' as const } }
-      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, { ...terms.protocol, ...equityMarketProfile })
+      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, {
+        ...terms.protocol,
+        ...jevMarketForSymbol(terms.symbol),
+      })
       if (rejection !== null || quote === undefined) return problem(rejection ?? 'missing-entry-quote')
       const quantityAtoms = yield* studyEntryQuantity({ ...terms, referencePrice: quote.value.askPrice })
       return {
@@ -112,8 +115,12 @@ export const stepMatchedLifecycle = (
     if (state.portfolio.inventory.status === 'FLAT') return state
     if (event.kind === MatchedEvent.Poll) {
       if (state.exit !== null) return problem('overlapping-exit-routing')
-      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, { ...terms.protocol, ...equityMarketProfile })
+      const rejection = replayQuoteRejection(quote, terms.symbol, atMs, {
+        ...terms.protocol,
+        ...jevMarketForSymbol(terms.symbol),
+      })
       const portfolio = yield* triggerControlExit({
+        feeMultiplierPpm: terms.assumptions.feeMultiplierPpm,
         portfolio: state.portfolio,
         protocol: terms.protocol,
         policy: ControlPolicy.RelativeMomentum,

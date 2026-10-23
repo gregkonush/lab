@@ -18,6 +18,7 @@ on:
       - 'apps/landing/package.json'
       - 'bun.lock'
       - '.github/workflows/ofz.yaml'
+      - '.github/scripts/install-tengri-chromium.mjs'
       - '.github/workflows/nix-oci-build-common.yml'
       - '.github/actions/setup-nix-toolchain/**'
       - 'packages/scripts/src/shared/oci.ts'
@@ -27,39 +28,63 @@ on:
       - 'nix/ci-run-timed.sh'
       - 'nix/ci-nix-oci-summary.sh'
       - 'nix/images/ofz.nix'
+      - 'nix/tengri-schema-hash.py'
       - 'nix/packages.nix'
       - 'flake.nix'
       - 'flake.lock'
   push:
     branches: [main]
     paths:
-      - 'services/ofz/**'
-      - 'devices/nuc/ofz-recovery/**'
-      - 'argocd/applications/ofz/**'
-      - 'proto/proompteng/authz/**'
-      - 'services/tengri/**'
-      - 'services/nanoagent/**'
-      - 'apps/landing/src/app/api/tengri/**'
-      - 'apps/landing/src/app/api/auth/**'
-      - 'apps/landing/src/lib/tengri/**'
-      - 'apps/landing/src/components/tengri/**'
-      - 'argocd/applications/keycloak/tengri/**'
-      - 'argocd/applications/proompteng/ingressroute.yaml'
-      - 'apps/landing/package.json'
-      - 'bun.lock'
-      - '.github/workflows/ofz.yaml'
-      - '.github/workflows/nix-oci-build-common.yml'
       - '.github/actions/setup-nix-toolchain/**'
-      - 'packages/scripts/src/shared/oci.ts'
-      - 'packages/scripts/src/shared/cli.ts'
-      - 'nix/oci-*.sh'
-      - 'nix/cache-push.sh'
-      - 'nix/ci-run-timed.sh'
-      - 'nix/ci-nix-oci-summary.sh'
-      - 'nix/images/ofz.nix'
-      - 'nix/packages.nix'
-      - 'flake.nix'
+      - '.github/workflows/nix-oci-build-common.yml'
+      - '.github/workflows/ofz.yaml'
+      - '.github/workflows/product-nix-images.yml'
+      - '.github/workflows/tengri-images.yml'
+      - 'apps/landing/**'
+      - 'apps/landing/package.json'
+      - 'apps/landing/src/app/api/auth/**'
+      - 'apps/landing/src/app/api/tengri/**'
+      - 'apps/landing/src/components/tengri/**'
+      - 'apps/landing/src/lib/tengri/**'
+      - 'argocd/applications/kargo/**'
+      - 'argocd/applications/keycloak/tengri/**'
+      - 'argocd/applications/ofz/**'
+      - 'argocd/applications/proompteng/**'
+      - 'argocd/applications/proompteng/ingressroute.yaml'
+      - 'argocd/applications/tengri/**'
+      - 'argocd/applications/tengri/crd.yaml'
+      - 'bun.lock'
+      - 'devices/galactic/omni/tengri-runner-*.json'
+      - 'devices/nuc/ofz-recovery/**'
       - 'flake.lock'
+      - 'flake.nix'
+      - 'nix/cache-push.sh'
+      - 'nix/ci-nix-oci-summary.sh'
+      - 'nix/ci-run-timed.sh'
+      - 'nix/images/bun-workspace-service.nix'
+      - 'nix/images/ofz.nix'
+      - 'nix/images/proompteng.nix'
+      - 'nix/oci-*.sh'
+      - 'nix/oci-inspect-archive.sh'
+      - 'nix/oci-push.sh'
+      - 'nix/packages.nix'
+      - 'nix/tengri-schema-hash.py'
+      - 'packages/backend/**'
+      - 'packages/design/**'
+      - 'packages/scripts/src/shared/cli.ts'
+      - 'packages/scripts/src/shared/oci.ts'
+      - 'packages/scripts/src/tengri/**'
+      - 'proto/proompteng/authz/**'
+      - 'services/nanoagent/**'
+      - 'services/ofz/**'
+      - 'services/ofz/Cargo.*'
+      - 'services/ofz/build.rs'
+      - 'services/ofz/migrations/**'
+      - 'services/ofz/operations.json'
+      - 'services/ofz/schema.zed'
+      - 'services/ofz/src/**'
+      - 'services/ofz/test-control.sh'
+      - 'services/tengri/**'
   workflow_dispatch:
 
 concurrency:
@@ -110,6 +135,10 @@ jobs:
           bash test-policy.sh
       - name: Verify initial bootstrap and archive-gated activation
         run: bash services/ofz/test-control.sh bootstrap
+      - name: Verify opt-in connector authority in the isolated fixture
+        env:
+          TENGRI_CONNECTORS_ENABLED: 'true'
+        run: bash services/ofz/test-control.sh control
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: '0.9.15'
@@ -129,7 +158,7 @@ jobs:
         run: |
           set -euo pipefail
           bun install --frozen-lockfile --ignore-scripts --filter @proompteng/source --filter landing --filter @proompteng/backend --filter @proompteng/design
-          bunx playwright install --with-deps chromium
+          node .github/scripts/install-tengri-chromium.mjs
           echo "KEYCLOAK_FIXTURE_BIN=$(bash services/ofz/tests/keycloak-runtime.sh "$RUNNER_TEMP/ofz-keycloak")" >> "$GITHUB_ENV"
       - name: Verify generated authorization client
         run: |
@@ -139,6 +168,7 @@ jobs:
         run: bash services/ofz/test-control.sh identity
 
   build-ofz:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     needs: validate
     uses: ./.github/workflows/nix-oci-build-common.yml
     with:
@@ -149,5 +179,4 @@ jobs:
       publish_kargo_tag: true
       kargo_tag_include_run_id: true
       release_artifact_name: ofz-image-release
-      pr_number: ${{ github.event.pull_request.number && format('{0}-ofz', github.event.pull_request.number) || '' }}
     secrets: inherit

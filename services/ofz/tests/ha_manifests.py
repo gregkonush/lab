@@ -1,5 +1,6 @@
 """Check the rendered coordinated-cutover targets, including rejected regressions."""
 
+import base64
 import copy
 import json
 import subprocess
@@ -73,7 +74,7 @@ def validate(targets):
         ]["max_connections"]
     )
     require(
-        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 12 + 8) + 6 * 2
+        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 14 + 8) + 6 * 4
         <= maximum_connections - 30,
         "ofz: simultaneous rolling surges exhaust the SQL connection budget",
     )
@@ -88,9 +89,9 @@ def validate(targets):
         "ofz_api": 42,
         "ofz_archiver": 4,
         "tengri_migrator": 2,
-        "tengri_controller": 36,
+        "tengri_controller": 42,
         "tengri_bff": 24,
-        "tengri_supervisor": 12,
+        "tengri_supervisor": 24,
     }
     require(
         roles.keys() == limits.keys(),
@@ -503,12 +504,87 @@ def validate(targets):
         and keycloak_ca.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
         "keycloak: mount only the public database CA certificate with mode 0440",
     )
+    theme_mounts = [
+        mount
+        for mount in container(targets, "keycloak", "StatefulSet", "keycloak")[
+            "volumeMounts"
+        ]
+        if mount["name"] == "login-theme"
+    ]
+    require(
+        theme_mounts
+        == [
+            {
+                "name": "login-theme",
+                "mountPath": "/opt/keycloak/themes/tengri/login",
+                "readOnly": True,
+            }
+        ],
+        "keycloak: the dedicated login theme must be mounted read-only",
+    )
+    theme = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "login-theme"
+    )["configMap"]
+    theme_files = {
+        "theme.properties": "theme.properties",
+        "webauthnRegister.js": "resources/js/webauthnRegister.js",
+        "webauthnAuthenticate.js": "resources/js/webauthnAuthenticate.js",
+        "webauthn-authenticate.ftl": "webauthn-authenticate.ftl",
+        "template.ftl": "template.ftl",
+        "tengri.css": "resources/css/tengri.css",
+        "messages_en.properties": "messages/messages_en.properties",
+        "fruit-pear.svg": "resources/img/fruit-pear.svg",
+        "wallpaper.webp": "resources/img/wallpaper.webp",
+        "GeistSans.woff2": "resources/fonts/GeistSans.woff2",
+        "OFL.txt": "resources/fonts/OFL.txt",
+        "pictogrammers-LICENSE.txt": "resources/img/pictogrammers-LICENSE.txt",
+    }
+    require(
+        theme["items"]
+        == [{"key": key, "path": path} for key, path in theme_files.items()],
+        "keycloak: branded assets must use the paths imported by the login templates",
+    )
+    theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
+    theme_config = resource(targets, "keycloak", "ConfigMap", theme["name"])
+    binary_assets = {"wallpaper.webp", "GeistSans.woff2"}
+    require(
+        theme_config["data"]
+        == {
+            key: (theme_root / path).read_text()
+            for key, path in theme_files.items()
+            if key not in binary_assets
+        }
+        and {
+            key: base64.b64decode(value)
+            for key, value in theme_config["binaryData"].items()
+        }
+        == {
+            key: (theme_root / path).read_bytes()
+            for key, path in theme_files.items()
+            if key in binary_assets
+        },
+        "keycloak: the deployed theme must contain the browser-qualified templates, modules and brand assets",
+    )
+    require(
+        len(json.dumps(theme_config).encode()) < 1024 * 1024,
+        "keycloak: the complete login theme must fit within the ConfigMap size limit",
+    )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
         "keycloak: bounded connection pool required",
     )
     database = resource(targets, "keycloak", "Cluster", "keycloak-db")["spec"]
     require(database["instances"] == 3, "keycloak: three database instances required")
+    capacity_mib = int(database["storage"]["size"].removesuffix("Gi")) * 1024
+    retained_wal_mib = int(
+        database["postgresql"]["parameters"]
+        .get("max_slot_wal_keep_size", "-1")
+        .removesuffix("MB")
+    )
+    require(
+        0 < retained_wal_mib <= capacity_mib // 4,
+        "keycloak: replica WAL retention must be bounded to a quarter of database storage",
+    )
     require(
         database["affinity"]["podAntiAffinityType"] == "required",
         "keycloak: database host spread required",
@@ -718,6 +794,23 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["postgresql"][
+            "parameters"
+        ].update(max_connections="200"),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_controller"
+        ).update(connectionLimit=36),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_supervisor"
+        ).update(connectionLimit=12),
         lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
             "spec"
         ].update(method="volumeSnapshot"),
@@ -820,12 +913,28 @@ def main():
         lambda data: container(data, "keycloak", "StatefulSet", "keycloak")[
             "env"
         ].append({"name": "KC_CACHE_EMBEDDED_MTLS_ENABLED", "value": "false"}),
+        lambda data: container(data, "keycloak", "StatefulSet", "keycloak").update(
+            volumeMounts=[]
+        ),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "login-theme"
+        )["configMap"]["items"].pop(),
         lambda data: resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
             "template"
         ]["spec"]["volumes"][0]["secret"].update(defaultMode=440),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["synchronous"].update(dataDurability="preferred"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "storage"
+        ].update(size="5Gi"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].pop("max_slot_wal_keep_size"),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "affinity"
         ].update(tolerations=[]),

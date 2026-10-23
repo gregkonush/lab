@@ -1,9 +1,14 @@
-import { canonicalHashV1, sha256 } from '../hash'
-import type { MarketDataContract } from '../market-data'
+import { Result } from 'effect'
+import type { SnapshotRequest } from '../market-data/model'
+import { sha256, canonicalHashV1Result } from '../hash'
+
 import { DataFeed, DataSource, PriceAdjustment, PublicationSchema, type InputManifest } from '../types'
 import { fixtureProtocol } from './runtime-fixtures'
 
-export const persistedMarketDataContract: MarketDataContract = {
+export const persistedMarketDataContract: Pick<
+  SnapshotRequest,
+  'universeId' | 'universeSymbolHash' | 'universe' | 'historyStart' | 'evaluationStart'
+> = {
   universeId: 'cross-asset-taa-v1',
   universeSymbolHash: sha256(fixtureProtocol.universe.join(',')),
   universe: fixtureProtocol.universe,
@@ -69,5 +74,5 @@ export const makePersistedSnapshotFixture = (): InputManifest => {
       lastSession: session,
     })),
   }
-  return { ...material, hash: canonicalHashV1(material) }
+  return { ...material, hash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }

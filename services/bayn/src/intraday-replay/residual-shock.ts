@@ -2,7 +2,7 @@ import { equityMarketProfile } from '../jev/markets'
 
 import { Data, Result } from 'effect'
 
-import { numberToMicros } from '../execution-model'
+import { numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { JevProtocol } from '../jev/protocol'
 import { usesWindowTradeEvidence, type IntradayBar } from '../market-data/intraday/model'
 import { intradayInstantNanos } from '../market-data/intraday/time'

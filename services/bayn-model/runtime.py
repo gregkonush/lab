@@ -36,8 +36,26 @@ def verify_file(path, item):
 
 
 def prepare(lock, cache, fetch=urlopen):
+    cache.mkdir(parents=True, exist_ok=True)
+    revisions = [
+        entry for entry in cache.iterdir() if re.fullmatch(r"[0-9a-f]{40}", entry.name)
+    ]
+    if any(entry.is_symlink() for entry in revisions):
+        raise ValueError("Model checkpoint cache cannot contain symlinks")
+    for entry in revisions:
+        if entry.name != lock["revision"] and entry.is_dir():
+            shutil.rmtree(entry)
     model = cache / lock["revision"]
     model.mkdir(parents=True, exist_ok=True)
+    for item in lock["files"]:
+        (model / f".download-{item['name']}").unlink(missing_ok=True)
+    required = sum(
+        item["bytes"] for item in lock["files"] if not (model / item["name"]).exists()
+    )
+    if shutil.disk_usage(cache).free < required + 2 * 1024**3:
+        raise ValueError(
+            "Insufficient model cache space for locked payload and 2 GiB runtime headroom"
+        )
     for item in lock["files"]:
         path = model / item["name"]
         temporary = model / f".download-{item['name']}"
@@ -85,7 +103,7 @@ def server_args(lock, cache):
         "--dtype",
         "bfloat16",
         "--max-model-len",
-        "16384",
+        "32768",
         "--gpu-memory-utilization",
         "0.24",
         "--max-num-seqs",

@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
 import {
@@ -26,8 +26,8 @@ test.each([
     ...original,
     candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   }
-  const hashed = { ...material, contentHash: canonicalHashV1(material) }
-  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
   const currentRequest = { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId }
   const evidence = Result.getOrThrow(makeIntradayPerformanceVolumeEvidence(currentRequest, archive, bars))
   if (evidence === undefined) throw new Error('expected complete policy-bound performance evidence')
@@ -53,7 +53,7 @@ test('reads a complete native session with exact microshares and an explicit IEX
     barCount: 390,
     sourceFeed: 'iex',
     finalizedAt: '2026-09-11T20:00:02.000Z',
-    volumeScope: 'IEX_RECORDED_SESSION_VOLUME',
+    volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME',
   })
   if (evidence === undefined) throw new Error('expected complete native evidence')
   expect(validIntradayPerformanceVolumeEvidence(evidence)).toBe(true)
@@ -180,8 +180,8 @@ test('rejects streaming cut tampering and an archive that has not retained the c
       positions: manifest.streaming.positions.map((position) => ({ ...position, offset: '0' })),
     },
   }
-  const withHash = { ...changed, contentHash: canonicalHashV1(changed) }
-  const tampered = { ...withHash, snapshotId: canonicalHashV1(withHash) }
+  const withHash = { ...changed, contentHash: Result.getOrThrow(canonicalHashV1Result(changed)) }
+  const tampered = { ...withHash, snapshotId: Result.getOrThrow(canonicalHashV1Result(withHash)) }
   expect(
     Result.isFailure(
       intradayPerformanceDecisionRequest({
@@ -269,6 +269,11 @@ test('rejects tampered decision identity, shifted session or cutoff, and rehashe
     { ...material, decisionManifest: { ...material.decisionManifest, universeId: 'another-universe' } },
     { ...material, barCount: 389 },
   ]) {
-    expect(validIntradayPerformanceVolumeEvidence({ ...change, contentHash: canonicalHashV1(change) })).toBe(false)
+    expect(
+      validIntradayPerformanceVolumeEvidence({
+        ...change,
+        contentHash: Result.getOrThrow(canonicalHashV1Result(change)),
+      }),
+    ).toBe(false)
   }
 })

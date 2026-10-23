@@ -1,4 +1,5 @@
 import { equityMarketProfile } from '../jev/markets'
+import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { makeJevEntryQuery } from '../jev/observation-query'
 import { Effect, Result, Schema } from 'effect'
 
@@ -53,7 +54,7 @@ export const scanControlInputs = (input: {
       pollIntervalMs > 60_000
     )
       return yield* new ControlStudyFailure({ message: 'Preflight requires a valid session and bounded poll cadence' })
-    const warmupMs = openMs + protocol.lookbackMinutes * 60_000 + protocol.decisionDelaySeconds * 1000
+    const warmupMs = openMs + intradayMinimumCompletedHistoryMs + protocol.decisionDelaySeconds * 1000
     const cutoffMs = closeMs - protocol.entryCutoffMinutesBeforeClose * 60_000
     const scheduledPollCount = Math.ceil((closeMs - openMs) / pollIntervalMs)
     let warmupPollCount = 0
@@ -143,12 +144,15 @@ export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt:
       return yield* new ControlStudyFailure({
         message: 'Native snapshot preflight does not certify Ridge feature coverage',
       })
-    const firstDate = prepared.input.sessionDates[0]
+    const firstDate = prepared.brokerSessions[0]?.date
     const lastDate = prepared.input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined)
       return yield* new ControlStudyFailure({ message: 'Preflight calendar has no boundary sessions' })
     const calendar = yield* Effect.fromResult(
-      normalizeMarketCalendarResult(prepared.input.calendar, { start: firstDate, end: lastDate }),
+      normalizeMarketCalendarResult(prepared.input.calendar, {
+        start: yield* Effect.fromResult(Schema.decodeUnknownResult(IsoDateSchema)(firstDate)),
+        end: lastDate,
+      }),
     )
     const runId = yield* Effect.fromResult(
       canonicalHashV1Result({ definition, studyDefinition, input, sourceReceiptHash: receipt.contentHash }),
@@ -172,7 +176,7 @@ export const runControlPreflight = (raw: unknown, arrivalsPath: string, receipt:
         ),
     }
     const sessions = []
-    for (const session of prepared.sessions)
+    for (const session of prepared.brokerSessions)
       sessions.push(
         yield* scanControlInputs({
           protocol: prepared.protocol,

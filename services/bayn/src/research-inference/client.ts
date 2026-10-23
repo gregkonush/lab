@@ -3,7 +3,7 @@ import { HttpClient, HttpClientRequest } from 'effect/http'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
 import {
-  parseResearchFactors,
+  parseResearchOutput,
   ResearchError,
   ResearchOutcome,
   hashResearch,
@@ -13,6 +13,8 @@ import {
   sealResearchReceipt,
   maximumResearchStreamBytes,
   type ResearchRun,
+  type RetainedResearchRun,
+  type ResearchReceipt,
 } from './contract'
 
 const maximumRequestBytes = 262144
@@ -37,7 +39,7 @@ const ChunkSchema = Schema.Struct({
   ),
 })
 
-export const makeResearchStreamDecoder = (run: ResearchRun) => {
+export const makeResearchStreamDecoder = (run: RetainedResearchRun) => {
   let output = ''
   let pending = ''
   let totalBytes = 0
@@ -169,7 +171,7 @@ export const makeResearchStreamDecoder = (run: ResearchRun) => {
         return yield* Result.fail(
           new ResearchError({ message: 'Research stream lacks complete termination, identity or usage' }),
         )
-      return yield* parseResearchFactors(run, output)
+      return yield* parseResearchOutput(run, output)
     })
   return { push, snapshot, complete }
 }
@@ -179,7 +181,10 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   runId: string,
   endpoint: string,
   traceHeaders: Readonly<Record<string, string>> = {},
+  workerSourceRevision: string | null = null,
 ) {
+  if (run.schemaVersion !== 'bayn.jev-editor.v1')
+    return yield* new ResearchError({ message: 'Retired research contracts cannot dispatch new model inference' })
   const startedAtMs = yield* Clock.currentTimeMillis
   const deadline = Date.parse(run.deadlineAt)
   const request = researchRequest(run)
@@ -193,7 +198,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   const state: { outcome: ResearchOutcome } = {
     outcome: startedAtMs < cutoff ? ResearchOutcome.Rejected : ResearchOutcome.Expired,
   }
-  let factors: readonly string[] = []
+  let instructions: ResearchReceipt['instructions'] = null
   if (startedAtMs >= cutoff && startedAtMs < deadline) {
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
@@ -212,7 +217,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
-      const attestation = incoming.headers['x-bayn-serving-identity']
+      const attestation = incoming.headers['x-model-serving-identity']
       if (attestation === undefined || attestation.length > 1024)
         return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
       servingIdentity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ResearchServingIdentitySchema))(
@@ -230,7 +235,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
           }),
         ),
       )
-      factors = yield* Effect.fromResult(stream.complete())
+      instructions = yield* Effect.fromResult(stream.complete())
       state.outcome = ResearchOutcome.Complete
     }).pipe(Effect.timeout(`${deadline - startedAtMs} millis`), Effect.result)
     if (Result.isFailure(response) && (yield* Clock.currentTimeMillis) >= deadline)
@@ -240,11 +245,12 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   const completedAtMs = yield* Clock.currentTimeMillis
   if (completedAtMs >= deadline && state.outcome === ResearchOutcome.Complete) {
     state.outcome = ResearchOutcome.Expired
-    factors = []
+    instructions = null
   }
   return yield* Effect.fromResult(
     sealResearchReceipt(run, {
       runId,
+      workerSourceRevision,
       requestHash,
       startedAtMs,
       completedAtMs,
@@ -252,7 +258,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
       httpStatus,
       servingIdentity,
       ...stream.snapshot(),
-      factors,
+      instructions,
     }),
   )
 }, Effect.scoped)

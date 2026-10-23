@@ -1,4 +1,5 @@
 import { DateTime, Result } from 'effect'
+import { sourceTimestamp } from '../observations'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { contractFailure, type BrokerReadContractFailure } from './failures'
@@ -33,14 +34,15 @@ import {
   type AssetObservation,
   type FillActivity,
   type MarketCalendarObservation,
-  type MarketCalendarSession,
   type Order,
   type Position,
 } from './model'
 import { accountConfigurationRequestMaterial, assetRequestMaterial } from './requests'
-import { Pipeable } from '../../pipeable'
+
+import { equityDataSession } from '../../equity-hours'
 import { quantityFromDecimal } from '../../quantity'
-import { decodeInstrument } from '../../instruments'
+import { decodeInstrument, instrumentMarket, MarketKind } from '../../instruments'
+import { cashReportingQuantum } from './cash-reporting'
 
 const decimalPattern = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$|^-[1-9][0-9]*(?:\.[0-9]+)?$|^-0\.[0-9]*[1-9][0-9]*$/
 
@@ -56,10 +58,11 @@ const hashResult = (value: unknown, field: string): Result.Result<string, Broker
     }),
   )
 
-const decimalToMicrosResultDataFirst = (
+const decimalMicrosResult = (
   value: string,
   signed: boolean,
   name: string,
+  rounding: 'EXACT' | 'DOWN' | 'UP',
 ): Result.Result<string, BrokerReadContractFailure> => {
   if (!decimalPattern.test(value)) {
     return Result.fail(
@@ -75,7 +78,8 @@ const decimalToMicrosResultDataFirst = (
   const separator = absolute.indexOf('.')
   const whole = separator === -1 ? absolute : absolute.slice(0, separator)
   const fraction = separator === -1 ? '' : absolute.slice(separator + 1)
-  if (fraction.length > 6 && /[1-9]/.test(fraction.slice(6))) {
+  const subMicroRemainder = /[1-9]/.test(fraction.slice(6))
+  if (rounding === 'EXACT' && subMicroRemainder) {
     return Result.fail(
       contractFailure({
         reason: 'DECIMAL_PRECISION',
@@ -88,7 +92,15 @@ const decimalToMicrosResultDataFirst = (
     )
   }
   const micros = BigInt(whole) * 1_000_000n + BigInt((fraction.slice(0, 6) + '000000').slice(0, 6))
-  const result = negative ? -micros : micros
+  const truncated = negative ? -micros : micros
+  const adjustment = subMicroRemainder
+    ? rounding === 'UP' && !negative
+      ? 1n
+      : rounding === 'DOWN' && negative
+        ? -1n
+        : 0n
+    : 0n
+  const result = truncated + adjustment
   if (!signed && result < 0n) {
     return Result.fail(
       contractFailure({
@@ -113,7 +125,8 @@ const decimalToMicrosResultDataFirst = (
   return Result.succeed(result.toString())
 }
 
-export const decimalToMicrosResult = Pipeable.dual(3, decimalToMicrosResultDataFirst)
+export const decimalToMicrosResult = (value: string, signed: boolean, name: string) =>
+  decimalMicrosResult(value, signed, name, 'EXACT')
 
 const quantityResult = (
   value: string,
@@ -205,7 +218,7 @@ const positionMicrosResult = (
       : Result.succeed(normalized.toString())
   })
 
-const normalizeAccountResultDataFirst = (
+export const normalizeAccountResult = (
   raw: typeof AccountResponseSchema.Type,
   expectedAccountId: string,
   observedAt: string,
@@ -225,14 +238,17 @@ const normalizeAccountResultDataFirst = (
   }
   return Result.gen(function* () {
     const cashMicros = yield* decimalToMicrosResult(raw.cash, true, 'account cash')
-    const equityMicros = yield* decimalToMicrosResult(raw.equity, true, 'account equity')
-    const lastEquityMicros = yield* decimalToMicrosResult(raw.last_equity, true, 'account last equity')
+    // Marks are not cash settlement amounts. Bound current equity down and the previous close up
+    // so converting provider mark precision to micros cannot understate the daily-loss guard.
+    const equityMicros = yield* decimalMicrosResult(raw.equity, true, 'account equity', 'DOWN')
+    const lastEquityMicros = yield* decimalMicrosResult(raw.last_equity, true, 'account last equity', 'UP')
     const buyingPowerMicros = yield* decimalToMicrosResult(raw.buying_power, true, 'account buying power')
     return {
       id: raw.id,
       status: raw.status,
       currency: raw.currency,
       cashMicros,
+      cashReportingQuantumMicros: cashReportingQuantum(raw.cash),
       equityMicros,
       lastEquityMicros,
       cryptoStatus: raw.crypto_status ?? null,
@@ -249,9 +265,7 @@ const normalizeAccountResultDataFirst = (
   })
 }
 
-export const normalizeAccountResult = Pipeable.dual(3, normalizeAccountResultDataFirst)
-
-const normalizeAccountConfigurationResultDataFirst = (
+export const normalizeAccountConfigurationResult = (
   raw: typeof AccountConfigurationResponseSchema.Type,
   observedAt: string,
 ): Result.Result<AccountConfigurationObservation, BrokerReadContractFailure> =>
@@ -267,9 +281,7 @@ const normalizeAccountConfigurationResultDataFirst = (
     return { ...normalized, observedAt, normalizedResponseHash }
   })
 
-export const normalizeAccountConfigurationResult = Pipeable.dual(2, normalizeAccountConfigurationResultDataFirst)
-
-const normalizePositionResultDataFirst = (
+export const normalizePositionResult = (
   raw: typeof PositionResponseSchema.Type,
   accountId: string,
   observedAt: string,
@@ -288,6 +300,16 @@ const normalizePositionResultDataFirst = (
     )
   }
   const assetClass = raw.asset_class
+  const symbol = raw.symbol
+  if ((instrumentMarket(symbol) === MarketKind.Crypto) !== (assetClass === AssetClass.Crypto)) {
+    return Result.fail(
+      contractFailure({
+        reason: 'ASSET_BINDING',
+        message: 'position symbol and asset class must agree',
+        facts: { field: 'position.symbol', actual: raw.symbol },
+      }),
+    )
+  }
   return Result.gen(function* () {
     const rawQuantity = BigInt(yield* quantityResult(raw.qty, 'position quantity', { signed: true }))
     const magnitude = rawQuantity < 0n ? -rawQuantity : rawQuantity
@@ -300,7 +322,7 @@ const normalizePositionResultDataFirst = (
     return {
       accountId,
       assetId: raw.asset_id,
-      symbol: raw.symbol,
+      symbol,
       exchange: raw.exchange,
       assetClass,
       side: raw.side,
@@ -315,18 +337,14 @@ const normalizePositionResultDataFirst = (
   })
 }
 
-export const normalizePositionResult = Pipeable.dual(3, normalizePositionResultDataFirst)
-
-const normalizePositionsResultDataFirst = (
+export const normalizePositionsResult = (
   raw: readonly (typeof PositionResponseSchema.Type)[],
   accountId: string,
   observedAt: string,
 ): Result.Result<readonly Position[], BrokerReadContractFailure> =>
   Result.all(raw.map((position) => normalizePositionResult(position, accountId, observedAt)))
 
-export const normalizePositionsResult = Pipeable.dual(3, normalizePositionsResultDataFirst)
-
-const normalizeAssetResultDataFirst = (
+export const normalizeAssetResult = (
   raw: typeof AssetResponseSchema.Type,
   requestedSymbol: string,
   observedAt: string,
@@ -379,9 +397,7 @@ const normalizeAssetResultDataFirst = (
   })
 }
 
-export const normalizeAssetResult = Pipeable.dual(3, normalizeAssetResultDataFirst)
-
-const normalizeOrderResultDataFirst = (
+export const normalizeOrderResult = (
   raw: typeof OrderResponseSchema.Type,
   accountId: string,
   observedAt: string,
@@ -474,6 +490,18 @@ const normalizeOrderResultDataFirst = (
       ...(notionalMicros === undefined ? {} : { notionalMicros }),
       filledQuantityAtoms,
       ...(filledAveragePriceMicros === undefined ? {} : { filledAveragePriceMicros }),
+      ...(raw.legs === null
+        ? {}
+        : {
+            legs: yield* Result.all(
+              raw.legs.map((leg) =>
+                Result.map(normalizeOrderResult(leg, accountId, observedAt), (child) => ({
+                  ...child,
+                  parentBrokerOrderId: raw.id,
+                })),
+              ),
+            ),
+          }),
       orderClass: raw.order_class === '' ? OrderClass.Simple : raw.order_class,
       orderType: raw.type,
       side: raw.side,
@@ -490,18 +518,14 @@ const normalizeOrderResultDataFirst = (
   })
 }
 
-export const normalizeOrderResult = Pipeable.dual(3, normalizeOrderResultDataFirst)
-
-const normalizeOrdersResultDataFirst = (
+export const normalizeOrdersResult = (
   raw: readonly (typeof OrderResponseSchema.Type)[],
   accountId: string,
   observedAt: string,
 ): Result.Result<readonly Order[], BrokerReadContractFailure> =>
   Result.all(raw.map((order) => normalizeOrderResult(order, accountId, observedAt)))
 
-export const normalizeOrdersResult = Pipeable.dual(3, normalizeOrdersResultDataFirst)
-
-const normalizeFillActivityResultDataFirst = (
+export const normalizeFillActivityResult = (
   raw: typeof FillActivityResponseSchema.Type,
   accountId: string,
 ): Result.Result<FillActivity, BrokerReadContractFailure> => {
@@ -555,15 +579,11 @@ const normalizeFillActivityResultDataFirst = (
   })
 }
 
-export const normalizeFillActivityResult = Pipeable.dual(2, normalizeFillActivityResultDataFirst)
-
-const normalizeFillActivitiesResultDataFirst = (
+export const normalizeFillActivitiesResult = (
   raw: readonly (typeof FillActivityResponseSchema.Type)[],
   accountId: string,
 ): Result.Result<readonly FillActivity[], BrokerReadContractFailure> =>
   Result.all(raw.map((activity) => normalizeFillActivityResult(activity, accountId)))
-
-export const normalizeFillActivitiesResult = Pipeable.dual(2, normalizeFillActivitiesResultDataFirst)
 
 const marketCalendarInstantResult = (
   date: string,
@@ -597,13 +617,13 @@ const marketCalendarInstantResult = (
     : Result.succeed(DateTime.formatIso(zoned.value))
 }
 
-const normalizeMarketCalendarResultDataFirst = (
+export const normalizeMarketCalendarResult = (
   raw: typeof MarketCalendarResponseSchema.Type,
   query: typeof MarketCalendarQueryBase.Type,
 ): Result.Result<MarketCalendarObservation, BrokerReadContractFailure> =>
   Result.gen(function* () {
-    const sessions = yield* Result.all(
-      raw.map((session): Result.Result<MarketCalendarSession, BrokerReadContractFailure> => {
+    const providerSessions = yield* Result.all(
+      raw.map((session) => {
         if (session.date < query.start || session.date > query.end) {
           return Result.fail(
             contractFailure({
@@ -628,11 +648,25 @@ const normalizeMarketCalendarResultDataFirst = (
               }),
             )
           }
-          return { date: session.date, openAt, closeAt }
+          const fullTime = (value: string) => `${value.slice(0, 2)}:${value.slice(2, 4)}`
+          const sessionOpenAt = yield* marketCalendarInstantResult(session.date, fullTime(session.session_open), 'open')
+          const sessionCloseAt = yield* marketCalendarInstantResult(
+            session.date,
+            fullTime(session.session_close),
+            'close',
+          )
+          return { date: session.date, regularOpenAt: openAt, regularCloseAt: closeAt, sessionOpenAt, sessionCloseAt }
         })
       }),
     )
-    sessions.sort((left, right) => (left.date < right.date ? -1 : left.date > right.date ? 1 : 0))
+    providerSessions.sort((left, right) => (left.date < right.date ? -1 : left.date > right.date ? 1 : 0))
+    const sessions = yield* Result.all(
+      providerSessions.map((session) =>
+        equityDataSession(session).pipe(
+          Result.mapError((cause) => contractFailure({ reason: 'CALENDAR_HOURS', message: cause.message })),
+        ),
+      ),
+    )
     for (let index = 1; index < sessions.length; index += 1) {
       if (sessions[index - 1]?.date === sessions[index]?.date) {
         return yield* Result.fail(
@@ -649,12 +683,11 @@ const normalizeMarketCalendarResultDataFirst = (
       requestedRange: { start: query.start, end: query.end },
       timeZone: 'UTC' as const,
       sessions,
+      providerSessions,
     }
     const normalizedResponseHash = yield* hashResult(normalized, 'market calendar response')
     return { ...normalized, normalizedResponseHash }
   })
-
-export const normalizeMarketCalendarResult = Pipeable.dual(2, normalizeMarketCalendarResultDataFirst)
 
 export const normalizeFeeActivitiesResult = (
   raw: readonly (typeof FeeActivityResponseSchema.Type)[],
@@ -673,6 +706,18 @@ export const normalizeFeeActivitiesResult = (
         const netAmountMicros = yield* decimalToMicrosResult(activity.net_amount, true, 'fee net amount')
         const common = { accountId, activityId: activity.id, date: activity.date, netAmountMicros }
         if (activity.activity_type === 'FEE') return common
+        const sourceCreatedAt = yield* sourceTimestamp(activity.created_at).pipe(
+          Result.mapError(() =>
+            contractFailure({ reason: 'FEE_SHAPE', message: 'crypto fee source timestamp is invalid' }),
+          ),
+        )
+        if (activity.qty === undefined) {
+          if (BigInt(netAmountMicros) >= 0n)
+            return yield* Result.fail(
+              contractFailure({ reason: 'DECIMAL_SIGN', message: 'USD crypto fee must debit cash' }),
+            )
+          return { ...common, sourceCreatedAt, cryptoCashFee: true as const }
+        }
         if (netAmountMicros !== '0')
           return yield* Result.fail(
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must have no cash amount' }),
@@ -688,7 +733,11 @@ export const normalizeFeeActivitiesResult = (
             contractFailure({ reason: 'DECIMAL_SIGN', message: 'coin fee must debit a positive coin quantity' }),
           )
         const priceAtoms = yield* quantityResult(activity.price, 'coin fee price')
-        return { ...common, coinDebit: { symbol, quantityAtoms: (-BigInt(quantity)).toString(), priceAtoms } }
+        return {
+          ...common,
+          sourceCreatedAt,
+          coinDebit: { symbol, quantityAtoms: (-BigInt(quantity)).toString(), priceAtoms },
+        }
       })
     }),
   )

@@ -60,18 +60,55 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         activity_type: 'CFEE',
         id: `20261011000000000::${orderId}`,
         date: '2026-10-11',
+        created_at: '2026-10-10T23:59:58.123456Z',
         net_amount: '0',
         symbol: symbol.replace('/', ''),
         qty: '-0.000000001',
         price: '103.123456789',
       }),
     )
-    if (raw.activity_type !== 'CFEE') throw new Error('Expected a coin fee fixture')
+    if (raw.activity_type !== 'CFEE' || raw.qty === undefined) throw new Error('Expected a coin fee fixture')
     const fee = Result.getOrThrow(normalizeFeeActivitiesResult([raw], accountId))[0]
     expect(fee?.coinDebit).toEqual({ symbol, quantityAtoms: '1', priceAtoms: '103123456789' })
     expect(fee?.netAmountMicros).toBe('0')
+    expect(fee).toMatchObject({ date: '2026-10-11', sourceCreatedAt: '2026-10-10T23:59:58.123456000Z' })
     expect(Result.isFailure(normalizeFeeActivitiesResult([{ ...raw, qty: '0.000000001' }], accountId))).toBe(true)
     expect(Result.isFailure(normalizeFeeActivitiesResult([{ ...raw, qty: '-0.0000000001' }], accountId))).toBe(true)
     expect(Result.isFailure(normalizeFeeActivitiesResult([{ ...raw, net_amount: '-1' }], accountId))).toBe(true)
   })
 }
+
+test('USD CFEE is a cash debit without coin fields and never retains provider descriptions', () => {
+  const raw = {
+    activity_type: 'CFEE',
+    id: `20261015000000000::${orderId}`,
+    date: '2026-10-15',
+    created_at: '2026-10-14T23:59:58.123456Z',
+    net_amount: '-0.2',
+    description: 'private provider detail',
+  }
+  const decode = (value: unknown) =>
+    Schema.decodeUnknownResult(FeeActivityResponseSchema)(value).pipe(
+      Result.flatMap((activity) => normalizeFeeActivitiesResult([activity], accountId)),
+    )
+  expect(Result.getOrThrow(decode(raw))).toEqual([
+    {
+      accountId,
+      activityId: raw.id,
+      date: raw.date,
+      sourceCreatedAt: '2026-10-14T23:59:58.123456000Z',
+      netAmountMicros: '-200000',
+      cryptoCashFee: true,
+    },
+  ])
+  for (const value of [
+    { ...raw, net_amount: '0' },
+    { ...raw, net_amount: '0.2' },
+    { ...raw, symbol: 'ETHUSD' },
+    { ...raw, qty: '-0.0001' },
+    { ...raw, price: '100' },
+    { ...raw, created_at: undefined },
+    { ...raw, created_at: '2026-02-30T00:00:00Z' },
+  ])
+    expect(Result.isFailure(decode(value))).toBe(true)
+})

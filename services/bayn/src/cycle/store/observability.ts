@@ -209,11 +209,11 @@ export type CycleObservabilityProjectionRow = ProjectionRow
 const ProjectionRowsSchema = Schema.Tuple([ProjectionRowSchema])
 const decodeRunId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 const decodeAccountId = Schema.decodeUnknownEffect(StrictNonEmptyStringSchema, strictParseOptions)
-const decodeProjectionRowsResult = Schema.decodeUnknownResult(ProjectionRowsSchema, strictParseOptions)
 
-export const decodeCycleObservabilityProjectionRows = (
-  rows: unknown,
-): Result.Result<readonly [CycleObservabilityProjectionRow], Schema.SchemaError> => decodeProjectionRowsResult(rows)
+export const decodeCycleObservabilityProjectionRows = Schema.decodeUnknownResult(
+  ProjectionRowsSchema,
+  strictParseOptions,
+)
 
 const messageOf = (cause: unknown): string =>
   pipe(
@@ -666,10 +666,11 @@ const makeCycleObservability = Effect.gen(function* () {
             WHERE transaction.account_id = (SELECT account_id FROM selected_account)
           ),
           selected_broker_fee_cash AS (
-            SELECT coalesce(sum(fee.net_amount_micros), 0) AS net_amount_micros
-            FROM broker_fee_accounting AS fee
+            SELECT coalesce(sum(fee.cash_delta_micros), 0) AS net_amount_micros,
+              COALESCE((SELECT sum(cost_basis_micros) FROM broker_inventory_debits WHERE account_id=(SELECT account_id FROM selected_account) AND posted AND effective_at<=CURRENT_TIMESTAMP),0) AS coin_cost_micros
+            FROM broker_cash_fee_deltas AS fee
             WHERE fee.account_id = (SELECT account_id FROM selected_account)
-              AND fee.first_observed_at <= CURRENT_TIMESTAMP
+              AND fee.effective_at <= CURRENT_TIMESTAMP
               AND fee.posted_at <= CURRENT_TIMESTAMP
           ),
           selected_accounting_receipts AS (
@@ -864,7 +865,25 @@ const makeCycleObservability = Effect.gen(function* () {
                   'quoteCount', coalesce((decision.document #>> '{bindings,executionMarketData,quoteCount}')::integer, 0),
                   'tradeCount', coalesce((decision.document #>> '{bindings,executionMarketData,tradeCount}')::integer, 0),
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
-                  'targetPlanReason', decision.document #>> '{targetPlan,reason}',
+                  'targetPlanReason', CASE
+                    WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
+                      AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
+                    THEN CASE
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IS NULL OR reason.value NOT IN (
+                          'MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED', 'NO_FUNDED_CANDIDATES'
+                        )
+                      ) THEN NULL
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IN ('MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED')
+                      ) THEN 'JEV_MODEL_ABSTAINED'
+                      ELSE 'JEV_NO_FUNDED_CANDIDATES'
+                    END
+                    ELSE decision.document #>> '{targetPlan,reason}'
+                  END,
                   'targetCount', (
                     SELECT count(*)::integer
                     FROM jsonb_array_elements(coalesce(decision.document #> '{targetPlan,targets}', '[]'::jsonb)) AS target
@@ -999,10 +1018,10 @@ const makeCycleObservability = Effect.gen(function* () {
             coalesce((SELECT sum(realized_pnl_micros) FROM selected_accounting_transactions), 0)::text
               AS accounting_gross_realized_pnl_micros,
             (coalesce((SELECT sum(fee_micros) FROM selected_accounting_transactions), 0)
-              - (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
+              - (SELECT net_amount_micros FROM selected_broker_fee_cash) + (SELECT coin_cost_micros FROM selected_broker_fee_cash))::text
               AS accounting_execution_fees_micros,
             (coalesce((SELECT sum(realized_pnl_micros - fee_micros) FROM selected_accounting_transactions), 0)
-              + (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
+              + (SELECT net_amount_micros FROM selected_broker_fee_cash) - (SELECT coin_cost_micros FROM selected_broker_fee_cash))::text
               AS accounting_net_realized_pnl_after_execution_fees_micros,
             (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
             (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)

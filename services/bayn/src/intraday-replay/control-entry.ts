@@ -5,7 +5,7 @@ import { makeJevObservation } from '../jev/observation'
 import { decodeJevPortfolio, JevPurpose } from '../jev/portfolio'
 import type { JevProtocol } from '../jev/protocol'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { ControlStudyFailure, type ControlPortfolio } from './control-portfolio'
 
 export const makeControlEntryObservation = (input: {

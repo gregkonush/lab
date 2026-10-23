@@ -1,13 +1,14 @@
 import { spawn, execFileSync } from 'node:child_process'
 import { createHash, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
-import { cpSync, readFileSync, writeFileSync } from 'node:fs'
+import { cpSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { createServer as httpServer } from 'node:http'
 import { createServer as httpsServer } from 'node:https'
 import path from 'node:path'
 import { createConnection, createServer as tcpServer, type Socket } from 'node:net'
 import { afterAll, expect, mock, test } from 'bun:test'
 import { create, toBinary } from '@bufbuild/protobuf'
+import AxeBuilder from '@axe-core/playwright'
 import { chromium, expect as browserExpect } from '@playwright/test'
 import { Pool } from 'pg'
 import { z } from 'zod'
@@ -123,6 +124,12 @@ identityTest(
     })
     cleanups.push(() => bffAdmin.end())
     const migration = readFileSync(path.join(root, 'services/tengri/migrations/0001_control.sql'))
+    const replayMigration = readFileSync(path.join(root, 'services/tengri/migrations/0002_replay_buckets.sql'))
+    const replaySlotsMigration = readFileSync(path.join(root, 'services/tengri/migrations/0003_replay_slots.sql'))
+    const leadershipMigration = readFileSync(path.join(root, 'services/tengri/migrations/0004_leadership_window.sql'))
+    const capabilityMigration = readFileSync(path.join(root, 'services/tengri/migrations/0005_capability_slots.sql'))
+    const leaseMigration = readFileSync(path.join(root, 'services/tengri/migrations/0006_preview_lease_identity.sql'))
+    const oauthMigration = readFileSync(path.join(root, 'services/tengri/migrations/0007_ephemeral_oauth.sql'))
     const secret = (name: string, value: string) => {
       const file = path.join(fixture.directory, name)
       writeFileSync(file, value, { mode: 0o600 })
@@ -143,16 +150,94 @@ identityTest(
       OFZ_DATABASE_DSN: `host=localhost port=${port} dbname=tengri_control user=tengri_migrator sslmode=require`,
       OFZ_DATABASE_PASSWORD_FILE: secret('runtime-owner-password', 'fixture-migrator'),
     }
+    const expectedChecksum = createHash('sha256').update(migration).digest()
+    const replayChecksum = createHash('sha256').update(replayMigration).digest()
+    const replaySlotsChecksum = createHash('sha256').update(replaySlotsMigration).digest()
+    const leadershipChecksum = createHash('sha256').update(leadershipMigration).digest()
+    const capabilityChecksum = createHash('sha256').update(capabilityMigration).digest()
+    const leaseChecksum = createHash('sha256').update(leaseMigration).digest()
+    const oauthChecksum = createHash('sha256').update(oauthMigration).digest()
+    await bffAdmin.query('SET ROLE tengri_migrator')
+    await bffAdmin.query(migration.toString())
+    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(1,$1)', [expectedChecksum])
+    await bffAdmin.query(replayMigration.toString())
+    await bffAdmin.query('INSERT INTO tengri.schema_version(version,checksum) VALUES(2,$1)', [replayChecksum])
+    const retainedWorkspace = randomUUID()
+    const retainedTicket = Buffer.alloc(32, 31)
+    await bffAdmin.query(
+      "INSERT INTO tengri.tickets(token_hash,agent_id,workspace_uid,payload,expires_at_ms) VALUES($1,'retained',$2,'{}',tengri.now_ms()+30000)",
+      [retainedTicket, retainedWorkspace],
+    )
+    await bffAdmin.query(
+      "INSERT INTO tengri.previews(id,token_hash,revocation_hash,agent_id,workspace_uid,payload,expires_at_ms) VALUES('abcdefghijklmnopqrstuvwx',$1,$1,'retained',$2,'{}',tengri.now_ms()+30000)",
+      [retainedTicket, retainedWorkspace],
+    )
+    const retainedNonce = Buffer.alloc(32, 47)
+    expect(
+      (await bffAdmin.query('SELECT tengri.consume_nonce($1,tengri.now_ms()+6000) AS consumed', [retainedNonce]))
+        .rows[0]?.consumed,
+    ).toBe(true)
+    const retainedOAuthState = Buffer.alloc(32, 51)
+    const retainedOAuthOperation = randomUUID()
+    await bffAdmin.query('SELECT tengri.begin_oauth($1,$2,$3,$4,$5)', [
+      retainedOAuthState,
+      Buffer.alloc(32, 52),
+      'v'.repeat(43),
+      'n'.repeat(43),
+      retainedOAuthOperation,
+    ])
+    await bffAdmin.query('RESET ROLE')
     for (let attempt = 0; attempt < 2; attempt++) {
       execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })
     }
-    const expectedChecksum = createHash('sha256').update(migration).digest()
     const versions = await bffAdmin.query<{ version: number; checksum: Buffer }>(
-      'SELECT version,checksum FROM tengri.schema_version',
+      'SELECT version,checksum FROM tengri.schema_version ORDER BY version',
     )
-    expect(versions.rowCount).toBe(1)
+    expect(versions.rowCount).toBe(7)
     expect(versions.rows[0]?.version).toBe(1)
     expect(versions.rows[0]?.checksum.equals(expectedChecksum)).toBe(true)
+    expect(versions.rows[1]?.version).toBe(2)
+    expect(versions.rows[1]?.checksum.equals(replayChecksum)).toBe(true)
+    expect(versions.rows[2]?.version).toBe(3)
+    expect(versions.rows[2]?.checksum.equals(replaySlotsChecksum)).toBe(true)
+    expect(versions.rows[3]?.version).toBe(4)
+    expect(versions.rows[3]?.checksum.equals(leadershipChecksum)).toBe(true)
+    expect(versions.rows[4]?.version).toBe(5)
+    expect(versions.rows[4]?.checksum.equals(capabilityChecksum)).toBe(true)
+    expect(versions.rows[5]?.version).toBe(6)
+    expect(versions.rows[5]?.checksum.equals(leaseChecksum)).toBe(true)
+    expect(versions.rows[6]?.version).toBe(7)
+    expect(versions.rows[6]?.checksum.equals(oauthChecksum)).toBe(true)
+    expect(
+      (await bffAdmin.query('SELECT operation_id FROM tengri.oauth_attempts WHERE state_hash=$1', [retainedOAuthState]))
+        .rows,
+    ).toEqual([{ operation_id: retainedOAuthOperation }])
+    await bffAdmin.query('DELETE FROM tengri.oauth_attempts WHERE state_hash=$1', [retainedOAuthState])
+    expect(
+      (
+        await bffAdmin.query<{ relname: string; relpersistence: string }>(
+          "SELECT relname,relpersistence FROM pg_class WHERE relnamespace='tengri'::regnamespace AND relkind='r' ORDER BY relname",
+        )
+      ).rows.filter((row) => row.relpersistence !== 'p'),
+    ).toEqual([{ relname: 'oauth_attempts', relpersistence: 'u' }])
+    const migratedLease = await bffAdmin.query(
+      "SELECT payload->>'lease_id' AS id FROM tengri.previews WHERE workspace_uid=$1",
+      [retainedWorkspace],
+    )
+    expect(z.uuid().safeParse(migratedLease.rows[0]?.id).success).toBe(true)
+    for (const table of ['tickets', 'previews']) {
+      const retained = await bffAdmin.query<{ capacity_slot: number; workspace_slot: number }>(
+        `SELECT capacity_slot,workspace_slot FROM tengri.${table} WHERE workspace_uid=$1`,
+        [retainedWorkspace],
+      )
+      expect(retained.rows).toEqual([{ capacity_slot: 1, workspace_slot: 1 }])
+      await bffAdmin.query(`DELETE FROM tengri.${table} WHERE workspace_uid=$1`, [retainedWorkspace])
+    }
+    expect(
+      (await bffAdmin.query('SELECT tengri.consume_nonce($1,tengri.now_ms()+5000) AS consumed', [retainedNonce]))
+        .rows[0]?.consumed,
+    ).toBe(false)
+    expect((await bffAdmin.query('SELECT count(*)::int AS slots FROM tengri.replay_nonces')).rows[0]?.slots).toBe(8192)
     expect(() =>
       execFileSync(binary, ['migrate-runtime'], {
         env: {
@@ -162,9 +247,24 @@ identityTest(
         stdio: 'pipe',
       }),
     ).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [Buffer.alloc(32)])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [Buffer.alloc(32)])
     expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
-    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1', [expectedChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=2', [replayChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=3', [replaySlotsChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=4', [leadershipChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=5', [capabilityChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=6', [leaseChecksum])
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=7', [Buffer.alloc(32)])
+    expect(() => execFileSync(binary, ['migrate-runtime'], { env: runtimeMigration, stdio: 'pipe' })).toThrow()
+    await bffAdmin.query('UPDATE tengri.schema_version SET checksum=$1 WHERE version=7', [oauthChecksum])
     const native = z.string().url().parse(process.env.OFZ_TEST_NATIVE_ENDPOINT)
     const nativeCall = async (endpoint: string, body: unknown) => {
       const response = await fetch(native + endpoint, {
@@ -466,12 +566,63 @@ identityTest(
       TENGRI_DATABASE_DSN: `postgres://tengri_bff@localhost:${port}/tengri_control`,
       TENGRI_DATABASE_PASSWORD_FILE: secret('bff-password', 'fixture-bff'),
       TENGRI_DATABASE_CA_FILE: process.env.OFZ_TEST_CA_FILE,
-      TENGRI_DATABASE_SCHEMA_FILE: path.join(root, 'services/tengri/migrations/0001_control.sql'),
       OFZ_GRPC_ENDPOINT: `localhost:${ofzPort}`,
       SPIFFE_ID: fixture.ownId,
       SPIFFE_ENDPOINT_SOCKET: fixture.endpoint,
       SPIFFE_WORKLOAD_API_PROTO_PATH: fixture.protoPath,
     })
+    expect((await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names).toBe('')
+    await admin.query("ALTER SYSTEM SET synchronous_standby_names='ANY 1 (oauth_fixture_missing)'")
+    try {
+      await admin.query('SELECT pg_reload_conf()')
+      for (let attempt = 0; ; attempt++) {
+        const setting = (await admin.query('SHOW synchronous_standby_names')).rows[0]?.synchronous_standby_names
+        if (setting === 'ANY 1 (oauth_fixture_missing)') break
+        if (attempt === 100) throw new Error('Fixture synchronous standby setting did not reload')
+        await new Promise((resolve) => setTimeout(resolve, 10))
+      }
+      const started = performance.now()
+      const response = await authRoute.POST(
+        new Request(`${base}/api/auth/login`, {
+          method: 'POST',
+          headers: { host: new URL(base).host, origin: base, 'sec-fetch-site': 'same-origin' },
+        }),
+      )
+      expect(response.status).toBe(200)
+      expect(performance.now() - started).toBeLessThan(1500)
+      const url = new URL(z.object({ url: z.string().url() }).parse(await response.json()).url)
+      const state = z.string().length(43).parse(url.searchParams.get('state'))
+      const binding = z
+        .string()
+        .length(43)
+        .parse(response.headers.getSetCookie()[0]?.match(/^__Host-tengri-oauth=([^;]+);/)?.[1])
+      const { controlDatabase, hashOpaque } = await import('./control-db')
+      const database = await controlDatabase()
+      const remaining = await bffAdmin.query<{ remaining: string }>(
+        'SELECT expires_at_ms-tengri.now_ms() AS remaining FROM tengri.oauth_attempts WHERE state_hash=$1',
+        [hashOpaque(state)],
+      )
+      expect(Number(remaining.rows[0]?.remaining)).toBeGreaterThan(0)
+      expect(Number(remaining.rows[0]?.remaining)).toBeLessThanOrEqual(300000)
+      const consume = () =>
+        database.query(
+          'DELETE FROM tengri.oauth_attempts WHERE state_hash=$1 AND binding_hash=$2 AND expires_at_ms>tengri.now_ms() RETURNING operation_id',
+          [hashOpaque(state), hashOpaque(binding)],
+        )
+      const consuming = performance.now()
+      expect((await Promise.all([consume(), consume()])).map((result) => result.rowCount).sort()).toEqual([0, 1])
+      expect(performance.now() - consuming).toBeLessThan(1500)
+      const replay = await authRoute.GET(
+        new Request(`${base}/api/auth/callback?state=${state}&code=discarded-attempt`, {
+          headers: { host: new URL(base).host, cookie: `__Host-tengri-oauth=${binding}` },
+        }),
+      )
+      expect(replay.status).toBe(401)
+      expect(replay.headers.getSetCookie().some((value) => value.startsWith('__Host-tengri-session='))).toBe(false)
+    } finally {
+      await admin.query('ALTER SYSTEM RESET synchronous_standby_names')
+      await admin.query('SELECT pg_reload_conf()')
+    }
     const freeCachePort = async () => {
       for (let attempt = 0; attempt < 20; attempt++) {
         const candidate = 10000 + Math.floor(Math.random() * 5000)
@@ -496,6 +647,9 @@ identityTest(
     const primaryHome = path.join(fixture.directory, 'keycloak-primary')
     const secondaryHome = path.join(fixture.directory, 'keycloak-secondary')
     cpSync(path.dirname(path.dirname(z.string().parse(process.env.KEYCLOAK_FIXTURE_BIN))), primaryHome, {
+      recursive: true,
+    })
+    cpSync(path.join(root, 'argocd/applications/keycloak/tengri/theme'), path.join(primaryHome, 'themes/tengri'), {
       recursive: true,
     })
     const startKeycloak = async (
@@ -678,13 +832,92 @@ identityTest(
     })
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
+    const webAuthnRequests: unknown[] = []
+    const registrations: unknown[] = []
+    await context.exposeFunction('recordRegistrationOptions', (options: unknown) => registrations.push(options))
+    await context.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      webAuthnRequests.push(options)
+    })
+    const observeWebAuthn = () => {
+      window.prompt = () => {
+        throw new Error('prompt() is not supported.')
+      }
+      const get = navigator.credentials.get.bind(navigator.credentials)
+      const createCredential = navigator.credentials.create.bind(navigator.credentials)
+      navigator.credentials.create = async (options) => {
+        if (options?.publicKey) {
+          const record: unknown = Reflect.get(window, 'recordRegistrationOptions')
+          if (typeof record === 'function')
+            await record({
+              hints: Reflect.get(options.publicKey, 'hints'),
+              authenticatorSelection: options.publicKey.authenticatorSelection,
+              excludedCredentials: options.publicKey.excludeCredentials?.length ?? 0,
+            })
+        }
+        return createCredential(options)
+      }
+      navigator.credentials.get = async (options) => {
+        if (options?.publicKey) {
+          const record: unknown = Reflect.get(window, 'recordWebAuthnOptions')
+          if (typeof record !== 'function') throw new Error('Fixture WebAuthn observer is unavailable')
+          await record({
+            hints: Reflect.get(options.publicKey, 'hints'),
+            userVerification: options.publicKey.userVerification,
+          })
+        }
+        return get(options)
+      }
+    }
+    await context.addInitScript(observeWebAuthn)
     const page = await context.newPage()
+    const themeScreenshots = process.env.TENGRI_IDENTITY_SCREENSHOTS
+    if (themeScreenshots) mkdirSync(themeScreenshots, { recursive: true })
+    const checkTheme = async (screen: string) => {
+      await browserExpect(page).toHaveTitle('Sign in to Tengri')
+      await browserExpect(page.locator('.tengri-brand')).toHaveText('Tengri')
+      await browserExpect(page.locator('.tengri-mark img')).toBeVisible()
+      await browserExpect(page.locator('link[rel="icon"]')).toHaveAttribute('href', /\/img\/fruit-pear\.svg$/)
+      for (const viewport of [
+        { width: 1280, height: 900 },
+        { width: 320, height: 740 },
+      ]) {
+        await page.setViewportSize(viewport)
+        await page.evaluate(() => document.fonts.ready)
+        await page
+          .locator('.tengri-window')
+          .evaluate((element) => Promise.all(element.getAnimations().map((animation) => animation.finished)))
+        expect(await page.evaluate(() => document.fonts.check('14px Geist'))).toBe(true)
+        expect(await page.locator('body').evaluate((element) => getComputedStyle(element).fontFamily)).toContain(
+          'Geist',
+        )
+        expect(
+          await page
+            .locator('.tengri-mark img')
+            .evaluate((element) => element instanceof HTMLImageElement && element.naturalWidth > 0),
+        ).toBe(true)
+        expect(await page.locator('body').evaluate((element) => element.scrollWidth <= window.innerWidth)).toBe(true)
+        await browserExpect(page.locator('.tengri-window')).toBeInViewport()
+        const accessibility = await new AxeBuilder({ page }).withTags(['wcag2a', 'wcag2aa', 'wcag21aa']).analyze()
+        expect(accessibility.violations).toEqual([])
+        if (themeScreenshots)
+          await page.screenshot({
+            path: path.join(themeScreenshots, `${screen}-${viewport.width}.png`),
+            fullPage: true,
+          })
+      }
+      await page.setViewportSize({ width: 1280, height: 900 })
+      await page.emulateMedia({ reducedMotion: 'reduce' })
+      expect(await page.locator('.tengri-window').evaluate((element) => getComputedStyle(element).animationName)).toBe(
+        'none',
+      )
+      await page.emulateMedia({ reducedMotion: 'no-preference' })
+    }
     const cdp = await context.newCDPSession(page)
     await cdp.send('WebAuthn.enable')
-    await cdp.send('WebAuthn.addVirtualAuthenticator', {
+    const { authenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
       options: {
         protocol: 'ctap2',
-        transport: 'internal',
+        transport: 'usb',
         hasResidentKey: true,
         hasUserVerification: true,
         isUserVerified: true,
@@ -694,7 +927,7 @@ identityTest(
     await page.goto(base)
     await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
-    await browserExpect(page.getByRole('heading', { name: /Passkey Registration/ }))
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true }))
       .toBeVisible({ timeout: 20_000 })
       .catch(async () => {
         throw new Error(
@@ -708,10 +941,21 @@ identityTest(
               .join('\n'),
         )
       })
-    page.on('dialog', (dialog) => void dialog.accept('Isolated virtual passkey'))
     await page.waitForLoadState('domcontentloaded')
-    await page.getByRole('button', { name: /Register/ }).click()
-    await page.waitForURL((url) => url.origin === base, { timeout: 20_000 })
+    await checkTheme('setup')
+    await page.keyboard.press('Tab')
+    await page.locator('#registerWebAuthn').focus()
+    expect(await page.locator('#registerWebAuthn').evaluate((element) => getComputedStyle(element).outlineStyle)).toBe(
+      'solid',
+    )
+    await page.keyboard.press('Enter')
+    await page
+      .waitForURL((url) => url.origin === base, { timeout: 20_000 })
+      .catch(async (cause: unknown) => {
+        throw new Error('Isolated passkey enrollment: ' + (await page.locator('body').innerText()).slice(0, 1200), {
+          cause,
+        })
+      })
     if (new URL(page.url()).pathname !== '/') {
       const denied = await control.query(
         "SELECT receipt->>'reason' AS reason FROM ofz.audit WHERE (receipt->>'allowed')::boolean=false ORDER BY sequence DESC LIMIT 3",
@@ -727,6 +971,7 @@ identityTest(
     }
     await browserExpect(page.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     await browserExpect(page.getByText('GitHub #1', { exact: true }).first()).toBeVisible()
+    await cdp.send('WebAuthn.setUserVerified', { authenticatorId, isUserVerified: false })
     const sessions = await control.query(
       'SELECT human_id,github_id,mfa_at_ms,expires_at_ms,idle_deadline_ms,token_hash FROM ofz.sessions',
     )
@@ -845,7 +1090,29 @@ identityTest(
     await adminCall(`/clients/${client.id}`, 'PUT', productionClient)
     githubSecret = 'fixture-github-secret-rotated'
     const rotatedBffSecret = 'fixture-bff-secret-rotated-not-production-0000000'
+    const webAuthnPolicy = Object.fromEntries(
+      Object.entries(z.record(z.string(), z.unknown()).parse(await (await adminCall('')).json())).filter(
+        ([key]) => key.startsWith('webAuthnPolicy') && !key.startsWith('webAuthnPolicyPasswordless'),
+      ),
+    )
+    await adminCall('', 'PUT', {
+      ...webAuthnPolicy,
+      loginTheme: 'keycloak',
+      sslRequired: 'none',
+      webAuthnPolicyUserVerificationRequirement: 'required',
+    })
+    expect(
+      z.object({ webAuthnPolicyUserVerificationRequirement: z.string() }).parse(await (await adminCall('')).json())
+        .webAuthnPolicyUserVerificationRequirement,
+    ).toBe('required')
+    expect(() => bootstrap(githubSecret, rotatedBffSecret)).toThrow()
+    await adminCall('', 'PUT', { sslRequired: 'all' })
     bootstrap(githubSecret, rotatedBffSecret)
+    expect(await (await adminCall('')).json()).toMatchObject({
+      ...webAuthnPolicy,
+      loginTheme: 'tengri',
+      webAuthnPolicyUserVerificationRequirement: 'discouraged',
+    })
     expect(z.array(z.object({ id: z.string() })).parse(await (await adminCall('/users')).json())).toEqual(usersBefore)
     expect(await (await adminCall(`/users/${firstUser.id}/credentials`)).json()).toEqual(credentialsBefore)
     const currentProvider = z
@@ -1157,12 +1424,15 @@ identityTest(
     await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
     await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
     await page.waitForLoadState('domcontentloaded')
+    await checkTheme('verify')
+    await browserExpect(page.getByRole('heading', { name: 'Verify your passkey', exact: true })).toBeVisible()
+    await browserExpect(page.getByRole('link', { name: 'Use another account', exact: true })).toBeVisible()
     const subjectBeforeFailover = (
       await control.query('SELECT identity_subject FROM ofz.sessions WHERE id=$1', [inspected.session.id])
     ).rows[0]?.identity_subject
     const credentialIdentities = async () =>
       z
-        .array(z.object({ id: z.string(), type: z.string() }))
+        .array(z.object({ id: z.string(), type: z.string(), userLabel: z.string() }))
         .parse(await (await adminCall(`/users/${subjectBeforeFailover}/credentials`)).json())
     const passkeysBeforeFailover = await credentialIdentities()
     const keycloakFailoverStarted = Date.now()
@@ -1192,6 +1462,11 @@ identityTest(
 
     // A second numeric GitHub identity has the same verified email upstream.
     const secondContext = await browser.newContext({ ignoreHTTPSErrors: true })
+    const platformWebAuthnRequests: unknown[] = []
+    await secondContext.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
+      platformWebAuthnRequests.push(options)
+    })
+    await secondContext.addInitScript(observeWebAuthn)
     const secondPage = await secondContext.newPage()
     const secondCdp = await secondContext.newCDPSession(secondPage)
     await secondCdp.send('WebAuthn.enable')
@@ -1205,14 +1480,13 @@ identityTest(
         automaticPresenceSimulation: true,
       },
     })
-    secondPage.on('dialog', (dialog) => void dialog.accept('Second isolated passkey'))
     const enroll = async (id: string) => {
       await secondPage.goto(base)
       await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
       await secondPage.getByRole('link', { name: `GitHub fixture ${id}`, exact: true }).click()
-      await browserExpect(secondPage.getByRole('heading', { name: /Passkey Registration/ })).toBeVisible()
+      await browserExpect(secondPage.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
       await secondPage.waitForLoadState('domcontentloaded')
-      await secondPage.getByRole('button', { name: /Register/ }).click()
+      await secondPage.getByRole('button', { name: 'Create passkey', exact: true }).click()
       await secondPage
         .waitForURL((url) => url.origin === base && (id === '999' || url.pathname === '/'), {
           timeout: 10_000,
@@ -1248,6 +1522,18 @@ identityTest(
     )
     expect(distinct.rowCount).toBe(2)
     expect(new Set(distinct.rows.map((row) => row.identity_subject)).size).toBe(2)
+    await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
+    await secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+    await secondPage.getByRole('link', { name: 'GitHub fixture 2', exact: true }).click()
+    await browserExpect(secondPage.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await secondPage.waitForLoadState('domcontentloaded')
+    await secondPage.locator('#authenticateWebAuthnButton').click()
+    await secondPage.waitForURL(base + '/')
+    await browserExpect(secondPage.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
+    expect(platformWebAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of platformWebAuthnRequests)
+      expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     // The nonmember is a separate upstream identity, with no existing Keycloak SSO cookie.
@@ -1318,7 +1604,7 @@ identityTest(
         ])
       ).rows[0]?.reason,
     ).toBe('verified passkey assurance required')
-    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('4')
+    expect((await control.query('SELECT count(*) FROM ofz.sessions')).rows[0]?.count).toBe('5')
     const mappers = z
       .array(z.object({ id: z.string(), name: z.string() }))
       .parse(await (await adminCall(`/clients/${client.id}/protocol-mappers/models`)).json())
@@ -1391,9 +1677,96 @@ identityTest(
           "SELECT count(*) FROM ofz.audit WHERE (receipt->>'action')::integer=32 AND (receipt->>'allowed')::boolean",
         )
       ).rows[0]?.count,
-    ).toBe('4')
+    ).toBe('5')
+    expect(webAuthnRequests.length).toBeGreaterThan(0)
+    for (const request of webAuthnRequests)
+      expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
+    const credentialsBeforeAddition = await credentialIdentities()
+    await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    expect(await credentialIdentities()).toEqual(credentialsBeforeAddition)
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false })
+    const { authenticatorId: platformAuthenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport: 'internal',
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    })
+    await page.getByRole('button', { name: 'Create passkey', exact: true }).click()
+    await page.waitForURL(base + '/')
+    expect(await credentialIdentities()).toHaveLength(credentialsBeforeAddition.length + 1)
+    expect(await credentialIdentities()).toEqual(expect.arrayContaining(credentialsBeforeAddition))
+    const labels = (await credentialIdentities()).map((credential) => credential.userLabel)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(registrations.at(-1)).toEqual({
+      hints: ['client-device', 'hybrid', 'security-key'],
+      authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'discouraged' },
+      excludedCredentials: credentialsBeforeAddition.length,
+    })
+    await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await browserExpect(page.getByText('Available Passkeys', { exact: true })).toHaveCount(0)
+    await browserExpect(page.getByText(/Passkey \(/)).toHaveCount(0)
+    await browserExpect(page.getByText('Internal', { exact: true })).toHaveCount(0)
+    await browserExpect(page.locator('#authn_select input[name="authn_use_chk"]')).toHaveCount(
+      credentialsBeforeAddition.length + 1,
+    )
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-two-passkeys.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: false,
+    })
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: true,
+    })
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
+    await page.locator('#authenticateWebAuthnButton').click()
+    await page.waitForURL(base + '/')
+    const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+    const phoneIdentity = await getTengriIdentity(
+      new Headers({ cookie: `__Host-tengri-session=${phoneSession?.value}` }),
+    )
+    expect(phoneIdentity?.session.githubId).toBe('1')
+    expect(phoneIdentity?.session.humanId).toBe(humans[0]?.humanId)
+    const credentialsBeforeCancellation = await credentialIdentities()
+    await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.waitForURL(base + '/')
+    expect(await credentialIdentities()).toEqual(credentialsBeforeCancellation)
+    console.log(
+      'PASS: existing USB credential authorizes a second platform passkey; fresh mobile-sized login succeeds with the USB authenticator removed',
+    )
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
+    )
+    await page.goto(issuer + '/protocol/openid-connect/auth?client_id=invalid-theme-fixture&response_type=code')
+    await browserExpect(page.getByRole('heading', { name: 'Unable to continue', exact: true })).toBeVisible()
+    await browserExpect(page.locator('#kc-error-message')).toContainText('Client not found')
+    await checkTheme('error')
+    console.log(
+      'PASS: branded passkey setup, verification and error pages fit desktop and 320px, load Geist, respect reduced motion and pass WCAG A/AA browser checks',
     )
   },
   300_000,

@@ -247,7 +247,7 @@
               bun = exact.bun;
             };
             "proompteng-image" = import ./nix/images/proompteng.nix {
-              inherit pkgs lib nodejs;
+              inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
             };

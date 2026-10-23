@@ -5,7 +5,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from runtime import prepare, read_lock
 
@@ -44,6 +44,46 @@ class ModelCacheTest(unittest.TestCase):
         second_fetch = Mock(side_effect=AssertionError("Cache hit must not fetch"))
         self.assertEqual(self.prepare(second_fetch), model)
         second_fetch.assert_not_called()
+
+    def test_retires_other_checkpoint_directories_before_fetch_and_preserves_runtime_cache(
+        self,
+    ):
+        retired = self.cache / ("b" * 40)
+        retired.mkdir()
+        (retired / "weights.safetensors").write_bytes(b"obsolete checkpoint")
+        runtime_cache = self.cache / "cache"
+        runtime_cache.mkdir()
+        (runtime_cache / "compiled-kernel").write_bytes(b"keep runtime cache")
+
+        def fetch(url, timeout):
+            self.assertFalse(retired.exists())
+            return io.BytesIO(self.content)
+
+        model = self.prepare(fetch)
+        self.assertEqual((model / "config.json").read_bytes(), self.content)
+        self.assertEqual(
+            (runtime_cache / "compiled-kernel").read_bytes(), b"keep runtime cache"
+        )
+
+    def test_checkpoint_symlinks_cannot_delete_outside_the_owned_cache(self):
+        outside = self.cache / "outside"
+        outside.mkdir()
+        (outside / "keep").write_bytes(b"keep")
+        (self.cache / ("b" * 40)).symlink_to(outside, target_is_directory=True)
+        fetch = Mock()
+        with self.assertRaisesRegex(ValueError, "symlink"):
+            self.prepare(fetch)
+        fetch.assert_not_called()
+        self.assertEqual((outside / "keep").read_bytes(), b"keep")
+
+    def test_capacity_failure_precedes_any_download(self):
+        fetch = Mock()
+        with patch(
+            "runtime.shutil.disk_usage", return_value=type("Usage", (), {"free": 0})()
+        ):
+            with self.assertRaisesRegex(ValueError, "Insufficient model cache"):
+                self.prepare(fetch)
+        fetch.assert_not_called()
 
     def test_same_size_corruption_prevents_reuse_without_overwriting_evidence(self):
         model = self.prepare(Mock(return_value=io.BytesIO(self.content)))

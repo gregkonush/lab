@@ -1,10 +1,12 @@
+import { strictParseOptions } from '../../schemas'
+import { withProviderSessions } from '../../testing/market-calendar-fixture'
 import { describe, expect, test } from 'bun:test'
 
-import { Effect, Result } from 'effect'
+import { Effect, Result, Schema } from 'effect'
 
-import type { MarketCalendarObservation } from '../../broker/alpaca'
+import type { MarketCalendarObservation } from '../../broker/alpaca/model'
 import { makeCycleExecutionPolicy } from '../construction'
-import { CycleState, decodeAutonomousCycle } from '../model'
+import { CycleState, AutonomousCycleSchema } from '../model'
 import {
   intradayEntryRearmDelayMs,
   makeIntradayCycleDraft,
@@ -24,8 +26,8 @@ if (policy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3') {
   throw new Error('calendar decision fixture requires the full-session execution policy')
 }
 
-const observation: MarketCalendarObservation = {
-  schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+const observation: MarketCalendarObservation = withProviderSessions({
+  schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
   source: 'alpaca-v2-calendar',
   requestedRange: { start: '2026-11-27', end: '2026-11-30' },
   timeZone: 'UTC',
@@ -42,12 +44,12 @@ const observation: MarketCalendarObservation = {
     },
   ],
   normalizedResponseHash: '1'.repeat(64),
-}
+})
 
 describe('intraday calendar decisions', () => {
   test.each([
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_000, eligible: false },
-    { warmupMinutes: 0, durationMs: 35 * 60_000 + 2_001, eligible: true },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_000, eligible: false },
+    { warmupMinutes: 0, durationMs: 6 * 60_000 + 2_001, eligible: true },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_000, eligible: false },
     { warmupMinutes: 45, durationMs: 50 * 60_000 + 2_001, eligible: true },
   ])('requires a nonempty completed-feature window: %j', ({ warmupMinutes, durationMs, eligible }) => {
@@ -72,7 +74,7 @@ describe('intraday calendar decisions', () => {
   test('derives a distinct cycle for every session under the same standing mandate', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
-      strategyName: 'intraday-momentum' as const,
+      strategyName: 'jev' as const,
       strategyProtocolHash: '3'.repeat(64),
       accountId: 'sandbox-account',
       executionPolicy: policy,
@@ -97,7 +99,7 @@ describe('intraday calendar decisions', () => {
   test('rearms successive zero-fill attempts until the session cutoff with distinct immutable cycles', () => {
     const candidate = {
       cycleBindingId: '2'.repeat(64),
-      strategyName: 'intraday-momentum' as const,
+      strategyName: 'jev' as const,
       strategyProtocolHash: '3'.repeat(64),
       accountId: 'sandbox-account',
       executionPolicy: policy,
@@ -108,7 +110,10 @@ describe('intraday calendar decisions', () => {
     const secondDraft = Result.getOrThrow(makeIntradayCycleDraft(candidate, observation, session, 2))
     const terminalAt = '2026-11-30T15:30:00.000Z'
     const first = Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...firstDraft,
         state: CycleState.Completed,
         bindings: { snapshotId: '4'.repeat(64), decisionHash: '5'.repeat(64) },
@@ -127,7 +132,10 @@ describe('intraday calendar decisions', () => {
     expect(nextIntradayEntryAttemptOrdinal(first, atRearm, first.window.submissionCutoffAt)).toBe(2)
 
     const second = Effect.runSync(
-      decodeAutonomousCycle({
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
         ...secondDraft,
         state: CycleState.Completed,
         bindings: { snapshotId: '6'.repeat(64), decisionHash: '7'.repeat(64) },

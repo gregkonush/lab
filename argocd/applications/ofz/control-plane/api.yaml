@@ -62,6 +62,16 @@ spec:
             - name: grpc
               containerPort: 9443
           env:
+            - name: SENTRY_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: ofz-observability
+                  key: SENTRY_DSN
+            - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
+              valueFrom:
+                configMapKeyRef:
+                  name: ofz-observability
+                  key: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
             - name: RUST_LOG
               value: ofz=info
             - name: OFZ_DATABASE_DSN

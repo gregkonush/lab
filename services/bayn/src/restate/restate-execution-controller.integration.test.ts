@@ -156,7 +156,7 @@ describeRestate('Real Restate execution deployment activation', () => {
           expect(yield* Effect.promise(() => wrongKey.text())).toContain('does not match this immutable deployment')
           expect(brokerActivations).toBe(0)
           expect(controllerActivations).toBe(0)
-          for (const method of ['activate', 'tick', 'deactivate', 'status']) {
+          for (const method of ['activate', 'tick', 'deactivate', 'prepareActivation', 'status']) {
             const denied = yield* invoke(config.controllerKey, method, `Bearer ${token}`)
             expect(denied.status).toBe(400)
             expect(yield* Effect.promise(() => denied.text())).toContain('the invoked service is not public')
@@ -272,6 +272,155 @@ describeRestate('Real Restate execution deployment activation', () => {
           ).toEqual(output)
           expect(brokerActivations).toBe(1)
           expect(controllerActivations).toBe(1)
+
+          let previousSource = config.sourceRevision
+          let previousNextSequence = state.nextSequence
+          const allReplacementAdvances: Array<Array<{ sequence: number }>> = []
+          const allProjections: Array<Array<{ active: boolean; epoch: number; sourceRevision: string }>> = []
+          let delayedActivation: { invocationId: string; release: () => void } | undefined
+          for (const [expectedEpoch, replacementSourceRevision] of [
+            [2, 'f'.repeat(40)],
+            [3, 'e'.repeat(40)],
+          ] as const) {
+            const replacementConfig = {
+              ...config,
+              sourceRevision: replacementSourceRevision,
+              planHash: '8'.repeat(64),
+            }
+            const replacementAdvances: Array<{ epoch: number; sequence: number; sourceRevision: string }> = []
+            allReplacementAdvances.push(replacementAdvances)
+            const projected: Array<{ active: boolean; epoch: number; sourceRevision: string }> = []
+            allProjections.push(projected)
+            const replacementController = makeBaynExecutionController(replacementConfig, {
+              advance: async (command) => {
+                replacementAdvances.push(command)
+                return {
+                  completedAt: command.issuedAt,
+                  observation: { result: 'SUCCESS', observedAt: command.issuedAt, outcome: 'WINDOW_CLOSED' },
+                  outcome: { _tag: ExecutionControllerOutcome.Waiting, receiptHash: 'f'.repeat(64), nextDelayMs: 500 },
+                }
+              },
+              projectState: async (_key, next) => {
+                projected.push(next)
+              },
+              log: () => Promise.resolve(),
+            })
+            const replacementObservations = makeBaynBrokerObservations(
+              { ...replacementConfig, pollIntervalMs: 1_000 },
+              {
+                activate: () => Promise.resolve(),
+                poll: async () => {
+                  const now = Clock.Clock.defaultValue().currentTimeMillisUnsafe()
+                  return {
+                    poll: { _tag: 'Published', snapshotHash: 'f'.repeat(64), nextPollNotBeforeMs: 0 },
+                    startedAtMs: now,
+                    completedAtMs: now,
+                  }
+                },
+              },
+            )
+            yield* register(
+              createServer(
+                restate.createEndpointHandler({ services: [replacementController, replacementObservations] }),
+              ),
+            )
+            const rotation = restateExecutionActivationRequest(
+              { ...replacementConfig, ...(yield* loadAttempt(randomUUID())) },
+              token,
+            )
+            const rotationOptions = { timeoutMs: 5_000, headers: rotation.headers }
+            const rotationReceipt = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
+            const rotatedOutput = yield* awaitRestateInvocation(ingress, rotationReceipt.invocationId, {
+              maximumAttempts: 200,
+              pollIntervalMs: 100,
+              requestTimeoutMs: 5_000,
+            })
+            const rotated = Result.getOrThrow(decodeExecutionControllerState(rotatedOutput))
+            expect(rotated).toMatchObject({
+              active: true,
+              epoch: expectedEpoch,
+              planHash: replacementConfig.planHash,
+              sourceRevision: replacementConfig.sourceRevision,
+            })
+            expect(rotated.initialSequence).toBeGreaterThanOrEqual(previousNextSequence)
+            expect(rotated.lastCompletion?.sequence).toBeGreaterThan(rotated.initialSequence)
+            expect(projected).toEqual([
+              expect.objectContaining({ active: false, epoch: expectedEpoch, sourceRevision: previousSource }),
+              expect.objectContaining({
+                active: true,
+                epoch: expectedEpoch,
+                sourceRevision: replacementConfig.sourceRevision,
+              }),
+            ])
+            expect(replacementAdvances.length).toBeGreaterThanOrEqual(2)
+            expect(
+              replacementAdvances.every(
+                (command) =>
+                  command.epoch === expectedEpoch && command.sourceRevision === replacementConfig.sourceRevision,
+              ),
+            ).toBe(true)
+            const replayedRotation = yield* sendRestateInvocation(url, rotation.body, rotationOptions)
+            expect(replayedRotation.invocationId).toBe(rotationReceipt.invocationId)
+            expect(projected).toHaveLength(2)
+            previousSource = replacementConfig.sourceRevision
+            previousNextSequence = rotated.nextSequence
+            if (expectedEpoch === 2) {
+              let release = () => {}
+              let received = () => {}
+              const gate = new Promise<void>((resolve) => {
+                release = resolve
+              })
+              const requestSeen = new Promise<void>((resolve) => {
+                received = resolve
+              })
+              const endpoint = restate.createEndpointHandler({
+                services: [replacementController, replacementObservations],
+              })
+              yield* register(
+                createServer((request, response) => {
+                  if (request.url.endsWith('/activateDeployment')) {
+                    received()
+                    void gate
+                      .then(() => endpoint(request, response))
+                      .catch((cause: unknown) => {
+                        response.destroy(cause instanceof Error ? cause : new Error('Delayed fixture handler failed'))
+                      })
+                  } else endpoint(request, response)
+                }),
+              )
+              yield* Effect.addFinalizer(() => Effect.sync(release))
+              const stale = restateExecutionActivationRequest(
+                { ...replacementConfig, ...(yield* loadAttempt(randomUUID())) },
+                token,
+              )
+              const receipt = yield* sendRestateInvocation(url, stale.body, {
+                timeoutMs: 5_000,
+                headers: stale.headers,
+              })
+              yield* Effect.promise(() => requestSeen).pipe(Effect.timeout('5 seconds'))
+              delayedActivation = { invocationId: receipt.invocationId, release }
+            } else {
+              if (delayedActivation === undefined) throw new Error('Missing pinned predecessor coordinator')
+              delayedActivation.release()
+              const staleFailure = yield* Effect.flip(
+                awaitRestateInvocation(ingress, delayedActivation.invocationId, {
+                  maximumAttempts: 200,
+                  pollIntervalMs: 100,
+                  requestTimeoutMs: 5_000,
+                }),
+              )
+              expect(staleFailure).toMatchObject({
+                operation: 'await',
+                cause: { message: 'Restate invocation output returned HTTP 400' },
+              })
+              expect(allProjections.map((changes) => changes.length)).toEqual([2, 2])
+            }
+          }
+          const allSequences = [
+            ...advanced,
+            ...allReplacementAdvances.flatMap((commands) => commands.map((command) => command.sequence)),
+          ]
+          expect(new Set(allSequences).size).toBe(allSequences.length)
         }),
       ),
     )

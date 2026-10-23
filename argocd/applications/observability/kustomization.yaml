@@ -34,7 +34,7 @@ resources:
   - torghut-execution-recovery-dashboard-configmap.yaml
   - arc-runner-capacity-dashboard-configmap.yaml
   - bayn-cycle-operations-dashboard-configmap.yaml
-  - bayn-model-dashboard-configmap.yaml
+  - bayn-cache-performance-dashboard-configmap.yaml
   - cluster-metrics-alloy-rbac.yaml
   - cluster-metrics-alloy-deployment.yaml
   - mimir-config-check.yaml

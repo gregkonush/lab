@@ -1,15 +1,21 @@
+import { jevBatchQuestionSetHash } from './batch'
 import { exchangeSessions } from '../market-hours'
-import { jevBenchmarkSymbol } from './markets'
+import { jevBenchmarkSymbol, jevMarketForSymbol } from './markets'
 import { isContinuousMarket } from '../market-hours'
 import { rollingValues } from '../market-data/features/native-feature'
+import { missingMinuteBars } from '../market-data/streaming/inputs'
 import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
-import { Result } from 'effect'
+import { BigDecimal, Result } from 'effect'
 
-import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
-import { usesWindowTradeEvidence } from '../market-data/intraday/model'
+import {
+  IntradayBenchmarkEvidencePolicy,
+  usesCompletedBarBenchmark,
+  usesWindowTradeEvidence,
+} from '../market-data/intraday/model'
 import { intradayAgeNanos } from '../market-data/intraday/time'
 import { canonicalHashV1Result } from '../hash'
 import { JevContractError, jevModel, prepareJevRequest, type JevRequest } from './contract'
@@ -24,17 +30,24 @@ import { makeJevEvaluationRequest, type JevEvaluationRequest } from './evidence'
 import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
+import { jevEntryEconomics } from './entry-economics'
+import { jevEntrySetupQuestion, jevTradePlanQuestion } from './trade-plan-choices'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
-export const jevEntryQuoteExclusion = (
-  quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>,
-  maximumSpreadBps: number,
-) =>
+const signalPriceMicros = (value: number, field: string) =>
+  Result.gen(function* () {
+    yield* numberToMicros(value, field)
+    const rounded = BigDecimal.round(BigDecimal.fromNumberUnsafe(value), { scale: 6, mode: 'half-ceil' })
+    return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), field, 1)
+  })
+
+export const jevEntryQuoteExclusion = (quote: NonNullable<StrategyMarketSnapshot['latestQuotes'][string]>) =>
   Result.gen(function* () {
     const bid = yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN')
     const ask = yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP')
-    if ((ask - bid) * 20_000n > BigInt(maximumSpreadBps) * (ask + bid)) return JevEntryExclusion.Spread
+    if ((ask - bid) * 20_000n > BigInt(jevMarketForSymbol(quote.symbol).maximumEntrySpreadBps) * (ask + bid))
+      return JevEntryExclusion.Spread
     if (quote.bidSize <= 0 || quote.askSize <= 0) return JevEntryExclusion.DisplayedSize
     return null
   })
@@ -51,6 +64,7 @@ const pricingAgeMs = (snapshot: StrategyMarketSnapshot, eventAt: string) =>
 export const jevStalePricingSymbols = (snapshot: VerifiedStrategyMarketSnapshot) =>
   snapshot.manifest.symbols.filter((symbol) => {
     if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) return false
+    if (usesCompletedBarBenchmark(snapshot.manifest, symbol)) return false
     const quote = snapshot.latestQuotes[symbol]
     const trade = latestSignalTrade(snapshot, symbol)
     const pricingEvidence = usesWindowTradeEvidence(snapshot.manifest, symbol) ? [quote] : [quote, trade]
@@ -59,27 +73,15 @@ export const jevStalePricingSymbols = (snapshot: VerifiedStrategyMarketSnapshot)
     )
   })
 
-const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
+const jevBarSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   Result.gen(function* () {
     const manifest = snapshot.manifest
-    if (
-      !manifest.symbols.includes(symbol) ||
-      manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true
-    )
-      return yield* unavailable('Jev signal subject is excluded or outside the verified snapshot')
     const rolling = manifest.streaming.features.find((entry) => entry.value.material.symbol === symbol)
-    const quote = snapshot.latestQuotes[symbol]
-    const trade = latestSignalTrade(snapshot, symbol)
     const bars = snapshot.bars
       .filter((bar) => bar.symbol === symbol)
       .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
-    if (rolling === undefined || quote === undefined || trade === undefined || bars.length !== 30)
-      return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
-    const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
-    const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
-    const pricingAges = usesWindowTradeEvidence(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
-    if (tradeAgeMs < 0 || pricingAges.some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
-      return yield* unavailable('Jev signal pricing evidence is stale or future dated')
+    if (!manifest.symbols.includes(symbol) || rolling === undefined || bars.length === 0)
+      return yield* unavailable('Jev benchmark requires verified rolling features and completed bars')
     const technical = manifest.streaming.technical?.features.find((entry) => entry.value.material.symbol === symbol)
     const recordedTechnicalValues = isCryptoMarketFeature(rolling.value)
       ? rolling.value.material.technical
@@ -96,37 +98,47 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
               { status: scalar.status, value: scalar.value === null ? null : Number(scalar.value) / 1_000_000 },
             ]),
           )
-    const closes = bars.map((bar) => bar.close)
     const first = bars[0]
     const last = bars.at(-1)
     if (first === undefined || last === undefined) return yield* unavailable('Jev rolling signal window is empty')
+    if (Date.parse(last.eventAt) !== Date.parse(manifest.rangeEndAt) - 60_000)
+      return yield* unavailable('Jev signals require the latest completed minute')
     const returnsBps = Object.fromEntries(
       [1, 5, 15, 30].map((minutes) => {
-        const reference = bars.at(-minutes)
+        const referenceAt = Date.parse(manifest.rangeEndAt) - minutes * 60_000
+        const reference = bars.find((bar) => Date.parse(bar.eventAt) === referenceAt)
         return [String(minutes), reference === undefined ? null : (last.close / reference.open - 1) * 10_000]
       }),
     )
-    const earlyVolume = bars.slice(0, 15).reduce((total, bar) => total + bar.volume, 0)
-    const recentVolume = bars.slice(15).reduce((total, bar) => total + bar.volume, 0)
-    const minuteReturns = closes.slice(1).map((close, index) => Math.log(close / (closes[index] ?? close)))
+    const midpoint = Date.parse(manifest.rangeEndAt) - 15 * 60_000
+    const earlyBars = bars.filter((bar) => Date.parse(bar.eventAt) < midpoint)
+    const recentBars = bars.filter((bar) => Date.parse(bar.eventAt) >= midpoint)
+    const earlyVolume = earlyBars.reduce((total, bar) => total + bar.volume, 0)
+    const recentVolume = recentBars.reduce((total, bar) => total + bar.volume, 0)
+    const minuteReturns = bars.flatMap((bar, index) => {
+      const previous = bars[index - 1]
+      return previous !== undefined && Date.parse(bar.eventAt) - Date.parse(previous.eventAt) === 60_000
+        ? [Math.log(bar.close / previous.close)]
+        : []
+    })
     const mean = minuteReturns.reduce((sum, value) => sum + value, 0) / minuteReturns.length
     const volatilityBps =
-      Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
+      minuteReturns.length === 0
+        ? null
+        : Math.sqrt(minuteReturns.reduce((sum, value) => sum + (value - mean) ** 2, 0) / minuteReturns.length) * 10_000
     const values = rollingValues(rolling.value)
-    if (values === null) return yield* unavailable('Rolling values are not ready')
     return {
       prices: {
-        reference: yield* priceNumberToMicros(values.reference),
-        high: yield* priceNumberToMicros(values.high),
-        low: yield* priceNumberToMicros(values.low),
-        bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
-        ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
-        trade: yield* priceNumberToMicros(trade.price),
+        reference: yield* signalPriceMicros(values.reference, 'signal reference'),
+        high: yield* signalPriceMicros(values.high, 'signal high'),
+        low: yield* signalPriceMicros(values.low, 'signal low'),
       },
+      close: yield* signalPriceMicros(last.close, 'signal close'),
       state: {
         symbol,
         bars1m: bars.map(({ open, high, low, close, volume, vwap, tradeCount }, index) => ({
-          minuteBeforeWindowEnd: 30 - index,
+          minuteBeforeWindowEnd:
+            (Date.parse(manifest.rangeEndAt) - Date.parse(bars[index]?.eventAt ?? first.eventAt)) / 60_000,
           open,
           high,
           low,
@@ -135,6 +147,52 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
           vwap,
           tradeCount,
         })),
+        priceWindow: {
+          contextStartAt: manifest.rangeStartAt,
+          contextEndAt: manifest.rangeEndAt,
+          referenceAt: first.eventAt,
+          observedBarCount: bars.length,
+          expectedBarCount: (Date.parse(manifest.rangeEndAt) - Date.parse(manifest.rangeStartAt)) / 60_000,
+          missingMinuteAt: missingMinuteBars(bars, manifest.rangeStartAt, manifest.rangeEndAt),
+          referencePrice: values.reference,
+          rangeHigh: values.high,
+          rangeLow: values.low,
+          totalVolume: values.volume,
+        },
+        returnsBps,
+        minuteLogReturnVolatilityBps: volatilityBps,
+        recent15mVolumeToPrior15m:
+          earlyBars.length !== 15 || recentBars.length !== 15 || earlyVolume === 0 ? null : recentVolume / earlyVolume,
+        technicalIndicators: technicalValues,
+        technicalAvailability: recordedTechnicalValues === undefined ? 'UNAVAILABLE' : 'RECORDED',
+      },
+    }
+  })
+
+export const jevSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
+  Result.gen(function* () {
+    const manifest = snapshot.manifest
+    if (manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true)
+      return yield* unavailable('Jev signal subject is excluded or outside the verified snapshot')
+    const base = yield* jevBarSignalFor(snapshot, symbol)
+    const quote = snapshot.latestQuotes[symbol]
+    const trade = latestSignalTrade(snapshot, symbol)
+    if (quote === undefined || trade === undefined)
+      return yield* unavailable('Jev signals require the verified rolling window, quote and trade')
+    const quoteAgeMs = pricingAgeMs(snapshot, quote.eventAt)
+    const tradeAgeMs = pricingAgeMs(snapshot, trade.eventAt)
+    const pricingAges = usesWindowTradeEvidence(manifest, symbol) ? [quoteAgeMs] : [quoteAgeMs, tradeAgeMs]
+    if (tradeAgeMs < 0 || pricingAges.some((age) => age < 0 || age > manifest.maximumQuoteAgeMs))
+      return yield* unavailable('Jev signal pricing evidence is stale or future dated')
+    return {
+      prices: {
+        ...base.prices,
+        bid: yield* priceNumberToMicros(quote.bidPrice, 'bid', 'DOWN'),
+        ask: yield* priceNumberToMicros(quote.askPrice, 'ask', 'UP'),
+        trade: yield* signalPriceMicros(trade.price, 'signal trade'),
+      },
+      state: {
+        ...base.state,
         quote: {
           bid: quote.bidPrice,
           ask: quote.askPrice,
@@ -143,109 +201,57 @@ const signalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
           ageMs: quoteAgeMs,
         },
         latestTrade: { price: trade.price, size: trade.size, ageMs: tradeAgeMs },
-        rolling30m: {
-          referencePrice: values.reference,
-          rangeHigh: values.high,
-          rangeLow: values.low,
-          totalVolume: values.volume,
-        },
-        returnsBps,
-        minuteLogReturnVolatilityBps: volatilityBps,
-        recent15mVolumeToPrior15m: earlyVolume === 0 ? null : recentVolume / earlyVolume,
-        technicalIndicators: technicalValues,
-        technicalAvailability: recordedTechnicalValues === undefined ? 'UNAVAILABLE' : 'RECORDED',
       },
     }
   })
 
-/** Exact 30-minute absolute/relative momentum, before any model output is available. */
-export const jevMomentumEntryCandidates = (snapshot: StrategyMarketSnapshot, protocol: JevProtocol) =>
+export const jevBenchmarkSignalFor = (snapshot: StrategyMarketSnapshot, symbol: string) =>
   Result.gen(function* () {
-    const signals = []
-    for (const symbol of snapshot.manifest.candidateSymbols ?? []) {
-      if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) continue
-      const candidate = yield* signalFor(snapshot, symbol)
-      const benchmark = yield* signalFor(snapshot, jevBenchmarkSymbol(symbol))
-      const { excessReturn } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
-      const quote = snapshot.latestQuotes[symbol]
-      if (quote === undefined) return yield* unavailable('Momentum candidate has no verified quote')
-      if (
-        (yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)) === null &&
-        candidate.prices.bid + candidate.prices.ask > 2n * candidate.prices.reference &&
-        excessReturn.numerator > 0n
-      )
-        signals.push({ symbol, excessReturn })
+    if (snapshot.manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars) {
+      const base = yield* jevBarSignalFor(snapshot, symbol)
+      return {
+        prices: { reference: base.prices.reference, bid: base.close, ask: base.close },
+        state: {
+          ...base.state,
+          pricingBasis: 'COMPLETED_BAR_CLOSE' as const,
+          latestCompletedClose: Number(base.close) / 1_000_000,
+        },
+      }
     }
-    return signals.sort((a, b) => {
-      const difference =
-        a.excessReturn.numerator * b.excessReturn.denominator - b.excessReturn.numerator * a.excessReturn.denominator
-      return difference === 0n ? a.symbol.localeCompare(b.symbol) : difference > 0n ? -1 : 1
-    })
+    return yield* jevSignalFor(snapshot, symbol)
   })
 
-export const jevTradingQuestions = {
-  regime: {
-    type: 'choice',
-    instructions: {
-      question:
-        'Which current price-action regime best fits the candidate, considering its recent path, computed signals and benchmark context?',
-      evidence: ['candidate', 'benchmark', 'relativeSignals'],
-      uncertainty: 'Use unclear when the available evidence does not distinguish these regimes.',
-    },
-    criteria: {
-      upward_trend: 'Broadly sustained upward movement, rather than a single isolated jump.',
-      downward_trend: 'Broadly sustained downward movement, rather than a single isolated drop.',
-      range: 'Mostly oscillating or balanced movement without sustained direction.',
-      unstable: 'Abrupt or conflicting movements dominate.',
-      unclear: 'Insufficient or conflicting evidence prevents classification.',
-    },
-  },
-  continuation: {
-    type: 'noul',
-    instructions:
-      'Does the combined candidate price path, volume, technical signals and benchmark context support sustained upward continuation over the stated horizon?',
-    criteria: {
-      true: 'The evidence supports an upward continuation setup.',
-      false:
-        'The evidence does not support upward continuation, including downtrend, exhaustion, contradictory signals or insufficient evidence.',
-    },
-  },
-  exhaustion: {
-    type: 'noul',
-    instructions:
-      'Does the candidate show a stretched or weakening upward move with meaningful reversal risk over the stated horizon? Evaluate the joint pattern rather than applying one indicator threshold.',
-  },
-  setup_quality: {
-    type: 'score',
-    instructions:
-      'How coherent is the candidate long-entry setup across price action, volume, technical signals and benchmark context? Missing indicators provide no supporting evidence. Do not calculate sizing or treat this score as a return forecast.',
-    criteria: [
-      'No supported long setup',
-      'Weak or contradictory setup',
-      'Mixed but plausible setup',
-      'Several signals support a coherent setup',
-      'Strongly aligned evidence across the available signal groups',
-    ],
-  },
-  action: {
-    type: 'choice',
-    instructions:
-      'Given the candidate and benchmark trading signals, which long-only entry decision is best supported for the stated horizon? This question assesses the setup; deterministic code separately checks permission, sizing and risk.',
-    criteria: {
-      enter: 'Evidence supports entering a long position now.',
-      wait: 'A possible setup needs further confirmation.',
-      avoid: 'The setup is adverse, exhausted, contradictory or unsupported.',
-    },
-  },
-} satisfies JevRequest['questions']
+export const commonMomentumPrices = (
+  snapshot: StrategyMarketSnapshot,
+  symbol: string,
+  benchmarkSymbol: string,
+  candidate: Result.Result.Success<ReturnType<typeof jevSignalFor>>,
+  benchmark: Result.Result.Success<ReturnType<typeof jevBenchmarkSignalFor>>,
+) =>
+  Result.gen(function* () {
+    const candidateBars = snapshot.bars
+      .filter((bar) => bar.symbol === symbol)
+      .toSorted((a, b) => a.eventAt.localeCompare(b.eventAt))
+    const benchmarkBars = snapshot.bars.filter((bar) => bar.symbol === benchmarkSymbol)
+    const reference = candidateBars.find((bar) => benchmarkBars.some((entry) => entry.eventAt === bar.eventAt))
+    const benchmarkReference = benchmarkBars.find((bar) => bar.eventAt === reference?.eventAt)
+    if (reference === undefined || benchmarkReference === undefined)
+      return yield* unavailable('Relative momentum requires a common actual observed minute')
+    return {
+      referenceAt: reference.eventAt,
+      candidate: { ...candidate.prices, reference: yield* signalPriceMicros(reference.open, 'signal reference') },
+      benchmark: {
+        ...benchmark.prices,
+        reference: yield* signalPriceMicros(benchmarkReference.open, 'signal reference'),
+      },
+    }
+  })
 
 export const jevManagementQuestions = {
-  continuation: jevTradingQuestions.continuation,
-  exhaustion: jevTradingQuestions.exhaustion,
   action: {
     type: 'choice',
     instructions:
-      'Given the current market signals and actual held long position, is holding for the remaining horizon supported, or is exiting now better supported? Bayn independently enforces position limits, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
+      'Given `candidate`, `benchmark`, `relativeSignals` and the held long `position`, does the current market evidence support continuation over `position.remainingHoldingMinutes`, or does deterioration support exiting now? Judge the future setup from the supplied signals. Code separately enforces sizing, fees, protective stops and the holding deadline. Assess the evidence without assuming that a prior entry was correct.',
     criteria: {
       hold: 'Continuation is supported by the current evidence over the remaining holding horizon.',
       exit: 'Deteriorating, exhausted or contradictory current evidence supports closing the long.',
@@ -262,9 +268,10 @@ const requestFromSnapshot = (
 ) =>
   Result.gen(function* () {
     if (symbol === benchmarkSymbol) return yield* unavailable('Candidate and benchmark must be distinct')
-    const candidate = yield* signalFor(snapshot, symbol)
-    const benchmark = yield* signalFor(snapshot, benchmarkSymbol)
-    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(candidate.prices, symbol, benchmark.prices)
+    const candidate = yield* jevSignalFor(snapshot, symbol)
+    const benchmark = yield* jevBenchmarkSignalFor(snapshot, benchmarkSymbol)
+    const common = yield* commonMomentumPrices(snapshot, symbol, benchmarkSymbol, candidate, benchmark)
+    const { metrics } = yield* deriveIntradayMomentumSignalMetrics(common.candidate, symbol, common.benchmark)
     const continuous = isContinuousMarket(snapshot.manifest.calendar)
     const session = continuous
       ? undefined
@@ -278,31 +285,28 @@ const requestFromSnapshot = (
         (entry) => entry.symbol === symbol && BigInt(entry.quantityAtoms) > 0n,
       )
       const firstFill = native.portfolio.entryFills[0]
-      if (
-        held === undefined ||
-        held.schemaVersion !== 'bayn.position.v2' ||
-        firstFill === undefined ||
-        BigInt(held.costBasisMicros) <= 0n
-      )
+      if (held === undefined || firstFill === undefined || BigInt(held.costBasisMicros) <= 0n)
         return yield* unavailable('Jev management requires the actual long, cost basis and entry fills')
-      const cost = BigInt(held.costBasisMicros)
-      const pnl = (candidate.prices.bid * BigInt(held.quantityAtoms)) / 1_000_000_000n - cost
       const heldForMinutes = (observed - Date.parse(firstFill.occurredAt)) / 60_000
       position = {
         symbol,
         quantityUnits: Number(held.quantityAtoms) / 1_000_000_000,
-        costBasisUsd: Number(cost) / 1_000_000,
-        averageEntryPriceUsd: (Number(cost) * 1_000) / Number(held.quantityAtoms),
         entryFilledAt: firstFill.occurredAt,
         heldForMinutes,
         maximumHoldingMinutes: native.protocol.maximumHoldingMinutes,
         remainingHoldingMinutes: Math.max(0, native.protocol.maximumHoldingMinutes - heldForMinutes),
-        unrealizedPnlAtBidUsd: Number(pnl) / 1_000_000,
-        unrealizedPnlAtBidBps: Number((pnl * 10_000n) / cost),
-        entryFeesUsd:
-          Number(native.portfolio.entryFills.reduce((sum, fill) => sum + BigInt(fill.feeMicros), 0n)) / 1_000_000,
       }
     }
+    const economics =
+      native.portfolio.purpose === JevPurpose.Entry
+        ? yield* jevEntryEconomics({
+            protocol: native.protocol,
+            symbol,
+            bidMicros: candidate.prices.bid,
+            askMicros: candidate.prices.ask,
+            capitalMicros: native.portfolio.brokerState.account.equityMicros,
+          })
+        : null
     return yield* prepareJevRequest({
       model: jevModel,
       state: {
@@ -315,6 +319,16 @@ const requestFromSnapshot = (
             'Evaluate the supplied trading signals. No unreported outside facts or future observations are available.',
         },
         position,
+        entryEconomics: economics,
+        execution: {
+          orderType: 'LIMIT',
+          timeInForce: continuous ? 'IOC' : 'DAY',
+          extendedHours: !continuous,
+          sizingPolicy: native.protocol.entrySizingPolicy,
+          maximumEntrySpreadBps: jevMarketForSymbol(symbol).maximumEntrySpreadBps,
+          estimatedFeeBpsPerSide: jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+          estimatedRoundTripFeesBps: 2 * jevMarketForSymbol(symbol).estimatedTakerFeeBps,
+        },
         units: {
           prices: 'USD per unit',
           volume: continuous ? 'base asset units on Alpaca crypto US' : 'shares on the IEX feed',
@@ -341,9 +355,21 @@ const requestFromSnapshot = (
         },
         candidate: candidate.state,
         benchmark: benchmark.state,
-        relativeSignals: metrics,
+        relativeSignals: {
+          ...metrics,
+          referenceAt: common.referenceAt,
+          lookbackMinutes: (observed - Date.parse(common.referenceAt)) / 60_000,
+          candidateReferencePriceUsd: Number(common.candidate.reference) / 1_000_000,
+          benchmarkReferencePriceUsd: Number(common.benchmark.reference) / 1_000_000,
+        },
       },
-      questions: native.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
+      questions:
+        native.portfolio.purpose === JevPurpose.Manage
+          ? jevManagementQuestions
+          : {
+              action: yield* jevTradePlanQuestion({ snapshot, symbol, economics, protocol: native.protocol }),
+              setup: jevEntrySetupQuestion,
+            },
     })
   })
 
@@ -391,16 +417,12 @@ const batchFromObservation = (
   Result.gen(function* () {
     const { snapshot, protocol } = observation
     const manifest = snapshot.manifest
-    if (planVersion !== JevBatchPlanVersion.V4)
-      return yield* unavailable('The current trading protocol requires batch v4')
+    if (planVersion !== JevBatchPlanVersion.V6)
+      return yield* unavailable('The current trading protocol requires batch v6')
     if (Date.parse(expiresAt) !== Date.parse(observation.observedAt) + protocol.inferenceValidityMs)
       return yield* unavailable('Jev batch deadline must equal its source-controlled validity interval')
     if (manifest.candidateSymbols === undefined || manifest.candidateSymbols.length === 0)
       return yield* unavailable('Jev batch requires the complete recorded candidate universe')
-    const momentumCandidates =
-      observation.portfolio.purpose === JevPurpose.Entry
-        ? new Set((yield* jevMomentumEntryCandidates(snapshot, observation.protocol)).map(({ symbol }) => symbol))
-        : null
     const candidates = []
     for (const symbol of manifest.candidateSymbols) {
       const excluded = manifest.candidateExclusions?.find((candidate) => candidate.symbol === symbol)
@@ -408,11 +430,27 @@ const batchFromObservation = (
         candidates.push({ ...excluded, status: JevCandidatePlanStatus.Excluded })
         continue
       }
-      const prepareRequest = () => requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
+      const benchmarkExclusion = manifest.candidateExclusions?.find(
+        (candidate) => candidate.symbol === jevBenchmarkSymbol(symbol),
+      )
+      if (
+        benchmarkExclusion !== undefined &&
+        (snapshot.manifest.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
+          Result.isFailure(jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(symbol))))
+      ) {
+        candidates.push({
+          symbol,
+          status: JevCandidatePlanStatus.Excluded,
+          reason: benchmarkExclusion.reason,
+          message: `Required benchmark ${benchmarkExclusion.symbol}: ${benchmarkExclusion.message}`,
+        })
+        continue
+      }
+      const prepared = yield* requestFromSnapshot(snapshot, symbol, jevBenchmarkSymbol(symbol), observation)
       if (observation.portfolio.purpose === JevPurpose.Entry) {
         const quote = snapshot.latestQuotes[symbol]
         if (quote !== undefined) {
-          const entryExclusion = yield* jevEntryQuoteExclusion(quote, protocol.maximumSpreadBps)
+          const entryExclusion = yield* jevEntryQuoteExclusion(quote)
           if (entryExclusion !== null) {
             candidates.push({
               symbol,
@@ -427,16 +465,6 @@ const batchFromObservation = (
           }
         }
       }
-      if (momentumCandidates !== null && !momentumCandidates.has(symbol)) {
-        candidates.push({
-          symbol,
-          status: JevCandidatePlanStatus.Excluded,
-          reason: JevEntryExclusion.Momentum,
-          message: 'Verified candidate lacks strictly positive exact own and benchmark-relative 30-minute return',
-        })
-        continue
-      }
-      const prepared = yield* prepareRequest()
       const request = yield* makeJevEvaluationRequest({
         schemaVersion: 'bayn.jev-evaluation-request.v1',
         cycleId: observation.cycleId,
@@ -462,12 +490,7 @@ const batchFromObservation = (
       observedAt: manifest.observedAt,
       expiresAt,
       benchmarkSymbol: jevBenchmarkSymbol(manifest.candidateSymbols[0] ?? 'SPY'),
-      questionSetHash: yield* canonicalHashV1Result({
-        model: jevModel,
-        questions: observation.portfolio.purpose === JevPurpose.Manage ? jevManagementQuestions : jevTradingQuestions,
-      }).pipe(
-        Result.mapError((cause) => new JevContractError({ message: 'Jev question set cannot be hashed', cause })),
-      ),
+      questionSetHash: yield* jevBatchQuestionSetHash(candidates),
       candidates,
     })
   })

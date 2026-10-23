@@ -24,7 +24,7 @@ use hyper_util::{
 };
 use tokio::{
     net::TcpListener,
-    sync::{Mutex, watch},
+    sync::{Mutex, RwLock, watch},
 };
 
 use super::{
@@ -44,7 +44,7 @@ pub(crate) const READINESS_TIMEOUT: std::time::Duration = std::time::Duration::f
 #[derive(Clone)]
 struct Supervisor {
     state: watch::Sender<SlotState>,
-    gate: Arc<Mutex<()>>,
+    gate: Arc<RwLock<()>>,
     grpc: Arc<Mutex<Option<GuestConnection>>>,
     fences: watch::Sender<()>,
     database: Arc<crate::control::Database>,
@@ -216,6 +216,7 @@ pub async fn run() -> anyhow::Result<()> {
             "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
         )?))?,
     )?;
+    let readiness_admission = admission.clone();
     let health = Router::new()
         .route(
             "/metrics",
@@ -234,13 +235,18 @@ pub async fn run() -> anyhow::Result<()> {
             "/readyz",
             get(move || {
                 let database = readiness_database.clone();
+                let admission = readiness_admission.clone();
                 async move {
+                    if !admission.is_ready() {
+                        return StatusCode::SERVICE_UNAVAILABLE;
+                    }
                     readiness(&database, &runner::sockets_directory().join("control.sock")).await
                 }
             }),
         );
     let health_listener = TcpListener::bind("0.0.0.0:8080").await?;
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    admission.wait_ready().await;
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
         result = serve(listener, tls, database, admission) => result,
@@ -279,7 +285,7 @@ pub(super) async fn serve(
     let (state, _) = watch::channel(SlotState::Preparing);
     let supervisor = Supervisor {
         state,
-        gate: Arc::new(Mutex::new(())),
+        gate: Arc::new(RwLock::new(())),
         grpc: Default::default(),
         fences: watch::channel(()).0,
         database,
@@ -295,7 +301,15 @@ pub(super) async fn serve(
         .route("/slot/sleep", post(sleep))
         .route("/slot/stop", post(stop))
         .fallback(forward)
-        .with_state(supervisor);
+        .with_state(supervisor)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
+        );
     let incoming = crate::identity::tls_incoming(listener, tls);
     tokio::pin!(incoming);
     while let Some(connection) = incoming.next().await {
@@ -318,7 +332,7 @@ async fn install_fence(
     State(supervisor): State<Supervisor>,
     Json(fence): Json<crate::control::Fence>,
 ) -> Result<StatusCode, (StatusCode, String)> {
-    let _guard = supervisor.gate.lock().await;
+    let _guard = supervisor.gate.write().await;
     if supervisor.fencing_failed.load(Ordering::SeqCst) {
         return Err((
             StatusCode::SERVICE_UNAVAILABLE,
@@ -378,7 +392,7 @@ fn request_fence(headers: &HeaderMap) -> Result<crate::control::Fence, (StatusCo
 async fn status(
     State(supervisor): State<Supervisor>,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
-    let _guard = supervisor.gate.lock().await;
+    let _guard = supervisor.gate.write().await;
     let status = supervisor
         .command(&CommandRequest::Status)
         .await
@@ -431,7 +445,7 @@ async fn lifecycle(
     leadership: crate::control::Fence,
     request: &CommandRequest,
 ) -> Result<Json<SlotStatus>, (StatusCode, String)> {
-    let _guard = supervisor.gate.lock().await;
+    let _guard = supervisor.gate.write().await;
     supervisor.require_leadership(Some(leadership)).await?;
     if matches!(
         request,
@@ -530,12 +544,18 @@ async fn forward(
     State(supervisor): State<Supervisor>,
     mut request: Request<Body>,
 ) -> Result<Response, (StatusCode, String)> {
+    let _request = supervisor.admission.reserve_request().map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "guest admission request capacity exhausted".into(),
+        )
+    })?;
     let admission =
         crate::metrics::global().latency_timer(crate::metrics::Latency::SupervisorAdmission);
     #[cfg(test)]
     let started = std::time::Instant::now();
     // The status read and transport admission cannot overlap a sleep fence.
-    let guard = supervisor.gate.lock().await;
+    let guard = supervisor.gate.read().await;
     let leadership = supervisor.require_leadership(None).await?;
     let status = supervisor
         .command(&CommandRequest::Status)
@@ -554,12 +574,26 @@ async fn forward(
         ));
     }
     supervisor.state.send_replace(status.state);
-    let (opening, forwarded) = supervisor.admission.opening(request).await.map_err(|_| {
-        (
-            StatusCode::FORBIDDEN,
-            "invalid signed guest RPC opening".into(),
-        )
-    })?;
+    let (opening, forwarded) = supervisor
+        .admission
+        .opening(request)
+        .await
+        .map_err(|error| {
+            if error
+                .downcast_ref::<tonic::Status>()
+                .is_some_and(|status| status.code() == tonic::Code::ResourceExhausted)
+            {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "guest admission buffer capacity exhausted".into(),
+                )
+            } else {
+                (
+                    StatusCode::FORBIDDEN,
+                    "invalid signed guest RPC opening".into(),
+                )
+            }
+        })?;
     supervisor
         .admission
         .consume(&opening, &claim, leadership, &supervisor.database)
@@ -575,6 +609,7 @@ async fn forward(
         })?;
     supervisor.require_leadership(Some(leadership)).await?;
     request = forwarded;
+    request.headers_mut().extend(crate::telemetry::headers());
     drop(opening);
     #[cfg(test)]
     eprintln!(
@@ -893,7 +928,7 @@ mod tests {
     async fn unproven_execution_fencing_rejects_transport_and_replacement_leadership() {
         let supervisor = Supervisor {
             state: watch::channel(SlotState::Preparing).0,
-            gate: Arc::new(Mutex::new(())),
+            gate: Arc::new(RwLock::new(())),
             grpc: Default::default(),
             fences: watch::channel(()).0,
             database: Arc::new(crate::control::Database::unconnected_fixture()),
@@ -1008,7 +1043,7 @@ mod tests {
                 .unwrap();
             let supervisor = Supervisor {
                 state: watch::channel(awake).0,
-                gate: Arc::new(Mutex::new(())),
+                gate: Arc::new(RwLock::new(())),
                 grpc: Default::default(),
                 fences: watch::channel(()).0,
                 database: database.clone(),
@@ -1093,23 +1128,37 @@ mod tests {
         let current = Arc::new(Mutex::new(awake.clone()));
         let sleeping = Arc::new(Notify::new());
         let finish = Arc::new(Notify::new());
+        let stall_status = Arc::new(AtomicBool::new(true));
+        let status_started = Arc::new(Notify::new());
+        let finish_status = Arc::new(Notify::new());
         let runner = tokio::spawn({
             let current = current.clone();
             let sleeping = sleeping.clone();
             let finish = finish.clone();
+            let stall_status = stall_status.clone();
+            let status_started = status_started.clone();
+            let finish_status = finish_status.clone();
             async move {
                 loop {
                     let (stream, _) = listener.accept().await.unwrap();
                     let current = current.clone();
                     let sleeping = sleeping.clone();
                     let finish = finish.clone();
+                    let stall_status = stall_status.clone();
+                    let status_started = status_started.clone();
+                    let finish_status = finish_status.clone();
                     tokio::spawn(async move {
                         let (reader, mut writer) = stream.into_split();
                         let mut line = String::new();
                         BufReader::new(reader).read_line(&mut line).await.unwrap();
-                        if let CommandRequest::Sleep { claim } =
-                            serde_json::from_str(&line).unwrap()
+                        let command: CommandRequest = serde_json::from_str(&line).unwrap();
+                        if matches!(command, CommandRequest::Status)
+                            && stall_status.swap(false, Ordering::SeqCst)
                         {
+                            status_started.notify_one();
+                            finish_status.notified().await;
+                        }
+                        if let CommandRequest::Sleep { claim } = command {
                             sleeping.notify_one();
                             finish.notified().await;
                             *current.lock().await = SlotState::Sleeping {
@@ -1146,7 +1195,7 @@ mod tests {
             .unwrap();
         let supervisor = Supervisor {
             state: watch::channel(awake).0,
-            gate: Arc::new(Mutex::new(())),
+            gate: Arc::new(RwLock::new(())),
             grpc: Default::default(),
             fences: watch::channel(()).0,
             database: database.clone(),
@@ -1155,6 +1204,37 @@ mod tests {
             runner_socket: socket,
             admission: GuestAdmission::fixture(),
         };
+        let guest_request = || {
+            Request::builder()
+                .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
+                .header(CLAIM_UID_HEADER, &claim.microvm_uid)
+                .header(CLAIM_EPOCH_HEADER, "7")
+                .header(RUNTIME_EPOCH_HEADER, &claim.runtime_epoch)
+                .body(Body::empty())
+                .unwrap()
+        };
+        let stalled_request = guest_request();
+        let stalled = tokio::spawn({
+            let supervisor = supervisor.clone();
+            async move { forward(State(supervisor), stalled_request).await }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(2), status_started.notified())
+            .await
+            .unwrap();
+        let independent = tokio::time::timeout(
+            std::time::Duration::from_secs(1),
+            forward(State(supervisor.clone()), guest_request()),
+        )
+        .await;
+        finish_status.notify_one();
+        assert!(matches!(
+            stalled.await.unwrap(),
+            Err((StatusCode::FORBIDDEN, _))
+        ));
+        assert!(
+            matches!(independent, Ok(Err((StatusCode::FORBIDDEN, _)))),
+            "one guest opening blocked another request's authorization denial"
+        );
         let transition = tokio::spawn({
             let supervisor = supervisor.clone();
             let claim = claim.clone();
@@ -1163,13 +1243,7 @@ mod tests {
         tokio::time::timeout(std::time::Duration::from_secs(2), sleeping.notified())
             .await
             .unwrap();
-        let request = Request::builder()
-            .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
-            .header(CLAIM_UID_HEADER, &claim.microvm_uid)
-            .header(CLAIM_EPOCH_HEADER, "7")
-            .header(RUNTIME_EPOCH_HEADER, "44444444-4444-4444-8444-444444444444")
-            .body(Body::empty())
-            .unwrap();
+        let request = guest_request();
         let forwarded = forward(State(supervisor.clone()), request);
         tokio::pin!(forwarded);
         assert!(
@@ -1206,7 +1280,7 @@ mod tests {
             readiness(&readiness_database, &supervisor.runner_socket).await,
             StatusCode::OK
         );
-        readiness_database.pool.close();
+        readiness_database.close_fixture();
         let started = tokio::time::Instant::now();
         assert_eq!(
             readiness(&readiness_database, &supervisor.runner_socket).await,
@@ -1221,7 +1295,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn concurrent_guest_requests_wait_for_transport_admission() {
+    async fn guest_requests_wait_for_exclusive_transport_fencing() {
         let (state, _) = watch::channel(SlotState::Awake {
             claim: Claim {
                 microvm_id: "agent-a".into(),
@@ -1230,8 +1304,8 @@ mod tests {
                 runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
             },
         });
-        let gate = Arc::new(Mutex::new(()));
-        let _admission = gate.lock().await;
+        let gate = Arc::new(RwLock::new(()));
+        let _admission = gate.write().await;
         let request = Request::builder()
             .uri("/proompteng.runtime.guest.v1.NanoagentService/GetInfo")
             .header(CLAIM_UID_HEADER, "owner-a")
@@ -1269,7 +1343,7 @@ mod tests {
         let (state, _) = watch::channel(saving.clone());
         let supervisor = Supervisor {
             state,
-            gate: Arc::new(Mutex::new(())),
+            gate: Arc::new(RwLock::new(())),
             grpc: Default::default(),
             fences: watch::channel(()).0,
             database: Arc::new(crate::control::Database::unconnected_fixture()),
@@ -1314,7 +1388,7 @@ mod tests {
         let (state, _) = watch::channel(awake.clone());
         let supervisor = Supervisor {
             state,
-            gate: Arc::new(Mutex::new(())),
+            gate: Arc::new(RwLock::new(())),
             grpc: Default::default(),
             fences: watch::channel(()).0,
             database: Arc::new(crate::control::Database::unconnected_fixture()),

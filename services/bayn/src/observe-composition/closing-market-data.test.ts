@@ -1,12 +1,26 @@
+import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
+import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
+import { IsoDateSchema, strictParseOptions } from '../schemas'
+import { executionCloseRecoveryExpiry } from '../market-hours'
 import { describe, expect, test } from 'bun:test'
-import { Clock, Effect, Exit, Option, Result } from 'effect'
+import { Clock, Effect, Exit, Option, Result, Schema } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, BrokerReadError, BrokerReadErrorKind, type BrokerReadShape } from '../broker/alpaca'
-import { CycleState, decodeAutonomousCycle } from '../cycle'
-import { Authority, IntentState, KillState, OrderType, TerminalOutcome } from '../execution/contracts'
-import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents'
-import { MutationStore, type MutationStoreShape } from '../execution/mutations'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
+import { CycleState, AutonomousCycleSchema } from '../cycle/model'
+import {
+  Authority,
+  IntentState,
+  KillState,
+  OrderType,
+  OrderSide,
+  ReconciliationStatus,
+  TerminalOutcome,
+  TimeInForce,
+} from '../execution/contracts'
+import { IntentStore, planExecutionIntent, type StoredIntent } from '../execution/intents/domain'
+import { MutationStore, type MutationStoreShape } from '../execution/mutations/model'
 import {
   makeExecutionCycleClosure,
   type ExecutionCycleClosure,
@@ -21,13 +35,14 @@ import { JevEvaluationStore } from '../jev/evaluation'
 import { nativeJevBatchResult, nativeJevFixture } from '../jev/native.test-support'
 import { JevPositionStore, JevPurpose } from '../jev/portfolio'
 import { decideJevExit, JevExitReason } from '../jev/exit'
-import { type IntradayMarketDataService, MarketData } from '../market-data'
+import { type IntradayMarketDataService } from '../market-data/intraday/model'
+
 import { IntradaySnapshotFailure } from '../market-data/intraday/model'
 import { retryableOperationalError } from '../errors'
-import { reconciledStateHash } from '../reconciliation'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { type ReconciliationPassResult } from '../reconciler'
-import { loadStrategyExecutionRiskPolicy } from '../observe-composition'
-import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
+import { loadStrategyExecutionRiskPolicy } from './startup'
+import { makeJevMarketTestSnapshot as makeIntradayMomentumTestSnapshot } from '../testing/jev-market-fixture'
 import { fixtureRuntime } from '../testing/runtime-fixtures'
 import { fixtureStreamingReference, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { currentUtcInstant } from '../time'
@@ -48,6 +63,7 @@ import {
 import {
   buildMutationShadowCycleDecision,
   ExecutionCloseAwaitingMarketData,
+  ExecutionCloseAwaitingReconciliation,
   executionCloseMarketDataDiagnostics,
   prepareClosingExecutionCycleDecision,
 } from './decision-builder'
@@ -61,7 +77,10 @@ const native = activeNativeFixture()
 const accountId = native.portfolio.brokerState.account.accountId
 const at = native.query.observedAt
 const activeCycle = Effect.runSync(
-  decodeAutonomousCycle({
+  Schema.decodeUnknownEffect(
+    AutonomousCycleSchema,
+    strictParseOptions,
+  )({
     ...native.draft,
     state: CycleState.Active,
     bindings: {},
@@ -141,7 +160,20 @@ const freshMarket: IntradayMarketDataService = {
   verifyReference: fixtureStreamingReference,
 }
 
-const fixture = async () => {
+const fixture = async (source = native) => {
+  const selectedCycle = Effect.runSync(
+    Schema.decodeUnknownEffect(
+      AutonomousCycleSchema,
+      strictParseOptions,
+    )({
+      ...source.draft,
+      state: CycleState.Active,
+      bindings: {},
+      stateVersion: 1,
+      createdAt: at,
+      updatedAt: at,
+    }),
+  )
   const input = {
     accountId,
     authorityGenerationHash: generationHash,
@@ -166,7 +198,7 @@ const fixture = async () => {
     fillActivities: () => unused,
     marketCalendar: () =>
       Effect.succeed({
-        value: native.query.calendar,
+        value: source.query.calendar,
         evidence: {
           requestId: 'fixture',
           status: 200,
@@ -180,7 +212,7 @@ const fixture = async () => {
       yield* TestClock.setTime(Date.parse(at))
       return yield* buildMutationShadowCycleDecision({
         authorityGenerationHash: generationHash,
-        cycle: activeCycle,
+        cycle: selectedCycle,
         executionModel: preparation.executionModel,
         policy,
         reconcile: Effect.succeed(factsAt(at)),
@@ -189,15 +221,6 @@ const fixture = async () => {
       })
     }).pipe(
       Effect.provideService(BrokerRead, broker),
-      Effect.provideService(MarketData, {
-        check: unused,
-        load: unused,
-        inspect: unused,
-        inspectCyclePublications: unused,
-        inspectPublication: () => unused,
-        inspectSnapshotPublication: () => unused,
-        loadSnapshotPublication: () => unused,
-      }),
       Effect.provideService(CandidateObservationStore, {
         record: () => Effect.void,
         latestJevWindowEnd: () => Effect.succeed(Option.none()),
@@ -209,6 +232,7 @@ const fixture = async () => {
           Clock.currentTimeMillis.pipe(
             Effect.map((now) => ({
               plan,
+              dispatches: [],
               result: nativeJevBatchResult(plan, new Date(now).toISOString(), (symbol) =>
                 symbol === 'AAPL' ? 'enter' : 'wait',
               ),
@@ -218,7 +242,7 @@ const fixture = async () => {
       }),
       Effect.provideService(JevEvaluationStore, {
         read: () => unused,
-        begin: () => unused,
+
         record: () => unused,
         abandon: () => unused,
       }),
@@ -233,18 +257,246 @@ const fixture = async () => {
     policy,
     entryDocument: document,
     cycle: Effect.runSync(
-      decodeAutonomousCycle({
-        ...activeCycle,
+      Schema.decodeUnknownEffect(
+        AutonomousCycleSchema,
+        strictParseOptions,
+      )({
+        ...selectedCycle,
         bindings: { snapshotId: document.bindings.snapshotId, decisionHash: document.contentHash },
         stateVersion: 2,
         updatedAt: document.createdAt,
       }),
     ),
-    closeExpiresAt: activeCycle.window.executionCloseAt,
+    closeExpiresAt: selectedCycle.window.executionCloseAt,
   }
 }
 
 describe('closing market-data fallback boundaries', () => {
+  test('an equity-calendar recovery closes an external crypto holding with IOC', async () => {
+    const request = await fixture()
+    const observedAt = new Date(Date.parse(request.closeExpiresAt) - 60_000).toISOString()
+    const facts = factsAt(observedAt, true)
+    const state = {
+      ...facts.brokerState,
+      positions: facts.brokerState.positions.map((position) => ({ ...position, symbol: 'BTC/USD' })),
+    }
+    const stateHash = Result.getOrThrow(reconciledStateHash(state))
+    const reconciliation = { ...state.reconciliation, expectedHash: stateHash, observedHash: stateHash }
+    const result = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareClosingExecutionCycleDecision({
+          ...request,
+          reconcile: Effect.succeed({
+            ...facts,
+            brokerState: { ...state, reconciliation },
+            report: { ...facts.report, reconciliation },
+          }),
+          input: {
+            ...request.input,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: () => Effect.die('An external holding uses reconciled position evidence'),
+            },
+          },
+        })
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(result.document.dispatchable).toBe(true)
+    expect(result.document.targetPlan.intentTargets).toMatchObject([
+      { symbol: 'BTC/USD', orderType: OrderType.Limit, timeInForce: TimeInForce.ImmediateOrCancel },
+    ])
+  })
+
+  test('an expired equity cycle closes from fresh reconciled positions during verified broker extended hours', async () => {
+    const day = Schema.decodeUnknownSync(IsoDateSchema)(native.query.sessionDate)
+    const calendarSource = Result.getOrThrow(
+      normalizeMarketCalendarResult(
+        Schema.decodeUnknownSync(MarketCalendarResponseSchema)([
+          { date: day, open: '09:30', close: '16:00', session_open: '0400', session_close: '2000' },
+        ]),
+        { start: day, end: day },
+      ),
+    )
+    const extended = nativeJevFixture(
+      JevPurpose.Entry,
+      at,
+      accountId,
+      native.protocol,
+      'a'.repeat(64),
+      { AAPL: 0.02, AMZN: 0.01 },
+      calendarSource,
+    )
+    const request = await fixture(extended)
+    const calendar = request.entryDocument.executionSession?.calendar
+    if (calendar === undefined) throw new Error('Expected bound calendar')
+    const observedAt = new Date(Date.parse(request.cycle.window.executionCloseAt) + 60_000).toISOString()
+    const expiry = executionCloseRecoveryExpiry(calendar, observedAt)
+    if (expiry === null) throw new Error('Expected broker extended hours')
+    const closed = await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(observedAt))
+        return yield* prepareClosingExecutionCycleDecision({
+          ...request,
+          closeExpiresAt: expiry,
+          reconcile: Effect.succeed(factsAt(observedAt, true)),
+          input: {
+            ...request.input,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: () => Effect.die('An expired IEX session cannot supply a fresh strategy quote'),
+            },
+          },
+        })
+      }).pipe(Effect.provide(TestClock.layer())),
+    )
+    expect(closed.document.dispatchable).toBe(true)
+    expect(closed.document.expiresAt).toBe(expiry)
+    expect(closed.document.targetPlan.executionTerms).toMatchObject({
+      executionPurpose: 'forced-close',
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      priceReference: 'reconciled-broker-position-mark',
+    })
+    expect(closed.document.targetPlan.intentTargets).toMatchObject([
+      { side: OrderSide.Sell, symbol: 'AAPL', quantityAtoms: '5000000000' },
+    ])
+  })
+  test.each(['cash-discrepancy', 'inexact-accounting', 'unknown-mutation', 'unknown-order'] as const)(
+    'an inexact reconciliation waits before binding a close and recovers with exact evidence (%s)',
+    async (scenario) => {
+      const request = await fixture()
+      const closeWindow = Result.getOrThrow(
+        resolveExecutionCycleCloseWindow({
+          executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
+          recoveryExpiresAt: null,
+          observedAt: '2026-08-19T19:00:00.000Z',
+          executionCloseAt: request.closeExpiresAt,
+          sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
+          sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
+        }),
+      )
+      let closure: ExecutionCycleClosure | undefined
+      let archiveReads = 0
+      const unused = () => Effect.die('reconciliation wait must not read or mutate intents')
+      const store: ExecutionCycleClosureStoreShape = {
+        read: unused,
+        readLatestReplan: unused,
+        bind: (value) =>
+          Effect.sync(() => {
+            closure = value
+            return value
+          }),
+        bindReplan: unused,
+        containsIntent: unused,
+      }
+      const input = {
+        ...request.input,
+        executionCycleClosureStore: store,
+        intradayMarketData: {
+          ...freshMarket,
+          loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
+            Effect.sync(() => {
+              archiveReads += 1
+            }).pipe(Effect.andThen(freshMarket.loadSnapshot(query))),
+        },
+      }
+      await Effect.runPromise(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(closeWindow.startAt) + 1_000)
+          const at = yield* currentUtcInstant
+          const base = factsAt(at, true)
+          const reconciliation = {
+            ...base.brokerState.reconciliation,
+            status: scenario === 'cash-discrepancy' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
+          }
+          const facts = {
+            ...base,
+            brokerState: {
+              ...base.brokerState,
+              reconciliation,
+              unknownOrderCount: scenario === 'unknown-order' ? 1 : 0,
+            },
+            riskContext: { ...base.riskContext, unknownMutationCount: scenario === 'unknown-mutation' ? 1 : 0 },
+            report: {
+              ...base.report,
+              reconciliation,
+              metrics: {
+                ...base.report.metrics,
+                accountingExact: scenario !== 'inexact-accounting',
+                discrepancyCount: scenario === 'cash-discrepancy' ? 1 : 0,
+              },
+            },
+          }
+          const failure = yield* Effect.flip(
+            prepareClosingExecutionCycleDecision({
+              ...request,
+              input,
+              reconcile: Effect.succeed(facts),
+              initialReconciliation: facts,
+            }),
+          )
+          expect(failure).toBeInstanceOf(ExecutionCloseAwaitingReconciliation)
+          const close = (reconciled: ReconciliationPassResult) =>
+            ensureExecutionCycleClosure({
+              ...request,
+              input,
+              closeWindow,
+              reconcile: Effect.succeed(reconciled),
+              refreshReconciliation: unused(),
+              existing: undefined,
+            })
+          expect(yield* close(facts)).toEqual({
+            _tag: 'Wait',
+            observedAt: at,
+            waitReason: 'CLOSE_RECONCILIATION_PENDING',
+          })
+          expect(archiveReads).toBe(0)
+          expect(closure).toBeUndefined()
+          expect(
+            executionEvidenceContinuationDelayMs(
+              {
+                outcome: 'RECOVERED',
+                action: 'WAITING',
+                observedAt: at,
+                cycle: request.cycle,
+                waitReason: 'CLOSE_RECONCILIATION_PENDING',
+              },
+              30_000,
+              at,
+            ),
+          ).toBeUndefined()
+          expect((yield* close(base))._tag).toBe('Close')
+          expect(closure).toBeDefined()
+          expect(archiveReads).toBeGreaterThan(0)
+        }).pipe(
+          Effect.provideService(IntentStore, {
+            protectionForCycle: () => Effect.succeed([]),
+            beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
+            read: unused,
+            commit: unused,
+            commitClosing: unused,
+          }),
+          Effect.provideService(MutationStore, {
+            authorizeSubmit: unused,
+            beginSubmit: unused,
+            submitAccepted: unused,
+            submitRejected: unused,
+            submitDenied: unused,
+            submitUnknown: unused,
+            beginCancel: unused,
+            cancelAccepted: unused,
+            cancelUnknown: unused,
+            recoveryFound: unused,
+            recoveryNotFound: unused,
+            recoveryUnknown: unused,
+            latest: unused,
+          }),
+          Effect.provide(TestClock.layer()),
+        ),
+      )
+    },
+  )
   test.each([
     'filled',
     'filled reuses preflight',
@@ -265,6 +517,9 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
+        recoveryExpiresAt: null,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
@@ -354,9 +609,11 @@ describe('closing market-data fallback boundaries', () => {
             if (risk === undefined) throw new Error('missing fixture risk binding')
             const intent = yield* planExecutionIntent(
               {
-                schemaVersion: 'bayn.paper-intent-plan.v1',
+                schemaVersion: 'bayn.intent-plan.v3',
                 ...target,
                 notionalLimitMicros: risk.notionalLimitMicros,
+                limitPriceMicros: risk.limitPriceMicros,
+                ...(risk.protection === undefined ? {} : { protection: risk.protection }),
                 ...(document.replanGenerationHash === undefined
                   ? {}
                   : { replanGenerationHash: document.replanGenerationHash }),
@@ -486,6 +743,8 @@ describe('closing market-data fallback boundaries', () => {
         }
       }).pipe(
         Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die('terminal close must not commit another intent'),
           commitClosing: () => Effect.die('terminal close must not commit another close'),
@@ -515,6 +774,9 @@ describe('closing market-data fallback boundaries', () => {
     const request = await fixture()
     const closeWindow = Result.getOrThrow(
       resolveExecutionCycleCloseWindow({
+        executionCalendarSchemaVersion: request.cycle.window.executionCalendarSchemaVersion,
+        recoveryExpiresAt: null,
+        observedAt: '2026-08-19T19:00:00.000Z',
         executionCloseAt: request.closeExpiresAt,
         sessionCloseStartLeadMs: native.protocol.flattenBeforeCloseMinutes * 60_000,
         sessionCloseSubmitLeadMs: native.protocol.hardFlatBeforeCloseMinutes * 60_000,
@@ -771,6 +1033,8 @@ describe('closing market-data fallback boundaries', () => {
         expect(closeCommits).toBe(2)
       }).pipe(
         Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
           read: (id) => Effect.sync(() => Option.fromUndefinedOr(records.get(id))),
           commit: () => Effect.die(new Error('residual close cannot use entry commit authority')),
           commitClosing: (intent, decision) =>
@@ -1186,7 +1450,11 @@ describe('closing market-data fallback boundaries', () => {
     expect(result.document.bindings.executionMarketData?.schemaVersion).toBe(
       'bayn.reconciled-position-liquidation-binding.v1',
     )
-    expect(result.document.targetPlan.intentTargets.every((target) => target.orderType === OrderType.Market)).toBe(true)
+    expect(
+      result.document.targetPlan.intentTargets.every(
+        (target) => target.orderType === OrderType.Limit && target.timeInForce === TimeInForce.Day,
+      ),
+    ).toBe(true)
   })
 
   test('the second boundary check still refuses a fallback that expires during reconciliation', async () => {

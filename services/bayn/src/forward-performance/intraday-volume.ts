@@ -1,10 +1,11 @@
 import { quantityFromDecimal } from '../quantity'
-import { exchangeSessions } from '../market-hours'
+import { exchangeSessions, isContinuousMarket } from '../market-hours'
 import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { IntradaySnapshotFailure, type IntradaySnapshotRequest } from '../market-data/intraday/model'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
+import { nativePayloadNumericFields } from '../market-data/native-json'
 import { intradayInstantNanos } from '../market-data/intraday/time'
 import { verifyIntradayArchiveWatermarks, verifyIntradaySnapshotRequest } from '../market-data/intraday/verification'
 import { IntradayPerformanceDecisionManifestSchema, IntradayPerformanceVolumeEvidenceSchema } from './intraday-schema'
@@ -23,11 +24,8 @@ const hash = (value: unknown) =>
   )
 const canonicalOffset = (value: string): boolean => /^(0|[1-9][0-9]*)$/.test(value) && BigInt(value) <= maxOffset
 const micros = (value: number | string): bigint | undefined => {
-  const match = /^(0|[1-9][0-9]*)(?:[.]([0-9]*))?$/.exec(String(value))
-  if (match?.[1] === undefined) return undefined
-  const fraction = match[2] ?? ''
-  if (fraction.slice(6).replaceAll('0', '') !== '') return undefined
-  return BigInt(match[1]) * 1_000_000n + BigInt(fraction.slice(0, 6).padEnd(6, '0'))
+  const atoms = quantityFromDecimal(String(value))
+  return Result.isSuccess(atoms) ? (atoms.success + 500n) / 1000n : undefined
 }
 
 export const intradayPerformanceDecisionRequest = (
@@ -82,6 +80,10 @@ export const intradayPerformanceDecisionRequest = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
       feed: manifest.feed,
       delayClass: manifest.delayClass,
       sourceTopics: manifest.sourceTopics,
@@ -91,12 +93,20 @@ export const intradayPerformanceDecisionRequest = (
     })
     const session = exchangeSessions(original.calendar).find((item) => item.date === request.executionSessionDate)
     if (
-      request.sourceFeed !== 'iex' ||
+      request.sourceFeed !== manifest.feed ||
       request.decisionSnapshotAsOfSession !== manifest.sessionDate ||
       manifest.sessionDate !== request.executionSessionDate ||
       !original.universe.includes(request.symbol) ||
-      session?.openAt !== request.windowOpenedAt ||
-      session.closeAt !== request.windowClosedAt ||
+      (isContinuousMarket(original.calendar)
+        ? !Number.isFinite(Date.parse(request.windowOpenedAt)) ||
+          !Number.isFinite(Date.parse(request.windowClosedAt)) ||
+          request.windowOpenedAt.slice(0, 10) !== request.executionSessionDate ||
+          request.windowOpenedAt > manifest.observedAt ||
+          request.windowClosedAt <= manifest.observedAt ||
+          Date.parse(request.windowClosedAt) - Date.parse(request.windowOpenedAt) > 86_400_000 ||
+          Math.ceil(Date.parse(request.windowOpenedAt) / 60_000) >=
+            Math.floor(Date.parse(request.windowClosedAt) / 60_000)
+        : session?.openAt !== request.windowOpenedAt || session.closeAt !== request.windowClosedAt) ||
       !Number.isFinite(Date.parse(request.evidenceCutoffAt)) ||
       request.evidenceCutoffAt < request.windowClosedAt ||
       request.evidenceCutoffAt < manifest.observedAt
@@ -116,8 +126,8 @@ export const intradayPerformanceSessionQuery = (
 ): IntradaySnapshotRequest => ({
   sessionDate: original.sessionDate,
   calendar: original.calendar,
-  rangeStartAt: request.windowOpenedAt,
-  rangeEndAt: request.windowClosedAt,
+  rangeStartAt: new Date(Math.ceil(Date.parse(request.windowOpenedAt) / 60_000) * 60_000).toISOString(),
+  rangeEndAt: new Date(Math.floor(Date.parse(request.windowClosedAt) / 60_000) * 60_000).toISOString(),
   observedAt: request.evidenceCutoffAt,
   universeId: original.universeId,
   universeSymbolHash: original.universeSymbolHash,
@@ -166,11 +176,12 @@ export const makeIntradayPerformanceVolumeEvidence = (
   Result.gen(function* () {
     const archive = yield* verifyArchiveRequest(request, archiveRequest)
     const bars = yield* decodeIntradayBarRows(rawBars)
-    const open = intradayInstantNanos(request.windowOpenedAt)
-    const close = intradayInstantNanos(request.windowClosedAt)
+    const open = ((intradayInstantNanos(request.windowOpenedAt) + minuteNanos - 1n) / minuteNanos) * minuteNanos
+    const close = (intradayInstantNanos(request.windowClosedAt) / minuteNanos) * minuteNanos
     const cutoff = intradayInstantNanos(request.evidenceCutoffAt)
     let lastEvent: bigint | undefined
     let quantity = 0n
+    let price: bigint | undefined
     let finalizedAt = request.windowClosedAt
     for (const bar of bars) {
       const event = intradayInstantNanos(bar.event_at)
@@ -181,8 +192,8 @@ export const makeIntradayPerformanceVolumeEvidence = (
       )
       if (
         bar.provider !== 'alpaca' ||
-        bar.feed !== 'iex' ||
-        bar.delay_class !== 'real_time_exchange_only' ||
+        bar.feed !== archive.feed ||
+        bar.delay_class !== archive.delayClass ||
         bar.universe_id !== archive.universeId ||
         bar.universe_symbol_hash !== archive.universeSymbolHash ||
         bar.symbol !== request.symbol ||
@@ -204,13 +215,20 @@ export const makeIntradayPerformanceVolumeEvidence = (
           failure('intraday performance bar violates identity, ordering, availability or watermark bounds'),
         )
       }
-      const volumeResult = quantityFromDecimal(String(bar.volume))
+      const native =
+        bar.native_payload === undefined
+          ? undefined
+          : yield* nativePayloadNumericFields(bar.native_payload).pipe(
+              Result.mapError((cause) => failure('invalid native bar payload', cause)),
+            )
+      const volumeResult = quantityFromDecimal(native === undefined ? String(bar.volume) : (native['v'] ?? ''))
       const volume = Result.isSuccess(volumeResult) ? volumeResult.success : undefined
       if (volume === undefined)
         return yield* Result.fail(
           failure('intraday performance volume cannot be represented exactly in quantity atoms'),
         )
       quantity += volume
+      price = micros(native === undefined ? bar.close : (native['c'] ?? ''))
       lastEvent = event
       if (ingested > intradayInstantNanos(finalizedAt))
         finalizedAt = new Date(Date.parse(bar.ingested_at)).toISOString()
@@ -222,13 +240,11 @@ export const makeIntradayPerformanceVolumeEvidence = (
     for (let minute = open; minute < close; minute += minuteNanos) {
       if (!observed.has(minute)) missingMinutes.push(new Date(Number(minute / 1_000_000n)).toISOString())
     }
-    const last = bars.at(-1)
-    const price = last === undefined ? undefined : micros(last.close)
     if (quantity <= 0n || price === undefined || price <= 0n) return undefined
     const material = {
       ...request,
-      schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v1' as const,
-      volumeScope: 'IEX_RECORDED_SESSION_VOLUME' as const,
+      schemaVersion: 'bayn.forward-performance-intraday-volume-evidence.v2' as const,
+      volumeScope: 'RECORDED_COMPLETE_MINUTE_VOLUME' as const,
       terminalPriceBasis: 'FINAL_MINUTE_BAR_CLOSE' as const,
       quantityAtoms: quantity.toString(),
       closePriceMicros: price.toString(),
@@ -245,14 +261,16 @@ export const validIntradayPerformanceVolumeEvidence = (
   evidence: ForwardPerformanceIntradayMarketVolumeEvidence,
 ): boolean => {
   if (!Schema.is(IntradayPerformanceVolumeEvidenceSchema)(evidence)) return false
-  const expectedMinutes = (Date.parse(evidence.windowClosedAt) - Date.parse(evidence.windowOpenedAt)) / 60_000
+  const windowOpen = Math.ceil(Date.parse(evidence.windowOpenedAt) / 60_000) * 60_000
+  const windowClose = Math.floor(Date.parse(evidence.windowClosedAt) / 60_000) * 60_000
+  const expectedMinutes = (windowClose - windowOpen) / 60_000
   const missing = evidence.missingMinutes
   if (
     missing.some(
       (minute, i) =>
         Date.parse(minute) % 60_000 !== 0 ||
-        minute < evidence.windowOpenedAt ||
-        Date.parse(minute) >= Date.parse(evidence.windowClosedAt) - 60_000 ||
+        Date.parse(minute) < windowOpen ||
+        Date.parse(minute) >= windowClose - 60_000 ||
         (i > 0 && minute <= (missing[i - 1] ?? minute)),
     )
   )
@@ -263,8 +281,8 @@ export const validIntradayPerformanceVolumeEvidence = (
     Result.isSuccess(expected) &&
     expected.success === contentHash &&
     Result.isSuccess(verifyArchiveRequest(evidence, evidence.archiveRequest)) &&
-    evidence.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v1' &&
-    evidence.volumeScope === 'IEX_RECORDED_SESSION_VOLUME' &&
+    evidence.schemaVersion === 'bayn.forward-performance-intraday-volume-evidence.v2' &&
+    evidence.volumeScope === 'RECORDED_COMPLETE_MINUTE_VOLUME' &&
     evidence.terminalPriceBasis === 'FINAL_MINUTE_BAR_CLOSE' &&
     /^[a-f0-9]{64}$/.test(evidence.barsContentHash) &&
     /^[1-9][0-9]*$/.test(evidence.quantityAtoms) &&

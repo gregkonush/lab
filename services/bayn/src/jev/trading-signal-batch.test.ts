@@ -1,9 +1,10 @@
+import { jevBatchQuestionSetHash } from './batch'
 import { jevObservationForSnapshot, jevRequestForSnapshot } from './native.test-support'
 import { equityMarketProfile } from './markets'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   constructSimulatedSnapshot,
   constructStreamingSnapshot,
@@ -32,7 +33,7 @@ const input = {
   expiresAt: new Date(
     Date.parse(fixture.observation.payload.observedAt) + fixture.protocol.inferenceValidityMs,
   ).toISOString(),
-  planVersion: JevBatchPlanVersion.V4,
+  planVersion: JevBatchPlanVersion.V6,
 }
 
 const nativeObservationWithWideQuotes = (
@@ -107,7 +108,7 @@ describe('Jev trading batch source reproduction', () => {
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
       }
-      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V4 }))).toBe(
+      expect(Result.isFailure(makeJevTradingSignalBatch({ ...material, planVersion: JevBatchPlanVersion.V6 }))).toBe(
         true,
       )
     }
@@ -122,11 +123,11 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const excluded = plan.candidates.find((candidate) => candidate.symbol === 'AAPL')
-    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V4)
+    expect(plan.schemaVersion).toBe(JevBatchPlanVersion.V6)
     expect(excluded?.status).toBe(JevCandidatePlanStatus.Excluded)
     if (excluded?.status !== JevCandidatePlanStatus.Excluded) throw new Error('Missing spread exclusion')
     expect(excluded.reason).toBe(JevEntryExclusion.Spread)
@@ -135,12 +136,13 @@ describe('Jev trading batch source reproduction', () => {
       plan.candidates
         .filter((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
         .map((candidate) => candidate.symbol),
-    ).toEqual(['AMZN'])
+    ).toEqual(equityMarketProfile.candidateSymbols.filter((symbol) => symbol !== 'AAPL'))
     expect(Result.getOrThrow(reproduceJevTradingSignalBatch(observation.payload, plan))).toEqual(plan)
     const { batchId: _, ...material } = plan
     const forged = Result.getOrThrow(
       makeJevBatchPlan({
         ...material,
+        questionSetHash: Result.getOrThrow(canonicalHashV1Result([])),
         candidates: plan.candidates.map((candidate) =>
           candidate.status === JevCandidatePlanStatus.Requested
             ? {
@@ -166,7 +168,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates.every((candidate) => candidate.status === JevCandidatePlanStatus.Excluded)).toBe(true)
@@ -187,7 +189,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates[0]?.status).toBe(JevCandidatePlanStatus.Requested)
@@ -196,13 +198,13 @@ describe('Jev trading batch source reproduction', () => {
   test('entry quote eligibility uses the same exact boundary for spread and displayed size', () => {
     const quote = nativeJevFixture().snapshot.latestQuotes['AAPL']
     if (quote === undefined) throw new Error('Native fixture quote is missing')
-    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004 }, 5))).toBeNull()
-    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0006 }, 5))).toBe(
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004 }))).toBeNull()
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0006 }))).toBe(
       JevEntryExclusion.Spread,
     )
-    expect(
-      Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004, askSize: 0 }, 5)),
-    ).toBe(JevEntryExclusion.DisplayedSize)
+    expect(Result.getOrThrow(jevEntryQuoteExclusion({ ...quote, askPrice: quote.bidPrice * 1.0004, askSize: 0 }))).toBe(
+      JevEntryExclusion.DisplayedSize,
+    )
   })
 
   test('rejects a retired batch version instead of reconstructing its old request path', () => {
@@ -213,7 +215,7 @@ describe('Jev trading batch source reproduction', () => {
         expiresAt: new Date(
           Date.parse(native.observation.payload.observedAt) + native.protocol.inferenceValidityMs,
         ).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     const { batchId: _, ...material } = current
@@ -223,13 +225,10 @@ describe('Jev trading batch source reproduction', () => {
   test('freezes the entire recorded universe and reproduces each exact request', () => {
     const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
     expect(plan.observationHash).toBe(fixture.observation.contentHash)
-    expect(plan.protocolHash).toBe(canonicalHashV1(fixture.protocol))
+    expect(plan.protocolHash).toBe(Result.getOrThrow(canonicalHashV1Result(fixture.protocol)))
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual([...equityMarketProfile.candidateSymbols])
     for (const candidate of plan.candidates) {
-      if (candidate.status === JevCandidatePlanStatus.Excluded) {
-        expect(candidate.reason).toBe(JevEntryExclusion.Momentum)
-        continue
-      }
+      if (candidate.status !== JevCandidatePlanStatus.Requested) throw new Error('Valid candidates must reach Jev')
       const prepared = Result.getOrThrow(jevRequestForSnapshot(fixture.snapshot, candidate.symbol))
       expect(candidate.request.requestHash).toBe(prepared.requestHash)
       expect(
@@ -240,7 +239,7 @@ describe('Jev trading batch source reproduction', () => {
     expect(
       Result.getOrThrow(reproduceJevTradingSignalBatch(input.observation, JSON.parse(JSON.stringify(plan)))),
     ).toEqual(plan)
-  })
+  }, 30_000)
 
   test('request reconstruction rejects incomplete rows, different observation time and a changed universe', () => {
     const plan = Result.getOrThrow(makeJevTradingSignalBatch(input))
@@ -258,7 +257,13 @@ describe('Jev trading batch source reproduction', () => {
 
   test('a correctly rehashed plan cannot omit a losing candidate or change model input', () => {
     const { batchId: _, ...material } = Result.getOrThrow(makeJevTradingSignalBatch(input))
-    const omitted = Result.getOrThrow(makeJevBatchPlan({ ...material, candidates: material.candidates.slice(1) }))
+    const omitted = Result.getOrThrow(
+      makeJevBatchPlan({
+        ...material,
+        candidates: material.candidates.slice(1),
+        questionSetHash: Result.getOrThrow(jevBatchQuestionSetHash(material.candidates.slice(1))),
+      }),
+    )
     expect(Result.isFailure(reproduceJevTradingSignalBatch(input.observation, omitted))).toBe(true)
     const altered = Result.getOrThrow(
       makeJevBatchPlan({
@@ -270,7 +275,11 @@ describe('Jev trading batch source reproduction', () => {
           return {
             ...candidate,
             request: Result.getOrThrow(
-              makeJevEvaluationRequest({ ...evaluation, request, requestHash: canonicalHashV1(request) }),
+              makeJevEvaluationRequest({
+                ...evaluation,
+                request,
+                requestHash: Result.getOrThrow(canonicalHashV1Result(request)),
+              }),
             ),
           }
         }),

@@ -1,17 +1,21 @@
+import { decodeIntradayMomentumProtocol, defaultIntradayMomentumProtocolDocument } from './intraday-momentum/protocol'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { decodeJevProtocol, defaultJevProtocolDocument } from '../jev/protocol'
-import { decodeDefaultIntradayMomentumProtocol } from './intraday-momentum/protocol'
 
 describe('shared intraday market contract', () => {
-  test('preserves the active and retained protocol identities', () => {
+  test('binds active and research protocols to observed-history features', () => {
     const jev = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
-    const momentum = Result.getOrThrow(decodeDefaultIntradayMomentumProtocol())
+    const momentum = Result.getOrThrow(decodeIntradayMomentumProtocol(defaultIntradayMomentumProtocolDocument))
 
-    expect(canonicalHashV1OrThrow(jev)).toBe('d97d393a316dd769857752321bd6951d3e7e7efad2df97523e585efe07625ca3')
-    expect(canonicalHashV1OrThrow(momentum)).toBe('558b80751a44bea69bef1d1dd810a16ddfee614c23bbb89652e6ea0e7e148669')
+    expect(Result.getOrThrow(canonicalHashV1Result(jev))).toBe(
+      '367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2',
+    )
+    expect(Result.getOrThrow(canonicalHashV1Result(momentum))).toBe(
+      '0dccbe2abe3a380a987bcb2bbf6af299ff317d94df0198a35de3f89cbd28a775',
+    )
     expect(jev.lookbackMinutes).toBe(30)
     expect(jev.decisionDelaySeconds).toBe(2)
     expect(momentum.lookbackMinutes).toBe(jev.lookbackMinutes)

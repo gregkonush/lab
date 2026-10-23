@@ -91,11 +91,10 @@ internal fun decodeArchivedCryptoMarketFeature(
   require(
     Math.addExact(archivedAtMs, FEATURE_MAX_CLOCK_SKEW_MS) >= feature.computedAtMs,
   ) { "crypto feature is unavailable at archive time" }
-  material.rolling30m.values?.let { values ->
+  material.priceWindow.let { values ->
     val prices = listOf(values.referencePrice, values.rangeHighPrice, values.rangeLowPrice, values.lastClosePrice).map(String::toBigDecimal)
     require(prices.all { it.signum() > 0 } && values.totalVolume.toBigDecimal().signum() >= 0) { "invalid crypto rolling values" }
     require(prices[1] >= maxOf(prices[0], prices[3]) && prices[2] <= minOf(prices[0], prices[3])) { "inconsistent crypto rolling range" }
-    require(material.inputs.size >= 30) { "crypto rolling values precede warmup" }
   }
   val scalars = Json.encodeToJsonElement(CryptoTechnicalValues.serializer(), material.technical).jsonObject.values
   for (element in scalars) {

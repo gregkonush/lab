@@ -48,24 +48,23 @@ test('unrelated workspace metadata does not rebuild another service', () => {
   expect(selectAffectedInputs(['apps/landing/package.json'], targets, before, before).bayn).toBe(false)
 })
 
-test('native Tengri images do not consume Bun metadata', () => {
+test('native PR validation skips Bun metadata while production publishes the complete source cohort', () => {
   const workflow = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
     if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
-    for (const file of ['bun.lock', 'packages/scripts/package.json']) {
-      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
-    }
+    expect(paths.some((pattern) => matchesGlob('bun.lock', text(pattern)))).toBe(event === 'push')
+    expect(paths.some((pattern) => matchesGlob('packages/scripts/package.json', text(pattern)))).toBe(false)
   }
 })
 
-test('Ofz implementation keeps runtime qualification while packaging and docs skip guest images', () => {
+test('Ofz implementation keeps runtime qualification and production packages one source cohort', () => {
   const workflow = Bun.YAML.parse(readFileSync('.github/workflows/tengri-images.yml', 'utf8'))
   for (const event of ['pull_request', 'push']) {
     const paths = property(property(property(workflow, 'on'), event), 'paths')
     if (!Array.isArray(paths)) throw new Error('Missing native image trigger paths')
     for (const file of ['services/ofz/README.md', 'nix/images/ofz.nix']) {
-      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(false)
+      expect(paths.some((pattern) => matchesGlob(file, text(pattern)))).toBe(event === 'push')
     }
     for (const file of [
       'services/ofz/src/lib.rs',
@@ -286,20 +285,16 @@ test('Tengri frontend PRs skip native images while main publishes coordinated re
   }
 })
 
-test('Tengri Warehouse discovers the source of desktop repairs', () => {
+test('the shared Warehouse binds desktop and runtime artifacts to the same immutable source', () => {
   const manifests: unknown = Bun.YAML.parse(readFileSync('argocd/applications/kargo/warehouses.yaml', 'utf8'))
   if (!Array.isArray(manifests)) throw new Error('Missing Warehouse manifests')
-  const warehouse = manifests.find((manifest) => property(property(manifest, 'metadata'), 'name') === 'tengri')
-  const subscriptions = property(property(warehouse, 'spec'), 'subscriptions')
-  if (!Array.isArray(subscriptions)) throw new Error('Missing Warehouse subscriptions')
-  const git = property(
-    subscriptions.find((subscription) => property(subscription, 'git') !== undefined),
-    'git',
-  )
-  const paths = property(git, 'includePaths')
-  if (!Array.isArray(paths)) throw new Error('Missing Warehouse source paths')
-  const source = 'apps/landing/src/components/tengri/desktop-dock.tsx'
-  expect(paths.some((path) => source.startsWith(`${text(path)}/`))).toBe(true)
+  const warehouse = manifests.find((manifest) => property(property(manifest, 'metadata'), 'name') === 'ofz')
+  const criteria = text(property(property(property(warehouse, 'spec'), 'freightCreationCriteria'), 'expression'))
+  for (const image of ['tengri', 'nanoagent', 'proompteng']) {
+    expect(criteria).toContain(
+      `imageFrom('registry.ide-newton.ts.net/lab/${image}').Tag == 'kargo-sha-' + imageFrom('registry.ide-newton.ts.net/lab/ofz').Annotations['org.opencontainers.image.revision']`,
+    )
+  }
 })
 
 test.each([

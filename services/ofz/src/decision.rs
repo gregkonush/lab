@@ -1,5 +1,4 @@
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tonic::Status;
 use uuid::Uuid;
 
@@ -168,11 +167,18 @@ pub fn scope_allows(scope: &ObservationScope, action: Action, target: &str) -> b
         Action::BrowserObserve => {
             target == "status" || (scope.browser_screenshot && target == "screenshot")
         }
-        Action::KubeStatusRead
-        | Action::KubeLogsRead
-        | Action::KubeEventsRead
-        | Action::ConnectorRead => {
+        Action::ConnectorRead if scope.connector_operations.is_empty() => {
             !target.is_empty() && target.len() <= 256 && !target.contains(['\0', '\n', '\r'])
+        }
+        Action::KubeStatusRead | Action::KubeLogsRead | Action::KubeEventsRead => {
+            !target.is_empty() && target.len() <= 256 && !target.contains(['\0', '\n', '\r'])
+        }
+        Action::ConnectorRead | Action::ConnectorInvoke => {
+            !target.is_empty()
+                && scope
+                    .connector_operations
+                    .iter()
+                    .any(|operation| operation == target)
         }
         _ => false,
     }
@@ -219,6 +225,14 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
         || scope.file_roots.len() > 16
         || scope.thread_ids.len() > 32
         || scope.terminal_ids.len() > 16
+        || scope.connector_operations.len() > 128
+        || scope.connector_operations.iter().any(|name| {
+            name.is_empty()
+                || name.len() > 128
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        })
     {
         return Err(Status::invalid_argument(
             "bounded observation scope required",
@@ -242,6 +256,8 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
     if actions.contains(&(Action::FilesObserve as i32)) && scope.file_roots.is_empty()
         || actions.contains(&(Action::CodexObserve as i32)) && scope.thread_ids.is_empty()
         || actions.contains(&(Action::TerminalObserve as i32)) && scope.terminal_ids.is_empty()
+        || actions.contains(&(Action::ConnectorInvoke as i32))
+            && scope.connector_operations.is_empty()
     {
         return Err(Status::invalid_argument(
             "content access requires an explicit scope",
@@ -428,6 +444,16 @@ pub fn validate_context(context: &RequestContext, peer: &str, state: &State) -> 
     Ok(())
 }
 
+pub fn decision_deadline(deadline: u64, state: &State) -> Result<u64, Status> {
+    let now = u64::try_from(chrono::Utc::now().timestamp_millis())
+        .map_err(|_| Status::unavailable("authorization clock unavailable"))?;
+    let valid_until = deadline.min(state.now_ms + 2000).min(now + 2000);
+    if valid_until <= now || valid_until <= state.now_ms {
+        return Err(Status::deadline_exceeded("authorization decision expired"));
+    }
+    Ok(valid_until)
+}
+
 pub async fn evaluate(
     database: &Database,
     native: &Native,
@@ -441,6 +467,12 @@ pub async fn evaluate(
         resource,
         target,
     } = evaluation;
+    if matches!(
+        action,
+        Action::ConnectorCreate | Action::ConnectorManage | Action::ConnectorInvoke
+    ) {
+        policy::require_connectors()?;
+    }
     let kind = resource.validate_for(action)?;
     let actor = context
         .actor
@@ -457,7 +489,7 @@ pub async fn evaluate(
     if (state.fenced || !state.archive_healthy) && !allow_fenced_revoke {
         return Err(Status::unavailable("protected access fenced"));
     }
-    let mut valid_until = context.deadline_unix_ms.min(state.now_ms + 2000);
+    let mut valid_until = decision_deadline(context.deadline_unix_ms, &state)?;
     let needs_active_workspace = kind == "workspace"
         && !matches!(
             action,
@@ -472,7 +504,20 @@ pub async fn evaluate(
     let mut effective_scope = None;
     let mut checks = match actor.identity.as_ref() {
         Some(Identity::HumanId(_)) => {
-            if !matches!(peer, BFF_ID | CONTROLLER_ID) {
+            if !(matches!(peer, BFF_ID | CONTROLLER_ID)
+                || (peer == CONNECTOR_BROKER_ID
+                    && policy::connectors_enabled()
+                    && matches!(
+                        action,
+                        Action::PlatformAdmit
+                            | Action::ConnectorRead
+                            | Action::ConnectorInvoke
+                            | Action::ConnectorManage
+                            | Action::GrantsManage
+                            | Action::CodexControl
+                            | Action::WorkspacePolicyRead
+                    )))
+            {
                 return Err(Status::permission_denied("human caller denied"));
             }
             valid_until = valid_until.min(session(database, context, action, &state).await?);
@@ -499,10 +544,14 @@ pub async fn evaluate(
                 || grant.agent_id != subject
                 || grant.resource != *resource
                 || !grant.actions.contains(&(action as i32))
-                || !action.permission()?.diagnostic
+                || (!action.permission()?.diagnostic && action != Action::ConnectorInvoke)
                 || grant.expires_at_ms <= state.now_ms
                 || grant.recovery_generation != state.recovery_generation
                 || !scope_allows(&grant.scope, action, target)
+                || (matches!(action, Action::ConnectorRead | Action::ConnectorInvoke)
+                    && !grant.scope.connector_operations.is_empty()
+                    && (grant.scope.connector_runtime_epoch.is_empty()
+                        || grant.scope.connector_runtime_epoch != context.runtime_epoch))
             {
                 return Err(Status::permission_denied("access denied"));
             }
@@ -545,7 +594,7 @@ pub async fn evaluate(
             }
         }
         if allowed
-            && matches!(
+            && (matches!(
                 action,
                 Action::FilesObserve
                     | Action::FilesWrite
@@ -557,7 +606,11 @@ pub async fn evaluate(
                     | Action::BrowserControl
                     | Action::EditorOpen
                     | Action::PreviewAccess
-            )
+            ) || (matches!(action, Action::ConnectorRead | Action::ConnectorInvoke)
+                && effective_scope
+                    .as_ref()
+                    .is_some_and(|scope| !scope.connector_operations.is_empty())
+                && matches!(actor.identity, Some(Identity::AgentId(_)))))
         {
             let client = database
                 .pool
@@ -578,13 +631,23 @@ pub async fn evaluate(
     }
     if allowed && kind == "workspace" && actor_kind == "human" && content_observation(action) {
         let observation = human_observation_scope(database, context, action, target).await?;
+        if observation.state.version != state.version
+            || observation.state.recovery_generation != state.recovery_generation
+            || observation.state.now_ms >= valid_until
+            || observation.state.fenced
+            || !observation.state.archive_healthy
+        {
+            return Err(Status::aborted(
+                "workspace observation changed while authorizing",
+            ));
+        }
         allowed = observation.allowed;
         effective_scope = observation.scope;
     }
     // A dependency response arriving beyond the bound cannot authorize a disclosure.
     let after = database.state().await?;
-    if after.now_ms >= valid_until
-        || after.recovery_generation != state.recovery_generation
+    let valid_until = decision_deadline(valid_until, &after)?;
+    if after.recovery_generation != state.recovery_generation
         || ((after.fenced || !after.archive_healthy) && !allow_fenced_revoke)
     {
         return Err(Status::deadline_exceeded("authorization decision expired"));
@@ -611,6 +674,12 @@ pub async fn check(
         .ok_or_else(|| Status::invalid_argument("resource required"))?;
     let action =
         Action::try_from(request.action).map_err(|_| Status::invalid_argument("unknown action"))?;
+    if matches!(
+        action,
+        Action::ConnectorCreate | Action::ConnectorManage | Action::ConnectorInvoke
+    ) {
+        policy::require_connectors()?;
+    }
     let result = evaluate(
         database,
         native,
@@ -624,7 +693,7 @@ pub async fn check(
         false,
     )
     .await;
-    let (allowed, revision, valid_until, state, effective_scope) = match result {
+    let (allowed, revision, _, state, effective_scope) = match result {
         Ok(result) => result,
         Err(mut error) => {
             if request.stream_receipt_id.is_empty()
@@ -655,73 +724,48 @@ pub async fn check(
             return Err(error);
         }
     };
-    let audit_receipt_id = if request.stream_receipt_id.is_empty() {
-        let receipt = store::receipt(
+    let mut receipt = store::receipt(
+        context,
+        peer,
+        resource.clone(),
+        action,
+        allowed,
+        "",
+        "protected access",
+    );
+    receipt.revision = revision.clone();
+    receipt.recovery_generation = state.recovery_generation;
+    let receipt = database
+        .observation_audit(&receipt, &request.target, &request.stream_receipt_id)
+        .await?;
+    let (audit_receipt_id, audited_revision) = (receipt.id, receipt.revision);
+    let finalized = evaluate(
+        database,
+        native,
+        peer,
+        Evaluation {
             context,
-            peer,
-            resource.clone(),
             action,
-            allowed,
-            "",
-            "protected access",
-        );
-        database.audit(&receipt, &request.target).await?
-    } else {
-        let id = parse_uuid(&request.stream_receipt_id)?;
-        let client = database
-            .pool
-            .get()
-            .await
-            .map_err(|_| Status::unavailable("control database pool unavailable"))?;
-        let actor = store::encode(&context.actor)?;
-        let resource = store::encode(resource)?;
-        let target_hash = Sha256::digest(request.target.as_bytes()).to_vec();
-        let bound = client.query_opt("SELECT receipt FROM ofz.audit WHERE id=$1 AND receipt->'actor'=$2 AND receipt->'resource'=$3 AND (receipt->>'action')::integer=$4 AND receipt->>'workload_id'=$5 AND receipt->>'allowed'='true' AND target_hash=$6 AND created_at_ms>ofz.now_ms()-28800000", &[&id,&actor,&resource,&(action as i32),&peer,&target_hash]).await.map_err(sql_error)?;
-        let bound =
-            bound.ok_or_else(|| Status::permission_denied("stream receipt binding mismatch"))?;
-        let receipt: crate::proto::AuditReceipt = store::decode(bound.get(0))?;
-        if receipt.session_id != context.session_id
-            || receipt.grant_id != context.grant_id
-            || receipt.workspace_uid != context.workspace_uid
-            || receipt.runtime_epoch != context.runtime_epoch
-            || receipt.origin != context.origin
-            || receipt.recovery_generation != state.recovery_generation
+            resource,
+            target: &request.target,
+        },
+        false,
+    )
+    .await;
+    let (_, _, valid_until, state, effective_scope) = match finalized {
+        Ok(current)
+            if current.0 == allowed
+                && current.3.version == state.version
+                && current.3.recovery_generation == state.recovery_generation
+                && current.4 == effective_scope =>
         {
-            return Err(Status::permission_denied("stream receipt binding mismatch"));
+            current
         }
-        request.stream_receipt_id
-    };
-    if allowed
-        && resource.kind == crate::proto::ResourceKind::Workspace as i32
-        && matches!(
-            context
-                .actor
-                .as_ref()
-                .and_then(|actor| actor.identity.as_ref()),
-            Some(Identity::HumanId(_))
-        )
-        && content_observation(action)
-    {
-        // Audit and receipt lookup may block while restrictive intent commits.
-        let failure =
-            match human_observation_scope(database, context, action, &request.target).await {
-                Ok(current)
-                    if current.allowed
-                        && current.scope == effective_scope
-                        && current.state.version == state.version
-                        && current.state.recovery_generation == state.recovery_generation
-                        && current.state.now_ms < valid_until
-                        && !current.state.fenced
-                        && current.state.archive_healthy =>
-                {
-                    None
-                }
-                Ok(_) => Some(Status::aborted(
-                    "workspace observation changed before disclosure",
-                )),
-                Err(error) => Some(error),
+        outcome => {
+            let mut error = match outcome {
+                Err(error) => error,
+                Ok(_) => Status::aborted("authorization changed before disclosure"),
             };
-        if let Some(error) = failure {
             let denial = store::receipt(
                 context,
                 peer,
@@ -729,15 +773,21 @@ pub async fn check(
                 action,
                 false,
                 "",
-                "workspace observation changed before disclosure",
+                "authorization changed before disclosure",
             );
-            database.audit(&denial, &request.target).await?;
+            let receipt = database.audit(&denial, &request.target).await?;
+            error.metadata_mut().insert(
+                "x-ofz-audit-receipt",
+                receipt
+                    .parse()
+                    .map_err(|_| Status::internal("invalid audit ID"))?,
+            );
             return Err(error);
         }
-    }
+    };
     Ok(CheckResponse {
         allowed,
-        revision,
+        revision: audited_revision,
         audit_receipt_id,
         valid_until_unix_ms: valid_until,
         recovery_generation: state.recovery_generation,
@@ -760,7 +810,61 @@ pub fn workload_actor(peer: &str) -> Actor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_observation_scope_keeps_its_stored_json_and_connector_semantics() {
+        let legacy = serde_json::json!({
+            "file_roots": ["/workspace/src"],
+            "thread_ids": [], "terminal_ids": [], "browser_screenshot": false,
+            "max_bytes": 1024, "max_items": 20
+        });
+        let scope: crate::proto::ObservationScope = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&scope).unwrap(), legacy);
+        super::validate_scope(&[crate::proto::Action::ConnectorRead as i32], &scope).unwrap();
+        assert!(super::scope_allows(
+            &scope,
+            crate::proto::Action::ConnectorRead,
+            "legacy-operation"
+        ));
+        let scoped = crate::proto::ObservationScope {
+            connector_operations: vec!["search".into()],
+            ..scope
+        };
+        assert!(super::scope_allows(
+            &scoped,
+            crate::proto::Action::ConnectorRead,
+            "search"
+        ));
+        assert!(!super::scope_allows(
+            &scoped,
+            crate::proto::Action::ConnectorRead,
+            "delete"
+        ));
+    }
+
     use super::*;
+
+    #[test]
+    fn decision_deadline_is_bounded_by_both_clocks_and_the_request() {
+        let now = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+        let mut state = State {
+            version: 1,
+            recovery_generation: 1,
+            fenced: false,
+            now_ms: now,
+            archive_healthy: true,
+        };
+        for database_now in [now - 500, now + 500] {
+            state.now_ms = database_now;
+            let deadline = decision_deadline(now + 5000, &state).unwrap();
+            let finished = u64::try_from(chrono::Utc::now().timestamp_millis()).unwrap();
+            assert!(deadline > finished && deadline > database_now);
+            assert!(deadline <= finished + 2000 && deadline <= database_now + 2000);
+            assert!(decision_deadline(now - 1, &state).is_err());
+            assert!(decision_deadline(now + 1000, &state).unwrap() <= now + 1000);
+        }
+        state.now_ms = now + 3000;
+        assert!(decision_deadline(now + 5000, &state).is_err());
+    }
 
     #[test]
     fn observation_scope_rejects_control_characters() {
@@ -771,6 +875,8 @@ mod tests {
             browser_screenshot: false,
             max_bytes: 1024,
             max_items: 20,
+            connector_operations: vec![],
+            connector_runtime_epoch: String::new(),
         };
         validate_scope(&[], &approved).unwrap();
         for control in ['\n', '\r', '\u{1b}', '\u{7f}', '\u{85}'] {
@@ -799,6 +905,8 @@ mod tests {
             browser_screenshot: false,
             max_bytes: 65536,
             max_items: 100,
+            connector_operations: vec![],
+            connector_runtime_epoch: String::new(),
         };
         assert!(scope_allows(
             &scope,

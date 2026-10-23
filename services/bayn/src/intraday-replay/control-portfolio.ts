@@ -1,35 +1,37 @@
-import { quantityFromNumber, quantityScale } from '../quantity'
-import { equityMarketProfile } from '../jev/markets'
+import { jevLiquidationValue } from '../jev/liquidation-economics'
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
+import { momentumControlCandidates } from './momentum-control'
+import { replayInstrument, type ReplayInstrumentsSchema } from './execution-core'
+import { quantityFromNumber } from '../quantity'
+import { equityMarketProfile, jevMarketForSymbol } from '../jev/markets'
 import { equityRollingValues } from '../market-data/features/native-feature'
 
 import { Data, Result } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { assessEntryTurnoverReserve, EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import {
   constrainExecutionTargetAllocationCapitalMicros,
   executionMandateAllocationCapitalMicros,
 } from '../execution/mandate'
-import { MICROS, numberToMicros } from '../execution-model'
-import { jevProtectiveStopCrossed } from '../jev/exit'
+import { MICROS } from '../strategy/execution-model/model'
+import { notionalMicros, numberToMicros } from '../strategy/execution-model/fixed-point'
 import type { JevProtocol } from '../jev/protocol'
-import { usesWindowTradeEvidence, type IntradayQuote } from '../market-data/intraday/model'
-import { intradayInstantNanos } from '../market-data/intraday/time'
+import { type IntradayQuote } from '../market-data/intraday/model'
 import { compareRecords } from '../market-data/intraday/verification'
 import type { ObservedMarketValue } from '../market-data/streaming/projection'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import type { Policy } from '../risk'
-import {
-  decideIntradayMomentumCore,
-  deriveIntradayMomentumSignalMetrics,
-} from '../strategy/intraday-momentum/decision-core'
+import { decideIntradayMomentumCore } from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { replayQuoteRejection } from './broker-execution-evidence'
 import { applyReplayFill, createReplayLedger, type EconomicReplayFill, type ReplayLedger } from './ledger'
-import { studyIoc } from './signal-study'
-import { RidgeControlPolicy } from './control-ridge'
+import { studyOrder } from './signal-study'
 import { ResidualShockCandidate, residualShockDefinition, selectResidualShock } from './residual-shock'
+
+export const controlExitDefinition = { protectiveStopBps: 50, profitTargetNetBps: 100 } as const
 
 export enum ControlPolicy {
   RetainedBreakout = 'RETAINED_BREAKOUT_CLOSE',
@@ -37,8 +39,8 @@ export enum ControlPolicy {
   RelativeMomentum = 'REPEATED_RELATIVE_MOMENTUM',
   JevEntry = 'REPEATED_JEV_ENTRY',
   ResidualShock = ResidualShockCandidate.SpyRelativeShockRebound60s,
-  Ridge = RidgeControlPolicy.Ridge,
-  TrainingMean = RidgeControlPolicy.TrainingMean,
+  Ridge = 'SIX_BAR_RIDGE_V1',
+  TrainingMean = 'SIX_BAR_TRAINING_MEAN_V1',
   FixedCandidateTraining = 'SIX_BAR_FIXED_CANDIDATE_TRAINING_V1',
 }
 
@@ -47,6 +49,7 @@ export enum ControlExit {
   SessionClose = 'SESSION_CLOSE',
   MaximumHold = 'MAXIMUM_HOLD',
   ProtectiveStop = 'PROTECTIVE_STOP',
+  ProfitTarget = 'PROFIT_TARGET',
   SignalHorizon = 'SIGNAL_HORIZON',
 }
 
@@ -129,51 +132,7 @@ export const selectControlSymbol = (snapshot: StrategyMarketSnapshot, policy: Co
       })
       return decision.selectedSymbols[0] ?? null
     }
-    const prices = (symbol: string) =>
-      Result.gen(function* () {
-        const rolling = snapshot.manifest.streaming.features.find((entry) => entry.value.material.symbol === symbol)
-        const quote = snapshot.latestQuotes[symbol]
-        const trade = latestTrades[symbol]
-        if (rolling === undefined || quote === undefined || trade === undefined)
-          return yield* Result.fail(new ControlStudyFailure({ message: `Missing control signal for ${symbol}` }))
-        const now = intradayInstantNanos(snapshot.manifest.observedAt)
-        const pricingTimes = usesWindowTradeEvidence(snapshot.manifest, symbol)
-          ? [quote.eventAt]
-          : [quote.eventAt, trade.eventAt]
-        const fresh =
-          intradayInstantNanos(trade.eventAt) <= now &&
-          pricingTimes.every((at) => {
-            const age = now - intradayInstantNanos(at)
-            return age >= 0n && age <= BigInt(protocol.maximumQuoteAgeMs) * 1_000_000n
-          })
-        const values = yield* equityRollingValues(rolling.value)
-        return {
-          reference: BigInt(values.referencePriceMicros),
-          high: BigInt(values.rangeHighPriceMicros),
-          low: BigInt(values.rangeLowPriceMicros),
-          bid: yield* numberToMicros(quote.bidPrice),
-          ask: yield* numberToMicros(quote.askPrice),
-          trade: yield* numberToMicros(trade.price),
-          liquid: fresh && quote.bidSize > 0 && quote.askSize > 0,
-        }
-      })
-    const benchmark = yield* prices('SPY')
-    if (!benchmark.liquid)
-      return yield* Result.fail(new ControlStudyFailure({ message: 'Control benchmark is stale or illiquid' }))
-    const signals = []
-    for (const symbol of controlCandidates(policy, protocol)) {
-      if (snapshot.manifest.candidateExclusions?.some((entry) => entry.symbol === symbol) === true) continue
-      const p = yield* prices(symbol)
-      const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(p, symbol, benchmark)
-      if (!p.liquid || metrics.spreadBps > protocol.maximumSpreadBps) continue
-      if (p.bid + p.ask > 2n * p.reference && excessReturn.numerator > 0n) signals.push({ symbol, excessReturn })
-    }
-    signals.sort((a, b) => {
-      const delta =
-        a.excessReturn.numerator * b.excessReturn.denominator - b.excessReturn.numerator * a.excessReturn.denominator
-      return delta === 0n ? (a.symbol < b.symbol ? -1 : 1) : delta > 0n ? -1 : 1
-    })
-    return signals[0]?.symbol ?? null
+    return (yield* momentumControlCandidates(snapshot))[0]?.symbol ?? null
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot select control signal', cause })))
 
 export const controlEntryQuantity = (input: {
@@ -183,6 +142,7 @@ export const controlEntryQuantity = (input: {
   readonly targetWeight: number
   readonly symbol: string
   readonly referencePriceMicros: bigint
+  readonly instruments: typeof ReplayInstrumentsSchema.Type
   readonly atMs: number
   readonly feeMultiplierPpm: number
   readonly turnoverPolicy?: EntryTurnoverPolicy
@@ -240,33 +200,36 @@ export const controlEntryQuantity = (input: {
       maxAdverseSlippageBps: BigInt(policy.maxAdverseSlippageBps),
       targetWeights,
     })
+    const instrument = yield* replayInstrument(symbol, input.instruments)
+    const increment = instrument.quantityIncrementAtoms
     const weight = BigInt(Math.round(input.targetWeight * 1_000_000))
-    let high = (constrained * weight) / MICROS / referencePriceMicros
+    let high = (constrained * weight * 1_000_000_000n) / MICROS / referencePriceMicros / increment
     let low = 0n
     const pricing = yield* deriveExecutionIntentPricing({
       symbol: symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
+      // Price derivation needs a nonzero micro-dollar notional; a crypto increment can be one nano-coin.
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros,
-      executionModel: protocol.executionModel,
       limitSlippageBps: BigInt(policy.maxAdverseSlippageBps),
     })
     while (low < high) {
       const shares = (low + high + 1n) / 2n
-      const notional = shares * pricing.expectedExecutionPriceMicros
+      const quantity = shares * increment
+      const notional = (quantity * pricing.expectedExecutionPriceMicros + 999_999_999n) / 1_000_000_000n
       const tentative = applyReplayFill(
         portfolio.ledger,
         {
           symbol,
           side: 'buy',
           observedAt: new Date(input.atMs).toISOString(),
-          quantityAtoms: String(shares * 1_000_000_000n),
+          quantityAtoms: String(shares * increment),
           priceMicros: String(pricing.expectedExecutionPriceMicros),
-          notionalMicros: String(notional),
+          notionalMicros: String(yield* notionalMicros(quantity, pricing.expectedExecutionPriceMicros)),
         },
-        String(shares * 1_000_000_000n),
+        String(shares * increment),
         protocol.executionModel,
         input.feeMultiplierPpm,
       )
@@ -282,7 +245,7 @@ export const controlEntryQuantity = (input: {
             filledTurnoverMicros: portfolio.tradedNotionalMicros,
             maximumTurnoverMicros: BigInt(policy.maxDailyTradedNotionalMicros),
             otherReservedMicros: 0n,
-            quantityAtoms: shares * 1_000_000_000n,
+            quantityAtoms: shares * increment,
             entryLimitPriceMicros: pricing.expectedExecutionPriceMicros,
             exitReferencePriceMicros: referencePriceMicros,
             exitAllowanceBps: BigInt(policy.maxAdverseSlippageBps),
@@ -290,12 +253,13 @@ export const controlEntryQuantity = (input: {
       if (allowed) low = shares
       else high = shares - 1n
     }
-    return low * 1_000_000_000n
+    return low * increment >= instrument.minimumQuantityAtoms ? low * increment : 0n
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot size control entry', cause })))
 
 export const triggerControlExit = (input: {
   readonly portfolio: ControlPortfolio
   readonly policy: ControlPolicy
+  readonly feeMultiplierPpm: number
   readonly protocol: JevProtocol
   readonly atMs: number
   readonly cutoffMs: number
@@ -315,16 +279,33 @@ export const triggerControlExit = (input: {
       else if (
         quote !== undefined &&
         quote.value.bidSize > 0 &&
-        replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...equityMarketProfile }) === null &&
-        jevProtectiveStopCrossed(
-          BigInt(position.costBasisMicros),
-          BigInt(position.quantityAtoms),
-          yield* numberToMicros(quote.value.bidPrice),
-          protocol.protectiveStopBps,
+        replayQuoteRejection(quote, position.symbol, atMs, { ...protocol, ...jevMarketForSymbol(position.symbol) }) ===
+          null
+      ) {
+        const bid = yield* numberToMicros(quote.value.bidPrice)
+        if (
+          bid * BigInt(position.quantityAtoms) * 10_000n <=
+          BigInt(position.costBasisMicros) * 1_000_000_000n * BigInt(10_000 - controlExitDefinition.protectiveStopBps)
         )
-      )
-        reason = ControlExit.ProtectiveStop
-      else if (
+          reason = ControlExit.ProtectiveStop
+        else if (input.policy !== ControlPolicy.ResidualShock) {
+          const liquidation = yield* jevLiquidationValue({
+            protocol,
+            symbol: position.symbol,
+            quantityAtoms: BigInt(position.quantityAtoms),
+            bidMicros: bid,
+            costMultiplierMicros: BigInt(input.feeMultiplierPpm),
+          })
+          const acquisition = BigInt(portfolio.inventory.openingCashMicros) - BigInt(portfolio.ledger.cashMicros)
+          if (
+            liquidation.conservativeNetMicros >=
+            (acquisition * BigInt(10_000 + controlExitDefinition.profitTargetNetBps) + 9_999n) / 10_000n
+          )
+            reason = ControlExit.ProfitTarget
+        }
+      }
+      if (
+        reason === undefined &&
         input.policy === ControlPolicy.ResidualShock &&
         atMs - portfolio.inventory.enteredAtMs >= residualShockDefinition.targetHoldingMs
       )
@@ -335,12 +316,16 @@ export const triggerControlExit = (input: {
       : { ...portfolio, inventory: { ...portfolio.inventory, status: 'EXITING' as const, reason } }
   }).pipe(Result.mapError((cause) => new ControlStudyFailure({ message: 'Cannot manage control position', cause })))
 
-export const applyControlOrder = (portfolio: ControlPortfolio, input: Parameters<typeof studyIoc>[0]) =>
+export const applyControlOrder = (
+  portfolio: ControlPortfolio,
+  input: Omit<Parameters<typeof studyOrder>[0], 'orderType'>,
+) =>
   Result.gen(function* () {
     const buying = input.side === OrderSide.Buy
     if ((buying && portfolio.inventory.status !== 'FLAT') || (!buying && portfolio.inventory.status !== 'EXITING'))
       return yield* Result.fail(new ControlStudyFailure({ message: 'Order violates control inventory phase' }))
-    let outcome = yield* studyIoc(input)
+    const orderType = OrderType.Limit
+    let outcome = yield* studyOrder({ ...input, orderType })
     if (outcome.status !== 'FILLED') return { portfolio, outcome }
     const quote = input.arrivalQuote
     if (quote === undefined)
@@ -350,13 +335,15 @@ export const applyControlOrder = (portfolio: ControlPortfolio, input: Parameters
     if (consumed > 0n) {
       const displayed = yield* quantityFromNumber(buying ? quote.value.askSize : quote.value.bidSize)
       const available = (displayed * BigInt(input.assumptions.availableLiquidityPpm)) / MICROS
-      const remaining = available > consumed ? ((available - consumed) / quantityScale) * quantityScale : 0n
+      const increment = (yield* replayInstrument(input.symbol, input.assumptions.instruments)).quantityIncrementAtoms
+      const remaining = available > consumed ? ((available - consumed) / increment) * increment : 0n
       if (remaining === 0n)
         return {
           portfolio,
           outcome: { status: 'CANCELED' as const, reason: 'quote-liquidity-exhausted', quoteHash: quote.recordHash },
         }
-      if (remaining < input.quantityAtoms) outcome = yield* studyIoc({ ...input, quantityAtoms: remaining })
+      if (remaining < input.quantityAtoms)
+        outcome = yield* studyOrder({ ...input, orderType, quantityAtoms: remaining })
       if (outcome.status !== 'FILLED') return { portfolio, outcome }
     }
     const ledger = yield* applyReplayFill(

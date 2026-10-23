@@ -11,7 +11,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   storage:
     storageClass: rook-ceph-block
-    size: 5Gi
+    size: 20Gi
   bootstrap:
     initdb:
       database: keycloak
@@ -55,6 +55,7 @@ spec:
     parameters:
       archive_timeout: 60s
       max_connections: "100"
+      max_slot_wal_keep_size: 4096MB
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
   plugins:

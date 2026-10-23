@@ -33,6 +33,14 @@ operator. Their upstream versions remain pinned in source; the repository-owned 
 CNPG generates `ofz-db-app`. The SpiceDB operator reads its `uri` key directly. Both migration jobs and serving pods
 verify PostgreSQL's TLS certificate with `ofz-db-ca`. `track_commit_timestamp=on` enables the SpiceDB Watch API.
 
+The WAL buffer is 16 MiB, matching one WAL segment. Forced archive switches pad the segment, so a smaller buffer can
+cause repeated buffer evictions and small writes while authorization commits wait. `fdatasync` lets the primary and
+standbys batch WAL writes before their durable flush. WAL I/O timing is enabled for live
+readback through `pg_stat_io`. PostgreSQL still requires `fsync`, full-page writes and one synchronous standby.
+Changing `wal_buffers` requires a CNPG rolling restart and switchover; verify all three instances, replication and
+actual authenticated app requests after reconciliation. Reverting these parameters through Git follows the same
+rollout and preserves the database and workspace volumes.
+
 `ofz-spicedb-key` contains the API preshared key. Its namespace-bound SealedSecret is committed here. The preshared key
 grants access to the whole SpiceDB API; only the Ofz API and owner bootstrap jobs receive it. The native API uses plaintext
 transport inside the cluster and has no ingress route. Browser access uses Tailscale HTTPS and requires tailnet access.
@@ -49,6 +57,16 @@ The [control-plane runbook](control-plane/README.md) describes managed roles, ch
 archive credentials and fenced bootstrap. The [independent NUC recovery store](../../../devices/nuc/ofz-recovery/README.md)
 holds both the audit archive and separate database buckets. PostgreSQL persists the native relationship datastore and the separate `ofz_control`
 and `tengri_control` databases. Application roles have distinct schema/table permissions.
+
+Separated Tengri pools require two connections per process for schema/readiness and leadership operations,
+in addition to request writes. The managed controller role permits 42 connections, covering two replicas and one
+rolling-update surge with twelve request and two coordination connections each. The supervisor role permits 24 connections for six slots with two
+request and two coordination connections each. Apply this role limit through the Ofz promotion before deploying
+the separated Tengri pools. CNPG updates the roles online and rolls the three database instances to apply the
+220-connection server limit. This leaves 32 connections beyond simultaneous application rolling surges.
+Verify all three instances are ready and report 220 connections before the Tengri rollout. Database privileges,
+credentials and runtime migration checksums stay unchanged. Reverting the pool separation precedes any reduction
+of these connection budgets.
 
 ## Validate before deployment
 

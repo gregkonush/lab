@@ -159,6 +159,7 @@ test('failed capture disposes lazy broker acquisition before returning measured 
     stdout: 'pipe',
     stderr: 'pipe',
   })
+
   const [stdout, stderr, exitCode] = await Promise.all([
     new Response(child.stdout).text(),
     new Response(child.stderr).text(),
@@ -192,3 +193,49 @@ test('failed capture disposes lazy broker acquisition before returning measured 
     },
   })
 })
+
+test.each(['invalid-response', 'defect', 'interruption'])(
+  'preserves broker acquisition %s without reporting a false timeout or settling unknown work',
+  async (mode) => {
+    const child = Bun.spawn(['bun', `${import.meta.dir}/broker-observation-runtime.test-support.ts`, mode], {
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(child.stdout).text(),
+      new Response(child.stderr).text(),
+      child.exited,
+    ])
+    expect({ exitCode, stderr }).toEqual({ exitCode: 0, stderr: '' })
+    const line = stdout.split('\n').find((value) => value.startsWith('BROKER_POLL_RESULT='))
+    if (line === undefined) throw new Error(`Broker poll worker returned no result: ${stdout}`)
+    const result = JSON.parse(line.slice('BROKER_POLL_RESULT='.length))
+    expect(result.attemptsAtReturn).toBe(1)
+    expect(result.attemptsAfterReturn).toBe(1)
+    expect(result.mutationInvalidations).toBe(0)
+    expect(result.interruptedCaptures).toEqual(
+      mode === 'interruption'
+        ? [{ accountId: 'test-account', sourceRevision: 'b'.repeat(40), captureId: 'test-capture' }]
+        : [],
+    )
+    if (mode === 'invalid-response') {
+      expect(result.failed).toBe(false)
+      expect(result.poll._tag).toBe('Unavailable')
+      expect(result.settlements).toBe(1)
+      expect(result.logs).toContainEqual({
+        message: 'Broker observation poll failed',
+        annotations: expect.objectContaining({
+          'broker.operation': 'positions',
+          'broker.failure_kind': 'INVALID_RESPONSE',
+          'broker.retryable': false,
+          'broker.http_status': 200,
+        }),
+      })
+    } else {
+      expect(result.failed).toBe(true)
+      expect(result.poll).toBeUndefined()
+      expect(result.settlements).toBe(0)
+    }
+    expect(JSON.stringify(result.logs)).not.toContain('synthetic private response detail')
+  },
+)

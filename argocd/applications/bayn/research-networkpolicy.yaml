@@ -22,6 +22,17 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - port: 8000
+          protocol: TCP
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
@@ -69,12 +80,12 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: bayn-model
+              kubernetes.io/metadata.name: flamingo
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: bayn-model
+              app.kubernetes.io/name: flamingo
       ports:
-        - port: 8080
+        - port: 8000
           protocol: TCP
     - to:
         - namespaceSelector:

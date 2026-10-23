@@ -1,7 +1,7 @@
 import { Clock, Data, Effect, Match, Result } from 'effect'
 
-import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations'
-import { BrokerRead, type BrokerReadShape } from '../broker/alpaca'
+import { BrokerMutation, MutationOperation } from '../broker/alpaca-mutations/model'
+import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { IntentState, type Intent } from './contracts'
 import {
   cancellationIdentity,
@@ -29,10 +29,10 @@ import {
   type SubmitPersistenceDecision,
 } from './coordinator-decisions'
 import { IntentStore, type IntentStoreError, type StoredIntent } from './intents/domain'
-import { MutationStore, MutationStoreError, type MutationEvent } from './mutations'
+import { MutationStore, MutationStoreError, type MutationEvent } from './mutations/model'
 import type { WriterFenceError } from './writer-fence'
 import { currentUtcInstant, utcInstantFromEpochMillis } from '../time'
-import { Pipeable } from '../pipeable'
+
 import { withObservedStage } from '../telemetry'
 import { SubmissionDenialReason } from './submission-denial'
 
@@ -220,10 +220,9 @@ const submitToBroker = (
   stored: StoredIntent,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
-  closeOnly: boolean,
 ) => {
   const submittedIntent: Intent = { ...stored.intent, state: IntentState.IoStarted }
-  return services.broker.submit(submittedIntent, closeOnly).pipe(
+  return services.broker.submit(submittedIntent).pipe(
     Effect.matchEffect({
       onFailure: (error) => persistSubmitDecision(services, started, decideSubmitFailure(started.requestHash, error)),
       onSuccess: (receipt) =>
@@ -240,7 +239,6 @@ const continueStartedSubmit = (
   services: MutationServices,
   started: MutationEvent,
   request: DryRunSubmitDecision['request'],
-  closeOnly: boolean,
 ): Effect.Effect<
   MutationEvent,
   ExecutionError | IntentStoreError | MutationStoreError | WriterFenceError,
@@ -253,7 +251,7 @@ const continueStartedSubmit = (
           (currentTimeMillis): Effect.Effect<MutationEvent, ExecutionError | MutationStoreError | WriterFenceError> => {
             const validation = validateStartedSubmitRiskDecision(startedIntent, currentTimeMillis)
             if (Result.isSuccess(validation)) {
-              return submitToBroker(services, validation.success, started, request, closeOnly)
+              return submitToBroker(services, validation.success, started, request)
             }
             return validation.failure._tag === 'ExpiredRiskDecision'
               ? denyStartedSubmit(services.mutations, started, SubmissionDenialReason.ExpiredRiskDecision)
@@ -289,7 +287,7 @@ const startSubmit = (
     ),
     Effect.flatMap((started) => {
       if (!started.started) return Effect.succeed(started.event)
-      return continueStartedSubmit(services, started.event, request, closeOnly)
+      return continueStartedSubmit(services, started.event, request)
     }),
   )
 
@@ -314,7 +312,7 @@ const runSubmit = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
+export const submit = (intentId: string, consistencyDelayMs: number, closeOnly = false) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
@@ -323,11 +321,6 @@ const submitDataFirst = (intentId: string, consistencyDelayMs: number, closeOnly
     withObservedStage('bayn.execution.submit', { operation: closeOnly ? 'close' : 'entry' }),
     Effect.annotateLogs({ intentId, closeOnly }),
   )
-
-export const submit = Pipeable.by<
-  (consistencyDelayMs: number, closeOnly?: boolean) => (intentId: string) => ReturnType<typeof submitDataFirst>,
-  typeof submitDataFirst
->((arguments_) => typeof arguments_[0] === 'string', submitDataFirst)
 
 const persistCancelDecision = (
   services: MutationServices,
@@ -420,13 +413,11 @@ const runCancel = (services: MutationServices, intentId: string, consistencyDela
       ),
     )
 
-const cancelDataFirst = (intentId: string, consistencyDelayMs: number) =>
+export const cancel = (intentId: string, consistencyDelayMs: number) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerMutation,
   }).pipe(Effect.flatMap((services) => runCancel(services, intentId, consistencyDelayMs)))
-
-export const cancel = Pipeable.dual(2, cancelDataFirst)
 
 const markInterruptedStart = (mutations: MutationStore['Service'], event: MutationEvent, occurredAt: string) =>
   Match.value(decideInterruptedStart(event, occurredAt)).pipe(
@@ -545,10 +536,8 @@ const runRecovery = (services: RecoveryServices, intentId: string, operation: Mu
     ),
   )
 
-const recoverDataFirst = (intentId: string, operation: MutationOperation) =>
+export const recover = (intentId: string, operation: MutationOperation) =>
   Effect.all({
     mutations: MutationStore,
     broker: BrokerRead,
   }).pipe(Effect.flatMap((services) => runRecovery(services, intentId, operation)))
-
-export const recover = Pipeable.dual(2, recoverDataFirst)

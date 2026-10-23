@@ -4,9 +4,9 @@
 over immediately executable positive benchmark-relative momentum on the same observed opportunities? It runs entirely offline and
 never calls a provider, places orders, changes safeguards or promotes a strategy.
 
-The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive sessions,
-at least twenty different selections, a USD 10,000 whole-share budget per opportunity, five-second management polls,
-a 50 bp protective stop, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
+The definition is TypeScript in `src/intraday-replay/matched-entry-study.ts`. It fixes five consecutive exchange sessions or continuous UTC observation days,
+at least twenty different selections, a USD 10,000 budget quantized by frozen broker instrument increments per opportunity, five-second management polls,
+a 50 bp price stop, a 100 bp estimated execution-net profit target including adverse exit allowance, a 15-minute maximum hold and the five-minute close window. Three independent arms use identical execution assumptions and mechanical management. Immediate momentum starts
 at witnessed deterministic completion; delayed momentum and Jev start at witnessed decision commitment. One IOC entry is followed by
 persistent reducing exit retries; actual partial fills and consumed quote liquidity remain in the ledger.
 Idle management keeps the five-second cadence regardless of routing latency. Only an actual pending exit skips
@@ -21,11 +21,22 @@ independent confidence intervals. The older resolved-only signal screen answers 
 Keep all registrations, trading evidence and outputs private, outside Git and CI artifacts.
 Decode registrations with `MatchedRegistrationSchema`:
 
-- `schemaVersion: "bayn.matched-entry-registration.v1"`
+- `schemaVersion: "bayn.matched-entry-registration.v2"`
 - Canonical `definitionHash`, native `protocolHash`, and reviewed code `sourceRevision`.
 - `registeredAt`, `dataRole` (`DEVELOPMENT` or `PROSPECTIVE`), and five ordered unique `sessionDates`.
 - `latencyMs` and canonical `executionAssumptionsHash` for the complete `study.assumptions` object.
 - `latencyEvidenceHash` and `capacityEvidenceHash`; unknown witnesses are `null`.
+
+`study.assumptions.instruments` is required and pins `minimumQuantityAtoms`, `quantityIncrementAtoms`, and
+`priceIncrementAtoms` for every traded symbol. The study does not substitute equity precision for crypto.
+The definition freezes the first-tier taker rate at 25 bp per leg. Buy fees debit received coins; sell fees debit USD.
+Coin fees round up to an atom and cash fees to a cent as explicit conservative research assumptions, not a claim about
+provider receipt rounding. Multipliers stress both legs. Net sell quantity comes from the fee-adjusted ledger.
+Missing inference, operating, or original timing evidence still makes the comparison incomplete.
+
+Continuous studies include weekends and keep elapsed holding deadlines across midnight. UTC days group observations;
+they do not impose a midnight liquidation. Each arm has the same 15-minute hold and three-minute recovery budget.
+Equity studies retain their exchange close and five-minute flattening window.
 
 Freeze the code, threshold/prompt/protocol, universe, arrival model, costs and execution assumptions before the first
 prospective market open. Independently record the registration byte SHA-256 and code revision in a review receipt.
@@ -96,8 +107,8 @@ Candidate exclusions remain in the report; omitted entire batches fail the indep
 
 ### Timing and report versions
 
-Definition and report are `bayn.matched-entry-definition.v4` and `bayn.matched-entry-study.v4`. Input is v2;
-registration remains v1 with the new definition hash. Old input contracts and registrations are rejected.
+Definition and report are `bayn.matched-entry-definition.v7` and `bayn.matched-entry-study.v7`. Input is v2;
+registration is v2 with the new definition hash and frozen native profit-target lifecycle. Old input contracts and registrations are rejected.
 Historical reports retain their original identities and must not be relabeled as prospective evidence.
 
 The in-process recorder and its interval replay API have been removed. Producing new timing witnesses through that
@@ -132,6 +143,50 @@ receipt; a JSON hash alone cannot prove clocks were genuinely observed. Missing 
 comparison incomplete. Earlier captures without the producer cannot supply an immediate counterfactual.
 
 The [incremental-value audit](jev-incremental-audit.md) explains why selection and delay require separate arms.
+
+### Export a retained native timing witness
+
+`services/bayn/tools/entry-timing-export.ts` derives the existing v1 timing receipt from one independently retained
+Tempo trace query response and the exact committed native execution-decision document. It runs offline, reproduces
+the current native decision and momentum selection, and has no database, broker or model client.
+
+```sh
+bun services/bayn/tools/entry-timing-export.ts \
+  --trace /private/tempo-trace.json --trace-sha256 <pinned-original-trace-sha256> \
+  --decision /private/native-decision.json --decision-sha256 <pinned-original-decision-sha256> \
+  --source-revision <instrumented-worker-source-revision> \
+  --output /private/new-timing-directory
+```
+
+The trace must be the original JSON returned by Tempo's `/api/traces/<traceId>` query endpoint: a `batches` envelope,
+canonical protobuf base64 trace/span identifiers and string enums. This is a Tempo query representation, not the
+different OTLP/JSON ingestion wire format. The command validates both input hashes before decoding those same bytes;
+each input is limited to 16 MiB and the trace to 10,000 spans. It rejects malformed or duplicate identities and
+attributes. Preserve the private original files, capture/review seals and exporter code revision; hashes do not prove
+that a trace or native document was independently captured.
+
+The native planning and accepted binding must belong to the same successful cycle pass, source revision and worker
+instance. The command requires exactly one successful direct writer-fence child of that binding and one successful
+COMMIT child of the fence, matching the exact native decision, batch and result. Replays, rejected bindings, rollback,
+missing or ambiguous spans, foreign processes, inconsistent ancestry and conflicting clocks fail without a completed
+export. Valid native abstentions can supply timing; unavailable inference or an uncommitted batch cannot.
+Historical protocol documents are not rewritten and have no decoding fallback.
+
+All span chronology and containment checks use integer nanoseconds. The unchanged v1 study/receipt contract accepts
+millisecond UTC strings, so the acknowledged COMMIT end is rounded **up** to the next millisecond only after those
+checks. This adds from zero to less than one millisecond and never starts the delayed control earlier than the observed
+commit. Original input-readiness and deterministic-completion annotations retain their native millisecond values.
+
+The new directory has mode `0700`, with `timing.json` and `receipt.json` at `0600`. Existing destinations are never
+overwritten. The `bayn.jev-entry-timing-export.v1` receipt binds both input byte hashes, the timing-file hash, exact
+selected trace/span identities and nanosecond boundaries, and the exact commitment-rounding difference. A directory
+without a complete receipt is an incomplete attempt. The command prints only output receipt metadata.
+Pin the raw `timing.json` hash as the matched input's `evidenceHash`, and the original native-decision file hash as
+`decisionEvidenceHash`; copy the timing fields from that verified receipt into the inline witness.
+
+An export establishes only observed entry timing. It remains `UNQUALIFIED` and does not provide complete source,
+session or controller coverage, latency/capacity calibration, cost allocations or profitability evidence. Every
+existing matched-study inventory, registration, source, cost and completeness requirement remains in force.
 
 ## Run
 
@@ -169,3 +224,7 @@ With complete prospective evidence, nonpositive Jev net budget return or total i
 scenario or an additional ten bps per filled leg stops prioritizing this entry hypothesis. Positive results only earn
 the separate frozen portfolio acceptance test. No outcome grants authority or strategy promotion. Preserve all five
 scheduled sessions and failed runs; do not retune thresholds, prompts, universe, exits, sampling or costs mid-window.
+
+The v7 definition uses an independent mechanical control exit profile. Its results do not qualify the v14 strategy's
+range-derived prices or broker-held bracket, OCO or stop-limit lifecycle. Historical registrations cannot be reused
+against a changed definition hash. Native lifecycle acceptance requires the production engine and broker evidence.

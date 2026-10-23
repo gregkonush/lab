@@ -5,10 +5,11 @@ import {
   Cause,
   Clock,
   Effect,
-  type Exit,
+  Exit,
   Layer,
   Logger,
   ManagedRuntime,
+  Metric,
   Option,
   References,
   Result,
@@ -18,17 +19,18 @@ import {
 } from 'effect'
 import { HttpClient } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
-import { layer as brokerSessionLayer, BrokerSession, BrokerSessionAcquisitionError } from '../broker/alpaca/session'
+import type { ApplicationPlan } from '../app'
+import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
-import { observedBrokerSnapshotHash, observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import { canonicalHashV1Result } from '../hash'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
 import type { BrokerObservationPoll, BrokerObservationRuntime } from '../restate/restate-broker-observations'
-import { withObservedSpan } from '../telemetry'
+import { withObservedStage } from '../telemetry'
 import { ValkeyCache, ValkeyCacheError, ValkeyFailureCategory } from '../valkey-cache'
 import { currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 
@@ -68,25 +70,6 @@ export const brokerPublicationFailureAnnotations = (failure: BrokerReadError): R
   }
 }
 
-/** Preserve typed acquisition failures, defects and interruption across the managed runtime boundary. */
-export const runBrokerObservationCapture = <A>(
-  capture: (signal: AbortSignal) => Promise<Exit.Exit<A, BrokerReadError | BrokerSessionAcquisitionError>>,
-): Effect.Effect<A, BrokerReadError> =>
-  Effect.promise(capture).pipe(
-    Effect.flatten,
-    Effect.mapError((cause) => {
-      if (cause instanceof BrokerReadError) return cause
-      const read = cause.cause instanceof BrokerReadError ? cause.cause : undefined
-      return new BrokerReadError({
-        operation: read?.operation ?? 'preflight',
-        kind: read?.kind ?? BrokerReadErrorKind.Forbidden,
-        retryable: read?.retryable ?? false,
-        message: 'Verified broker observation acquisition failed',
-        cause,
-      })
-    }),
-  )
-
 export const settleCompletedBrokerObservationPoll = <R>(
   poll: Effect.Effect<BrokerObservationPoll, BrokerReadError, R>,
   nextPollNotBeforeMs: Effect.Effect<number>,
@@ -103,7 +86,7 @@ export const settleCompletedBrokerObservationPoll = <R>(
   )
 
 export const acquireBrokerObservationRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
@@ -115,6 +98,8 @@ export const acquireBrokerObservationRuntime = (
   Effect.gen(function* () {
     const cache = yield* ValkeyCache
     const telemetry = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
       Layer.succeed(Logger.CurrentLoggers, yield* Logger.CurrentLoggers),
       Layer.succeed(Tracer.Tracer, yield* Tracer.Tracer),
       Layer.succeed(Clock.Clock, yield* Clock.Clock),
@@ -203,7 +188,7 @@ export const acquireBrokerObservationRuntime = (
                   const broker = yield* ScopedRef.get(brokerRuntimes)
                   const parent = yield* Effect.currentSpan.pipe(Effect.orDie)
                   const annotations = yield* References.CurrentLogAnnotations
-                  return yield* runBrokerObservationCapture((captureSignal) =>
+                  return yield* Effect.promise((captureSignal) =>
                     broker.runPromiseExit(
                       Effect.gen(function* () {
                         return yield* captureBrokerObservation(
@@ -214,34 +199,61 @@ export const acquireBrokerObservationRuntime = (
                       }).pipe(Effect.withParentSpan(parent), Effect.annotateLogs(annotations)),
                       { signal: captureSignal },
                     ),
+                  ).pipe(
+                    Effect.flatMap((exit) =>
+                      Exit.isSuccess(exit)
+                        ? Effect.succeed(exit.value)
+                        : Effect.failCause(
+                            Cause.map(exit.cause, (cause) => {
+                              if (cause instanceof BrokerReadError) return cause
+                              if (cause.cause instanceof BrokerReadError) return cause.cause
+                              return new BrokerReadError({
+                                operation: 'preflight',
+                                kind: BrokerReadErrorKind.Forbidden,
+                                retryable: false,
+                                message: 'Broker account read permissions are unavailable',
+                                cause: cause.cause,
+                              })
+                            }),
+                          ),
+                    ),
                   )
                 })
                 const result = yield* capture.pipe(
-                  withObservedSpan('bayn.broker.observation.capture'),
+                  withObservedStage('bayn.broker.observation.capture', { dependency: 'alpaca' }),
                   Effect.timeoutOrElse({
                     duration: captureTimeoutMs,
                     orElse: () =>
                       Effect.fail(observationUnavailable('Broker observation acquisition exceeded its deadline')),
                   }),
+                  // Stop lazy layer acquisition on every failed exit before any known-work quota settlement.
+                  Effect.onExit((exit) =>
+                    Exit.isFailure(exit) ? ScopedRef.set(brokerRuntimes, acquireBroker) : Effect.void,
+                  ),
                   Effect.result,
                 )
                 if (Result.isFailure(result)) {
-                  // ManagedRuntime's lazy layer build can outlive the canceled capture effect.
-                  // Stop it before a persistence failure may release the measured request budget.
-                  yield* ScopedRef.set(brokerRuntimes, acquireBroker)
                   yield* persistence.failed(ticket, yield* budget.nextPollNotBeforeMs)
                   yield* Effect.logWarning('Broker observation poll failed').pipe(
                     Effect.annotateLogs({
                       'broker.operation': result.failure.operation,
                       'broker.failure_kind': result.failure.kind,
+                      'broker.retryable': result.failure.retryable,
+                      ...(result.failure.status === undefined ? {} : { 'broker.http_status': result.failure.status }),
                     }),
                   )
                   return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
                 }
+                const snapshotHash = yield* Effect.fromResult(canonicalHashV1Result(result.success)).pipe(
+                  Effect.mapError((cause) => observationUnavailable('Broker snapshot cannot be canonicalized', cause)),
+                )
                 const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                 const publication = yield* persistence
                   .publish(ticket, result.success, nextPollNotBeforeMs)
-                  .pipe(withObservedSpan('bayn.broker.observation.publish'), Effect.result)
+                  .pipe(
+                    withObservedStage('bayn.broker.observation.publish', { dependency: 'postgresql' }),
+                    Effect.result,
+                  )
                 if (Result.isFailure(publication)) {
                   yield* persistence.failed(ticket, nextPollNotBeforeMs)
                   yield* Effect.logWarning('Broker observation publication failed').pipe(
@@ -255,7 +267,7 @@ export const acquireBrokerObservationRuntime = (
                 }
                 yield* Effect.logInfo('Broker observation published').pipe(
                   Effect.annotateLogs({
-                    'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
+                    'broker.snapshot_hash': snapshotHash,
                     'broker.observed_at': result.success.observedAt,
                     'broker.source_revision': plan.config.build.sourceRevision,
                     'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
@@ -263,16 +275,18 @@ export const acquireBrokerObservationRuntime = (
                 )
                 return {
                   _tag: 'Published',
-                  snapshotHash: observedBrokerSnapshotHash(result.success),
+                  snapshotHash,
                   nextPollNotBeforeMs,
                 } as const
               }),
               budget.nextPollNotBeforeMs,
             )
           }).pipe(
-            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
-            withObservedSpan('bayn.broker.observation.poll', {
-              'bayn.source.revision': plan.config.build.sourceRevision,
+            // A canceled predecessor must not invalidate a newer capture or a published result. Retain the
+            // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
+            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
+            withObservedStage('bayn.broker.observation.poll', {
+              attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),
             Effect.annotateLogs({ sourceRevision: plan.config.build.sourceRevision }),
           )

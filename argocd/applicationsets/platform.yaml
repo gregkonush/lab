@@ -224,6 +224,21 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "true"
+              - name: glitchtip
+                path: argocd/applications/glitchtip
+                namespace: glitchtip
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt

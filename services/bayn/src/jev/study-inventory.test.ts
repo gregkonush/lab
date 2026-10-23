@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import { CycleState } from '../cycle/model'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevPurpose } from './portfolio'
 import { verifyJevStudyInventory, type JevStudyInventory } from './study-inventory'
 
@@ -49,7 +49,7 @@ const fixture = (): JevStudyInventory => {
   }
   return {
     schemaVersion: 'bayn.jev-study-inventory.v1',
-    receipt: { ...receipt, receiptHash: canonicalHashV1(receipt) },
+    receipt: { ...receipt, receiptHash: Result.getOrThrow(canonicalHashV1Result(receipt)) },
     cycles,
     batches,
   }
@@ -73,7 +73,7 @@ test('native inventory retains completed and no-batch cycles, management and pen
         ...inventory,
         cycles: [],
         batches: [],
-        receipt: { ...empty, receiptHash: canonicalHashV1(empty) },
+        receipt: { ...empty, receiptHash: Result.getOrThrow(canonicalHashV1Result(empty)) },
       }),
     ),
   ).toBeTrue()

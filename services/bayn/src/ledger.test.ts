@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Result } from 'effect'
 import { CreateAccountStatus, CreateTransferStatus, type Account, type Transfer } from 'tigerbeetle-node'
 
 import { prepareAccounting, rebuildAccountingLedger } from './accounting/domain'
-import type { RuntimeConfig } from './config'
+import type { RuntimeConfig } from './config/model'
 import { provideTestLayer } from './effect-test-support'
 import { OrderSide, type Fill } from './execution/contracts'
 import {
@@ -115,6 +115,12 @@ const makeTigerBeetleClient = (overrides: Partial<TigerBeetleClient> = {}): Tige
   lookupTransfers: async () => [],
   queryAccounts: async () => [],
   queryTransfers: async () => [],
+  getAccountTransfers: async () => {
+    throw new Error('unexpected account transfer history read')
+  },
+  getAccountBalances: async () => {
+    throw new Error('unexpected account balance history read')
+  },
   destroy: () => undefined,
   ...overrides,
 })
@@ -170,6 +176,12 @@ const makeLedgerClient = () => {
             (filter.user_data_64 === 0n || transfer.user_data_64 === filter.user_data_64),
         )
         .slice(0, filter.limit),
+    getAccountTransfers: async () => {
+      throw new Error('unexpected account transfer history read')
+    },
+    getAccountBalances: async () => {
+      throw new Error('unexpected account balance history read')
+    },
     destroy: () => undefined,
   }
   return { accounts, transfers, client }
@@ -178,8 +190,9 @@ const makeLedgerClient = () => {
 const withJournal = <A, E>(client: TigerBeetleClient, use: (journal: JournalService) => Effect.Effect<A, E>) =>
   Effect.gen(function* () {
     return yield* use(yield* Journal)
-  }).pipe(
+  }).pipe((self) =>
     provideTestLayer(
+      self,
       JournalLive(journalConfig, {
         createClient: () => client,
         resolveReplicaAddresses: () => Effect.succeed(['3000']),
@@ -998,6 +1011,12 @@ describe('TigerBeetle simulation journal', () => {
         writes += 1
         return []
       },
+      getAccountTransfers: async () => {
+        throw new Error('unexpected account transfer history read')
+      },
+      getAccountBalances: async () => {
+        throw new Error('unexpected account balance history read')
+      },
       destroy: () => undefined,
     })
     const config: RuntimeConfig = {
@@ -1015,8 +1034,9 @@ describe('TigerBeetle simulation journal', () => {
     const useJournal = <A, E>(body: (journal: JournalService) => Effect.Effect<A, E>) =>
       Effect.gen(function* () {
         return yield* body(yield* Journal)
-      }).pipe(
+      }).pipe((self) =>
         provideTestLayer(
+          self,
           JournalLive(config, {
             createClient: () => client,
             resolveReplicaAddresses: () => Effect.succeed(['3000']),

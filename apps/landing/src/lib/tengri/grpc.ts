@@ -1,6 +1,12 @@
 import 'server-only'
 
-import type { TengriCodexImage } from './codex-images'
+import {
+  codexImageMatchesMediaType,
+  isCodexAttachmentPath,
+  isWorkspaceImagePath,
+  MAX_CODEX_IMAGE_BYTES,
+  type TengriCodexImage,
+} from './codex-images'
 
 import { createHash } from 'node:crypto'
 import { existsSync } from 'node:fs'
@@ -45,9 +51,10 @@ import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
 import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
+import { codexRunSchema, type TengriCodexRun } from './codex-run'
 import type { CodexHistoryPage } from './codex-history'
+import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
-const DEFAULT_GRPC_DEADLINE_MS = 15_000
 const LIFECYCLE_GRPC_DEADLINE_MS = 310_000
 const MAX_GRPC_MESSAGE_BYTES = 16 * 1024 * 1024
 const PROTO_RELATIVE_PATH = 'proompteng/runtime/v1/microvm.proto'
@@ -152,7 +159,7 @@ export async function createAgent(identity: TengriIdentity, displayName: string,
     throw error
   }
   const agent = normalizeAgent(
-    await unary<RawAgent>('createAgent', { displayName, reservationId: operationId }, identity, 35_000),
+    await unary<RawAgent>('createAgent', { displayName, reservationId: operationId }, identity),
   )
   return setRuntime(identity, agent.id, agent.uid, intent, true)
 }
@@ -247,7 +254,7 @@ export async function updatePowerSettings(identity: TengriIdentity, id: string, 
         idleTimeoutMinutes: power.idleTimeoutMinutes,
       },
       identity,
-      DEFAULT_GRPC_DEADLINE_MS,
+      TENGRI_UNARY_TIMEOUT_MS,
       undefined,
       POWER_SETTINGS_PRESERVED_SCALAR_DEFAULTS,
     ),
@@ -276,17 +283,36 @@ export async function listFiles(identity: TengriIdentity, agentId: string, fileP
     'listFiles',
     { agentId, path: filePath },
     identity,
-    130_000,
   )
   return { path: stringValue(response.path, '/'), entries: (response.entries ?? []).map(normalizeFileEntry) }
 }
 
 export async function readFile(identity: TengriIdentity, agentId: string, filePath: string) {
+  const { content, ...response } = await readFileBytes(identity, agentId, filePath)
+  return { ...response, content: decodeUtf8File(content) }
+}
+
+export async function readCodexAttachment(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isCodexAttachmentPath(filePath)) throw new TengriUnavailableError('Invalid attachment path', 400)
+  return readWorkspaceImage(identity, agentId, filePath)
+}
+
+export async function readWorkspaceImage(identity: TengriIdentity, agentId: string, filePath: string) {
+  if (!isWorkspaceImagePath(filePath)) throw new TengriUnavailableError('Invalid image path', 400)
+  const result = await readFileBytes(identity, agentId, filePath)
+  const lowerPath = filePath.toLowerCase()
+  const mediaType = lowerPath.endsWith('.png') ? 'image/png' : lowerPath.endsWith('.webp') ? 'image/webp' : 'image/jpeg'
+  if (result.content.length > MAX_CODEX_IMAGE_BYTES || !codexImageMatchesMediaType(mediaType, result.content)) {
+    throw new TengriUnavailableError('Invalid image attachment', 415)
+  }
+  return { content: result.content, mediaType }
+}
+
+async function readFileBytes(identity: TengriIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; content?: Uint8Array; contentType?: string; revision?: string }>(
     'readFile',
     { agentId, path: filePath },
     identity,
-    130_000,
   )
   const content = response.content ?? new Uint8Array()
   const revision = stringValue(response.revision)
@@ -295,7 +321,7 @@ export async function readFile(identity: TengriIdentity, agentId: string, filePa
   }
   return {
     path: stringValue(response.path, filePath),
-    content: decodeUtf8File(content),
+    content,
     contentType: stringValue(response.contentType, 'application/octet-stream'),
     revision,
   }
@@ -317,7 +343,7 @@ export async function writeFile(
     'writeFile',
     { agentId, path: filePath, content: bytes, expectedRevision },
     identity,
-    130_000,
+    TENGRI_UNARY_TIMEOUT_MS,
     signal,
   )
   if (response.revision !== createHash('sha256').update(bytes).digest('hex')) {
@@ -327,17 +353,15 @@ export async function writeFile(
 }
 
 export async function createDirectory(identity: TengriIdentity, agentId: string, filePath: string) {
-  return normalizeFileEntry(await unary<RawRecord>('createDirectory', { agentId, path: filePath }, identity, 130_000))
+  return normalizeFileEntry(await unary<RawRecord>('createDirectory', { agentId, path: filePath }, identity))
 }
 
 export async function moveFile(identity: TengriIdentity, agentId: string, sourcePath: string, destinationPath: string) {
-  return normalizeFileEntry(
-    await unary<RawRecord>('moveFile', { agentId, sourcePath, destinationPath }, identity, 130_000),
-  )
+  return normalizeFileEntry(await unary<RawRecord>('moveFile', { agentId, sourcePath, destinationPath }, identity))
 }
 
 export async function deleteFile(identity: TengriIdentity, agentId: string, filePath: string, recursive: boolean) {
-  await unary('deleteFile', { agentId, path: filePath, recursive }, identity, 130_000)
+  await unary('deleteFile', { agentId, path: filePath, recursive }, identity)
 }
 
 export async function searchFiles(identity: TengriIdentity, agentId: string, filePath: string, query: string) {
@@ -345,7 +369,6 @@ export async function searchFiles(identity: TengriIdentity, agentId: string, fil
     'searchFiles',
     { agentId, path: filePath, query, limit: 100 },
     identity,
-    130_000,
   )
   return {
     entries: (response.entries ?? []).map(normalizeFileEntry),
@@ -371,7 +394,7 @@ export function normalizeFileEvent(event: RawRecord): TengriFileEvent {
 }
 
 export async function listTerminals(identity: TengriIdentity, agentId: string) {
-  const response = await unary<{ sessions?: RawRecord[] }>('listTerminals', { agentId }, identity, 130_000)
+  const response = await unary<{ sessions?: RawRecord[] }>('listTerminals', { agentId }, identity)
   return (response.sessions ?? []).map(normalizeTerminal)
 }
 
@@ -385,20 +408,38 @@ export async function createTerminal(
   signal?: AbortSignal,
 ) {
   return normalizeTerminal(
-    await unary<RawRecord>('createTerminal', { agentId, creationId, cwd, columns, rows }, identity, 130_000, signal),
+    await unary<RawRecord>(
+      'createTerminal',
+      { agentId, creationId, cwd, columns, rows },
+      identity,
+      TENGRI_UNARY_TIMEOUT_MS,
+      signal,
+    ),
   )
 }
 
-export async function terminateTerminal(identity: TengriIdentity, agentId: string, terminalId: string) {
-  await unary('terminateTerminal', { agentId, terminalId }, identity)
+export async function terminateTerminal(
+  identity: TengriIdentity,
+  agentId: string,
+  terminalId: string,
+  signal?: AbortSignal,
+) {
+  await unary('terminateTerminal', { agentId, terminalId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
 }
 
 export async function issueTerminalTicket(
   identity: TengriIdentity,
   agentId: string,
   terminalId: string,
+  signal?: AbortSignal,
 ): Promise<TengriTerminalTicket> {
-  const response = await unary<RawRecord>('issueTerminalTicket', { agentId, terminalId }, identity)
+  const response = await unary<RawRecord>(
+    'issueTerminalTicket',
+    { agentId, terminalId },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   return {
     websocketUrl: stringValue(response.websocketUrl),
     ticket: stringValue(response.ticket),
@@ -411,7 +452,7 @@ export async function getCodexAccount(
   agentId: string,
   signal?: AbortSignal,
 ): Promise<TengriCodexAccount> {
-  const response = await unary<RawRecord>('getCodexAccount', { agentId }, identity, 130_000, signal)
+  const response = await unary<RawRecord>('getCodexAccount', { agentId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
   return {
     authenticated: Boolean(response.authenticated),
     email: stringValue(response.email),
@@ -425,7 +466,7 @@ export async function getCodexLogin(
   signal?: AbortSignal,
 ): Promise<TengriCodexLogin | null> {
   try {
-    const response = await unary<RawRecord>('getCodexLogin', { agentId }, identity, 130_000, signal)
+    const response = await unary<RawRecord>('getCodexLogin', { agentId }, identity, TENGRI_UNARY_TIMEOUT_MS, signal)
     return normalizeCodexLogin(response)
   } catch (error) {
     if (error instanceof TengriUnavailableError && error.status === 404) return null
@@ -434,7 +475,7 @@ export async function getCodexLogin(
 }
 
 export async function startCodexLogin(identity: TengriIdentity, agentId: string): Promise<TengriCodexLogin> {
-  const response = await unary<RawRecord>('startCodexLogin', { agentId }, identity, 130_000)
+  const response = await unary<RawRecord>('startCodexLogin', { agentId }, identity)
   return normalizeCodexLogin(response)
 }
 
@@ -447,12 +488,23 @@ function normalizeCodexLogin(response: RawRecord): TengriCodexLogin {
   }
 }
 
-export async function listCodexModels(identity: TengriIdentity, agentId: string, cursor?: string) {
-  const response = await unary<RawRecord>('listCodexModels', { agentId, cursor }, identity, 130_000)
+export async function listCodexModels(
+  identity: TengriIdentity,
+  agentId: string,
+  cursor?: string,
+  signal?: AbortSignal,
+) {
+  const response = await unary<RawRecord>(
+    'listCodexModels',
+    { agentId, cursor },
+    identity,
+    TENGRI_UNARY_TIMEOUT_MS,
+    signal,
+  )
   try {
     return parseCodexModelPage(stringValue(response.rawJson))
   } catch {
-    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog')
+    throw new TengriUnavailableError('The guest returned an invalid Codex model catalog', 502, 'model_catalog_invalid')
   }
 }
 
@@ -461,7 +513,7 @@ export async function createCodexThread(
   agentId: string,
   options: TengriCodexOptions = {},
 ): Promise<TengriCodexThread> {
-  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, identity, 130_000)
+  const response = await unary<RawRecord>('createCodexThread', { agentId, ...options }, identity)
   return normalizeCodexThread(response)
 }
 
@@ -477,14 +529,19 @@ export async function resumeCodexThread(
     { agentId, threadId, ...options },
     identity,
     NO_PRESERVED_SCALAR_DEFAULTS,
-    130_000,
+    TENGRI_UNARY_TIMEOUT_MS,
   )
   return codexHistoryResponse(source, signal, normalizeCodexHistoryPage, (error) => {
-    if (error instanceof TengriUnavailableError) return error
+    if (error instanceof TengriUnavailableError)
+      return new TengriUnavailableError(error.message, 502, 'conversation_history_invalid')
     if (typeof error === 'object' && error !== null && 'code' in error && typeof error.code === 'number') {
       return mapGrpcError(error as grpc.ServiceError, 'resumeCodexThread')
     }
-    return new TengriUnavailableError('Codex conversation recovery returned invalid history')
+    return new TengriUnavailableError(
+      'Codex conversation recovery returned invalid history',
+      502,
+      'conversation_history_invalid',
+    )
   })
 }
 
@@ -536,24 +593,52 @@ export async function sendCodexTurn(
   identity: TengriIdentity,
   agentId: string,
   threadId: string,
+  operationId: string,
   text: string,
   options: TengriCodexOptions = {},
   images: readonly TengriCodexImage[] = [],
 ) {
-  return normalizeTurn(
+  return normalizeRun(
     await unary<RawRecord>(
       'sendCodexInput',
       {
         agentId,
         threadId,
+        operationId,
         text,
         ...options,
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
       },
       identity,
-      130_000,
     ),
   )
+}
+
+export async function getActiveCodexRun(identity: TengriIdentity, agentId: string) {
+  const result = await unary<RawRecord>('getActiveCodexRun', { id: agentId }, identity)
+  return result.runId ? normalizeRun(result) : null
+}
+
+export async function getCodexRun(identity: TengriIdentity, agentId: string, runId: string) {
+  return normalizeRun(await unary<RawRecord>('getCodexRun', { agentId, runId }, identity))
+}
+
+function normalizeRun(value: RawRecord): TengriCodexRun {
+  if (typeof value.stateJson !== 'string') throw new TengriUnavailableError('Invalid durable run state')
+  let state: unknown
+  try {
+    state = JSON.parse(value.stateJson)
+  } catch {
+    throw new TengriUnavailableError('Invalid durable run state')
+  }
+  const parsed = codexRunSchema.safeParse({
+    runId: value.runId,
+    agentId: value.agentId,
+    threadId: value.threadId,
+    state,
+  })
+  if (!parsed.success) throw new TengriUnavailableError('Invalid durable run state')
+  return parsed.data
 }
 
 export async function steerCodexTurn(
@@ -561,6 +646,8 @@ export async function steerCodexTurn(
   agentId: string,
   threadId: string,
   turnId: string,
+  operationId: string,
+  runId: string,
   text: string,
   images: readonly TengriCodexImage[] = [],
 ) {
@@ -568,26 +655,52 @@ export async function steerCodexTurn(
     await unary<RawRecord>(
       'steerCodexInput',
       {
+        runId,
         agentId,
         threadId,
         turnId,
+        operationId,
         text,
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
       },
       identity,
-      130_000,
     ),
   )
 }
 
-export async function interruptCodexTurn(identity: TengriIdentity, agentId: string, threadId: string, turnId: string) {
-  await unary('interruptCodexTurn', { agentId, threadId, turnId }, identity)
+export async function interruptCodexTurn(
+  identity: TengriIdentity,
+  agentId: string,
+  runId: string,
+  operationId: string,
+) {
+  await unary('interruptCodexTurn', { agentId, runId, operationId }, identity)
+}
+
+export async function answerCodexQuestions(
+  identity: TengriIdentity,
+  agentId: string,
+  approvalId: string,
+  runId: string,
+  operationId: string,
+  response: import('./codex-input').TengriCodexInputResponse,
+) {
+  const { codexInputResponseSchema } = await import('./codex-input')
+  const validated = codexInputResponseSchema.parse(response)
+  await unary<RawRecord>(
+    'resolveCodexApproval',
+    { agentId, approvalId, runId, operationId, responseJson: Buffer.from(JSON.stringify(validated)) },
+    identity,
+    130_000,
+  )
 }
 
 export async function resolveCodexApproval(
   identity: TengriIdentity,
   agentId: string,
   approvalId: string,
+  runId: string,
+  operationId: string,
   decision:
     | 'approve-once'
     | 'approve-session'
@@ -602,7 +715,7 @@ export async function resolveCodexApproval(
     'approve-network-policy-amendment': 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
     deny: 'CODEX_APPROVAL_DECISION_DENY',
   }[decision]
-  await unary('resolveCodexApproval', { agentId, approvalId, decision: wireDecision }, identity)
+  await unary('resolveCodexApproval', { agentId, approvalId, runId, operationId, decision: wireDecision }, identity)
 }
 
 export async function issuePreviewSession(
@@ -612,7 +725,7 @@ export async function issuePreviewSession(
   path: string,
   fragment: string,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, identity, 130_000)
+  const response = await unary<RawRecord>('issuePreviewSession', { agentId, port, path, fragment }, identity)
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -625,8 +738,16 @@ export async function issueEditorSession(
   identity: TengriIdentity,
   agentId: string,
   windowId: string,
+  renewal: boolean,
+  signal: AbortSignal,
 ): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueEditorSession', { agentId, windowId }, identity, 400_000)
+  const response = await unary<RawRecord>(
+    'issueEditorSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -639,8 +760,20 @@ export async function revokeDesktopPreviews(identity: TengriIdentity) {
   await unary('revokeEditorSessions', {}, identity)
 }
 
-export async function issueBrowserSession(identity: TengriIdentity, agentId: string): Promise<TengriPreviewSession> {
-  const response = await unary<RawRecord>('issueBrowserSession', { id: agentId }, identity, 400_000)
+export async function issueBrowserSession(
+  identity: TengriIdentity,
+  agentId: string,
+  windowId: string,
+  renewal: boolean,
+  signal: AbortSignal,
+): Promise<TengriPreviewSession> {
+  const response = await unary<RawRecord>(
+    'issueBrowserSession',
+    { agentId, windowId, renewal },
+    identity,
+    400_000,
+    signal,
+  )
   return {
     id: stringValue(response.id),
     launchUrl: stringValue(response.launchUrl),
@@ -680,7 +813,7 @@ async function unary<Response = RawRecord>(
   methodName: string,
   request: RawRecord,
   identity: TengriIdentity,
-  deadlineMs = DEFAULT_GRPC_DEADLINE_MS,
+  deadlineMs = TENGRI_UNARY_TIMEOUT_MS,
   signal?: AbortSignal,
   preservedScalarDefaults: ReadonlySet<string> = NO_PRESERVED_SCALAR_DEFAULTS,
 ): Promise<Response> {
@@ -688,7 +821,20 @@ async function unary<Response = RawRecord>(
   const method = client[methodName] as UnaryMethod
   if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   const canonicalRequest = canonicalizeProto3Request(request, preservedScalarDefaults)
-  const signedMetadata = await metadata(identity, methodName, canonicalRequest)
+  const signedMetadata = await metadata(client, identity, methodName, canonicalRequest, signal)
+  return invokeUnary<Response>(client, methodName, canonicalRequest, signedMetadata, deadlineMs, signal)
+}
+
+function invokeUnary<Response>(
+  client: TengriGrpcClient,
+  methodName: string,
+  request: RawRecord,
+  metadata: grpc.Metadata,
+  deadlineMs: number,
+  signal?: AbortSignal,
+): Promise<Response> {
+  const method = client[methodName] as UnaryMethod
+  if (typeof method !== 'function') throw new TengriUnavailableError(`Tengri method ${methodName} is unavailable`)
   return new Promise((resolve, reject) => {
     if (signal?.aborted) {
       reject(abortedRequestError())
@@ -702,7 +848,7 @@ async function unary<Response = RawRecord>(
       call?.cancel()
       reject(abortedRequestError())
     }
-    call = method.call(client, canonicalRequest, signedMetadata, callOptions(deadlineMs), (error, response) => {
+    call = method.call(client, request, metadata, callOptions(deadlineMs), (error, response) => {
       if (settled) return
       settled = true
       signal?.removeEventListener('abort', onAbort)
@@ -734,7 +880,7 @@ async function stream(
   return method.call(
     client,
     canonicalRequest,
-    await metadata(identity, methodName, canonicalRequest),
+    await metadata(client, identity, methodName, canonicalRequest),
     callOptions(deadlineMs),
   )
 }
@@ -835,25 +981,41 @@ function resolveProtoPath() {
   return existing
 }
 
-async function metadata(identity: TengriIdentity, methodName: string, request: RawRecord) {
+async function metadata(
+  client: TengriGrpcClient,
+  identity: TengriIdentity,
+  methodName: string,
+  request: RawRecord,
+  signal?: AbortSignal,
+) {
   const key = signingKey()
   if (!key) throw new TengriUnavailableError('Tengri signing key is not configured')
   const workspaceName =
     typeof request.agentId === 'string' ? request.agentId : typeof request.id === 'string' ? request.id : ''
   const workspace = workspaceName && methodName !== 'getAgent' ? await getAgent(identity, workspaceName) : undefined
+  const value = new grpc.Metadata()
+  const { injectTrace } = await import('@/lib/observability/server')
+  injectTrace((key, header) => value.set(key, header))
+  const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
+  if (binding.guestApiProtocolVersion !== 7) {
+    throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
+  }
+  if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
   const context = humanContext(identity, workspace?.uid, workspace?.runtimeEpoch)
+  context.deadlineUnixMs = BigInt(Date.now() + 4000)
   const method = grpcMethod(methodName)
   let signed: ReturnType<typeof signTengriMetadata>
   try {
     signed = signTengriMetadata(context, identity.session.recoveryGeneration, key, {
       rpcPath: method.path,
       body: method.requestSerialize(request),
+      audience: binding.audience,
     })
   } catch (cause) {
     throw new TengriUnavailableError(cause instanceof Error ? cause.message : 'Tengri signing failed', 503)
   }
-  const value = new grpc.Metadata()
   value.set('x-tengri-context-bin', Buffer.from(signed.context))
+  value.set('x-tengri-audience', signed.audience)
   value.set('x-tengri-recovery-generation', signed.recoveryGeneration)
   value.set('x-tengri-nonce', signed.nonce)
   value.set('x-tengri-signature', signed.signature)
@@ -889,7 +1051,7 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
     case grpc.status.PERMISSION_DENIED:
       return new TengriUnavailableError('Tengri request is not permitted', 403)
     case grpc.status.NOT_FOUND:
-      if (methodName === 'resumeCodexThread' && isMissingCodexConversation(error.details)) {
+      if (methodName === 'resumeCodexThread' && error.details === 'Codex conversation could not be found') {
         return new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found')
       }
       return new TengriUnavailableError('Tengri resource was not found', 404)
@@ -903,6 +1065,16 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (
+        ['steerCodexInput', 'resolveCodexApproval'].includes(methodName) &&
+        error.details === 'Codex control was not dispatched'
+      ) {
+        return new TengriUnavailableError(
+          'The turn changed before this control was delivered. Try again.',
+          409,
+          'control_not_dispatched',
+        )
+      }
       if (
         methodName === 'createAgent' &&
         ['workspace reservation expired', 'workspace reservation released'].includes(error.details)
@@ -936,20 +1108,6 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
   }
 }
 
-function isMissingCodexConversation(details: string) {
-  try {
-    const payload: unknown = JSON.parse(details)
-    return (
-      typeof payload === 'object' &&
-      payload !== null &&
-      'error' in payload &&
-      payload.error === 'Codex conversation could not be found'
-    )
-  } catch {
-    return false
-  }
-}
-
 function decodeUtf8File(content: Uint8Array) {
   try {
     return new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(content)
@@ -959,6 +1117,9 @@ function decodeUtf8File(content: Uint8Array) {
 }
 
 function normalizeAgent(agent: RawAgent): TengriAgent {
+  if (agent.conditions?.some((condition) => condition.type === 'Ready' && condition.status === 'Unknown')) {
+    throw new TengriUnavailableError('Runtime status cannot be confirmed. Retrying.', 503)
+  }
   const power = tengriPowerSettingsSchema.safeParse({
     idleTimeoutMinutes: agent.idleTimeoutMinutes,
   })

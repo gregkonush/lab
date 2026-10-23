@@ -16,7 +16,9 @@ import {
 } from './projection'
 import { decodeRawMarketRecord, RawMarketEventKind, type KafkaMarketRecord, type StreamingUniverse } from './raw-events'
 
-const start = Date.parse('2026-10-12T23:30:00.000Z')
+const start = Date.parse('2026-10-12T13:30:00.000Z')
+const eventTime = (minute: number) =>
+  start + Math.floor(minute / 390) * 86_400_000 + (((minute % 390) + 390) % 390) * 60_000
 const universe: StreamingUniverse = {
   universeId: 'synthetic-bar-history',
   universeSymbolHash: 'a'.repeat(64),
@@ -24,7 +26,7 @@ const universe: StreamingUniverse = {
   topics: { bars: 'test.bars', quotes: 'test.quotes', trades: 'test.trades', features: 'test.features' },
 }
 const recordFor = (index: number, minute: number, publication: number, price: number): KafkaMarketRecord => {
-  const eventTs = new Date(start + minute * 60_000).toISOString()
+  const eventTs = new Date(eventTime(minute)).toISOString()
   return {
     topic: universe.topics.bars,
     partition: index % 3,
@@ -37,7 +39,7 @@ const recordFor = (index: number, minute: number, publication: number, price: nu
       channel: 'bars',
       symbol: 'AAPL',
       eventTs,
-      ingestTs: new Date(start + 200 * 60_000 + publication * 1000).toISOString(),
+      ingestTs: new Date(eventTime(minute) + 60_000 + publication * 1000).toISOString(),
       version: 2,
       isFinal: true,
       payload: { o: price, h: 110, l: 90, c: 100, v: 10, vw: 100, n: 2, t: eventTs },
@@ -130,9 +132,9 @@ describe('bounded streaming bar history', () => {
             if (decoded.kind !== RawMarketEventKind.Bar) throw new Error('expected bar fixture')
             const recorded = index % 3 === 0
             const bar = recorded
-              ? { ...decoded.value, eventAt: new Date(start + change.minute * 60_000).toISOString() }
+              ? { ...decoded.value, eventAt: new Date(eventTime(change.minute)).toISOString() }
               : decoded.value
-            const availableAtMs = start + 100_000_000 + change.arrival * 1000
+            const availableAtMs = start + 1_000_000_000 + change.arrival * 1000
             reference = referenceHistory(
               reference.bars,
               bar,
@@ -164,7 +166,7 @@ describe('bounded streaming bar history', () => {
 
   test('duplicates, conflicting receipts and invalid offset encodings retain the same bar history', () => {
     const record = recordFor(0, 0, 0, 100)
-    const availableAtMs = start + 70_000_000
+    const availableAtMs = start + 1_000_000_000
     const initial = incorporateMarketRecord(emptyStreamingProjection('duplicate'), record, universe, availableAtMs)
     const history = initial.bars.get('AAPL')
     expect(history).toHaveLength(1)

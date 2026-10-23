@@ -45,6 +45,8 @@ spec:
             - name: restate
               containerPort: 9080
           env:
+            - name: RESTATE_INGRESS_ORIGIN
+              value: http://restate.restate.svc.cluster.local:8080
             - name: BAYN_PUBLIC_INFORMATION_ENABLED
               value: 'true'
             - name: BAYN_PUBLIC_INFORMATION_PROXY
@@ -68,6 +70,11 @@ spec:
                 secretKeyRef:
                   name: bayn-research-captures
                   key: AWS_SECRET_ACCESS_KEY
+            - name: BAYN_JEV_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bayn-jev-auth
+                  key: api-key
             - name: BAYN_RESEARCH_APPROVAL_KEY
               valueFrom:
                 secretKeyRef:
@@ -76,14 +83,19 @@ spec:
             - name: RESTATE_REQUEST_IDENTITY_KEYS
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
             - name: BAYN_RESEARCH_INFERENCE_POLICY
-              value: '{"model":"alpha-r1-82c2aa5fcdda","checkpoint":"82c2aa5fcdda6b4ff00caeba68b0903f13d0e1a5","servingImage":"sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2","tokenizerRevision":"82c2aa5fcdda6b4ff00caeba68b0903f13d0e1a5","chatTemplateRevision":"82c2aa5fcdda6b4ff00caeba68b0903f13d0e1a5","temperature":0,"top_p":0.7,"top_k":-1,"min_p":0,"seed":1,"presence_penalty":0,"frequency_penalty":0,"repetition_penalty":1,"enable_thinking":true,"max_tokens":4096,"stop":[],"maximumFactors":5}'
+              value: '{"model":"qwen36-flamingo","checkpoint":"739af1e7aac320af1682ed1e0cce369af4c5265d","servingImage":"sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2","tokenizerRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","chatTemplateRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0,"seed":1,"presence_penalty":0,"frequency_penalty":0,"repetition_penalty":1,"enable_thinking":true,"max_tokens":4096,"stop":[]}'
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:
                   name: bayn-research-db
                   key: fqdn-uri
+            - name: BAYN_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: bayn-glitchtip-dsns
+                  key: bayn-research
             - name: OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
-              value: http://observability-tempo-distributor.observability.svc.cluster.local:4318/v1/traces
+              value: http://bayn-telemetry.bayn.svc.cluster.local:4318/v1/traces
             - name: NODE_ENV
               value: production
           resources:
@@ -127,4 +139,4 @@ spec:
                 path: ca.crt
         - name: tmp
           emptyDir:
-            sizeLimit: 32Mi
+            sizeLimit: 256Mi

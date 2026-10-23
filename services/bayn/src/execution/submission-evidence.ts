@@ -11,11 +11,15 @@ const SubmittedBody = Schema.Struct({
   qty: Schema.optionalKey(Decimal),
   notional: Schema.optionalKey(Decimal),
   side: Schema.Literals(['buy', 'sell']),
-  type: Schema.Literals(['market', 'limit']),
+  type: Schema.Literals(['market', 'limit', 'stop_limit']),
   time_in_force: Schema.Literals(['day', 'gtc', 'ioc', 'fok']),
   client_order_id: Schema.String,
-  extended_hours: Schema.Literal(false),
+  extended_hours: Schema.Boolean,
   limit_price: Schema.optionalKey(Decimal),
+  stop_price: Schema.optionalKey(Decimal),
+  order_class: Schema.optionalKey(Schema.Literals(['bracket', 'oco'])),
+  take_profit: Schema.optionalKey(Schema.Struct({ limit_price: Decimal })),
+  stop_loss: Schema.optionalKey(Schema.Struct({ stop_price: Decimal, limit_price: Decimal })),
 })
 
 /** Evidence records what was transmitted; it does not construct a broker request. */
@@ -37,7 +41,9 @@ export const submittedOrderEvidence = (
       body.client_order_id !== expected.clientOrderId ||
       body.side !== expected.side.toLowerCase() ||
       (body.qty === undefined) === (body.notional === undefined) ||
-      (body.type === 'limit') !== (body.limit_price !== undefined) ||
+      (body.type !== 'market') !== (body.limit_price !== undefined) ||
+      (body.type === 'stop_limit') !== (body.stop_price !== undefined) ||
+      (body.order_class !== undefined) !== (body.take_profit !== undefined && body.stop_loss !== undefined) ||
       (body.notional !== undefined && body.type !== 'market')
     )
       return yield* Result.fail({ message: 'submitted body does not bind the intent and durable request hash' })
@@ -50,6 +56,9 @@ export const submittedOrderEvidence = (
       (price !== undefined && (price <= 0n || price % 1000n !== 0n))
     )
       return yield* Result.fail({ message: 'submitted terms exceed the exact quantity or cash domain' })
+    const stopPrice = body.stop_price === undefined ? undefined : yield* quantityFromDecimal(body.stop_price)
+    if (stopPrice !== undefined && (stopPrice <= 0n || stopPrice % 1000n !== 0n))
+      return yield* Result.fail({ message: 'submitted stop exceeds price precision' })
     const durations = {
       day: TimeInForce.Day,
       gtc: TimeInForce.GoodUntilCanceled,
@@ -57,7 +66,9 @@ export const submittedOrderEvidence = (
       fok: TimeInForce.FillOrKill,
     }
     return {
-      submittedOrderType: body.type === 'limit' ? OrderType.Limit : OrderType.Market,
+      submittedOrderType:
+        body.type === 'stop_limit' ? OrderType.StopLimit : body.type === 'limit' ? OrderType.Limit : OrderType.Market,
+      ...(stopPrice === undefined ? {} : { submittedStopPriceMicros: (stopPrice / 1000n).toString() }),
       submittedTimeInForce: durations[body.time_in_force],
       ...(quantity === undefined ? {} : { submittedQuantityAtoms: quantity.toString() }),
       ...(cash === undefined ? {} : { submittedNotionalMicros: (cash / 1000n).toString() }),

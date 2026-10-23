@@ -1,7 +1,7 @@
 import { Context, Data, Effect } from 'effect'
 
 import type { BrokerEventInput, FillEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
-import type { RuntimeConfig } from '../../config'
+import type { RuntimeConfig } from '../../config/model'
 import type {
   AccountingReceipt,
   Authority,
@@ -10,7 +10,7 @@ import type {
   ResearchCapitalGrantProofBinding,
   Valuation,
 } from '../../execution/contracts'
-import type { BrokerSnapshot, IntentBinding, ReconciliationWriteResult } from '../reconciliation'
+import type { BrokerSnapshot, IntentBinding, ReconciledBrokerSnapshot } from '../reconciliation'
 
 export const VALUATION_SNAPSHOT_MAX_SKEW_MS = 30_000
 
@@ -77,8 +77,15 @@ export interface ValuationStoreShape {
 }
 
 export interface ReconciliationStoreShape {
+  readonly retainCashReporting: (
+    snapshot: Pick<BrokerSnapshot, 'account' | 'accountEventId' | 'cashReportingQuantumMicros'>,
+  ) => Effect.Effect<void, ExecutionStoreError>
   readonly bindings: (accountId: string) => Effect.Effect<readonly IntentBinding[], ExecutionStoreError>
-  readonly reconcile: (snapshot: BrokerSnapshot) => Effect.Effect<ReconciliationWriteResult, ExecutionStoreError>
+  /** Recovers committed fees, ingests and prepares one cut, commits, then posts and verifies its ledger evidence. */
+  readonly reconcile: <E, R>(
+    accountId: string,
+    ingestSnapshot: Effect.Effect<BrokerSnapshot, E, R>,
+  ) => Effect.Effect<ReconciledBrokerSnapshot, E | ExecutionStoreError, R>
 }
 
 export interface AuthorityGenerationStoreShape {

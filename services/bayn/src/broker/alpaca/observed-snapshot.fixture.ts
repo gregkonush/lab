@@ -77,6 +77,7 @@ export const observedBrokerSnapshotFixture = (
     snapshot: {
       account: observe({
         cryptoStatus: null,
+        cashReportingQuantumMicros: '1' as const,
         nonMarginableBuyingPowerMicros: null,
 
         id: accountId,

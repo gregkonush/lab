@@ -41,7 +41,7 @@ postgres_image=ghcr.io/cloudnative-pg/postgresql:18.6-system-trixie@sha256:5a6a6
 spicedb_image=ghcr.io/authzed/spicedb@sha256:aa96009a0477f8a759149823407d47ad16d1a74390bae3102b3b0b7143502764
 # shellcheck disable=SC2016
 fixture_docker run --detach --name "$fixture_database" --network "$fixture_network" --publish 127.0.0.1::5432 \
-  --tmpfs /tmp:rw,size=268435456,mode=1777 --memory 512m --entrypoint bash "$postgres_image" -ec \
+  --tmpfs /tmp:rw,size=268435456,mode=1777 --memory 1g --entrypoint bash "$postgres_image" -ec \
   'for attempt in $(seq 1 300); do if test -f /tmp/fixture-ready; then break; fi; sleep 0.1; done; test -f /tmp/fixture-ready; initdb -D /tmp/ofz-data --auth=trust -U postgres >/dev/null; printf "local all all trust\nhostnossl all all 0.0.0.0/0 reject\nhostssl all postgres 0.0.0.0/0 trust\nhostssl all all 0.0.0.0/0 scram-sha-256\n" > /tmp/ofz-data/pg_hba.conf; exec postgres -D /tmp/ofz-data -c track_commit_timestamp=on -c listen_addresses="*" -c ssl=on -c ssl_cert_file=/tmp/server.crt -c ssl_key_file=/tmp/server.key' >/dev/null
 fixture_docker exec --user 0 -i "$fixture_database" sh -ec 'cat > /tmp/server.crt' < "$fixture_dir/server.crt"
 fixture_docker exec --user 0 -i "$fixture_database" sh -ec 'cat > /tmp/server.key' < "$fixture_dir/server.key"

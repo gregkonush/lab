@@ -182,6 +182,53 @@ Claimed slots keep their image during releases and ordinary sleep. Unused old-im
 CAS, stopped, and retired with the same proof-before-deletion rule. Fresh replacements never inherit another owner's
 memory, home, token, or snapshot. Sleeping homes still occupy one of the six owner slots. No other owner is evicted.
 
+### Replacing a claimed guest while retaining its home
+
+Use this procedure during an authorized maintenance window when a paired release changes the guest API or snapshot
+contract. Keep image publication held until enrollment is complete. Preserve the existing MicroVM, home PVC,
+filesystem, owner grant, credentials, and native conversations. The replacement cold-boots once; it cannot resume the
+old memory snapshot.
+
+1. Qualify the complete Ofz, Tengri, Nanoagent, and Proompteng image cohort from one reviewed source. Record the four
+   digests and the original successful publication runs. Freeze that source for the maintenance window and verify
+   no other main native workflow occupies its publisher concurrency before taking the workspace offline.
+   Finish active work and reconcile uncertain external effects.
+   An idle browser, a transcript, or a sleeping snapshot alone does not establish that work completed.
+2. Use authenticated workspace sleep. Verify the exact runtime claim in the committed sleeping journal, the reaped
+   Firecracker process, and the absence of another storage writer. Capture a fresh baseline after the work finishes:
+   MicroVM, Lease, Pod and PVC UIDs; filesystem UUID; representative file hashes; and native conversation identities.
+3. Record the Tengri Application's UID, source, and sync policy. Confirm its owning ApplicationSet preserves
+   [`argocd.argoproj.io/skip-reconcile`](https://argo-cd.readthedocs.io/en/release-3.4/user-guide/skip_reconcile/),
+   then set that annotation to `true` on only this Application. Preserve its sync
+   policy and Kargo metadata. Quiesce the old controller with UID/resourceVersion preconditions and verify its Pods
+   have terminated before changing the retained binding.
+4. Delete only the fenced slot Pod incarnation with UID/resourceVersion preconditions. Verify termination and safe
+   volume detachment. If fencing or storage custody is uncertain, retain the claim and stop. Never delete the home
+   PVC, clear a storage lock, or force-detach its volume to proceed.
+5. Keep the Lease UID, holder identity, slot epoch, home name and home UID. Set its image annotation and the original
+   MicroVM's image to the qualified Nanoagent digest. Verify the home initialization annotation remains `complete`.
+   Retain the old Lease Pod UID and MicroVM slot binding for now. These references prevent pool recreation while the
+   old controller is absent. Use fresh resourceVersion preconditions for each change.
+6. Release the original successful publishers through the existing hold. Rerun only the native publisher against its
+   unchanged architecture artifacts, verify both index digests remain exact, and require successful signing and
+   artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
+   prevent rerunning its original job. Do not rebuild or substitute a guest digest after enrollment.
+7. Follow the same Freight through Ofz migration and rollout, then the generated `kargo/tengri` commit. Verify that
+   commit selects the qualified controller and guest digests before removing the Application's temporary
+   `skip-reconcile` annotation. Let Argo restore the reviewed controller replicas from Git.
+8. After the new controller revision is present, clear only the old Lease Pod UID annotation, then clear
+   `MicroVM.spec.slot`. Keep the home and allocation identity unchanged. The controller prepares a new Pod from the
+   enrolled image, records its actual UID, and binds it to the existing MicroVM. Do not invent or copy a successor Pod
+   UID, replace the Lease, or assign another prepared home.
+9. Verify the new slot and registered Restate worker, then complete the upstream Tengri verification and downstream
+   Proompteng promotion. Resume through authenticated Ofz lifecycle control. Read back the unchanged filesystem UUID,
+   retained files and conversations. Exercise run recovery, approval, cancellation, worker replacement, and active-run
+   sleep exclusion before reopening normal work.
+
+If the replacement fails, keep traffic closed and retain the home and claim for repair. Once the new guest writes,
+never restore its older memory snapshot against the advanced disk. Recovery must use a reviewed compatible image
+cohort and an explicit retained-home cold boot.
+
 ## Permission review and hard cutover
 
 Implementation and read-only validation can proceed before rollout. New device/identity grants and execution of a KVM
