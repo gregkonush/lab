@@ -30,7 +30,7 @@ describe('Bayn egress proxy contract', () => {
       'shared OpenCode bypass',
       deployedConfig.replace('acl trading_api dstdomain ', 'acl trading_api dstdomain opencode.ai '),
     ],
-    ['OpenCode listener bypass', deployedConfig.replace('http_access deny opencode_listener\n', '')],
+    ['OpenCode listener bypass', deployedConfig.replace('http_access deny opencode_listener !opencode_api\n', '')],
     ['unrelated domain', deployedConfig.replace('api.alpaca.markets', 'example.com')],
     ['wildcard TypeSafe domain', deployedConfig.replace('api.typesafe.ai', '.typesafe.ai')],
     ['wildcard OpenCode domain', deployedConfig.replace('opencode.ai', '.opencode.ai')],
@@ -47,8 +47,11 @@ describe('Bayn egress proxy contract', () => {
     [
       'allow before deny',
       deployedConfig
-        .replace('http_access allow CONNECT trading_api\n', '')
-        .replace('http_access deny !CONNECT', 'http_access allow CONNECT trading_api\nhttp_access deny !CONNECT'),
+        .replace('http_access allow CONNECT !opencode_listener trading_api\n', '')
+        .replace(
+          'http_access deny !CONNECT',
+          'http_access allow CONNECT !opencode_listener trading_api\nhttp_access deny !CONNECT',
+        ),
     ],
   ])('rejects %s expansion', (_name, config) => {
     expect(() => validateBaynEgressProxy(config)).toThrow()

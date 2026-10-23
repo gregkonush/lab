@@ -38,7 +38,7 @@ import {
   type ResearchRun,
 } from '../research-inference/contract'
 import { strictParseOptions } from '../schemas'
-import { admitOpenCodeCall, type OpenCodeAttempt } from './gateway'
+import { admitOpenCodeCall, nativeProviderHeaders, type OpenCodeAttempt } from './gateway'
 import { makeOpenCodeConfiguration, openCodeDirectory, openCodeModel, openCodeVersion } from './configuration'
 
 const ProposalSchema = Schema.Struct({
@@ -176,22 +176,12 @@ export const serveOpenCode = (
       yield* Effect.fromResult(
         admitOpenCodeCall(
           current,
-          { body, sessionId: request.headers['x-opencode-session'] },
+          { body, sessionId: request.headers['x-opencode-session-id'] },
           yield* Clock.currentTimeMillis,
         ),
       )
       if (current === undefined) return yield* new ResearchError({ message: 'OpenCode active attempt disappeared' })
-      const headers: Record<string, string> = {}
-      for (const key of [
-        'authorization',
-        'user-agent',
-        'x-opencode-client',
-        'x-opencode-project',
-        'x-opencode-session',
-      ]) {
-        const value = request.headers[key]
-        if (value !== undefined) headers[key] = value
-      }
+      const headers = nativeProviderHeaders(request.headers)
       current.providerRequest = Buffer.from(body)
       yield* fs.writeFileString(`${current.evidenceBase}.provider-request.json`, body, { flag: 'wx', mode: 0o600 })
       const forward = Effect.gen(function* () {

@@ -64,12 +64,12 @@ export const validateBaynEgressProxy = (source: string): BaynEgressProxyContract
   const rules = [
     'http_access deny !CONNECT',
     'http_access deny CONNECT !SSL_ports',
+    'http_access deny opencode_listener !opencode_api',
+    `http_access deny !opencode_listener !${aclName}`,
     'http_access deny blocked_private_v4',
     'http_access deny blocked_private_v6',
     'http_access allow CONNECT opencode_listener opencode_api',
-    'http_access deny opencode_listener',
-    `http_access deny !${aclName}`,
-    `http_access allow CONNECT ${aclName}`,
+    `http_access allow CONNECT !opencode_listener ${aclName}`,
     'http_access deny all',
   ]
   const actualRules = lines.filter((line) => line.startsWith('http_access '))

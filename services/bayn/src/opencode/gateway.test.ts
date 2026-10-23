@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { admitOpenCodeCall, type OpenCodeAttempt } from './gateway'
+import { admitOpenCodeCall, nativeProviderHeaders, type OpenCodeAttempt } from './gateway'
 import { openCodeConfiguration, openCodeModel } from './configuration'
 
 const request = (change: object = {}) => ({
@@ -45,4 +45,25 @@ test('paid models, extra output, altered schema and oversized input are denied b
     expect(Result.isFailure(admitOpenCodeCall(state, request(changed), 1))).toBe(true)
     expect(state.calls).toBe(0)
   }
+})
+
+test('the relay preserves actual native routing metadata without forwarding hop-by-hop or local-only headers', () => {
+  const native = {
+    'user-agent': 'opencode/latest/2.1.3/cli',
+    'x-opencode-client': 'cli',
+    'x-opencode-session-id': 'ses_study',
+    'x-opencode-session': 'session-affinity',
+    'x-session-affinity': 'session-affinity',
+    'x-session-id': 'session-affinity',
+    'x-opencode-project': 'project',
+  }
+  expect(
+    nativeProviderHeaders({
+      ...native,
+      host: '127.0.0.1:4098',
+      connection: 'keep-alive',
+      'content-length': '123',
+      'proxy-authorization': 'local-only',
+    }),
+  ).toEqual(native)
 })

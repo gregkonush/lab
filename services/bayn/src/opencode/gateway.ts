@@ -78,3 +78,20 @@ export const admitOpenCodeCall = (
         : new ResearchError({ message: 'OpenCode provider admission denied', cause }),
     ),
   )
+
+export const nativeProviderHeaders = (headers: Readonly<Record<string, string | undefined>>) => {
+  const forwarded: Record<string, string> = {}
+  for (const [name, value] of Object.entries(headers)) {
+    if (
+      value !== undefined &&
+      (name === 'authorization' ||
+        name === 'user-agent' ||
+        name.startsWith('x-opencode-') ||
+        name === 'x-session-affinity' ||
+        name === 'x-session-id' ||
+        name === 'x-parent-session-id')
+    )
+      forwarded[name] = value
+  }
+  return forwarded
+}
