@@ -36,7 +36,9 @@ complete original prefix.
 
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
-Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Compression batches yield to Node I/O; the writer groups up to 1 MiB or 16 chunks into one atomic database append.
+Smaller appends bound database work during bootstrap replay. An individual valid chunk above the append byte target
+is written whole under the existing chunk and queue bounds.
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
@@ -307,7 +309,7 @@ state and never clears either database. Give each attempt a distinct `replicate`
 PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. Individual database and reconciliation operations retain their deadlines; the total backtest length is governed by the selected sessions.
 The normal service composition does not load this command or its virtual clock.
 
-`bayn.backtest.v4` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
+`bayn.backtest.v5` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
 broker assets, execution assumptions and controller cadence. The source must cover the complete interval. UTC reporting
 windows are contiguous, including weekends. The retained Alpaca calendar still controls equities, with a successor
 session after the interval. Crypto remains continuous through the same engine and shared account.

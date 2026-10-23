@@ -52,6 +52,8 @@ import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
 import type { LedgerPlan } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
+import { makeAccountingInterpreter } from './execution-store/accounting'
+import { makeBrokerEventInterpreter } from './execution-store/broker-events'
 import type { FeeActivity } from '../broker/alpaca/model'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
@@ -1039,6 +1041,65 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.postingFailure).toMatchObject({ operation: 'account', failure: 'ledger' })
     expect(result.accountingMismatch).toMatchObject({ operation: 'account', failure: 'conflict' })
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
+  })
+
+  test('completed fill verification reads the inventory fee sources once per history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const accounting = yield* FillAccountingStore
+        yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
+        const inputs = Array.from({ length: 8 }, (_, index) => {
+          const event = fillEvent(`completed-history-${index}`, OrderSide.Buy, '1000000000', '100000000')
+          const fill = { ...event.fill, symbol: 'SOL/USD', feeMicros: '0' }
+          return { ...event, fill, contentHash: Result.getOrThrow(canonicalHashV1Result(fill)) }
+        })
+        for (const input of inputs) yield* accounting.account(input)
+        const lookups: Statement<Record<string, unknown>>[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('AS prior_quantity_atoms')) lookups.push(statement)
+            return statement
+          },
+        })
+        const verifier = makeAccountingInterpreter(
+          monitored,
+          journal(journalControl),
+          config,
+          makeBrokerEventInterpreter(monitored, fence),
+          fence,
+        )
+        yield* verifier.verifyCompleted(inputs)
+        expect(lookups).toHaveLength(1)
+        const lookup = lookups[0]
+        if (lookup === undefined) throw new Error('Completed accounting verification did not issue a query')
+        const [query, parameters] = lookup.compile()
+        const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+        const plans = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+        )(explanation)
+        const feeSourceReads = (node: unknown): number => {
+          if (node === null || typeof node !== 'object') return 0
+          const reads =
+            'Relation Name' in node &&
+            node['Relation Name'] === 'broker_fee_accounting' &&
+            'Actual Loops' in node &&
+            typeof node['Actual Loops'] === 'number'
+              ? node['Actual Loops']
+              : 0
+          return (
+            reads +
+            ('Plans' in node && Array.isArray(node.Plans)
+              ? node.Plans.reduce((sum: number, child: unknown) => sum + feeSourceReads(child), 0)
+              : 0)
+          )
+        }
+        expect(feeSourceReads(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBe(1)
+        expect(journalControl.postCount).toBe(inputs.length)
+      }),
+    )
   })
 
   test('opening cash and fee baselines avoid scanning account history', async () => {

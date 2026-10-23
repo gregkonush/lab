@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.complete-plan-choice.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "118da7b475784ce63cb8d6636c0d469857ee36e2c7d8305e2d400f9aa47d548c";
-  # Canonical hash of the compiled bayn.jev.protocol.v16 document.
-  strategyParameterHash = "6dab28f7282460dcb9fc4551a8b6f287066ab08959e726074a2bf8e00167f8a9";
+  # SHA-256 identity for bayn.jev.net-payoff-plan-coverage.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52";
+  # Canonical hash of the compiled bayn.jev.protocol.v19 document.
+  strategyParameterHash = "367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86";
+  strategyProtocolHash = "faa9278528a758e00138e32486df84662e38443191aa8154ed75354daa1110b0";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -34,33 +34,63 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/research-command.js" "$@"
   '';
-  harnessProbeCommand = pkgs.writeShellScriptBin "bayn-harness2-probe" ''
+  evaluationCommand = pkgs.writeShellScriptBin "bayn-jev-evaluate" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
-    exec "$root/bin/node" "$root/app/services/bayn/dist/harness2-command.js" "$@"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
   '';
-  harnessPython = pkgs.python312.withPackages (ps: [
+  dualSignalCommand = pkgs.writeShellScriptBin "bayn-dual-signal" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/dual-signal-command.js" "$@"
+  '';
+  backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/backtest-command.js" "$@"
+  '';
+  controlCommand = pkgs.writeShellScriptBin "bayn-control-study" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/control-study-command.js" "$@"
+  '';
+  gepaPython = pkgs.python312.withPackages (ps: [
     ps.boto3
     (ps.buildPythonPackage {
-      pname = "harness2";
-      version = "0.1.0";
+      pname = "gepa";
+      version = "0.1.4";
       pyproject = true;
       src = pkgs.fetchurl {
-        url = "https://github.com/google-research/harness2/archive/1cfe254e8d25b15f37048c3730134686abe60335.tar.gz";
-        hash = "sha256-Izf5G3GhMOBV2N+5nq0mZ6Rgh8Kd+TnU1PCjw1e1dI8=";
+        url = "https://github.com/gepa-ai/gepa/archive/8f287de942f41a6d1e0e7e5b2d576247c4bedee9.tar.gz";
+        hash = "sha256-9OiI0NGMGhPYoUw4KPhZYZd+oAG9qLyr0TkdkY3oDDM=";
       };
-      build-system = [ ps.setuptools ps.wheel ];
-      pythonImportsCheck = [ "harness2.core.schedule" ];
+      build-system = [ ps.setuptools ps.wheel ps.build ];
+      pythonImportsCheck = [ "gepa.optimize_anything" ];
       doCheck = false;
     })
   ]);
-  harnessCommand = pkgs.writeShellScriptBin "bayn-harness2" ''
+  gepaCommand = pkgs.writeShellScriptBin "bayn-gepa" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     export PATH="$root/bin:$PATH"
-    exec ${harnessPython}/bin/python "$root/app/services/bayn/harness2/runner.py" "$@"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/runner.py" "$@"
+  '';
+  gepaNativeCommand = pkgs.writeShellScriptBin "bayn-gepa-native" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    export PATH="$root/bin:$PATH"
+    exec ${gepaPython}/bin/python "$root/app/services/bayn/gepa/native.py" "$@"
   '';
   buildDefine = name: value: "--define ${name}=${lib.escapeShellArg (builtins.toJSON value)}";
+  buildDefines = lib.concatStringsSep " " [
+    (buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision)
+    (buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository)
+    (buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash)
+    (buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName)
+    (buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash)
+    (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
+  ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = {
     x86_64-linux = "sha256-TY+rJMR1vTCP84/kFDIRPurtGaCepT6lGy4Zjkx9ouA=";
@@ -68,25 +98,14 @@ let
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
-    (
-      "bun --cwd=services/bayn run build "
-      + buildDefine "__BAYN_BUILD_SOURCE_REVISION__" repoRevision
-      + " "
-      + buildDefine "__BAYN_BUILD_IMAGE_REPOSITORY__" imageRepository
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_BEHAVIOR_HASH__" strategyBehaviorHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PARAMETER_HASH__" strategyParameterHash
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_NAME__" strategyName
-      + " "
-      + buildDefine "__BAYN_BUILD_STRATEGY_PROTOCOL_HASH__" strategyProtocolHash
-      + " "
-      + buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash
-    )
+    "bun --cwd=services/bayn run build ${buildDefines}"
+    "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
-    "node services/bayn/dist/harness2-command.js --help"
+    "node services/bayn/dist/jev-evaluation-command.js --help"
+    "node services/bayn/dist/dual-signal-command.js --help"
+    "node services/bayn/dist/backtest-command.js --help"
+    "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/index.js"
     "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/forward-performance-command.js"
@@ -103,9 +122,10 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
-    mkdir -p "$out/app/services/bayn/harness2"
-    cp "$TMPDIR/work/services/bayn/harness2/runner.py" "$out/app/services/bayn/harness2/runner.py"
+    mkdir -p "$out/app/services/bayn/gepa"
+    cp "$TMPDIR/work/services/bayn/gepa/runner.py" "$TMPDIR/work/services/bayn/gepa/native.py" "$out/app/services/bayn/gepa/"
     node "$TMPDIR/work/services/bayn/scripts/copy-runtime-dependencies.mjs" \
       "$TMPDIR/work/services/bayn" "$out/app/services/bayn"
   '';
@@ -154,9 +174,15 @@ import ./bun-workspace-service.nix {
     forwardPerformanceCommand
     inferenceCostCommand
     researchCommand
-    harnessCommand
-    harnessProbeCommand
-    harnessPython
+    gepaCommand
+    gepaNativeCommand
+    bun
+    pkgs.git
+    evaluationCommand
+    dualSignalCommand
+    backtestCommand
+    controlCommand
+    gepaPython
   ];
   exposedPorts = {
     "8080/tcp" = { };

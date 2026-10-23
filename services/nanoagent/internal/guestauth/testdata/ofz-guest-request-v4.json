@@ -27,7 +27,6 @@
     "AttachTerminal": "ACTION_TERMINAL_CONTROL",
     "ListTerminals": "ACTION_TERMINAL_OBSERVE",
     "CodexLogin": "ACTION_CODEX_CONTROL",
-    "ResolveCodexApproval": "ACTION_CODEX_CONTROL",
     "WatchCodexEvents": "ACTION_CODEX_CONTROL",
     "CodexCall": "ACTION_CODEX_CONTROL"
   },

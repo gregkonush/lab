@@ -18,12 +18,14 @@ import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
+import { jevBacktestOutcome } from '../jev/experiment-economics'
+import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
-import { prepareBacktest, runBacktest, type BacktestPass } from './backtest'
+import { BacktestIssue, prepareBacktest, runBacktest, type BacktestPass } from './backtest'
 import { postgresMigrations } from '../db/postgres-migrations'
 import { canonicalHashV1Result } from '../hash'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
@@ -214,7 +216,7 @@ durableTest(
   30000,
 )
 
-durableTest.each(['opening', 'UTC-midnight'] as const)(
+durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
   'native backtest retains %s polling through measured bootstrap and cleanup latency',
   async (boundary) => {
     if (baynTestPostgresUrl === undefined || baynTestTigerBeetleAddress === undefined)
@@ -227,7 +229,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
     )
       throw new Error('Backtest acceptance requires isolated local test databases')
     const retained = retainedReplayFixture()
-    const openMs = Date.parse(boundary === 'opening' ? '2026-09-04T13:30:00Z' : '2026-09-04T23:59:30Z')
+    const openMs = Date.parse(boundary !== 'UTC-midnight' ? '2026-09-04T13:30:00Z' : '2026-09-04T23:59:30Z')
     const closeMs = openMs + 60_000
     const source = {
       ...retained.manifest,
@@ -238,15 +240,17 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
     const prepared = Result.getOrThrow(
       prepareBacktest(
         {
-          schemaVersion: 'bayn.backtest.v4',
+          schemaVersion: 'bayn.backtest.v5',
+          jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
           replicate: `measured-bootstrap-${randomUUID()}`,
           inference: {
             mode: 'measured-provider',
+            maximumCalls: 1000,
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v15',
+            inputDefinition: 'bayn.jev-trading-signal-state.v16',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
-          allocatedDataCostPerSessionMicros: '0',
+          allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : '0',
           interval: { startAt: new Date(openMs).toISOString(), endAt: new Date(closeMs).toISOString() },
           source,
           openingCashMicros: '100000000000',
@@ -254,10 +258,10 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           calendar: [
             {
               session_open: '0930',
-              session_close: boundary === 'opening' ? '0931' : '1600',
+              session_close: boundary !== 'UTC-midnight' ? '0931' : '1600',
               date: '2026-09-04',
               open: '09:30',
-              close: boundary === 'opening' ? '09:31' : '16:00',
+              close: boundary !== 'UTC-midnight' ? '09:31' : '16:00',
             },
             { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
           ],
@@ -349,7 +353,7 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
         expect(report.brokerState.ledger.positions).toEqual([])
         expect(report.sessions[0]?.schedule.firstPollAtMs).toBe(openMs)
         expect(report.sessions.at(-1)?.schedule.lastPollAtMs).toBe(closeMs)
-        expect(report.sessions).toHaveLength(boundary === 'opening' ? 1 : 2)
+        expect(report.sessions).toHaveLength(boundary !== 'UTC-midnight' ? 1 : 2)
         expect(report.schedule.failedPassCount).toBe(0)
         expect(report.brokerState.createdAt).toBe(new Date(openMs - 60_000).toISOString())
         if (boundary === 'UTC-midnight') {
@@ -359,8 +363,31 @@ durableTest.each(['opening', 'UTC-midnight'] as const)(
           expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.completedAtMs)
           expect(second.firstPollAtMs).toBeGreaterThanOrEqual(first.nextPollAtMs)
         }
+        expect(
+          Result.isFailure(
+            jevBacktestOutcome({
+              report,
+              variantBuild: null,
+              instructions: jevInstructions,
+              operatingAllocations: report.sessionDates.map((sessionDate) => ({
+                sessionDate,
+                infrastructure: { costMicros: '0', evidenceHash: report.reportHash },
+                research: { costMicros: '0', evidenceHash: report.reportHash },
+              })),
+            }),
+          ),
+        ).toBe(true)
         expect(report.processedRecords).toBe(source.recordCount)
         expect(report.inference.calls).toEqual([])
+        if (boundary === 'unknown-data-cost') {
+          expect(report.completion).toBe('INCOMPLETE')
+          expect(report.dataCostMicros).toBeNull()
+          expect(report.reconciledNetPnlAfterCostsMicros).toBeNull()
+          expect(report.maximumObservedDrawdownMicros).toBeNull()
+          expect(report.sessions.every((session) => session.allocatedDataCostMicros === null)).toBe(true)
+          expect(report.sessions.every((session) => session.netEquityChangeMicros === null)).toBe(true)
+          expect(report.issues).toContain(BacktestIssue.UnresolvedDataCost)
+        }
       }).pipe(Effect.scoped, Effect.provide(stores), Effect.provide(NodeServices.layer)),
     )
   },

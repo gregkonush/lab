@@ -1,12 +1,12 @@
 import { continuousMarketHours, type MarketHours } from '../../market-hours'
 import { canonicalHashV1Result } from '../../hash'
-import { Effect, Option, pipe, Schema } from 'effect'
+import { Cause, Effect, Option, pipe, Schema } from 'effect'
 
 import { BrokerRead } from '../../broker/alpaca/model'
 import { Authority } from '../../execution/contracts'
 import { currentUtcInstant } from '../../time'
 import { IsoDateSchema } from '../../schemas'
-import { CycleState, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { selectCycleRecovery } from './recovery-selection'
 import { type CycleRecoverySelection, type CycleRecoveryState } from './recovery-model'
 import { CycleStore } from '../store/model'
@@ -19,6 +19,7 @@ import {
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
+  firstIntradayObservationAtMs,
 } from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
@@ -93,7 +94,10 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
       const session = selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
-      if (session !== undefined && session.openAt <= observedAt) {
+      if (
+        session !== undefined &&
+        firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
+      ) {
         hours = calendar.value
         hoursReadHash = calendar.evidence.contentHash
       }
@@ -300,14 +304,28 @@ const recoverCycle = <R>(
                     pipe(
                       CycleStore,
                       Effect.flatMap((store) => {
-                        const binding = store.bindDecision(
-                          selection.cycle.identity.cycleId,
-                          document,
-                          bindObservedAt,
-                          evidence,
-                        )
+                        const binding = store
+                          .bindDecision(selection.cycle.identity.cycleId, document, bindObservedAt, evidence)
+                          .pipe(
+                            Effect.catchCause((cause) => {
+                              const reason = cause.reasons.length === 1 ? cause.reasons[0] : undefined
+                              return reason !== undefined &&
+                                Cause.isFailReason(reason) &&
+                                reason.error.failure === 'entry-expired'
+                                ? currentUtcInstant.pipe(
+                                    Effect.flatMap((expiredAt) =>
+                                      store.block(
+                                        selection.cycle.identity.cycleId,
+                                        CycleTerminalReason.UnusedEntryExpired,
+                                        expiredAt,
+                                      ),
+                                    ),
+                                  )
+                                : Effect.failCause(cause)
+                            }),
+                          )
                         const target = 'strategyDecision' in document ? document.strategyDecision : undefined
-                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v5') return binding
+                        if (target?.schemaVersion !== 'bayn.jev-entry-target.v6') return binding
                         const timingAttributes = {
                           'bayn.entry_timing.decision_hash': document.contentHash,
                           'bayn.entry_timing.batch_id': target.evidence.batchPlan.batchId,
@@ -325,13 +343,17 @@ const recoverCycle = <R>(
                           Effect.withSpan('bayn.jev.entry-decision-binding', { attributes: timingAttributes }),
                         )
                       }),
-                      Effect.mapError((cause) =>
-                        runnerError({
-                          operation: 'recover-cycle',
-                          failure: 'store',
-                          message: 'durable shadow decision binding failed',
-                          cause,
-                        }),
+                      Effect.catchCause((failure) =>
+                        Effect.failCause(
+                          Cause.map(failure, (cause) =>
+                            runnerError({
+                              operation: 'recover-cycle',
+                              failure: 'store',
+                              message: 'durable shadow decision binding failed',
+                              cause,
+                            }),
+                          ),
+                        ),
                       ),
                       Effect.map(
                         (binding): CycleRunResult => ({

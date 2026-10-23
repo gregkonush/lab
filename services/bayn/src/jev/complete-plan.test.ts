@@ -1,22 +1,68 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { nativeJevFixture } from './native.test-support'
+import { jevObservationForSnapshot, nativeJevFixture } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
-import { jevEntryProbability } from './trade-plan-choices'
+import { jevTradePlanQuestion } from './trade-plan-choices'
+import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { jevEntryEconomics } from './entry-economics'
+import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 
-test('rounded plan probabilities retain bounded aggregate research values without modifying raw answers', () => {
-  const rounded = Object.fromEntries(Array.from({ length: 16 }, (_, index) => [`plan_${index}`, 0.063]))
-  expect(jevEntryProbability({ ...rounded, wait: 0, avoid: 0 })).toBe(1)
-  expect(rounded['plan_0']).toBe(0.063)
-  expect(jevEntryProbability({ plan_0: 0.4, plan_1: 0.2, wait: 0.3, avoid: 0.1 })).toBeCloseTo(0.6)
-  expect(jevEntryProbability({ wait: 0.7, avoid: 0.3 })).toBe(0)
+test('provider bar context can exceed broker price precision without changing raw evidence', () => {
+  const { snapshot } = cryptoMarketFixture('SOL/USD')
+  const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      protocol: observation.protocol,
+      symbol: 'SOL/USD',
+      bidMicros: 103123456n,
+      askMicros: 103123457n,
+      capitalMicros: observation.portfolio.brokerState.account.equityMicros,
+    }),
+  )
+  const bar = snapshot.bars.find((entry) => entry.symbol === 'SOL/USD')
+  if (bar === undefined) throw new Error('Expected SOL history')
+  const observed = {
+    ...bar,
+    open: 107.677,
+    high: 107.77,
+    low: 107.674,
+    close: 107.7667664385,
+    volume: 0,
+    tradeCount: '0',
+  }
+  const input = {
+    snapshot: { ...snapshot, bars: [observed] },
+    symbol: 'SOL/USD',
+    economics,
+    protocol: observation.protocol,
+  }
+  const question = Result.getOrThrow(jevTradePlanQuestion(input))
+  expect(question).toEqual(
+    Result.getOrThrow(
+      jevTradePlanQuestion({ ...input, snapshot: { ...snapshot, bars: [{ ...observed, close: 107.766766 }] } }),
+    ),
+  )
+  expect(Object.keys(question.criteria).filter((choice) => choice.startsWith('plan_'))).toHaveLength(16)
+  expect(observed.close).toBe(107.7667664385)
+  expect(priceNumberToMicros(observed.close, 'broker quote')).toMatchObject({
+    _tag: 'Failure',
+    failure: { reason: 'precision-exceeded' },
+  })
+  for (const close of [NaN, Infinity, -1, Number.MAX_SAFE_INTEGER]) {
+    expect(jevTradePlanQuestion({ ...input, snapshot: { ...snapshot, bars: [{ ...observed, close }] } })).toMatchObject(
+      {
+        _tag: 'Failure',
+        failure: { _tag: 'InvalidFixedPointNumber', field: 'observed plan context' },
+      },
+    )
+  }
 })
 
 test('a fresh high still offers complete cost-valid hypothetical plans and explicit abstention', () => {
   const fixture = nativeJevFixture(undefined, undefined, undefined, undefined, undefined, undefined, undefined, false)
   const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
-  expect(Object.keys(prepared.request.questions)).toEqual(['action'])
+  expect(Object.keys(prepared.request.questions)).toEqual(['action', 'setup'])
   const action = prepared.request.questions['action']
   if (action?.type !== 'choice') throw new Error('Expected a plan choice')
   expect(action.criteria).toHaveProperty('wait')

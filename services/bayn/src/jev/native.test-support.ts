@@ -1,5 +1,6 @@
 import { jevPositionExitPolicy } from './exit-policy'
 import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
+import { JevEntrySetup } from './trade-plan-choices'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
@@ -292,12 +293,14 @@ export const nativeJevInference = (input: unknown, at: string, action = 'enter',
     else if (question.type === 'choice') {
       const choices = Object.keys(question.criteria)
       const selected =
-        key === 'action' && action === 'enter'
-          ? (choices.find((choice) => choice.startsWith('plan_')) ?? 'wait')
-          : key === 'action'
-            ? action
-            : choices[0]
-      const choiceProbability = key === 'action' ? probability : 0.8
+        key === 'setup'
+          ? JevEntrySetup.Upward
+          : key === 'action' && action === 'enter'
+            ? (choices.find((choice) => choice.startsWith('plan_')) ?? 'wait')
+            : key === 'action'
+              ? action
+              : choices[0]
+      const choiceProbability = key === 'action' || key === 'setup' ? probability : 0.8
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
         type: 'choice',

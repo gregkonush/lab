@@ -24,9 +24,11 @@ import { Reactivity } from 'effect/reactivity'
 import { SqlClient } from 'effect/sql'
 import type { Statement } from 'effect/sql/Statement'
 import { CycleStore } from './cycle/store/model'
-import { CycleStoreLive, makeCycleStore } from './cycle/store/postgres'
+import { CycleStoreLive, makeCycleStore, withWriterFenceCycleStore } from './cycle/store/postgres'
 import { makeCycleQueries } from './cycle/store/queries'
-import { DecisionEvidenceMismatch, cycleStoreError } from './cycle/store/model'
+import { DecisionEvidenceMismatch, cycleStoreError, runCycleStore } from './cycle/store/model'
+import { WriterFence, WriterFenceLive } from './execution/writer-fence'
+import { unusedEntryExpiresAt } from './cycle/entry-admission'
 import { makeCycleReadPrograms } from './cycle/store/read-program'
 import { cycleDecisionStoreEvidence } from './cycle/store/decision-contract'
 import { PostgresClientLive } from './db/postgres-client'
@@ -247,6 +249,7 @@ const fixture = (
   premiums: Readonly<Record<string, number>> = {},
   simulation = false,
   account = accountId,
+  pricingStopOffsetMicros?: number,
 ): ObserveShadowDecisionInput => {
   const native = nativeJevFixture(undefined, observedAt, account, undefined, hash('1'), premiums, calendar)
   const simulatedFixture = (
@@ -335,12 +338,12 @@ const fixture = (
     )
   })()
   const planningTargetWeights =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5'
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
       ? jevPlanningTargetWeights(compiledDecision)
       : compiledDecision.targetWeights
   const planningSymbols = Object.keys(planningTargetWeights)
   const hasEntryTargets =
-    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5' && compiledDecision.selectedSymbols.length > 0
+    compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6' && compiledDecision.selectedSymbols.length > 0
   const {
     candidateEvidencePolicy: _policy,
     benchmarkEvidencePolicy: _benchmark,
@@ -352,7 +355,18 @@ const fixture = (
     symbols: planningSymbols,
     purpose: IntradaySnapshotPurpose.EntryPricing,
   }
-  const rawPricing = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
+  const originalPricing = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
+  const rawPricing = {
+    ...originalPricing,
+    quotes: originalPricing.quotes.map((quote) => {
+      if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v6')
+        return quote
+      const plan = compiledDecision.exitPolicy.plans[quote.symbol]
+      if (plan === undefined) return quote
+      const bidPrice = (Number(plan.levels.stopPriceMicros) + pricingStopOffsetMicros) / 1_000_000
+      return { ...quote, bidPrice, askPrice: bidPrice + 0.01 }
+    }),
+  }
   const pricing = !hasEntryTargets
     ? snapshot
     : simulation
@@ -421,7 +435,7 @@ const fixture = (
       snapshotId: marketData.snapshotId,
       snapshotContentHash: marketData.contentHash,
       maximumBuyQuantityAtoms:
-        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v5'
+        compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
           ? value(
               maximumFundedBuyQuantities({
                 plans: compiledDecision.exitPolicy.plans,
@@ -565,6 +579,37 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
+  test.each([0, -10000])('durable Jev entry rejects a verified quote %s micros from its stop', async (offset) => {
+    const input = fixture({ AAPL: 0.02 }, false, accountId, offset)
+    expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
+    const result = await Effect.runPromise(
+      Effect.result(
+        buildExecutionDecision({
+          ...input,
+          authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
+          executionSession: executionSession(input),
+        }),
+      ),
+    )
+    expect(Result.isFailure(result)).toBe(true)
+    if (Result.isFailure(result)) expect(result.failure.failure).toBe('contract')
+  })
+
+  test('durable Jev entry accepts a verified quote one price tick above its stop', async () => {
+    const input = fixture({ AAPL: 0.02 }, false, accountId, 10000)
+    expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
+    const document = await Effect.runPromise(
+      buildExecutionDecision({
+        ...input,
+        authorityGenerationHash: hash('6'),
+        riskContext: fixtureRiskContext(input),
+        executionSession: executionSession(input),
+      }),
+    )
+    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
+  })
+
   test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
     'retains historical %s decision identities in financial reads without making them executable',
     async (schemaVersion) => {
@@ -864,6 +909,108 @@ describe('intraday shadow decision', () => {
   })
 
   const postgresTest = baynTestPostgresUrl === undefined ? test.skip : test
+  postgresTest.each(['statement', 'commit'] as const)(
+    'migrated cycle guard rolls back entry lease rejection at %s and permits normal expiry',
+    async (rejectedAt) => {
+      if (baynTestPostgresUrl === undefined) throw new Error('missing local PostgreSQL test URL')
+      const url = new URL(baynTestPostgresUrl)
+      if (!['127.0.0.1', 'localhost', '[::1]'].includes(url.hostname) || !url.pathname.endsWith('_test')) {
+        throw new Error('expiry regression requires a disposable local test database')
+      }
+      const original = fixture({ AAPL: 0.02 }, false, `replay-${hash('e')}`)
+      const input = {
+        ...original,
+        cycle: { ...original.cycle, createdAt: brokerObservedAt, updatedAt: brokerObservedAt },
+      }
+      const document = await Effect.runPromise(
+        buildExecutionDecision({
+          ...input,
+          authorityGenerationHash: hash('6'),
+          riskContext: fixtureRiskContext(input),
+          executionSession: executionSession(input),
+        }),
+      )
+      const expiredAt = new Date(unusedEntryExpiresAt(input.cycle)).toISOString()
+      const runtime = ManagedRuntime.make(
+        WriterFenceLive.pipe(
+          Layer.provideMerge(
+            PostgresClientLive({
+              operationTimeoutMs: 30_000,
+              postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+            }),
+          ),
+          Layer.provideMerge(NodeServices.layer),
+        ),
+      )
+      try {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const fence = yield* WriterFence
+            yield* sql`DROP SCHEMA public CASCADE`
+            yield* sql`CREATE SCHEMA public`
+            yield* postgresMigrations
+            yield* sql`INSERT INTO simulated_execution_clocks (account_id, source_manifest_hash, observed_at)
+            VALUES (${input.cycle.identity.accountId}, ${hash('e')}, ${document.createdAt})`
+            const cycles = yield* makeCycleStore()
+            yield* cycles.acquire(
+              value(makeCycleDraft(input.cycle.identity, input.cycle.window)),
+              input.cycle.createdAt,
+            )
+            yield* cycles.activate(input.cycle.identity.cycleId, input.cycle.updatedAt)
+            const expire = sql`UPDATE simulated_execution_clocks SET observed_at = ${expiredAt}
+            WHERE account_id = ${input.cycle.identity.accountId}`
+            // Exercise the migrated row and deferred guards with a complete decoded document,
+            // independently of external source and capital-activation fixture setup.
+            const binding = runCycleStore(
+              'bind-decision',
+              sql.withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`INSERT INTO autonomous_cycle_shadow_decisions (cycle_id, schema_version, document, created_at)
+              VALUES (${input.cycle.identity.cycleId}, ${document.schemaVersion}, ${sql.json(document)}, ${document.createdAt})`
+                  if (rejectedAt === 'statement') yield* expire
+                  yield* sql`UPDATE autonomous_cycles SET snapshot_id = ${document.bindings.snapshotId},
+              decision_hash = ${document.contentHash}, state_version = state_version + 1,
+              updated_at = ${document.createdAt} WHERE cycle_id = ${input.cycle.identity.cycleId}`
+                  if (rejectedAt === 'commit') yield* expire
+                  return { cycle: input.cycle, changed: true }
+                }),
+              ),
+            )
+            const fenced = withWriterFenceCycleStore({ ...cycles, bindDecision: () => binding }, fence)
+            const result = yield* fenced
+              .bindDecision(input.cycle.identity.cycleId, document, document.createdAt)
+              .pipe(Effect.result)
+            expect(result).toMatchObject({
+              _tag: 'Failure',
+              failure: { failure: 'entry-expired', persistenceFailure: 'constraint' },
+            })
+            expect(Option.getOrThrow(yield* cycles.read(input.cycle.identity.cycleId))).toMatchObject({
+              state: CycleState.Active,
+              bindings: {},
+            })
+            expect(Option.isNone(yield* cycles.readDecisionDocument(input.cycle.identity.cycleId))).toBe(true)
+            const [counts] = yield* sql`SELECT (SELECT count(*)::integer FROM intents) AS intents,
+            (SELECT count(*)::integer FROM mutation_events) AS mutations, (SELECT count(*)::integer FROM orders) AS orders`
+            expect(counts).toEqual({ intents: 0, mutations: 0, orders: 0 })
+            const blocked = yield* fenced.block(
+              input.cycle.identity.cycleId,
+              CycleTerminalReason.UnusedEntryExpired,
+              expiredAt,
+            )
+            expect(blocked.cycle).toMatchObject({
+              state: CycleState.Blocked,
+              terminalReason: CycleTerminalReason.UnusedEntryExpired,
+              bindings: {},
+            })
+          }),
+        )
+      } finally {
+        await runtime.dispose()
+      }
+    },
+    30_000,
+  )
   postgresTest(
     'migrated cycle guard validates constructed no-trade plans against durable risk facts',
     async () => {
@@ -923,7 +1070,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v16', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v19', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)
@@ -948,7 +1095,7 @@ describe('intraday shadow decision', () => {
           })})`
             const store = yield* makeCycleStore()
             yield* store.acquire(value(makeCycleDraft(input.cycle.identity, input.cycle.window)), input.cycle.createdAt)
-            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v5')
+            if (document.strategyDecision?.schemaVersion !== 'bayn.jev-entry-target.v6')
               throw new Error('missing Jev evidence')
             const { observation, batchPlan, batchResult } = document.strategyDecision.evidence
             yield* sql`INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
@@ -1017,7 +1164,7 @@ describe('intraday shadow decision', () => {
           JSON.stringify({
             targetPlan: document.targetPlan,
             selected:
-              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v5'
+              document.strategyDecision?.schemaVersion === 'bayn.jev-entry-target.v6'
                 ? document.strategyDecision.selectedSymbols
                 : [],
           }),
@@ -1645,7 +1792,7 @@ describe('intraday shadow decision', () => {
     const selectedSymbol = protocol.candidateSymbols[0]
     if (selectedSymbol === undefined) throw new Error('intraday fixture requires one candidate symbol')
     const input = fixture({ [protocol.benchmarkSymbol]: 0.005, [selectedSymbol]: 0.02 })
-    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v5') {
+    if (input.compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v6') {
       throw new Error('Jev fixture requires one entry decision')
     }
     expect(input.compiledDecision.selectedSymbols).toEqual([selectedSymbol])

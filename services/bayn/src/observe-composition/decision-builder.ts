@@ -948,8 +948,7 @@ const compileObserveStrategyDecision = <R>(
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
       decision.selectedSymbols.length === 0 &&
-      Date.parse(input.cycle.window.submissionCutoffAt) - Date.parse(evidence.decidedAt) >
-        (input.decisionFinalizationHeadroomMs ?? 0)
+      admissionExpiresAt - Date.parse(evidence.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev entry remains armed for a qualifying fresh signal',

@@ -1,4 +1,4 @@
-import { jevEntryProbability } from '../jev/trade-plan-choices'
+import { JevEntrySetup } from '../jev/trade-plan-choices'
 import { momentumControlCandidates } from './momentum-control'
 import { instrumentMarket } from '../instruments'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
@@ -46,7 +46,7 @@ export enum SignalScreenRule {
 }
 
 export const signalStudyDefinition = {
-  schemaVersion: 'bayn.jev-signal-study-definition.v3',
+  schemaVersion: 'bayn.jev-signal-study-definition.v4',
   cryptoFees: cryptoTakerFeeSchedule,
   factorBins: { probabilityEdges: [0, 0.25, 0.5, 0.65, 0.8, 1], setupQuality: 'floor of native score' },
   horizonMs: 15 * 60_000,
@@ -133,7 +133,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = quote.bidSize > 0 && quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
       const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
-      const answer = inference?.response.answers['action']
+      const answer = inference?.response.answers['setup']
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
       const factors =
         retained?.status === JevCandidateResultStatus.Resolved &&
@@ -153,7 +153,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        enterProbability: answer?.type === 'choice' ? jevEntryProbability(answer.probabilities) : null,
+        setupProbability: answer?.type === 'choice' ? (answer.probabilities[JevEntrySetup.Upward] ?? null) : null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -222,7 +222,8 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'action') factors.push(['enterProbability', bin(jevEntryProbability(answer.probabilities))])
+          if (name === 'setup' && answer.probabilities[JevEntrySetup.Upward] !== undefined)
+            factors.push(['setupProbability', bin(answer.probabilities[JevEntrySetup.Upward])])
         }
       }
     for (const [dimension, value] of [
@@ -500,7 +501,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       readonly decidedAt: string
       readonly symbol: string
       readonly selectedBy: readonly SignalScreenRule[]
-      readonly enterProbability: number | null
+      readonly setupProbability: number | null
       readonly factors: FactorEvidence
       readonly outcome: HypothesisOutcome
       readonly fills: readonly EconomicReplayFill[]
@@ -545,7 +546,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           decidedAt: batch.decidedAt,
           symbol: signal.symbol,
           selectedBy: Object.values(SignalScreenRule).filter((rule) => batch.selected[rule] === signal.symbol),
-          enterProbability: signal.enterProbability,
+          setupProbability: signal.setupProbability,
           factors: signal.factors,
         }
         if (
@@ -614,7 +615,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       }
     })
     const report = {
-      schemaVersion: 'bayn.jev-signal-study.v3',
+      schemaVersion: 'bayn.jev-signal-study.v4',
       definition: signalStudyDefinition,
       definitionHash: yield* Effect.fromResult(canonicalHashV1Result(signalStudyDefinition)),
       inputHash: yield* Effect.fromResult(canonicalHashV1Result(input)),

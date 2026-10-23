@@ -19,7 +19,7 @@ import { initializeErrorTracking, reportTerminalFailure } from '../error-trackin
 import { PostgresClientLive } from '../db/postgres-client'
 import { GitSourceRevisionSchema } from '../schemas'
 import { validateResearchApprovalKey } from '../research-inference/approval'
-import { hashResearch, ResearchError, HarnessEditorPolicySchema } from '../research-inference/contract'
+import { hashResearch, ResearchError, ResearchPolicySchema } from '../research-inference/contract'
 import { makeResearchRunner } from '../research-inference/runner'
 import { makeResearchStore } from '../research-inference/store'
 import { makeConfiguredTelemetryRuntimeLayer, telemetryRuntimeConfig } from '../telemetry'
@@ -42,13 +42,13 @@ export const researchServerConfig = Config.all({
       ? Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')
       : Config.succeed(embeddedBuildMetadata.sourceRevision),
   identityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
-  policy: Config.schema(Schema.fromJsonString(HarnessEditorPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
+  policy: Config.schema(Schema.fromJsonString(ResearchPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
   approvalKey: Config.Redacted('BAYN_RESEARCH_APPROVAL_KEY'),
   url: Config.Redacted('BAYN_POSTGRES_URL'),
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
 })
-export const researchModelEndpoint = 'http://bayn-model.bayn-model.svc.cluster.local:8080/v1/chat/completions'
+export const researchModelEndpoint = 'http://flamingo.flamingo.svc.cluster.local/v1/chat/completions'
 
 export const researchServerProgram = Effect.gen(function* () {
   const config = yield* researchServerConfig
@@ -83,22 +83,23 @@ export const researchServerProgram = Effect.gen(function* () {
         yield* Effect.sleep('30 seconds')
       }
     }).pipe(Effect.forkScoped)
-    const runner = yield* makeResearchRunner(store, researchModelEndpoint, () => ({
-      ...telemetry.traceHeaders(),
-    }))
+    const runner = yield* makeResearchRunner(
+      store,
+      researchModelEndpoint,
+      () => ({
+        ...telemetry.traceHeaders(),
+      }),
+      config.sourceRevision,
+    )
     const context = yield* Effect.context<HttpClient.HttpClient>()
     const workflow = makeBaynResearchRun(
       {
         run: (run, signal) => {
           const parent = currentOpenTelemetryParentSpan()
           const attempt = Effect.gen(function* () {
-            if (
-              run.schemaVersion !== 'bayn.jev-harness2-editor.v1' ||
-              run.sourceRevision !== config.sourceRevision ||
-              (yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash
-            )
+            if ((yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash)
               return yield* new ResearchError({
-                message: 'Research run differs from the deployed source or frozen serving policy',
+                message: 'Research run differs from the frozen serving policy',
               })
             return yield* runner.run(run)
           })

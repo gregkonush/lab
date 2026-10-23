@@ -5,6 +5,7 @@ export type AgentPhase = 'booting' | 'failed' | 'pending' | 'ready' | 'sleeping'
 export type AgentArchitecture = 'amd64' | 'arm64' | 'unknown'
 export type TengriErrorCode =
   | 'conversation_not_found'
+  | 'control_not_dispatched'
   | 'conversation_history_invalid'
   | 'file_conflict'
   | 'capacity_full'
@@ -174,18 +175,23 @@ export type TengriAction =
   | { action: 'codex-login-status'; agentId: string }
   | { action: 'codex-login'; agentId: string }
   | { action: 'codex-models'; agentId: string; cursor?: string }
+  | { action: 'active-codex-run'; agentId: string }
+  | { action: 'codex-run'; agentId: string; runId: string }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
   | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
   | ({
       action: 'send-turn'
       agentId: string
+      operationId: string
       threadId: string
       text: string
       images: import('./codex-images').TengriCodexImage[]
     } & TengriCodexOptions)
   | {
       action: 'steer-turn'
+      runId: string
       agentId: string
+      operationId: string
       threadId: string
       turnId: string
       text: string
@@ -193,13 +199,17 @@ export type TengriAction =
     }
   | {
       action: 'answer-questions'
+      runId: string
+      operationId: string
       agentId: string
       approvalId: string
       response: import('./codex-input').TengriCodexInputResponse
     }
-  | { action: 'interrupt-turn'; agentId: string; threadId: string; turnId: string }
+  | { action: 'interrupt-turn'; runId: string; operationId: string; agentId: string }
   | {
       action: 'resolve-approval'
+      runId: string
+      operationId: string
       agentId: string
       approvalId: string
       decision:

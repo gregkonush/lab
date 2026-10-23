@@ -167,12 +167,15 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z.strictObject({ action: z.literal('codex-login-status'), agentId }),
   z.strictObject({ action: z.literal('codex-login'), agentId }),
   z.strictObject({ action: z.literal('codex-models'), agentId, cursor: z.string().min(1).max(4096).optional() }),
+  z.strictObject({ action: z.literal('active-codex-run'), agentId }),
+  z.strictObject({ action: z.literal('codex-run'), agentId, runId: z.uuid() }),
   z.strictObject({ action: z.literal('create-thread'), agentId, ...codexOptions }),
   z.strictObject({ action: z.literal('resume-thread'), agentId, threadId: codexId, ...codexOptions }),
   z
     .strictObject({
       action: z.literal('send-turn'),
       agentId,
+      operationId: z.uuid(),
       threadId: codexId,
       text: codexPrompt,
       images: codexImages,
@@ -182,22 +185,33 @@ export const tengriActionSchema = z.discriminatedUnion('action', [
   z
     .strictObject({
       action: z.literal('steer-turn'),
+      runId: z.uuid(),
       agentId,
+      operationId: z.uuid(),
       threadId: codexId,
       turnId: codexId,
       text: codexPrompt,
       images: codexImages,
     })
     .refine((input) => Boolean(input.text || input.images.length), 'Add a message or image'),
-  z.strictObject({ action: z.literal('interrupt-turn'), agentId, threadId: codexId, turnId: codexId }),
+  z.strictObject({
+    action: z.literal('interrupt-turn'),
+    agentId,
+    runId: z.uuid(),
+    operationId: z.uuid(),
+  }),
   z.strictObject({
     action: z.literal('answer-questions'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
     agentId,
     approvalId: codexId,
     response: codexInputResponseSchema,
   }),
   z.strictObject({
     action: z.literal('resolve-approval'),
+    runId: z.uuid(),
+    operationId: z.uuid(),
     agentId,
     approvalId: codexId,
     decision: z.enum([

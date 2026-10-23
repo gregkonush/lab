@@ -120,8 +120,17 @@ impl Database {
             .build()
         };
         let coordination = pool(2)?;
-        let pool = pool(if role == "tengri_controller" { 12 } else { 2 })?;
+        let pool = pool(if role == "tengri_controller" { 8 } else { 2 })?;
         Ok(Self { pool, coordination })
+    }
+
+    pub fn into_run_worker(self) -> Self {
+        self.pool.close();
+        self.coordination.resize(1);
+        Self {
+            pool: self.coordination.clone(),
+            coordination: self.coordination,
+        }
     }
 
     #[cfg(test)]

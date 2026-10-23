@@ -1,31 +1,43 @@
 import { jevInstructions } from './instructions'
-import { Result, Schema } from 'effect'
+import { BigDecimal, Result, Schema } from 'effect'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
 import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
+import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import { JevContractError, type JevRequest, type JevResponse } from './contract'
 import { fundJevTradePlan, type JevEntryEconomics } from './entry-economics'
+import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from './strategy-exit-plan'
 
-const representativePrices = (values: readonly bigint[]) => {
+export enum JevEntrySetup {
+  Upward = 'upward',
+  Unclear = 'unclear',
+  Adverse = 'adverse',
+}
+
+export const jevEntrySetupQuestion = {
+  type: 'choice',
+  instructions:
+    'Assess whether `candidate`, `benchmark` and `relativeSignals` show a current long continuation setup over the supplied observation window. Compare recent completed bars with the current quote, trend, participation and benchmark. Judge the observed setup rather than predicting a future price or guaranteeing a profitable trade. An old rise contradicted by current deterioration is not upward support.',
+  criteria: {
+    [JevEntrySetup.Upward]:
+      'The current observed price structure, direction and participation support a long continuation setup.',
+    [JevEntrySetup.Unclear]:
+      'The current observations are flat, mixed, contradictory or insufficient for a supported long continuation setup.',
+    [JevEntrySetup.Adverse]:
+      'Current deterioration, exhaustion or a failed upward structure argues against a long continuation setup.',
+  },
+} satisfies JevRequest['questions'][string]
+
+const representativePrices = (values: readonly bigint[], maximum: number) => {
   const prices = [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
   return prices.filter((_, index) =>
-    Array.from({ length: Math.min(4, prices.length) }, (_, slot) =>
-      Math.floor((slot * (prices.length - 1)) / Math.max(1, Math.min(4, prices.length) - 1)),
+    Array.from({ length: Math.min(maximum, prices.length) }, (_, slot) =>
+      Math.floor((slot * (prices.length - 1)) / Math.max(1, Math.min(maximum, prices.length) - 1)),
     ).includes(index),
   )
 }
-
-export const jevEntryProbability = (probabilities: Readonly<Record<string, number>>) =>
-  Math.min(
-    1,
-    Object.entries(probabilities).reduce(
-      (sum, [choice, probability]) => sum + (choice.startsWith('plan_') ? probability : 0),
-      0,
-    ),
-  )
 
 export const jevTradePlanQuestion = (input: {
   readonly snapshot: StrategyMarketSnapshot
@@ -39,8 +51,9 @@ export const jevTradePlanQuestion = (input: {
       string,
       Extract<JevRequest['questions'][string], { readonly type: 'choice' }>['criteria'][string]
     > = {
-      wait: 'No supplied complete plan is supported now; a possible setup needs more confirmation.',
-      avoid: 'No supplied complete plan is supported; the setup is adverse, exhausted or unsupported.',
+      wait: 'No supplied complete plan has sufficient current observational support for a cost-covering long trade within the holding horizon.',
+      avoid:
+        'The current setup, stop placement, target distance or net reward versus loss argues against entering any supplied complete long plan now.',
     }
     if (economics !== null) {
       const quote = snapshot.latestQuotes[symbol]
@@ -51,7 +64,13 @@ export const jevTradePlanQuestion = (input: {
         snapshot.bars
           .filter((bar) => bar.symbol === symbol)
           .flatMap((bar) => [bar.open, bar.high, bar.low, bar.close])
-          .map((price) => priceNumberToMicros(price, 'observed plan context', 'DOWN')),
+          .map((price) =>
+            Result.gen(function* () {
+              yield* numberToMicros(price, 'observed plan context')
+              const rounded = BigDecimal.round(BigDecimal.fromNumberUnsafe(price), { scale: 6, mode: 'floor' })
+              return yield* scaledNumber(Number(BigDecimal.scale(rounded, 6).value), 'observed plan context', 1)
+            }),
+          ),
       )
       if (values.length === 0)
         return yield* Result.fail(new JevContractError({ message: 'Trade plans require completed price history' }))
@@ -61,19 +80,46 @@ export const jevTradePlanQuestion = (input: {
         quantizeInstrumentPriceMicros(symbol, bid + 1n, 'UP') - quantizeInstrumentPriceMicros(symbol, bid, 'DOWN')
       const rangeStep = (high - low + 3n) / 4n
       const step = rangeStep > tick ? rangeStep : tick
-      const breakEven = yield* priceNumberToMicros(economics.breakEvenExitBidUsd, 'break-even plan bid', 'UP')
+      const acquisition = BigInt(economics.acquisitionCostMicros)
+      const upperBid = BigInt(economics.maximumEntryPriceMicros) * 2n
+      const liquidation = { protocol, symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
+      const maximumTarget = yield* jevLiquidationValue({ ...liquidation, bidMicros: upperBid })
+      const profitableBid = yield* jevBreakEvenExitBid({
+        ...liquidation,
+        acquisitionCostMicros: acquisition + 1n,
+        upperBidMicros: upperBid,
+      })
+      const minimumProfitPrice = quantizeInstrumentPriceMicros(symbol, profitableBid, 'UP')
       const moves = [1n, 2n, 4n, 8n]
       const stops = representativePrices(
         [...values.filter((price) => price < bid), ...moves.map((multiple) => bid - step * multiple)]
           .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'DOWN'))
           .filter((price) => price > 0n && price < bid),
+        4,
       )
-      const profits = representativePrices(
-        [...values.filter((price) => price > breakEven), ...moves.map((multiple) => breakEven + step * multiple)]
+      const marketProfits = representativePrices(
+        [...values, ...moves.map((multiple) => bid + step * multiple)]
           .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'UP'))
-          .filter((price) => price > breakEven),
+          .filter((price) => price >= minimumProfitPrice),
+        3,
       )
       for (const stop of stops) {
+        const stopValue = yield* jevLiquidationValue({ ...liquidation, bidMicros: stop })
+        const loss = acquisition - stopValue.conservativeNetMicros
+        const requiredTargetNet = acquisition + loss
+        const rewardPrice =
+          stopValue.conservativeNetMicros > 0n && loss > 0n && requiredTargetNet <= maximumTarget.conservativeNetMicros
+            ? quantizeInstrumentPriceMicros(
+                symbol,
+                yield* jevBreakEvenExitBid({
+                  ...liquidation,
+                  acquisitionCostMicros: requiredTargetNet,
+                  upperBidMicros: upperBid,
+                }),
+                'UP',
+              )
+            : undefined
+        const profits = representativePrices([...marketProfits, ...(rewardPrice === undefined ? [] : [rewardPrice])], 4)
         for (const profit of profits) {
           const levels = yield* Schema.decodeUnknownResult(JevStrategyExitPlanSchema)({
             schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
@@ -97,8 +143,9 @@ export const jevTradePlanQuestion = (input: {
           if (funded === null) continue
           criteria[`plan_${Object.keys(criteria).length - 2}`] = {
             priceBasis: 'HYPOTHETICAL_ORDER_PRICES',
+            targetBasis: profit === rewardPrice ? 'NET_REWARD_ORDER_SCENARIO' : 'OBSERVED_RANGE_ORDER_SCENARIO',
             meaning:
-              'Enter now with this complete stop and target only if the supplied evidence supports the whole plan over the holding horizon. These proposed future order prices are not observed or predicted market outcomes.',
+              'A supplied complete long entry, stop and target plan. Its payoff numbers are conditional on execution at the proposed prices; assess whether entering this trade now is supported by the observations and holding horizon.',
             plan: funded.exitPlan,
             stopPriceUsd: Number(stop) / 1_000_000,
             targetPriceUsd: Number(profit) / 1_000_000,
@@ -121,6 +168,14 @@ export const jevTradePlanQuestion = (input: {
 
 export const selectedJevTradePlan = (request: JevRequest, response: JevResponse) =>
   Result.gen(function* () {
+    const setup = response.answers['setup']
+    if (
+      request.questions['setup']?.type !== 'choice' ||
+      setup?.type !== 'choice' ||
+      !Object.values(JevEntrySetup).some((choice) => choice === setup.choice)
+    )
+      return yield* Result.fail(new JevContractError({ message: 'Entry requires a typed current-setup judgment' }))
+    if (setup.choice !== JevEntrySetup.Upward) return null
     const answer = response.answers['action']
     const question = request.questions['action']
     if (answer?.type !== 'choice' || question?.type !== 'choice')

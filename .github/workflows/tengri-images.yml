@@ -148,6 +148,7 @@ jobs:
           cargo fmt --check
           cargo clippy --locked --all-targets -- -D warnings
           cargo test --locked --all-targets
+          cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
           bash test-runtime.sh
           bash test-rpc-interop.sh
           cargo run --locked --quiet --bin crdgen > /tmp/tengri-crd.yaml
@@ -193,6 +194,7 @@ jobs:
           bash -n build-boot-artifacts.sh tengri-init.sh
           bash validate-rootfs.test.sh
           bash bootstrap-codex.sh --validate-manifest
+          bash bootstrap-codex.sh --install-only
           buf lint ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto
           buf format ../tengri/proto --path ../tengri/proto/proompteng/runtime/guest/v1/nanoagent.proto --diff --exit-code
           bash generate-proto.sh
@@ -200,7 +202,8 @@ jobs:
           node ../tengri/fixtures/generate-ofz-guest-request-v4.mjs
           git diff --exit-code -- ../tengri/fixtures/ofz-guest-request-v4.json internal/guestauth/testdata/ofz-guest-request-v4.json
           test -z "$(gofmt -l .)"
-          GOWORK=off go test -race ./...
+          node --test relay-client.test.mjs
+          TENGRI_CODEX_CONTRACT_BINARY="$HOME/.local/bin/codex" GOWORK=off go test -race ./...
           GOWORK=off go vet ./...
 
   build:
@@ -321,7 +324,7 @@ jobs:
         if: always() && steps.kvm.outcome != '' && steps.kvm.outcome != 'skipped'
         uses: actions/upload-artifact@v4
         with:
-          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}
+          name: tengri-kvm-${{ matrix.architecture }}-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: .artifacts/kvm/
           include-hidden-files: true
           if-no-files-found: error
@@ -449,7 +452,7 @@ jobs:
       - name: Retain verified image indexes
         uses: actions/upload-artifact@v4
         with:
-          name: tengri-image-indexes-${{ github.sha }}
+          name: tengri-image-indexes-${{ github.sha }}-attempt-${{ github.run_attempt }}
           path: .artifacts/tengri/*-index.json
           include-hidden-files: true
           if-no-files-found: error

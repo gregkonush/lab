@@ -1,13 +1,6 @@
-import { Schema } from 'effect'
-
-import { StrictNonEmptyStringSchema } from '../schemas'
-
-export const JevInstructionsSchema = Schema.Struct({
-  entry: StrictNonEmptyStringSchema.check(Schema.isMaxLength(2000)),
-})
-export type JevInstructions = typeof JevInstructionsSchema.Type
+import type { JevInstructions } from './instructions-contract'
 
 export const jevInstructions: JevInstructions = {
   entry:
-    'Using `candidate`, `benchmark`, `relativeSignals`, `entryEconomics` and `session`, select one supplied complete long entry plan only when the evidence supports both its thesis-invalidation stop and reaching its target within `task.horizonMinutes` after estimated execution costs. The options are hypothetical order terms, not forecasts or additional observed data. A plan being funded does not make it likely or profitable. Choose wait or avoid when no complete plan is supported. No positive historical return or benchmark outperformance is required. Code owns permission, quantity, freshness, broker protection and account risk.',
+    'Which supplied complete long trade, if any, is supported for actual entry now? Judge `candidate`, `benchmark` and `relativeSignals` together with `entryEconomics` over `task.horizonMinutes`. The observed structure and movement must support a cost-covering exit before the mandatory holding deadline. Evaluate entry, stop, target and time-limit liquidation together. A recent upward trend alone does not establish an economically supported trade. Supplied order prices and estimated profit or loss are hypothetical payoffs, not evidence that a target will be reached. Choose wait or avoid when no supplied plan has that support. Code separately requires the current-setup judgment and enforces permission, funding, sizing, freshness, protection and account risk.',
 }
