@@ -28,6 +28,7 @@ import {
   type MutationStoreShape,
 } from '../execution/mutations/model'
 import { MutationOperation } from '../broker/alpaca-mutations/model'
+import { legacyCycleClosureSchemaVersion } from '../execution/legacy-wire'
 import { canonicalHashV1Result } from '../hash'
 import { decidePreparedMutationIntent } from './mutation-decisions'
 import {
@@ -300,6 +301,7 @@ describe('closing market-data fallback boundaries', () => {
     'pending-stop-unavailable',
     'pending-stop-error',
     'pending-stop-no-position',
+    'pending-stop-inexact-accounting',
     'pending-stop-nonprofit',
     'pending-at-holding',
     'partial-at-holding',
@@ -529,7 +531,11 @@ describe('closing market-data fallback boundaries', () => {
     const reconciliation = {
       ...freshFacts,
       brokerState: { ...positionState, reconciliation: exact },
-      report: { ...freshFacts.report, reconciliation: exact },
+      report: {
+        ...freshFacts.report,
+        reconciliation: exact,
+        metrics: { ...freshFacts.report.metrics, accountingExact: scenario !== 'pending-stop-inexact-accounting' },
+      },
     }
     for (const allowSubmit of [true, false]) {
       const unused = () => Effect.die(new Error('Pending profit must use its existing immutable commit'))
@@ -625,19 +631,142 @@ describe('closing market-data fallback boundaries', () => {
           'pending-before-holding',
           'pending-stop-unavailable',
           'pending-stop-no-position',
+          'pending-stop-inexact-accounting',
           'pending-stop-nonprofit',
         ].includes(scenario)
           ? { _tag: 'Wait', observedAt: checkAt, waitReason: 'intent-nonterminal' }
           : { _tag: 'Execute', action: 'CANCEL', intentId: intent.intentId, observedAt: checkAt },
       )
       expect(marketReads).toBe(
-        ['pending-at-holding', 'partial-at-holding', 'pending-stop-no-position', 'pending-stop-nonprofit'].includes(
-          scenario,
-        )
+        [
+          'pending-at-holding',
+          'partial-at-holding',
+          'pending-stop-no-position',
+          'pending-stop-inexact-accounting',
+          'pending-stop-nonprofit',
+        ].includes(scenario)
           ? 0
           : 1,
       )
     }
+    if (scenario !== 'partial-at-stop') return
+    // A stop releases only the resting remainder. A rebound cannot create another
+    // order before cancellation settles, and the current-bid contract restores the floor.
+    const closure = Result.getOrThrow(
+      makeExecutionCycleClosure({
+        schemaVersion: legacyCycleClosureSchemaVersion,
+        cycleId: request.cycle.identity.cycleId,
+        entryDecisionHash: request.entryDocument.contentHash,
+        document: result.document,
+        createdAt: result.document.createdAt,
+        expiresAt: result.document.expiresAt,
+      }),
+    )
+    let terminal = false
+    let settled = false
+    let replans = 0
+    const unused = () => Effect.die(new Error('Stop recovery must not create another broker mutation'))
+    const reboundAt = new Date(Date.parse(checkAt) + 1_000).toISOString()
+    const settledState = {
+      ...positionState,
+      account: { ...positionState.account, observedAt: reboundAt },
+      positions: positionState.positions.map((position) => ({ ...position, observedAt: reboundAt })),
+      positionsObservedAt: reboundAt,
+      ordersObservedAt: reboundAt,
+      orders: positionState.orders.map((order) => ({ ...order, status: OrderStatus.Canceled, observedAt: reboundAt })),
+    }
+    const settledHash = Result.getOrThrow(reconciledStateHash(settledState))
+    const settledReconciliation = {
+      ...exact,
+      reconciledAt: reboundAt,
+      expectedHash: settledHash,
+      observedHash: settledHash,
+    }
+    const recovered = {
+      ...reconciliation,
+      brokerState: { ...settledState, reconciliation: settledReconciliation },
+      report: { ...reconciliation.report, reconciliation: settledReconciliation },
+    }
+    const closureStore: ExecutionCycleClosureStoreShape = {
+      read: () => Effect.succeed(Option.some(closure)),
+      readLatestReplan: () => Effect.succeed(Option.none()),
+      bind: unused,
+      bindReplan: (value) =>
+        Effect.sync(() => {
+          replans += 1
+          return value
+        }),
+      containsIntent: () => Effect.succeed(true),
+    }
+    await Effect.runPromise(
+      Effect.gen(function* () {
+        yield* TestClock.setTime(Date.parse(reboundAt))
+        const reconcile = Effect.suspend(() => Effect.succeed(settled ? recovered : reconciliation))
+        const recover = ensureExecutionCycleClosure({
+          ...request,
+          input: {
+            ...request.input,
+            executionCycleClosureStore: closureStore,
+            intradayMarketData: {
+              ...freshMarket,
+              loadSnapshot: (pricing) => Effect.succeed(snapshotAt(pricing, floor - 0.01)),
+            },
+          },
+          closeWindow: {
+            startAt: result.document.createdAt,
+            submitCutoffAt: result.document.submissionCutoffAt,
+            expiresAt: result.document.expiresAt,
+          },
+          existing: closure,
+          reconcile,
+          refreshReconciliation: reconcile,
+        })
+        const pending = yield* recover
+        expect(pending._tag).toBe('Close')
+        if (pending._tag !== 'Close') throw new Error('Expected the immutable pending close')
+        expect(pending.document.contentHash).toBe(result.document.contentHash)
+        expect(replans).toBe(0)
+        terminal = true
+        expect(yield* recover).toMatchObject({ _tag: 'Wait', waitReason: 'COMPLETION_EVIDENCE_PENDING' })
+        expect(replans).toBe(0)
+        settled = true
+        const replacement = yield* recover
+        expect(replacement._tag).toBe('Close')
+        if (replacement._tag !== 'Close') throw new Error('Expected a fresh residual close')
+        expect(replans).toBe(1)
+        expect(replacement.document.replanGenerationHash).toBe(closure.contentHash)
+        expect(replacement.document.deltaRisk[0]?.limitPriceMicros).toBe(plan.levels.profitLimitPriceMicros)
+        expect(replacement.document.targetPlan.intentTargets[0]?.quantityAtoms).toBe(String(quantity - filled))
+        expect(replacement.document.orderedIntentIds).not.toEqual(result.document.orderedIntentIds)
+      }).pipe(
+        Effect.provide(TestClock.layer()),
+        Effect.provideService(IntentStore, {
+          protectionForCycle: () => Effect.succeed([]),
+          beginProtectionCancel: unused,
+          read: () =>
+            Effect.sync(() =>
+              Option.some(
+                terminal
+                  ? {
+                      ...record,
+                      intent: {
+                        ...record.intent,
+                        state: IntentState.Terminal,
+                        terminalOutcome: TerminalOutcome.Canceled,
+                      },
+                      updatedAt: reboundAt,
+                    }
+                  : record,
+              ),
+            ),
+          commit: unused,
+          commitClosing: unused,
+        }),
+        Effect.provideService(MutationStore, {
+          latest: () => Effect.succeed(accepted),
+        } as unknown as MutationStoreShape),
+      ),
+    )
   })
 
   test('an equity-calendar recovery closes an external crypto holding with IOC', async () => {

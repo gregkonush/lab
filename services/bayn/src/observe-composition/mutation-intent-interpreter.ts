@@ -804,6 +804,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
               document.executionSession !== undefined &&
               state.account.accountId === input.accountId &&
               state.reconciliation.status === ReconciliationStatus.Exact &&
+              facts.reconciliation.report.metrics.accountingExact &&
               (latest === undefined || state.reconciliation.reconciledAt >= latest.occurredAt) &&
               state.unknownOrderCount === 0 &&
               facts.reconciliation.riskContext.unknownMutationCount === 0 &&
