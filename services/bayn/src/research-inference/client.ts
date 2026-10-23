@@ -13,6 +13,7 @@ import {
   sealResearchReceipt,
   maximumResearchStreamBytes,
   type ResearchRun,
+  type RetainedResearchRun,
   type ResearchReceipt,
 } from './contract'
 
@@ -38,7 +39,7 @@ const ChunkSchema = Schema.Struct({
   ),
 })
 
-export const makeResearchStreamDecoder = (run: ResearchRun) => {
+export const makeResearchStreamDecoder = (run: RetainedResearchRun) => {
   let output = ''
   let pending = ''
   let totalBytes = 0
@@ -216,7 +217,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
-      const attestation = incoming.headers['x-bayn-serving-identity']
+      const attestation = incoming.headers['x-model-serving-identity']
       if (attestation === undefined || attestation.length > 1024)
         return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
       servingIdentity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ResearchServingIdentitySchema))(

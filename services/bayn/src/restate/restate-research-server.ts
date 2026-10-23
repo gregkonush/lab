@@ -48,7 +48,7 @@ export const researchServerConfig = Config.all({
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
 })
-export const researchModelEndpoint = 'http://bayn-model.bayn-model.svc.cluster.local:8080/v1/chat/completions'
+export const researchModelEndpoint = 'http://flamingo.flamingo.svc.cluster.local/v1/chat/completions'
 
 export const researchServerProgram = Effect.gen(function* () {
   const config = yield* researchServerConfig

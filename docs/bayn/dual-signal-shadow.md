@@ -35,7 +35,9 @@ writes, with no charged output. These are **not invoice-reconciled costs** and d
 
 ## Security/rollout gate
 
-The existing Bayn proxy allowlist does not include `api.openai.com`, and no OpenAI credential is configured on
-the research workload. Deploying the binary alone therefore **does not launch live visual calls**. Separate
-authorization to add a sealed OpenAI API key and its approved egress destination is needed before a production
-shadow trial. Do not add those permissions or enable autonomous spending as an incidental code rollout.
+The Bayn Squid CONNECT allowlist includes `api.openai.com` on HTTPS port 443. Kubernetes still restricts
+application traffic to the existing `bayn-egress-proxy` Service (port 3128), and the proxy blocks private
+destinations. This is network access only: no OpenAI credential is configured on the research workload, so
+deploying the binary **does not launch live visual calls**. A separate sealed API key and explicit research
+execution remain prerequisites for a production shadow trial. Do not enable autonomous provider spending or
+alter trading authority as part of the network rule rollout.
