@@ -9,13 +9,13 @@
 
 let
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
-  # SHA-256 identity for bayn.jev.setup-and-plan.behavior.v1, verified by the production executable.
-  strategyBehaviorHash = "f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180";
-  # Canonical hash of the compiled bayn.jev.protocol.v17 document.
-  strategyParameterHash = "8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e";
+  # SHA-256 identity for bayn.jev.funded-plan-coverage.behavior.v1, verified by the production executable.
+  strategyBehaviorHash = "e85e6199c691bb4a5f537ac1b0553a7247d7981e45035c65bd4768b613b7db10";
+  # Canonical hash of the compiled bayn.jev.protocol.v19 document.
+  strategyParameterHash = "367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2";
   strategyName = "jev";
   # Canonical bayn.strategy-protocol.v1 identity: name, behavior, parameters, and parameter schema.
-  strategyProtocolHash = "682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21";
+  strategyProtocolHash = "d9e9ff26982c868ea3af59a11ee111103476b1787903ac7f2957cdbbdd057d57";
   # Canonical increased sandbox policy for the build-contract sentinel, without embedding a broker account identity.
   # This records availability; runtime separately selects and verifies the account-bound activation policy.
   executionRiskPolicyHash = "5f0e0cd4aa5ee11556bede5ab9a6286744b589ef08efe2d1f8accbb30e63eeab";
@@ -38,6 +38,11 @@ let
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
+  '';
+  dualSignalCommand = pkgs.writeShellScriptBin "bayn-dual-signal" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/dual-signal-command.js" "$@"
   '';
   backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
     set -eu
@@ -98,6 +103,7 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
+    "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
@@ -173,6 +179,7 @@ import ./bun-workspace-service.nix {
     bun
     pkgs.git
     evaluationCommand
+    dualSignalCommand
     backtestCommand
     controlCommand
     gepaPython

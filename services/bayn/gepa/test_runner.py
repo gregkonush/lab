@@ -231,6 +231,41 @@ class GepaIntegrationTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             validate_study(study)
 
+    def test_known_cost_fitness_keeps_negative_net_and_unknown_coverage(self):
+        native = NativeBoundary()
+
+        def with_partial_costs(command, directory, timeout):
+            native(command, directory, timeout)
+            path = directory / "result/outcome.json"
+            outcome = read_json(path)
+            outcome["executionPnlMicros"] = "9969985"
+            outcome["knownNetPnlMicros"] = "-990030015"
+            outcome["costCoverage"] = "KNOWN_COSTS_ONLY"
+            path.write_bytes(encode(outcome))
+
+        study = fixture()
+        storage = MemoryStorage()
+        with tempfile.TemporaryDirectory() as directory:
+            adapter = Study(
+                study,
+                directory,
+                storage,
+                "/checkout",
+                "/dependencies",
+                with_partial_costs,
+                lambda: 1000,
+            )
+            score, feedback = adapter.evaluate(
+                encode(study["baseline"]).decode(), study["development"][0]
+            )
+            self.assertEqual(score, -990.030015)
+            self.assertEqual(feedback["knownNetPnlMicros"], "-990030015")
+            self.assertEqual(feedback["executionPnlMicros"], "9969985")
+            self.assertEqual(feedback["costCoverage"], "KNOWN_COSTS_ONLY")
+            self.assertIsNone(feedback["conservativeMaximumDrawdownMicros"])
+            retained = storage.read("receipts/0.json")
+            self.assertEqual(retained, {"score": score, "feedback": feedback})
+
     def test_temporal_overlap_source_mutation_and_unknown_fields_are_rejected(self):
         for mutate in (
             lambda s: s["evaluation"][0]["input"]["interval"].update(

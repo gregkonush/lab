@@ -267,7 +267,8 @@ export const jevBacktestOutcome = (input: {
       )
         return yield* invalid('Native session inference inventory or expense does not reproduce')
       if (allocation.infrastructure === null || allocation.research === null) operatingComplete = false
-      else operatingCost += BigInt(allocation.infrastructure.costMicros) + BigInt(allocation.research.costMicros)
+      if (allocation.infrastructure !== null) operatingCost += BigInt(allocation.infrastructure.costMicros)
+      if (allocation.research !== null) operatingCost += BigInt(allocation.research.costMicros)
       const delta = BigInt(session.closingNetEquityMicros) - previous
       if (session.netEquityChangeMicros !== null && BigInt(session.netEquityChangeMicros) !== delta)
         return yield* invalid('Native session equity carry differs from its net outcome')
@@ -338,7 +339,7 @@ export const jevBacktestOutcome = (input: {
       unresolvedModelCalls: costs.unresolvedCallCount,
       dataCostMicros: report.dataCostMicros,
       remainingPositions: ledger.positions.length,
-      issues: report.issues,
+      issues: [...new Set([...report.issues, ...report.sessions.flatMap((session) => session.issues)])],
       knownNetPnlMicros:
         ledger.netRealizedPnlAfterCostsMicros === null || ledger.positions.length !== 0
           ? null

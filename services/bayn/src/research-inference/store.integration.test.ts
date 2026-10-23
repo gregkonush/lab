@@ -4,7 +4,7 @@ import jevEditorMigration from '../../migrations/0135_jev_editor_identity'
 import jevHarnessMigration from '../../migrations/0132_jev_harness2'
 import { afterAll, beforeAll, describe, expect, test } from 'bun:test'
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
+import { Deferred, Effect, Fiber, Layer, ManagedRuntime, Redacted, Result, Schema } from 'effect'
 import { NodeHttpClient } from '@effect/platform-node'
 import { SqlClient } from 'effect/sql'
 
@@ -81,6 +81,146 @@ integration('research attempt durability with real PostgreSQL', () => {
       }),
     )
   })
+  test.each([false, true])(
+    'research cutover observes an in-flight claim only when locked before validation (lock first: %s)',
+    async (lockFirst) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const schema = `bayn_research_cutover_${crypto.randomUUID().replaceAll('-', '')}_test`
+          yield* sql`CREATE SCHEMA ${sql(schema)}`
+          yield* Effect.gen(function* () {
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SET LOCAL search_path TO ${sql(schema)}`
+                yield* sql`CREATE FUNCTION reject_evidence_mutation() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'immutable fixture'; END; $$`
+                yield* migration
+                yield* harnessMigration
+                yield* jevHarnessMigration
+                yield* jevEditorMigration
+                yield* structuredEditorMigration
+              }),
+            )
+            const now = new Date().toISOString()
+            const registration = {
+              ...retainedEditor,
+              registeredAt: now,
+              featureCutoff: now,
+              deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+            }
+            const runId = Result.getOrThrow(hashResearch(registration))
+            const claimed = yield* Deferred.make<void>()
+            const migratingPid = yield* Deferred.make<number>()
+            // Fork outside either transaction so the pool supplies independent connections.
+            const migrating = yield* sql
+              .withTransaction(
+                Effect.gen(function* () {
+                  yield* sql`SET LOCAL search_path TO ${sql(schema)}`
+                  yield* sql`SET LOCAL lock_timeout = '5s'`
+                  yield* sql`SET LOCAL statement_timeout = '10s'`
+                  yield* Deferred.await(claimed)
+                  const [backend] = yield* sql`SELECT pg_backend_pid() AS pid`.pipe(
+                    Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ pid: Schema.Int })]))),
+                  )
+                  yield* Deferred.succeed(migratingPid, backend.pid)
+                  // Preventive control, not a rewrite of applied migration 139. Without this lock,
+                  // its drain checks cannot see the other connection's uncommitted registration.
+                  if (lockFirst)
+                    yield* sql`LOCK TABLE research_inference_runs, research_inference_receipts IN ACCESS EXCLUSIVE MODE`
+                  yield* gepaEditorMigration
+                }),
+              )
+              .pipe(Effect.result, Effect.forkScoped)
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SET LOCAL search_path TO ${sql(schema)}`
+                yield* sql`SET LOCAL statement_timeout = '10s'`
+                yield* sql`INSERT INTO research_inference_runs (run_id, payload) VALUES (${runId}, ${sql.json(registration)})`
+                yield* Deferred.succeed(claimed, undefined)
+                const pid = yield* Deferred.await(migratingPid)
+                // Observe the actual conflicting table lock, rather than guessing at timing.
+                yield* Effect.gen(function* () {
+                  while (true) {
+                    const [lock] = yield* sql`SELECT EXISTS (
+                      SELECT 1 FROM pg_locks WHERE pid = ${pid}
+                        AND relation = ${`${schema}.research_inference_runs`}::regclass
+                        AND mode = 'AccessExclusiveLock' AND NOT granted
+                    ) AS waiting`.pipe(
+                      Effect.flatMap(
+                        Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ waiting: Schema.Boolean })])),
+                      ),
+                    )
+                    if (lock.waiting) break
+                    yield* Effect.sleep('10 millis')
+                  }
+                }).pipe(Effect.timeout('3 seconds'))
+              }),
+            )
+            const outcome = yield* Fiber.join(migrating)
+            expect(Result.isFailure(outcome)).toBe(lockFirst)
+            if (Result.isFailure(outcome)) {
+              // PostgreSQL Error.message is non-enumerable and is omitted by JSON.stringify.
+              const failure = yield* Schema.decodeUnknownEffect(
+                Schema.Struct({
+                  reason: Schema.Struct({ cause: Schema.Struct({ code: Schema.String, message: Schema.String }) }),
+                }),
+              )(outcome.failure)
+              expect(failure.reason.cause).toEqual({
+                code: 'P0001',
+                message: 'Let in-flight research registrations finish before the Jev editor hard migration',
+              })
+            }
+            yield* sql.withTransaction(
+              Effect.gen(function* () {
+                yield* sql`SET LOCAL search_path TO ${sql(schema)}`
+                const [row] = yield* sql`SELECT payload FROM research_inference_runs WHERE run_id = ${runId}`.pipe(
+                  Effect.flatMap(
+                    Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ payload: Schema.Unknown })])),
+                  ),
+                )
+                expect(row?.payload).toEqual(registration)
+                const receiptHash = '8'.repeat(64)
+                const receipt = {
+                  schemaVersion: 'bayn.research-receipt.v1',
+                  runId,
+                  receiptHash,
+                  qualification: 'UNQUALIFIED',
+                  costPicoUsd: '1',
+                }
+                const finished = yield* sql
+                  .withTransaction(
+                    sql`INSERT INTO research_inference_receipts (run_id, receipt_hash, payload)
+                      VALUES (${runId}, ${receiptHash}, ${sql.json(receipt)})`,
+                  )
+                  .pipe(Effect.result)
+                expect(Result.isSuccess(finished)).toBe(lockFirst)
+                if (Result.isFailure(finished))
+                  expect(JSON.stringify(finished.failure)).toContain('research_inference_receipts_check')
+                expect(yield* sql`SELECT payload FROM research_inference_receipts WHERE run_id = ${runId}`).toEqual(
+                  lockFirst ? [{ payload: receipt }] : [],
+                )
+              }),
+            )
+          }).pipe(
+            Effect.scoped,
+            Effect.timeout('15 seconds'),
+            Effect.ensuring(
+              sql
+                .withTransaction(
+                  Effect.gen(function* () {
+                    yield* sql`SET LOCAL lock_timeout = '2s'`
+                    yield* sql`SET LOCAL statement_timeout = '3s'`
+                    yield* sql`DROP SCHEMA ${sql(schema)} CASCADE`
+                  }),
+                )
+                .pipe(Effect.orDie),
+            ),
+          )
+        }),
+      )
+    },
+    20_000,
+  )
   test('rejects a receipt inserted as already expense-verified', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
