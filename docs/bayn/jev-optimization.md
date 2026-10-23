@@ -7,7 +7,7 @@ contracts are removed. Historical registrations and receipts remain immutable re
 
 ## Model and execution ownership
 
-Jev is the native typed System One decision model. GEPA's separate Qwen3-8B editor proposes a complete JSON
+Jev is the native typed System One decision model. GEPA's explicitly selected Flamingo or OpenCode free editor proposes a complete JSON
 instruction document containing only one `entry` string, bounded to 2,000 characters. The editor cannot alter
 state, the independent setup question, plan construction, arithmetic, quantities, risk, protection or authority.
 Question editing does not train Jev's weights.
@@ -26,6 +26,42 @@ The worker still enforces the signed registration and its exact serving policy. 
 `bayn.research-receipt.v2`. Factor selection, XML proposals and separate reflection requests cannot be submitted.
 The migration requires outstanding priced historical expenses to be settled first. Existing evidence is retained
 without enabling retired decoders or new legacy inference.
+
+## OpenCode free inference
+
+`bayn-opencode` runs the pinned native OpenCode 2.1.3 CLI beside the research worker, on CPU, inside the existing
+Bayn image and Kargo release. Its internal proposal endpoint is reachable only from the research worker. The native
+API and provider relay listen on loopback. The pod has no broker, Jev, database, research approval, storage API or
+Kubernetes credential. A protected PVC holds native session history and exclusive attempt claims across restarts.
+
+The worker's `BAYN_RESEARCH_INFERENCE_POLICIES` contains the exact admitted Flamingo and OpenCode policies. Select
+one policy in each frozen study; neither endpoint falls back to the other. OpenCode admits only
+`glm-5.3-flash-free`, with one hosted model call, low reasoning effort, 32 KiB of actual provider input and 4,096 completion tokens per
+proposal. The native agent keeps one native-generated session per study, with an exclusive retained mapping. Before
+each proposal it clears earlier messages through the native revert API and verifies that no earlier user input remains.
+Each attempt's original registration, provider request, response and receipt remain retained separately. Feedback is
+inline, and the frozen provider request requires `tool_choice: none`; proposals cannot request tool round trips.
+Title, summary, compaction, sharing, updates, warming and other agents are disabled. Native
+configuration is hashed into the policy. No Console login or paid key is required for this path.
+
+The loopback relay checks the actual model, session, output schema, input size, deadline and remaining call count
+before external I/O. All requests use the fixed OpenCode inference URL through the existing egress proxy on its separate OpenCode-only listener, port 3129. Kubernetes admits that listener
+only from the proposer; the ordinary trading/research listener cannot reach OpenCode. It
+forwards the native CLI's provider request; it does not imitate CLI headers in another inference client. Paid or
+unregistered calls and hidden extra model calls fail. An attempt that requires another model step is rejected.
+OpenCode's free-tier availability and models can change, so an unavailable free model stops the attempt.
+
+Receipts retain the actual native provider request bytes, their hash, the original provider SSE, model usage,
+configuration hash, native session ID, observed provider first-token time, exact server/worker source revision and zero provider charge. Hosted weights,
+tokenizer and server image are not observable and are not assigned fictional self-hosted identities. The frozen
+native evaluator revision remains independent of the research worker revision. CPU operating allocations remain
+separate; a free provider does not make total research or Jev evaluation cost zero. Failed or timed-out claims cannot
+be retried, and deadline cancellation interrupts the provider relay and native agent.
+
+The Nix build exercises the actual pinned binary against an in-process provider fixture on both architectures. It
+checks receipt verification, one session across server restart, refusal to replay a claimed attempt, cancellation and
+child-process release. This contract test spends no hosted-model inference. Live hosted inference and native financial
+comparisons remain separate rollout evidence.
 
 ## Frozen study and existing data
 
@@ -122,3 +158,20 @@ Both losing less than baseline and matching a numerical control are valid measur
 positive alpha. Preserve every trial and failed screen, source limitations, timing assumptions and missing costs.
 A successful search does not automatically edit `jev/instructions.ts`; any adoption is a reviewed source change
 through the existing identity, authority and Kargo delivery contracts.
+
+## Shared proposal model
+
+The editor uses Flamingo's `qwen36-flamingo`, backed by `unsloth/Qwen3.6-35B-A3B-NVFP4`, through
+`http://flamingo.flamingo.svc.cluster.local/v1/chat/completions`. The model and tokenizer revisions are pinned to
+`739af1e7aac320af1682ed1e0cce369af4c5265d`. Every accepted response must contain Flamingo's loaded serving identity
+and the matching model name in the stream. The registered policy enables thinking with a 4,096-token output cap,
+temperature 0.6, top-p 0.95 and top-k 20. The complete wire response and actual usage remain in the immutable receipt.
+
+New editor requests use only Flamingo, with no model fallback. The former dedicated deployment, server code, image workflow and release enrollment are removed. Shared GPU contention can affect proposal latency. Existing
+worker deadlines, single-attempt reservations and cost-coverage limits still apply. A failed or truncated proposal
+is retained and cannot trigger an automatic paid retry. Jev inference and trading execution do not call Flamingo.
+The protected cache PVC of the removed dedicated service remains retained; it consumes no GPU allocation.
+
+Retained old-policy registrations remain readable only for receipt verification and expense recovery. Current
+admission and inference still accept only the Flamingo policy. The cutover follows shared Flamingo
+serving-identity verification and a successful worker proposal receipt before dedicated-service retirement.

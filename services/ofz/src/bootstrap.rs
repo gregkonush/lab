@@ -21,7 +21,7 @@ use crate::{
 
 const BOOTSTRAP_AUTHORITY: &str = "postgresql:ofz_control:ofz_migrator";
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct Manifest {
     pub operation_id: String,
@@ -191,8 +191,11 @@ async fn prepare(
     let record = load(client)
         .await?
         .ok_or_else(|| Status::internal("missing bootstrap intent"))?;
-    if record.fingerprint != fingerprint
-        || record.manifest.clone().validate()?.fingerprint()? != fingerprint
+    let completed = record.phase == "active"
+        && record.bootstrap_receipt.is_some()
+        && record.activation_receipt.is_some();
+    if record.manifest.clone().validate()? != *manifest
+        || (!completed && record.fingerprint != fingerprint)
     {
         return Err(Status::already_exists(
             "platform bound to a different bootstrap manifest or schema",
@@ -886,6 +889,37 @@ mod tests {
                 .unwrap()
                 .receipt
         );
+        let mut previous_build = Sha256::new();
+        previous_build.update(b"ofz-platform-bootstrap-v1\0");
+        previous_build.update(b"previous reviewed compiled schema");
+        previous_build.update(serde_json::to_vec(&manifest).unwrap());
+        let historical_fingerprint = previous_build.finalize().to_vec();
+        let client = database.pool.get().await.unwrap();
+        client
+            .execute(
+                "UPDATE ofz.bootstrap SET fingerprint=$1 WHERE singleton",
+                &[&historical_fingerprint],
+            )
+            .await
+            .unwrap();
+        for operation in [Operation::Bootstrap, Operation::Activate] {
+            assert_eq!(
+                execute(&database, &native, operation, manifest.clone())
+                    .await
+                    .err()
+                    .unwrap()
+                    .code(),
+                tonic::Code::AlreadyExists
+            );
+        }
+        client
+            .execute(
+                "UPDATE ofz.bootstrap SET fingerprint=$1 WHERE singleton",
+                &[&manifest.fingerprint().unwrap()],
+            )
+            .await
+            .unwrap();
+        drop(client);
         let mut changed = manifest.clone();
         changed.administrator_github_ids = ["3".into(), "4".into()];
         assert_eq!(
@@ -1099,6 +1133,54 @@ mod tests {
                 .unwrap()
                 .receipt
         );
+        let installed_schema = native.schema_hash().await.unwrap();
+        database
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .execute(
+                "UPDATE ofz.bootstrap SET fingerprint=$1 WHERE singleton AND phase='active'",
+                &[&historical_fingerprint],
+            )
+            .await
+            .unwrap();
+        for (operation, command, original) in [
+            (Operation::Bootstrap, "bootstrap", &bootstrapped.receipt),
+            (Operation::Activate, "activate", &activated.receipt),
+        ] {
+            let replay = execute(&database, &native, operation, manifest.clone())
+                .await
+                .unwrap();
+            assert_eq!(&replay.receipt, original);
+            assert_eq!(replay.current_policy_version, 2);
+            assert!(!replay.current_platform_fenced);
+            let replay_cli = cli("ofz_migrator", command, &manifest).await;
+            assert!(
+                replay_cli.status.success(),
+                "{}",
+                String::from_utf8_lossy(&replay_cli.stderr)
+            );
+            let report: serde_json::Value = serde_json::from_slice(&replay_cli.stdout).unwrap();
+            assert_eq!(report["receipt"], serde_json::to_value(original).unwrap());
+        }
+        assert_eq!(native.schema_hash().await.unwrap(), installed_schema);
+        let mut changed_administrators = manifest.clone();
+        changed_administrators.administrator_github_ids = ["3".into(), "4".into()];
+        let mut changed_operations = manifest.clone();
+        changed_operations.operation_id = Uuid::new_v4().to_string();
+        for changed in [changed_administrators, changed_operations] {
+            for operation in [Operation::Bootstrap, Operation::Activate] {
+                assert_eq!(
+                    execute(&database, &native, operation, changed.clone())
+                        .await
+                        .err()
+                        .unwrap()
+                        .code(),
+                    tonic::Code::AlreadyExists
+                );
+            }
+        }
         let audit = database
             .pool
             .get()

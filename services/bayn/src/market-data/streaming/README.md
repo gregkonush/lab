@@ -34,9 +34,17 @@ and reducer dispositions. Repeated deliveries, rejected inputs, tombstones and i
 own receipts. The global consumer sequence spans equities and crypto; filtering out another market cannot claim a
 complete original prefix.
 
+Chunk appends and replay reads use the `(capture_id, ordinal)` primary key. Migration 0142 removes the unused global
+content-hash unique index, which caused random reads across unrelated captures on every append. Header and compressed
+byte hash checks, ordered-prefix guards and immutable-row triggers remain enforced. The header hash includes the capture
+ID and ordinal, so a repeated valid header is already rejected by the primary key and prefix guard.
+
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
 Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Within that transaction, PostgreSQL inserts at most 1 MiB or 16 chunks per statement. This bounds each SQL statement
+while sharing one synchronous durable commit across the append. A failed statement rolls back the whole append.
+An individual valid chunk above the SQL byte target is written whole under the existing chunk and queue bounds.
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.

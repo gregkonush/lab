@@ -1,10 +1,10 @@
 import { Cause, Clock, Context, Data, Effect, Layer, Redacted, Result, Schema } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/http'
+import { HttpClient, HttpClientError, HttpClientRequest } from 'effect/http'
 
-import { sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import { utcInstantFromEpochMillis } from '../time'
-import { JevClient, type JevInference } from './client'
-import { prepareJevRequest, type JevRequest } from './contract'
+import { JevClient, type JevError, type JevInference } from './client'
+import { JevFailure, JevResponseSchema, prepareJevRequest, type JevRequest } from './contract'
 import { JevEntrySetup } from './trade-plan-choices'
 import { nativeCandlestickEvidence } from './visual-evidence'
 
@@ -40,6 +40,7 @@ export class DualSignalError extends Data.TaggedError('DualSignalError')<{
   readonly message: string
   readonly category: 'INPUT' | 'PROVIDER' | 'CONTRACT' | 'DEADLINE'
   readonly cause?: unknown
+  readonly diagnostic?: HttpClientError.HttpClientError['reason']['_tag'] | 'TimeoutError' | 'UnknownError'
 }> {}
 
 export interface VisualInference {
@@ -96,7 +97,7 @@ export const decodeVisualDecision = (input: unknown) =>
           new DualSignalError({
             message: 'OpenAI decision payload violates typed contract',
             category: 'CONTRACT',
-            cause,
+            cause: Redacted.make(cause),
           }),
       ),
     )
@@ -173,6 +174,12 @@ export const VisualDecisionClientLive = (key: Redacted.Redacted<string>, timeout
                         ? 'OpenAI image decision timed out'
                         : 'OpenAI visual transport failed',
                       category: Cause.isTimeoutError(cause) ? 'DEADLINE' : 'PROVIDER',
+                      cause: Redacted.make(cause),
+                      diagnostic: Cause.isTimeoutError(cause)
+                        ? 'TimeoutError'
+                        : HttpClientError.isHttpClientError(cause)
+                          ? cause.reason._tag
+                          : 'UnknownError',
                     }),
               ),
             )
@@ -191,6 +198,30 @@ export const compareObservedSetups = (jev: JevInference, visual: VisualInference
     jevSetup: numerical.choice,
     visualSetup: chart.choice,
   }
+}
+
+const RejectedJevUsage = Schema.Struct({
+  model: JevResponseSchema.fields.model,
+  usage: JevResponseSchema.fields.usage,
+})
+
+/** A rejected decision can still have billable usage, but only from its bound, verified receipt. */
+const rejectedJevMetering = (error: JevError, request: JevRequest, requestHash: string) => {
+  if (
+    error.requestHash !== requestHash ||
+    error.responseHash === undefined ||
+    error.rejectedResponse === undefined ||
+    (error.failure !== JevFailure.Response &&
+      error.failure !== JevFailure.Timeout &&
+      error.failure !== JevFailure.Status)
+  )
+    return undefined
+  const raw = Redacted.value(error.rejectedResponse)
+  const hash = canonicalHashV1Result(raw)
+  if (Result.isFailure(hash) || hash.success !== error.responseHash) return undefined
+  const receipt = Schema.decodeUnknownResult(RejectedJevUsage)(raw)
+  if (Result.isFailure(receipt) || receipt.success.model !== request.model) return undefined
+  return { responseHash: hash.success, httpStatus: error.status ?? null, tokens: receipt.success.usage }
 }
 
 /** Correlated market views; compare but never combine into an order-authorizing vote. */
@@ -213,19 +244,24 @@ export const evaluateDualSignalResearch = (request: JevRequest, sealedSymbol?: s
     const completed = yield* Clock.currentTimeMillis
     const numerical = Result.isSuccess(outcomes.numerical) ? outcomes.numerical.success : null
     const visual = Result.isSuccess(outcomes.visual) ? outcomes.visual.success : null
-    const jTokens = numerical?.response.usage.input_tokens
+    const rejected = Result.isFailure(outcomes.numerical)
+      ? rejectedJevMetering(outcomes.numerical.failure, prepared.request, prepared.requestHash)
+      : undefined
+    const jTokens = numerical?.response.usage.input_tokens ?? rejected?.tokens.input_tokens
     const vUsage = visual?.response.usage
     const vTokens = vUsage?.input_tokens
     const cached = vUsage?.input_tokens_details.cached_tokens ?? 0
     const writes = vUsage?.input_tokens_details.cache_write_tokens ?? 0
     const report = {
-      schemaVersion: 'bayn.dual-signal-shadow-report.v1' as const,
+      schemaVersion: 'bayn.dual-signal-shadow-report.v2' as const,
       source: {
         requestHash: prepared.requestHash,
         symbol: image.symbol,
         barCount: image.barCount,
         barsHash: image.barsHash,
         imageSha256: image.pngHash,
+        visualEndpoint: openAiDecisionsEndpoint,
+        visualRequestHash: sha256(JSON.stringify(visualDecisionRequest(image))),
         provenance: image.provenance,
       },
       model: { numerical: 'jev-1.13.0' as const, visual: openAiDecisionsModel },
@@ -235,6 +271,7 @@ export const evaluateDualSignalResearch = (request: JevRequest, sealedSymbol?: s
           ? {
               status: 'UNAVAILABLE' as const,
               failure: Result.isFailure(outcomes.numerical) ? outcomes.numerical.failure.failure : 'UNKNOWN',
+              ...rejected,
             }
           : {
               status: 'RECEIVED' as const,
@@ -249,6 +286,7 @@ export const evaluateDualSignalResearch = (request: JevRequest, sealedSymbol?: s
           ? {
               status: 'UNAVAILABLE' as const,
               failure: Result.isFailure(outcomes.visual) ? outcomes.visual.failure.category : 'UNKNOWN',
+              diagnostic: Result.isFailure(outcomes.visual) ? (outcomes.visual.failure.diagnostic ?? null) : null,
             }
           : {
               status: 'RECEIVED' as const,

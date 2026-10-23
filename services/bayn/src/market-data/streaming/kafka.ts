@@ -57,6 +57,7 @@ export enum KafkaInvalidationReason {
   Rejoined = 'GROUP_REJOINED',
   Rebalanced = 'GROUP_REBALANCED',
   HeartbeatStalled = 'HEARTBEAT_STALLED',
+  BootstrapDeadlineExceeded = 'BOOTSTRAP_DEADLINE_EXCEEDED',
   TransportFailure = 'TRANSPORT_FAILURE',
 }
 
@@ -64,8 +65,16 @@ class KafkaAssignmentInvalidation extends Data.TaggedError('KafkaAssignmentInval
   readonly reason: KafkaInvalidationReason
 }> {}
 
-const invalidationReason = (cause: unknown): KafkaInvalidationReason =>
-  cause instanceof KafkaAssignmentInvalidation ? cause.reason : KafkaInvalidationReason.TransportFailure
+class KafkaBootstrapDeadlineExceeded extends Data.TaggedError('KafkaBootstrapDeadlineExceeded')<{}> {}
+
+const invalidationReason = (cause: unknown): KafkaInvalidationReason => {
+  if (cause instanceof KafkaBootstrapDeadlineExceeded) return KafkaInvalidationReason.BootstrapDeadlineExceeded
+  return cause instanceof KafkaAssignmentInvalidation ? cause.reason : KafkaInvalidationReason.TransportFailure
+}
+
+// Local catch-up exhaustion is not a Kafka protocol or network error.
+const projectionFailureCodes = (cause: unknown): readonly string[] =>
+  cause instanceof KafkaBootstrapDeadlineExceeded ? [] : safeKafkaFailureCodes(cause)
 
 const failure = (operation: KafkaMarketFailure['operation'], message: string, cause?: unknown) =>
   new KafkaMarketFailure({ operation, message, ...(cause === undefined ? {} : { cause }) })
@@ -571,7 +580,11 @@ export const makeKafkaMarketProjection = (
             positions = canonicalPositions([...incorporated.values()])
             ready = kafkaBootstrapComplete(evidence, positions)
             if (!ready && (yield* Clock.currentTimeMillis) - observedAtMs > config.bootstrapTimeoutMs)
-              return yield* failure('bootstrap', 'Kafka bootstrap deadline exceeded')
+              return yield* failure(
+                'bootstrap',
+                'Kafka bootstrap deadline exceeded',
+                new KafkaBootstrapDeadlineExceeded(),
+              )
             if (ready && !announced) {
               announced = true
 
@@ -620,7 +633,7 @@ export const makeKafkaMarketProjection = (
               bootstrapComplete: ready,
               available: ready && lastFailure === undefined,
               failureOperation: lastFailure?.operation ?? null,
-              failureCodes: lastFailure === undefined ? null : safeKafkaFailureCodes(lastFailure.cause),
+              failureCodes: lastFailure === undefined ? null : projectionFailureCodes(lastFailure.cause),
               queuedRecords: source.queuedRecords(),
               queueHighWaterMark: 256,
               endOffsetLookupStartedAtMs: lookupStartedAtMs,
@@ -654,7 +667,7 @@ export const makeKafkaMarketProjection = (
             epoch: projection.epoch,
             operation: lastFailure.operation,
             reason: invalidationReason(lastFailure.cause),
-            failureCodes: safeKafkaFailureCodes(lastFailure.cause),
+            failureCodes: projectionFailureCodes(lastFailure.cause),
             retryableBySupervisor: true,
           })
         }),
@@ -675,7 +688,7 @@ export const makeKafkaMarketProjection = (
             epoch: projection.epoch,
             operation: lastFailure.operation,
             reason: invalidationReason(lastFailure.cause),
-            failureCodes: safeKafkaFailureCodes(lastFailure.cause),
+            failureCodes: projectionFailureCodes(lastFailure.cause),
             ...(closeFailure === undefined ? {} : { cleanupFailureCodes: safeKafkaFailureCodes(closeFailure.cause) }),
             cooldownMs: 30_000,
           })

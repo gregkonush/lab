@@ -3,6 +3,7 @@ import { Result } from 'effect'
 import { sha256 } from '../hash'
 import {
   decodeResearchRun,
+  decodeRetainedResearchRun,
   hashResearch,
   maximumResearchStreamBytes,
   parseResearchOutput,
@@ -12,7 +13,13 @@ import {
   sealResearchReceipt,
 } from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
-import { fullTokenBudgetStreamFixture, editorFixture, streamFixture } from './test-support'
+import {
+  fullTokenBudgetStreamFixture,
+  editorFixture,
+  retainedEditorFixture,
+  retainedReceiptFixture,
+  streamFixture,
+} from './test-support'
 
 const run = editorFixture()
 const id = Result.getOrThrow(hashResearch(run))
@@ -37,6 +44,20 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('recovers priced retained editor receipts without admitting new inference for that policy', () => {
+    const old = retainedEditorFixture()
+    const before = JSON.stringify(old)
+    const receipt = retainedReceiptFixture(old)
+    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
+    expect(Result.getOrThrow(decodeRetainedResearchRun(old))).toEqual(old)
+    expect(Result.getOrThrow(verifyResearchReceipt(old, receipt))).toEqual(receipt)
+    expect(Result.getOrThrow(researchExpensePlan(old, receipt)).transfers[0]?.amount).toBe(1001000002n)
+    expect(Result.isFailure(verifyResearchReceipt(editorFixture(), receipt))).toBe(true)
+    expect(JSON.stringify(old)).toBe(before)
+    expect(
+      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
+    ).toBe(true)
+  })
   test('constrains prompt edits to the native instruction JSON schema', () => {
     const current = editorFixture()
     expect(researchRequest(current)).toMatchObject({
@@ -122,8 +143,8 @@ describe('frozen research contract and existing expense ledger', () => {
       { ...run, captureManifestHash: '6'.repeat(64) },
     ])
       expect(Result.getOrThrow(hashResearch(changed))).not.toBe(id)
-    expect(researchRequest(run).stream_options.include_usage).toBe(true)
-    expect(researchRequest(run).messages[0]?.content).toContain(run.context.memory.text)
+    expect(researchRequest(run).stream_options?.include_usage).toBe(true)
+    expect(researchRequest(run).messages?.[0]?.content).toContain(run.context.memory.text)
   })
   test('rejects unfrozen overrides, future context, changed bytes and unsupported free rates', () => {
     for (const changed of [

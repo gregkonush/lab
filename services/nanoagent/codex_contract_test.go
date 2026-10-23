@@ -33,10 +33,10 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
 	if binary == "" {
-		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.159.2 binary")
+		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.164.0 binary")
 	}
 	version, err := exec.Command(binary, "--version").Output()
-	if err != nil || strings.TrimSpace(string(version)) != "codex-cli 0.159.2" {
+	if err != nil || strings.TrimSpace(string(version)) != "codex-cli 0.164.0" {
 		t.Fatalf("wrong native contract binary: %s %v", version, err)
 	}
 	home := t.TempDir()
@@ -62,7 +62,7 @@ func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 		response.Header().Set("Content-Type", "text/event-stream")
 		response.WriteHeader(http.StatusOK)
 		if requestNumber := requests.Add(1); process && requestNumber == 1 {
-			command := fmt.Sprintf(`exec python3 -c 'import os,socket,time; s=socket.create_connection(("127.0.0.1",%d)); s.sendall(str(os.getpid()).encode()+bytes([10])); time.sleep(30)'`, listener.Addr().(*net.TCPAddr).Port)
+			command := fmt.Sprintf(`exec python3 -c 'import json,os,socket,time; open("native-command-marker", "w").write("guest workspace"); s=socket.create_connection(("127.0.0.1",%d)); s.sendall(json.dumps({"pid":os.getpid(),"cwd":os.getcwd()}).encode()+bytes([10])); time.sleep(30)'`, listener.Addr().(*net.TCPAddr).Port)
 			arguments, _ := json.Marshal(map[string]any{"cmd": command, "yield_time_ms": 1_000, "max_output_tokens": 100})
 			item := map[string]any{"id": "command-stop", "type": "function_call", "call_id": "call_stop", "name": "exec_command", "arguments": string(arguments)}
 			for _, event := range []map[string]any{
@@ -95,6 +95,8 @@ func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 	t.Setenv("OPENAI_API_KEY", "")
 	config := fmt.Sprintf(`model = "fixture"
 model_provider = "fixture"
+[features]
+apps = true
 [model_providers.fixture]
 name = "Fixture"
 base_url = %q
@@ -110,7 +112,22 @@ stream_max_retries = 0
 	supervisor := newCodexSupervisor(binary, workspace)
 	supervisor.start()
 	t.Cleanup(supervisor.close)
-	raw, _ := json.Marshal(map[string]any{"model": "fixture", "modelProvider": "fixture", "cwd": workspace, "historyMode": "paginated", "approvalPolicy": "on-request", "sandbox": "danger-full-access"})
+	assertAppsDisabled := func() {
+		t.Helper()
+		result, err := supervisor.request(ctx, "config/read", json.RawMessage(`{"includeLayers":false}`), true, nil)
+		var settings struct {
+			Config struct {
+				Features struct {
+					Apps *bool `json:"apps"`
+				} `json:"features"`
+			} `json:"config"`
+		}
+		if err != nil || json.Unmarshal(result.result, &settings) != nil || settings.Config.Features.Apps == nil || *settings.Config.Features.Apps {
+			t.Fatalf("native Codex retained inherited app tools: %s, error: %v", result.result, err)
+		}
+	}
+	assertAppsDisabled()
+	raw, _ := json.Marshal(map[string]any{"model": "fixture", "modelProvider": "fixture", "cwd": workspace, "historyMode": "paginated", "approvalPolicy": "on-request", "sandbox": "danger-full-access", "config": map[string]any{"features.apps": true}})
 	result, err := supervisor.call(ctx, "thread/start", raw)
 	if err != nil {
 		t.Fatal(err)
@@ -178,8 +195,20 @@ stream_max_retries = 0
 			t.Fatal("native foreground command did not start", err)
 		}
 		t.Cleanup(func() { _ = connection.Close() })
-		if _, err := bufio.NewReader(connection).ReadString('\n'); err != nil {
+		line, err := bufio.NewReader(connection).ReadBytes('\n')
+		if err != nil {
 			t.Fatal("native command did not report its PID", err)
+		}
+		var command struct {
+			PID int    `json:"pid"`
+			Cwd string `json:"cwd"`
+		}
+		expectedWorkspace, err := filepath.EvalSymlinks(workspace)
+		if err != nil || json.Unmarshal(line, &command) != nil || command.PID <= 0 || command.Cwd != expectedWorkspace {
+			t.Fatalf("native command ran outside its guest workspace: %s, error: %v", line, err)
+		}
+		if marker, err := os.ReadFile(filepath.Join(workspace, "native-command-marker")); err != nil || string(marker) != "guest workspace" {
+			t.Fatalf("native command did not write its guest workspace: %q, error: %v", marker, err)
 		}
 		t.Cleanup(func() {
 			cleanup, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -246,6 +275,7 @@ stream_max_retries = 0
 						}
 						time.Sleep(10 * time.Millisecond)
 					}
+					assertAppsDisabled()
 					nextParams := json.RawMessage(strings.Replace(params, "11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1))
 					next, err := supervisor.call(ctx, "turn/start", nextParams)
 					if err != nil {

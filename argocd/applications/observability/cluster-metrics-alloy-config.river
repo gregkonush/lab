@@ -233,21 +233,13 @@ prometheus.scrape "bayn" {
 	forward_to      = [prometheus.relabel.bayn_metrics.receiver]
 }
 
-prometheus.relabel "bayn_model_metrics" {
-	forward_to = [prometheus.remote_write.mimir.receiver]
-
-	rule {
-		action        = "keep"
-		source_labels = ["__name__"]
-		regex         = "up|vllm:.*|bayn_model_.*|process_.*"
-	}
-}
-
 discovery.kubernetes "bayn_valkey_pods" {
 	role = "pod"
+
 	namespaces {
 		names = ["bayn"]
 	}
+
 	selectors {
 		role  = "pod"
 		label = "buf.red/name=bayn-valkey"
@@ -256,19 +248,23 @@ discovery.kubernetes "bayn_valkey_pods" {
 
 discovery.relabel "bayn_valkey_metrics" {
 	targets = discovery.kubernetes.bayn_valkey_pods.targets
+
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_port_name"]
 		regex         = "exporter"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_namespace"]
 		target_label  = "namespace"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_pod_name"]
 		target_label  = "pod"
 	}
+
 	rule {
 		replacement  = "bayn-valkey"
 		target_label = "service"
@@ -277,6 +273,7 @@ discovery.relabel "bayn_valkey_metrics" {
 
 prometheus.relabel "bayn_valkey_metrics" {
 	forward_to = [prometheus.remote_write.mimir.receiver]
+
 	rule {
 		action        = "keep"
 		source_labels = ["__name__"]
@@ -290,31 +287,6 @@ prometheus.scrape "bayn_valkey" {
 	scrape_interval = "15s"
 	scrape_timeout  = "5s"
 	forward_to      = [prometheus.relabel.bayn_valkey_metrics.receiver]
-}
-
-prometheus.scrape "bayn_model" {
-	job_name = "bayn-model"
-	targets  = [{
-		"__address__" = "bayn-model.bayn-model.svc.cluster.local:8080",
-		"namespace"   = "bayn-model",
-		"service"     = "bayn-model",
-	}]
-	scrape_interval = "15s"
-	scrape_timeout  = "5s"
-	forward_to      = [prometheus.relabel.bayn_model_metrics.receiver]
-}
-
-prometheus.scrape "bayn_model_admission" {
-	job_name     = "bayn-model-admission"
-	metrics_path = "/admission/metrics"
-	targets      = [{
-		"__address__" = "bayn-model.bayn-model.svc.cluster.local:8080",
-		"namespace"   = "bayn-model",
-		"service"     = "bayn-model",
-	}]
-	scrape_interval = "15s"
-	scrape_timeout  = "5s"
-	forward_to      = [prometheus.relabel.bayn_model_metrics.receiver]
 }
 
 prometheus.relabel "tengri_metrics" {
@@ -437,7 +409,7 @@ discovery.kubernetes "bayn_log_pods" {
 	role = "pod"
 
 	namespaces {
-		names = ["bayn", "bayn-model"]
+		names = ["bayn"]
 	}
 }
 
@@ -488,23 +460,28 @@ loki.process "bayn_pod_logs" {
 
 discovery.relabel "bayn_valkey_logs" {
 	targets = discovery.kubernetes.bayn_valkey_pods.targets
+
 	rule {
 		action        = "keep"
 		source_labels = ["__meta_kubernetes_pod_container_name"]
 		regex         = "valkey|exporter"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_namespace"]
 		target_label  = "namespace"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_pod_name"]
 		target_label  = "pod"
 	}
+
 	rule {
 		source_labels = ["__meta_kubernetes_pod_container_name"]
 		target_label  = "container"
 	}
+
 	rule {
 		replacement  = "bayn-valkey"
 		target_label = "service"
@@ -794,4 +771,26 @@ prometheus.scrape "flink" {
 	scrape_interval = "30s"
 	scrape_timeout  = "10s"
 	forward_to      = [prometheus.remote_write.mimir.receiver]
+}
+
+prometheus.scrape "flamingo" {
+	job_name = "flamingo"
+	targets  = [{
+		"__address__" = "flamingo.flamingo.svc.cluster.local:80",
+		"namespace"   = "flamingo",
+		"service"     = "flamingo",
+	}]
+	scrape_interval = "15s"
+	scrape_timeout  = "5s"
+	forward_to      = [prometheus.relabel.flamingo_metrics.receiver]
+}
+
+prometheus.relabel "flamingo_metrics" {
+	forward_to = [prometheus.remote_write.mimir.receiver]
+
+	rule {
+		action        = "keep"
+		source_labels = ["__name__"]
+		regex         = "up|vllm:.*|process_.*"
+	}
 }
