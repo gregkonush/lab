@@ -54,10 +54,10 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v18 / signal state v16. Jev separately judges the current setup and whether an actual
+The source selects `jev` protocol v19 / signal state v16. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
-setup. Code supplies bounded hypothetical order scenarios and observed price context,
+setup. Code supplies a bounded menu containing the minimum fee-covering target, hypothetical order scenarios and observed price context,
 labels the scenarios explicitly, and validates/funds every candidate before inference. A price above a recent high is
 an order proposal, never fabricated market history. The stop and target remain one complete plan, with no default
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection
