@@ -84,20 +84,11 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180"
+              value: "8669593548424d848e8bcd2157eec5e571e9f7595315c9aea0c0ab56e214fc3b"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e"
+              value: "167b5258319906743909ed89d6bb8fec7a01e4a134825cc64aa30d65a229f3be"
             - name: BAYN_BROKER_ACCESS
               value: read-only
-            - name: BAYN_CAPITAL_ACTIVATION_REQUEST
-              valueFrom:
-                secretKeyRef:
-                  name: bayn-alpaca-auth
-                  key: capital-activation-request
-            - name: BAYN_CAPITAL_ACTIVATION_KIND
-              value: ResearchCapitalActivationRequest
-            - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"8512731b25e9a53e1095e653c25b87305dc20bb9c3342bbe663751dadf381bf5","authoredActivation":{"sourceRevision":"bac45b92ff6620cbbe01554aea1b2eb101776427","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e87681c94221bd5df43c0ec3b807c0a23e26d9bbcb3c2a5797e6c5acc6c84ac4"},"activation":{"sourceRevision":"bac45b92ff6620cbbe01554aea1b2eb101776427","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e87681c94221bd5df43c0ec3b807c0a23e26d9bbcb3c2a5797e6c5acc6c84ac4"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH
