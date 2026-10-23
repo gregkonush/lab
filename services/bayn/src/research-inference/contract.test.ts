@@ -3,8 +3,8 @@ import { Result } from 'effect'
 import { sha256 } from '../hash'
 import {
   decodeResearchRun,
+  decodeRetainedResearchRun,
   hashResearch,
-  HarnessPurpose,
   maximumResearchStreamBytes,
   parseResearchOutput,
   ResearchOutcome,
@@ -13,14 +13,21 @@ import {
   sealResearchReceipt,
 } from './contract'
 import { researchExpensePlan, verifyResearchReceipt } from './store'
-import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
+import {
+  fullTokenBudgetStreamFixture,
+  editorFixture,
+  retainedEditorFixture,
+  retainedReceiptFixture,
+  streamFixture,
+} from './test-support'
 
-const run = researchFixture()
+const run = editorFixture()
 const id = Result.getOrThrow(hashResearch(run))
 const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), completionTokens = 20) =>
   Result.getOrThrow(
     sealResearchReceipt(run, {
       runId: id,
+      workerSourceRevision: null,
       requestHash: Result.getOrThrow(hashResearch(researchRequest(run))),
       startedAtMs: 0,
       completedAtMs: 1001,
@@ -31,14 +38,28 @@ const receipt = (outcome = ResearchOutcome.Complete, stream = streamFixture(), c
       serverRequestId: 'chatcmpl-synthetic',
       responseBase64: Buffer.from(stream).toString('base64'),
       responseHash: sha256(stream),
-      responseText: '<alpha_list>alpha001</alpha_list>',
-      factors: ['alpha001'],
+      responseText: '{"entry":"Assess"}',
+      instructions: outcome === ResearchOutcome.Complete ? { entry: 'Assess' } : null,
       usage: { prompt_tokens: 10, completion_tokens: completionTokens, total_tokens: 10 + completionTokens },
     }),
   )
 describe('frozen research contract and existing expense ledger', () => {
+  test('recovers priced retained editor receipts without admitting new inference for that policy', () => {
+    const old = retainedEditorFixture()
+    const before = JSON.stringify(old)
+    const receipt = retainedReceiptFixture(old)
+    expect(Result.isFailure(decodeResearchRun(old))).toBe(true)
+    expect(Result.getOrThrow(decodeRetainedResearchRun(old))).toEqual(old)
+    expect(Result.getOrThrow(verifyResearchReceipt(old, receipt))).toEqual(receipt)
+    expect(Result.getOrThrow(researchExpensePlan(old, receipt)).transfers[0]?.amount).toBe(1001000002n)
+    expect(Result.isFailure(verifyResearchReceipt(editorFixture(), receipt))).toBe(true)
+    expect(JSON.stringify(old)).toBe(before)
+    expect(
+      Result.isFailure(decodeRetainedResearchRun({ ...old, policy: { ...old.policy, checkpoint: '0'.repeat(40) } })),
+    ).toBe(true)
+  })
   test('constrains prompt edits to the native instruction JSON schema', () => {
-    const current = harnessEditorFixture()
+    const current = editorFixture()
     expect(researchRequest(current)).toMatchObject({
       response_format: {
         type: 'json_schema',
@@ -67,87 +88,23 @@ describe('frozen research contract and existing expense ledger', () => {
     '<harness>{"entry":"Assess"}</harness>',
     '{"entry":"Assess"} trailing text',
   ])('rejects non-native structured editor documents %#', (output) => {
-    expect(Result.isFailure(parseResearchOutput(harnessEditorFixture(), output))).toBe(true)
+    expect(Result.isFailure(parseResearchOutput(editorFixture(), output))).toBe(true)
   })
-  test('keeps reflection outside the instruction JSON format', () => {
-    const reflection = { ...harnessEditorFixture(), purpose: HarnessPurpose.Reflection }
-    expect(researchRequest(reflection)).not.toHaveProperty('response_format')
-    expect(Result.getOrThrow(parseResearchOutput(reflection, 'NO_ENTRY'))).toEqual([])
-  })
-  test('preserves the original unconstrained v2 provider request identity for retained receipts', () => {
-    const historical = Result.getOrThrow(
-      decodeResearchRun({
-        ...harnessEditorFixture(),
-        schemaVersion: 'bayn.jev-harness2-editor.v2',
-        promptTemplate: 'Revise only the three Jev instructions using the supplied development evidence.',
-      }),
-    )
-    expect(Result.getOrThrow(hashResearch(researchRequest(historical)))).toBe(
-      'abc0a20675fde2fb65bf6b88218a31c1bb54a03a19f94250129658bc241a65ae',
-    )
-    expect(researchRequest(historical)).not.toHaveProperty('response_format')
+  test.each([
+    'bayn.research-run.v1',
+    'bayn.harness2-inference.v1',
+    'bayn.jev-harness2-editor.v1',
+    'bayn.jev-harness2-editor.v2',
+    'bayn.jev-harness2-editor.v3',
+  ])('rejects retired new registrations %s', (schemaVersion) =>
+    expect(Result.isFailure(decodeResearchRun({ ...run, schemaVersion }))).toBe(true),
+  )
+  test('binds the current general editor and rejects reflection and factor policy', () => {
+    expect(Result.isFailure(decodeResearchRun({ ...run, purpose: 'reflection' }))).toBe(true)
+    expect(Result.isFailure(decodeResearchRun({ ...run, policy: { ...run.policy, maximumFactors: 1 } }))).toBe(true)
     expect(
-      Result.isSuccess(
-        parseResearchOutput(historical, '<harness>{"currentInstructions":{"entry":"Assess"}}</harness>'),
-      ),
+      Result.isFailure(decodeResearchRun({ ...run, policy: { ...run.policy, model: 'alpha-r1-82c2aa5fcdda' } })),
     ).toBe(true)
-  })
-  test('current Jev editor is bound to the general instruction checkpoint and rejects Alpha-R1 substitution', () => {
-    const current = harnessEditorFixture()
-    expect(researchRequest(current).model).toBe('qwen3-jev-editor-b968826d9c46')
-    expect(researchRequest(current).chat_template_kwargs.enable_thinking).toBe(false)
-    const { maximumFactors: _historicalLimit, ...retired } = run.policy
-    expect(Result.isFailure(decodeResearchRun({ ...current, policy: retired }))).toBe(true)
-    expect(researchRequest(current).messages[0]?.content).not.toContain('<alpha_list>')
-  })
-  test('Jev editors use native instruction text without factor-selection context', () => {
-    const { maximumFactors: _retired, ...policy } = run.policy
-    const editor = Result.getOrThrow(
-      decodeResearchRun({
-        ...run,
-        schemaVersion: 'bayn.jev-harness2-editor.v1',
-        purpose: HarnessPurpose.PromptEdit,
-        context: { memory: run.context.memory },
-        policy,
-      }),
-    )
-    const content = researchRequest(editor).messages[0]?.content
-    expect(content).toContain('<harness>')
-    expect(content).not.toContain('<alpha_list>')
-    expect(content).not.toContain('alpha001')
-    expect(Result.isFailure(decodeResearchRun({ ...editor, context: run.context }))).toBe(true)
-  })
-  test('binds the harness role and verifies its original bytes through the same receipt and expense path', () => {
-    const edit = Result.getOrThrow(
-      decodeResearchRun({ ...run, schemaVersion: 'bayn.harness2-inference.v1', purpose: HarnessPurpose.PromptEdit }),
-    )
-    const text = '<harness>Return IDs in <alpha_list> tags.</harness>'
-    const stream = streamFixture(text)
-    const {
-      receiptHash: _hash,
-      costPicoUsd: _cost,
-      schemaVersion: _version,
-      qualification: _qualification,
-      ...material
-    } = receipt()
-    const value = Result.getOrThrow(
-      sealResearchReceipt(edit, {
-        ...material,
-        runId: Result.getOrThrow(hashResearch(edit)),
-        requestHash: Result.getOrThrow(hashResearch(researchRequest(edit))),
-        responseText: text,
-        responseBase64: Buffer.from(stream).toString('base64'),
-        responseHash: sha256(stream),
-        factors: [],
-      }),
-    )
-    expect(Result.getOrThrow(verifyResearchReceipt(edit, value))).toEqual(value)
-    expect(Result.getOrThrow(researchExpensePlan(edit, value)).transfers[0]?.amount).toBe(1001000002n)
-    expect(Result.isFailure(verifyResearchReceipt(run, value))).toBe(true)
-    expect(Result.getOrThrow(hashResearch(edit))).not.toBe(id)
-    expect(researchRequest(edit).messages[0]?.content).not.toContain('Select at most')
-    expect(Result.isFailure(decodeResearchRun({ ...edit, purpose: 'trade' }))).toBe(true)
-    expect(Result.isFailure(decodeResearchRun({ ...run, purpose: HarnessPurpose.PromptEdit }))).toBe(true)
   })
   test('verifies and prices an immutable receipt containing the full approved stream', () => {
     const value = receipt(ResearchOutcome.Complete, fullTokenBudgetStreamFixture(), 4096)
@@ -176,46 +133,28 @@ describe('frozen research contract and existing expense ledger', () => {
     for (const policy of [
       { ...run.policy, seed: 2 },
       { ...run.policy, max_tokens: 3000 },
-      { ...run.policy, enable_thinking: false },
+      { ...run.policy, enable_thinking: true },
       { ...run.policy, stop: ['x'] },
     ])
       expect(Result.getOrThrow(hashResearch({ ...run, policy }))).not.toBe(id)
     for (const changed of [
       { ...run, attempt: 1 },
       { ...run, armManifestHashes: ['5'.repeat(64)] },
-      { ...run, context: { ...run.context, producerManifestHash: '6'.repeat(64) } },
+      { ...run, captureManifestHash: '6'.repeat(64) },
     ])
       expect(Result.getOrThrow(hashResearch(changed))).not.toBe(id)
     expect(researchRequest(run).stream_options.include_usage).toBe(true)
-    expect(researchRequest(run).messages[0]?.content).toContain(run.context.factors[0]?.description ?? '')
+    expect(researchRequest(run).messages[0]?.content).toContain(run.context.memory.text)
   })
-  test('rejects unfrozen overrides, future labels, mismatched descriptions and unsupported free rates', () => {
-    const factor = run.context.factors[0]
-    expect(factor).toBeDefined()
+  test('rejects unfrozen overrides, future context, changed bytes and unsupported free rates', () => {
     for (const changed of [
       { ...run, policy: { ...run.policy, best_of: 3 } },
-      {
-        ...run,
-        context: {
-          ...run.context,
-          factors: [
-            { ...factor, performance: { ...factor?.performance, labelsMaturedAt: '1970-01-01T00:00:00.001Z' } },
-          ],
-        },
-      },
-      { ...run, context: { ...run.context, factors: [{ ...factor, description: 'changed' }] } },
+      { ...run, context: { memory: { ...run.context.memory, availableAt: '1970-01-01T00:00:00.001Z' } } },
+      { ...run, context: { memory: { ...run.context.memory, text: 'changed' } } },
       { ...run, costBasis: { ...run.costBasis, picoUsdPerSecond: '0' } },
       { ...run, costBasis: { ...run.costBasis, picoUsdPerSecond: (2n ** 128n / 180n + 1n).toString() } },
     ])
       expect(Result.isFailure(decodeResearchRun(changed))).toBe(true)
-    expect(
-      Result.isSuccess(
-        decodeResearchRun({
-          ...run,
-          costBasis: { ...run.costBasis, picoUsdPerSecond: ((2n ** 128n - 1n) / 180n).toString() },
-        }),
-      ),
-    ).toBe(true)
   })
   test('allocates integer USD_PICO without floating point or changing posted identities', () => {
     const value = receipt()

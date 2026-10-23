@@ -68,7 +68,7 @@ if (
   throw Error('Compiler requires exact committed clean inputs')
 const dependencies = compilerDependencyBytes(compilerFiles)
 const compiled = await Bun.build({
-  entrypoints: [join(root, 'services/bayn/tools/jev-harness-variant.ts')],
+  entrypoints: [join(root, 'services/bayn/tools/jev-instruction-variant.ts')],
   target: 'bun',
   plugins: [dependencies.plugin],
   define: { __BAYN_VARIANT_SOURCE_ROOT__: JSON.stringify(root) },

@@ -1,5 +1,10 @@
 # Tengri control plane
 
+The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
+`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
+workspace and conversation requests do not call Relay.
+
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
@@ -290,7 +295,7 @@ parsing each page. An explicit completion record is required, and any
 failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
-The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
@@ -605,7 +610,7 @@ The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks e
 Run the native correlation and interruption contract with an isolated pinned binary:
 
 ```sh
-TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.159.2 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.164.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
 ```
 
 The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's

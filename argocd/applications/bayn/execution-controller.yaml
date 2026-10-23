@@ -84,9 +84,9 @@ spec:
             # read-only; only the sealed, validated research mandate can
             # realize a mutation generation after startup.
             - name: BAYN_STRATEGY_BEHAVIOR_HASH
-              value: "f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180"
+              value: "4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52"
             - name: BAYN_STRATEGY_PARAMETER_HASH
-              value: "8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e"
+              value: "367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2"
             - name: BAYN_BROKER_ACCESS
               value: read-only
             - name: BAYN_CAPITAL_ACTIVATION_REQUEST
@@ -97,7 +97,7 @@ spec:
             - name: BAYN_CAPITAL_ACTIVATION_KIND
               value: ResearchCapitalActivationRequest
             - name: BAYN_RESEARCH_CAPITAL_BUILD_LINEAGE
-              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"8512731b25e9a53e1095e653c25b87305dc20bb9c3342bbe663751dadf381bf5","authoredActivation":{"sourceRevision":"bac45b92ff6620cbbe01554aea1b2eb101776427","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e87681c94221bd5df43c0ec3b807c0a23e26d9bbcb3c2a5797e6c5acc6c84ac4"},"activation":{"sourceRevision":"bac45b92ff6620cbbe01554aea1b2eb101776427","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:e87681c94221bd5df43c0ec3b807c0a23e26d9bbcb3c2a5797e6c5acc6c84ac4"}}'
+              value: '{"schemaVersion":"bayn.research-capital-build-lineage.v1","requestHash":"bf1e564198d96bff8e01d41957dd4655dc06464fc003425bf0e9d3b33631ec85","authoredActivation":{"sourceRevision":"df59f9a1e1dbebe061b1a97446e30f613b0a89cb","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:208f2ce344d058a7265f1a1c1fdb82f596f0eaba25705c361ef66d19d807c13a"},"activation":{"sourceRevision":"df59f9a1e1dbebe061b1a97446e30f613b0a89cb","imageRepository":"registry.ide-newton.ts.net/lab/bayn","imageDigest":"sha256:208f2ce344d058a7265f1a1c1fdb82f596f0eaba25705c361ef66d19d807c13a"}}'
             - name: BAYN_CAPITAL_AUTHORITY
               value: none
             - name: BAYN_AUTHORITY_GENERATION_HASH

@@ -9,16 +9,28 @@ import { BrokerAccess, CapitalAuthorityKind } from '../execution/authority'
 import {
   makeResearchCapitalActivationRequest,
   makeResearchCapitalPlanHash,
+  researchCapitalGrantProof,
   type ResearchCapitalActivationRequest,
 } from '../execution/configuration'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
-import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
+import {
+  AccountStatus,
+  Authority,
+  KillState,
+  ReconciliationStatus,
+  makeResearchCapitalGrantGenerationResult,
+  type AuthorityState,
+} from '../execution/contracts'
+import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store'
+import { executionObserveSuccessorGenerationHash } from '../blocked-generation-recovery'
+import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
 import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   configuredCapitalActivation,
+  prepareOrRecoverResearchCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
   validateResearchCapitalPreflight,
   validateResearchCapitalRiskPolicy,
@@ -237,4 +249,177 @@ test('pre-activation retains a typed nonexact reconciliation failure until a lat
   expect(await Effect.runPromise(refresh)).toEqual({
     report: { reconciliation: { status: ReconciliationStatus.Exact } },
   })
+})
+
+test('a cutover mandate rearms through current proof and exact reconciliation before activation', async () => {
+  const at = '2026-10-23T10:50:00.000Z'
+  const policy = await Effect.runPromise(
+    loadExecutionRiskPolicy(accountId, fixtureRuntime.definition.parameters.universe),
+  )
+  const current = request({}, Result.getOrThrow(canonicalHashV1Result(policy)))
+  const retired = request({ behaviorHash: 'f'.repeat(64), parameterSchemaVersion: 'bayn.jev.protocol.v18' })
+  const generation = (mandate: ResearchCapitalActivationRequest, previousGenerationHash: string) => {
+    const { schemaVersion: _proofSchema, ...proof } = researchCapitalGrantProof(mandate)
+    return Result.getOrThrow(
+      makeResearchCapitalGrantGenerationResult({
+        ...proof,
+        schemaVersion: 'bayn.paper-authority-generation.v3',
+        maximum: Authority.Execution,
+        previousGenerationHash,
+        reconciliationId: '2'.repeat(64),
+        reconciliationContentHash: '3'.repeat(64),
+      }),
+    )
+  }
+  const previous = generation(retired, 'a'.repeat(64))
+  const successorHash = Result.getOrThrow(
+    executionObserveSuccessorGenerationHash({ previousExecutionGenerationHash: previous.generationHash }),
+  )
+  for (const scenario of ['current', 'nonexact', 'stale-build', 'stale-strategy', 'operator-kill'] as const) {
+    let authority: AuthorityState = {
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: previous.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: scenario === 'operator-kill' ? 'operator kill' : strategyProtocolCutoverRestrictionReason,
+      version: 2,
+      updatedAt: at,
+    }
+    const history = new Map([[previous.generationHash, previous]])
+    const steps: string[] = []
+    const unexpected = Effect.die('unexpected authority operation')
+    const authorityStore: AuthorityGenerationStoreShape = {
+      readAuthorityState: Effect.sync(() => authority),
+      readResearchAuthorityGeneration: (hash) => Effect.succeed(history.get(hash)),
+      readOrInitializeObserveAuthority: () => unexpected,
+      readAuthorityGenerationLineage: () => unexpected,
+      ensureAuthorityGeneration: (input) =>
+        Effect.sync(() => {
+          steps.push('observe-successor')
+          expect(input).toEqual({ generationHash: successorHash, maximum: Authority.Observe })
+          authority = {
+            schemaVersion: 'bayn.paper-authority.v1',
+            generationHash: successorHash,
+            maximum: Authority.Observe,
+            effective: Authority.Observe,
+            kill: KillState.Clear,
+            version: 3,
+            updatedAt: at,
+          }
+          return authority
+        }),
+    }
+    const lifecycle: CapitalGrantLifecycleStoreShape = {
+      activateResearchCapitalGrant: (proof, sourceHash) =>
+        Effect.sync(() => {
+          steps.push('activate')
+          expect(sourceHash).toBe(successorHash)
+          expect(proof).toEqual(researchCapitalGrantProof(current))
+          const next = generation(current, sourceHash)
+          history.set(next.generationHash, next)
+          authority = {
+            ...authority,
+            generationHash: next.generationHash,
+            maximum: Authority.Execution,
+            effective: Authority.Execution,
+            version: 4,
+          }
+          return authority
+        }),
+    }
+    const reconciliation = {
+      schemaVersion: 'bayn.paper-reconciliation.v1' as const,
+      accountId,
+      reconciliationId: '2'.repeat(64),
+      contentHash: '3'.repeat(64),
+      expectedHash: '4'.repeat(64),
+      observedHash: '4'.repeat(64),
+      status: scenario === 'nonexact' ? ReconciliationStatus.Discrepancy : ReconciliationStatus.Exact,
+      discrepancies: [],
+      reconciledAt: at,
+    }
+    const brokerState: ReconciledBrokerState = {
+      account: {
+        schemaVersion: 'bayn.paper-account-snapshot.v1',
+        accountId,
+        status: AccountStatus.Active,
+        currency: 'USD',
+        cashMicros: '100000000000',
+        equityMicros: '100000000000',
+        buyingPowerMicros: '100000000000',
+        observedAt: at,
+      },
+      positions: [],
+      orders: [],
+      positionsObservedAt: at,
+      ordersObservedAt: at,
+      accountingHash: '1'.repeat(64),
+      unknownOrderCount: 0,
+      reconciliation,
+    }
+    const reconcile = Effect.sync(() => {
+      steps.push('reconcile')
+      return {
+        report: {
+          reconciliation,
+          metrics: {
+            brokerPollAgeMs: 0,
+            oldestUnknownMutationAgeMs: 0,
+            cashDifferenceMicros: '0',
+            positionDifferenceMicros: '0',
+            equityDifferenceMicros: '0',
+            accountingExact: true,
+            discrepancyCount: scenario === 'nonexact' ? 1 : 0,
+          },
+        },
+        brokerState,
+        riskContext: {
+          tradingDate: '2026-10-23' as const,
+          authority,
+          authorityObservedAt: at,
+          unknownMutationCount: 0,
+          dailyTradedNotionalMicros: '0',
+          dayStartEquityMicros: brokerState.account.equityMicros,
+          peakEquityMicros: brokerState.account.equityMicros,
+        },
+      }
+    })
+    const candidate = scenario === 'stale-strategy' ? retired : current
+    const runtime = plan()
+    const candidatePlan =
+      scenario === 'stale-build'
+        ? {
+            ...runtime,
+            config: { ...runtime.config, build: { ...runtime.config.build, sourceRevision: 'f'.repeat(40) } },
+          }
+        : runtime
+    const outcome = await Effect.runPromise(
+      prepareOrRecoverResearchCapitalActivation(
+        candidatePlan,
+        candidate,
+        null,
+        null,
+        authorityStore,
+        lifecycle,
+        reconcile,
+        1000,
+      ).pipe(Effect.result),
+    )
+    expect(history.get(previous.generationHash)).toEqual(previous)
+    if (scenario === 'current') {
+      expect(outcome).toEqual(Result.succeed(generation(current, successorHash)))
+      expect(steps).toEqual(['reconcile', 'observe-successor', 'activate'])
+      expect(authority).toMatchObject({
+        maximum: Authority.Execution,
+        effective: Authority.Execution,
+        kill: KillState.Clear,
+      })
+    } else {
+      expect(Result.isFailure(outcome)).toBe(true)
+      expect(steps).toEqual(scenario === 'nonexact' ? ['reconcile'] : [])
+      expect(authority.generationHash).toBe(previous.generationHash)
+      expect(history.size).toBe(1)
+    }
+  }
 })

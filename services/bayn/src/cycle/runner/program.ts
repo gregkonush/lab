@@ -19,6 +19,7 @@ import {
   marketCalendarQueryFromSession,
   nextIntradayEntryAttemptOrdinal,
   selectIntradayExecutionSession,
+  firstIntradayObservationAtMs,
 } from './calendar-decisions'
 import { runnerError, type CycleRunContext, type CycleRunnerError, type CycleRunResult } from './model'
 import { DecisionReadinessReason } from './readiness'
@@ -93,7 +94,10 @@ export const discoverAutonomousCyclePass = <R>(
         ),
       )
       const session = selectIntradayExecutionSession(calendar.value, candidate.executionPolicy, observedAt)
-      if (session !== undefined && session.openAt <= observedAt) {
+      if (
+        session !== undefined &&
+        firstIntradayObservationAtMs(session, candidate.executionPolicy) <= Date.parse(observedAt)
+      ) {
         hours = calendar.value
         hoursReadHash = calendar.evidence.contentHash
       }

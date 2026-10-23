@@ -13,7 +13,7 @@ import { approveResearchRun } from './approval'
 export const submitResearch = Effect.fn('bayn.research.submit')(
   function* (input: unknown, origin: string, approvalKey: Redacted.Redacted<string>) {
     const run = yield* Effect.fromResult(decodeResearchRun(input))
-    if (run.schemaVersion !== 'bayn.jev-harness2-editor.v3')
+    if (run.schemaVersion !== 'bayn.jev-editor.v1')
       return yield* new ResearchError({ message: 'Retired research contracts cannot be submitted for new inference' })
     const runId = yield* Effect.fromResult(hashResearch(run))
     const approval = yield* Effect.fromResult(approveResearchRun(run, approvalKey))

@@ -123,7 +123,7 @@ jobs:
       build-command: bun run --cwd services/bayn build
     secrets: inherit
 
-  harness2:
+  gepa:
     needs: changes
     if: needs.changes.outputs.bayn == 'true'
     runs-on: ubuntu-latest
@@ -133,8 +133,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - run: python -m pip install -r services/bayn/harness2/requirements.txt
-      - run: python -m unittest discover -s services/bayn/harness2 -p 'test_*.py' -v
+      - run: python -m pip install -r services/bayn/gepa/requirements.txt
+      - run: python -m unittest discover -s services/bayn/gepa -p 'test_*.py' -v
 
   unit-tests:
     needs: changes
@@ -415,7 +415,7 @@ jobs:
     needs:
       - changes
       - pr-checks
-      - harness2
+      - gepa
       - unit-tests
       - archive-integration
       - ledger-integration
@@ -431,7 +431,7 @@ jobs:
           BAYN_RELEVANT: ${{ needs.changes.outputs.bayn }}
           IMAGE_RELEVANT: ${{ needs.changes.outputs.image }}
           PR_CHECKS_RESULT: ${{ needs.pr-checks.result }}
-          HARNESS2_RESULT: ${{ needs.harness2.result }}
+          GEPA_RESULT: ${{ needs.gepa.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           ARCHIVE_RESULT: ${{ needs.archive-integration.result }}
           LEDGER_RESULT: ${{ needs.ledger-integration.result }}
@@ -451,7 +451,7 @@ jobs:
           fi
           for result_name in \
             PR_CHECKS_RESULT \
-            HARNESS2_RESULT \
+            GEPA_RESULT \
             UNIT_RESULT \
             ARCHIVE_RESULT \
             LEDGER_RESULT \

@@ -98,8 +98,12 @@ An explicit symbol fallback preserves monospace columns for glyphs Geist Mono do
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
 right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
-thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
-switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. Saved history
+loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
+reduced motion, and failures show the existing recovery controls. You can start or
+switch conversations while another response runs or its submission is pending. Late thread creation and send replies
+cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
@@ -143,7 +147,7 @@ Consecutive tools appear in compact, collapsible groups. Each row keeps its comm
 expanding it shows arguments and results. Terminal output removes ANSI controls and decodes JSON string wrappers while
 preserving columns. Conversation and tool-output scrollbars use a thin thumb with a transparent track.
 
-Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+Submitted messages and active turns share the same quiet Thinking animation. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
 appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
@@ -268,10 +272,17 @@ workspace and automatically resolves advertised action confirmations while the c
 native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+Resolved approvals and answers stay retired for the open workspace, including across conversation changes. Older
+run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
+navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
 Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
-stay out of these activity labels. Failed status reads show a reconnect message, retry, and clear their own error
-after a successful read. Authentication and permission failures keep their original errors.
+stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
+appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
+failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
+retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
+approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
@@ -280,6 +291,13 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+Use the pin button in a file preview to keep the file in **Pinned** in the conversation sidebar. Pins retain an
+optional line and column and remain available after closing their tabs. Open a pin to restore that location, or
+unpin it without closing the preview. Each window restores its own tabs and selected view after reload; workspace
+pins are shared across windows. Selecting a conversation returns to Chat without closing resource tabs.
+Tabs and pins each retain up to 20 files. Persistence contains validated `/workspace` paths and locations only,
+with no file contents or credentials. Restored inactive tabs do not read files until selected. Deleting the workspace
+clears its resource metadata along with its conversation state.
 Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
 PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
 Local image links can open image file tabs. Retained image reads use the authenticated,
