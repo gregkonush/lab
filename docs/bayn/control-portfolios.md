@@ -22,7 +22,10 @@ still needs frozen definitions, calibrated execution assumptions and untouched p
 Controls require a complete regular broker session inside the replay interval. The broker calendar's `open` and
 `close` fields define that session, including early closes. Wider `session_open` and `session_close` bounds describe
 provider hours; the separate data window does not replace regular trading hours. Keep the original calendar and
-source unchanged. Preparation rejects an interval with no complete regular session before any model dispatch.
+source unchanged. Preparation retains the complete reviewed Jev protocol for native observation and journal
+validation. The separate equity market profile selects source symbols; it cannot replace protocol fields or add
+market metadata to the serialized native protocol. Preparation rejects an interval with no complete regular
+session before any model dispatch.
 
 ## Offline input preflight
 
