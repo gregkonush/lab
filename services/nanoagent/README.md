@@ -134,6 +134,12 @@ delivered event streams without duplication. Device login and thread state persi
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
 
+Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
+start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
+such as `agents_shell` from the default tool set. Native shell, file editing, Git, and repository setup run inside
+the guest's retained `/workspace`. The explicitly configured Tengri browser and Relay MCP servers remain separate
+from the ChatGPT app catalog. This default is not a network sandbox; the guest administrator retains full guest access.
+
 Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
 from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
 inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
