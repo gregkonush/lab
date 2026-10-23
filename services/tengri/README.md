@@ -459,9 +459,10 @@ and Proompteng release images build only from `main`. PRs do not build unused na
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
 Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
-native qualification. Guest test binaries stay local to that job. Native qualification does not import or export a
-separate registry cache or wait for the other architecture. Publication still requires both architectures and the full
-controller and guest source validation.
+native qualification. The runtime and harness builds both import the existing per-architecture Tengri cache: a cache
+hit in the runtime request does not materialize every intermediate build result for the later harness request.
+Guest test binaries stay local to that job. Native qualification does not create a separate registry cache or wait for
+the other architecture. Publication still requires both architectures and the full controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
@@ -475,6 +476,10 @@ eviction, guest administration, and browser startup. It also requires terminal f
 Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
 disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
 error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
+The retained `io-responsiveness.json` aligns heartbeat windows with bounded samples of the VMM main thread and four
+vCPUs. It records public scheduler, page-fault and wait-state counters so a failed responsiveness gate can be traced
+without capturing guest memory, RPC payloads or credentials. Sampling stops after the I/O probe, with a twelve-second
+upper bound. The latency limits and fifty heartbeat samples remain unchanged.
 The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
