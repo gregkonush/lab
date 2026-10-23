@@ -23,7 +23,7 @@ data:
             annotations:
               summary: Bayn research worker stopped publishing telemetry
               description: Inspect the isolated research worker and database access. Trading execution has no research dependency.
-              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+              runbook_url: docs/bayn/jev-optimization.md
           - alert: BaynPublicInformationStale
             expr: |
               (
@@ -53,7 +53,7 @@ data:
             annotations:
               summary: Bayn research attempts are failing
               description: Join runId, receiptHash and trace_id in bayn-research logs. Check model expiry, invalid streams and signed registration.
-              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+              runbook_url: docs/bayn/jev-optimization.md
           - alert: BaynResearchCostCoverageIncomplete
             expr: max(bayn_research_unpriced_attempts) > 0 or max(bayn_research_ambiguous_attempts) > 0 or max(bayn_research_oldest_pending_expense_seconds) > 300
             for: 10m
@@ -65,7 +65,7 @@ data:
             annotations:
               summary: Bayn research costs lack complete verified coverage
               description: Inspect retained run and receipt identities, the frozen allocation basis and expense projection. Unknown costs prevent a fully costed comparison.
-              runbook_url: services/bayn/README.md#independent-alpha-r1-research
+              runbook_url: docs/bayn/jev-optimization.md
       - name: flamingo.rules
         rules:
           - alert: FlamingoModelUnavailable
@@ -82,33 +82,6 @@ data:
               summary: Shared Flamingo model is unavailable
               description: The model metrics endpoint has been unavailable for fifteen minutes while the deployment is enabled. Inspect readiness, startup logs and shared GPU capacity before inference.
               runbook_url: argocd/applications/flamingo/README.md
-      - name: bayn-model.rules
-        rules:
-          - alert: BaynModelUnavailable
-            expr: |
-              (up{job="bayn-model"} == 0 or absent(up{job="bayn-model"}))
-              and on()
-              (kube_deployment_spec_replicas{namespace="bayn-model",deployment="bayn-model"} > 0)
-            for: 15m
-            labels:
-              severity: warning
-              team: platform
-              service: bayn-model
-            annotations:
-              summary: Bayn research model is unavailable
-              description: The private Alpha-R1 metrics endpoint has been unavailable for fifteen minutes. Research is paused; execution has no dependency on this endpoint.
-              runbook_url: services/bayn-model/README.md
-          - alert: BaynModelRequestsExpiring
-            expr: sum(increase(bayn_model_requests_total{namespace="bayn-model",outcome="expired"}[15m])) >= 2
-            for: 5m
-            labels:
-              severity: warning
-              team: platform
-              service: bayn-model
-            annotations:
-              summary: Bayn research inference is reaching its deadline
-              description: At least two research requests reached the server deadline in fifteen minutes. Inspect queue, prefill, decode and shared GPU pressure before retrying.
-              runbook_url: services/bayn-model/README.md
       - name: buzz-production.rules
         rules:
           - record: buzz_rollout_enabled
