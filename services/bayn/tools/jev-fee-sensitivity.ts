@@ -99,7 +99,7 @@ const Economics = Schema.Struct({
   receivedQuantityAtoms: PositiveMicrosSchema,
   acquisitionCostMicros: PositiveMicrosSchema,
   maximumEntryPriceMicros: PositiveMicrosSchema,
-  breakEvenExitBidUsd: Schema.Finite,
+  holdingExitBreakEvenBidUsd: Schema.Finite,
 })
 export const hypotheticalCryptoFeeSensitivity = (input: {
   symbol: string
@@ -132,21 +132,21 @@ export const hypotheticalCryptoFeeSensitivity = (input: {
       }),
     )
     if (bps === 25) {
-      const sealedBidMicros = Math.round(economics.breakEvenExitBidUsd * 1_000_000)
+      const sealedBidMicros = Math.round(economics.holdingExitBreakEvenBidUsd * 1_000_000)
       if (
         received !== BigInt(economics.receivedQuantityAtoms) ||
         !Number.isSafeInteger(sealedBidMicros) ||
         !Number.isSafeInteger(Number(bid)) ||
         BigInt(sealedBidMicros) !== bid ||
-        Number(bid) / 1_000_000 !== economics.breakEvenExitBidUsd
+        Number(bid) / 1_000_000 !== economics.holdingExitBreakEvenBidUsd
       )
         throw new Error('Fee sensitivity does not reproduce sealed 25bps baseline')
     }
     return {
       hypotheticalFeeBpsPerSide: bps,
       receivedQuantityAtoms: received.toString(),
-      breakEvenExitBidMicros: bid.toString(),
-      requiredBidRiseBps: Number(((bid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
+      holdingExitBreakEvenBidMicros: bid.toString(),
+      holdingExitRequiredBidRiseBps: Number(((bid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
     }
   })
   return {

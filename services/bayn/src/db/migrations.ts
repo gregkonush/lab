@@ -1,3 +1,4 @@
+import executableProfitLimits from '../../migrations/0143_executable_profit_limits'
 import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_append_locality'
 import fundedPlanCoverage from '../../migrations/0141_funded_plan_coverage'
 import economicTradePlans from '../../migrations/0140_economic_trade_plans'
@@ -144,6 +145,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '143_executable_profit_limits': executableProfitLimits,
   '142_native_arrival_append_locality': nativeArrivalAppendLocality,
   '140_economic_trade_plans': economicTradePlans,
   '141_funded_plan_coverage': fundedPlanCoverage,
