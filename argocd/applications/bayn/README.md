@@ -73,10 +73,10 @@ rule source covers missing telemetry, repeated failed attempts and incomplete ex
 instruction proposals, cancellation, retained replay, expense recovery and matching Loki/Tempo/Mimir evidence against
 the deployed revision. Synthetic acceptance does not establish economic qualification or session latency.
 
-The model provisioner and Bayn worker each follow their existing Kargo Stage. Verify both promoted revisions and
-the model response's five serving-identity fields before the first signed acceptance run. An older model endpoint
-without the identity header is rejected; research cannot fall back to alias-only provenance. Updating the model
-provisioner restarts only the independent model endpoint and re-verifies the cached checkpoint.
+The Bayn worker follows the Bayn Kargo Stage. Verify its promoted source/image and Flamingo's pinned serving image,
+model/tokenizer revisions and five response serving-identity fields before the first signed acceptance run.
+Flamingo's reviewed GitOps manifests own its deployment; there is no separate Bayn model Stage or provisioner.
+An endpoint without the identity header is rejected; research cannot fall back to alias-only provenance.
 
 Original-session eligibility, preparation expenses and comparison requirements are described in the
 [research contract](../../../docs/bayn/jev-optimization.md). Invalidated or unsealed captures cannot establish
