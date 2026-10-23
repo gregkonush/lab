@@ -1,0 +1,24 @@
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: observability-bayn-model-log-reader
+  namespace: bayn-model
+rules:
+  - apiGroups: [""]
+    resources:
+      - pods/log
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: observability-bayn-model-log-reader
+  namespace: bayn-model
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: observability-bayn-model-log-reader
+subjects:
+  - kind: ServiceAccount
+    name: observability-cluster-metrics-alloy
+    namespace: observability

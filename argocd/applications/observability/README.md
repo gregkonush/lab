@@ -206,10 +206,15 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
   http://127.0.0.1:19090/prometheus/api/v1/query
 ```
 
-## Bayn research inference
+## Bayn research model
 
-Bayn's GEPA worker calls the shared Flamingo model. Flamingo's existing metrics and logs cover model capacity and
-latency. The central log pipeline retains the independent `research` container. Its Effect metrics reach Mimir
-through the gateway's pod port 8080. `bayn-research.rules` covers worker heartbeat, failed attempts and incomplete
-expense coverage. A model outage pauses research and does not change Bayn execution readiness.
-See the [Jev optimization contract](../../../docs/bayn/jev-optimization.md).
+The private `bayn-model` application replaces Rune with a locked Alpha-R1 checkpoint. The central Alloy scrapes
+vLLM metrics and admission metrics every fifteen seconds and retains both provisioning and serving logs with
+namespace, pod, container and service identity. Research capacity and latency metrics remain available in Explore;
+the independent research model has no dedicated Bayn execution dashboard. Request logs contain
+generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
+The same log pipeline retains the independent `research` container. Its Effect metrics reach Mimir through the
+gateway's pod port 8080; the research egress policy must allow that destination port even though the Service exposes
+port 80. `bayn-research.rules` covers worker heartbeat, failed attempts and incomplete expense coverage.
+Research-model unavailability and repeated deadline expiry are warnings without email paging. A model outage does
+not change Bayn execution readiness. See [the model runbook](../../../services/bayn-model/README.md).
