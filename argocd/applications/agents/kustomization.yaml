@@ -28,8 +28,6 @@ resources:
   - codex-versioncontrolprovider.yaml
   - codex-orchestrations.yaml
   - codex-github-events-kafkasource.yaml
-  - codex-github-events-dead-letter.yaml
-  - codex-github-events-kafka-auth.yaml
   - sample-approvalpolicy.yaml
   - sample-budget.yaml
   - sample-signal.yaml

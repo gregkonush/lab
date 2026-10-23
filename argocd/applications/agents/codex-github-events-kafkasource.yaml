@@ -3,8 +3,6 @@ kind: KafkaSource
 metadata:
   name: agents-codex-github-events
   namespace: agents
-  annotations:
-    argocd.argoproj.io/sync-wave: "1"
 spec:
   bootstrapServers:
     - kafka-kafka-bootstrap.kafka:9092
@@ -12,16 +10,6 @@ spec:
     - github.webhook.events
   consumerGroup: agents-codex-github-events
   initialOffset: earliest
-  delivery:
-    retry: 5
-    backoffPolicy: exponential
-    backoffDelay: PT1S
-    timeout: PT10S
-    deadLetterSink:
-      ref:
-        apiVersion: eventing.knative.dev/v1alpha1
-        kind: KafkaSink
-        name: agents-codex-github-events-dlq
   net:
     sasl:
       enable: true
