@@ -878,9 +878,12 @@ const executeBoundExecutionCycle = (
         })
         if (protection._tag === 'PostMutationReconciliation') return protection
         if (protection._tag === 'Step') {
-          if (protection.step._tag !== 'Execute') return protection.step
-          step = protection.step
-          closeOnly = true
+          if (protection.step._tag === 'Execute') {
+            step = protection.step
+            closeOnly = true
+          } else if (protection.step._tag !== 'Complete' || committedClosure === undefined) {
+            return protection.step
+          }
         }
         if (step === undefined) {
           const closure = yield* ensureExecutionCycleClosure({

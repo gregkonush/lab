@@ -154,7 +154,7 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 	bytes := 0
 	for page := 0; page < 256; page++ {
 		params, _ := json.Marshal(map[string]any{"threadId": op.Thread, "cursor": cursor, "limit": 100, "sortDirection": "desc"})
-		result, err := supervisor.request(ctx, "thread/items/list", params, true)
+		result, err := supervisor.request(ctx, "thread/items/list", params, true, nil)
 		if err != nil {
 			return op, errCodexOperationUnknown
 		}
@@ -206,7 +206,20 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 
 func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
 	if method != "tengri/resolveApproval" {
-		return supervisor.request(ctx, method, params, true)
+		result, err := supervisor.request(ctx, method, params, true, nil)
+		var input struct {
+			Thread string `json:"threadId"`
+		}
+		var rpcError *codexRPCError
+		if method != "turn/start" || result.generation == nil || json.Unmarshal(params, &input) != nil ||
+			!errors.As(err, &rpcError) || rpcError.code != -32600 || rpcError.message != "thread not found: "+input.Thread {
+			return result, err
+		}
+		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated"})
+		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
+			return result, err
+		}
+		return supervisor.request(ctx, method, params, true, result.generation)
 	}
 	var input struct {
 		Thread   string          `json:"threadId"`
@@ -296,11 +309,12 @@ func writeCodexReceipt(path string, value any) error {
 }
 
 type codexTerminalReceipt struct {
-	Version    int    `json:"version"`
-	Thread     string `json:"thread"`
-	Turn       string `json:"turn"`
-	Generation string `json:"generation"`
-	Status     string `json:"status"`
+	Version          int    `json:"version"`
+	Thread           string `json:"thread"`
+	Turn             string `json:"turn"`
+	Generation       string `json:"generation"`
+	Status           string `json:"status"`
+	ProcessesStopped bool   `json:"processesStopped,omitempty"`
 }
 
 func (supervisor *codexSupervisor) terminalPath(thread, turn, generation string) string {
@@ -320,11 +334,37 @@ func (supervisor *codexSupervisor) recordTerminal(generation *codexProcessGenera
 		(input.Turn.Status != "completed" && input.Turn.Status != "failed" && input.Turn.Status != "interrupted") {
 		return errors.New("invalid native terminal outcome")
 	}
+	identity := codexTurnIdentity{thread: input.Thread, turn: input.Turn.ID}
+	if supervisor.terminalStatus(input.Thread, input.Turn.ID, generation.id) == input.Turn.Status {
+		supervisor.finishCommandTracking(generation, identity)
+		return nil
+	}
 	path := supervisor.terminalPath(input.Thread, input.Turn.ID, generation.id)
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	return writeCodexReceipt(path, codexTerminalReceipt{Version: 1, Thread: input.Thread, Turn: input.Turn.ID, Generation: generation.id, Status: input.Turn.Status})
+	receipt := codexTerminalReceipt{Version: 2, Thread: input.Thread, Turn: input.Turn.ID, Generation: generation.id, Status: input.Turn.Status}
+	if receipt.Status == "interrupted" {
+		supervisor.mu.Lock()
+		commands, found := generation.commands[identity]
+		complete := found && !supervisor.workUnknown && supervisor.generation == generation && generation.failure == nil
+		items := make(map[string]struct{}, len(commands))
+		for id := range commands {
+			items[id] = struct{}{}
+		}
+		supervisor.mu.Unlock()
+		if !complete {
+			supervisor.markWorkUnknown(generation)
+			return errors.New("interrupted command ownership is unavailable")
+		}
+		go supervisor.finishInterruptedTurn(generation, identity, items, path, receipt)
+		return nil
+	}
+	if err := writeCodexReceipt(path, receipt); err != nil {
+		return err
+	}
+	supervisor.finishCommandTracking(generation, identity)
+	return nil
 }
 
 func (supervisor *codexSupervisor) terminalStatus(thread, turn, generation string) string {
@@ -341,7 +381,7 @@ func (supervisor *codexSupervisor) terminalStatus(thread, turn, generation strin
 		return ""
 	}
 	var receipt codexTerminalReceipt
-	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 1 || receipt.Thread != thread || receipt.Turn != turn || receipt.Generation != generation {
+	if json.Unmarshal(raw, &receipt) != nil || receipt.Version != 2 || receipt.Thread != thread || receipt.Turn != turn || receipt.Generation != generation || (receipt.Status == "interrupted" && !receipt.ProcessesStopped) {
 		return ""
 	}
 	switch receipt.Status {

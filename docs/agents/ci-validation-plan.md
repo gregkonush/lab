@@ -134,10 +134,6 @@ run_namespace_guardrails() {
   - Use `packages/scripts/src/agents/smoke-agents.ts` for a repeatable local flow.
 - GitHub + Linear mock webhook sync tests (webhook-only).
 
-The Kind CI job reads published image pins from `argocd/applications/agents/values.yaml` at the fetched
-`kargo/agents` commit. Selected components are replaced with locally built images. The source baseline on `main`
-does not track promoted digests and can reference images that have been removed from the registry.
-
 ## Performance
 
 - Load test AgentRun submission (concurrency limits enforced).

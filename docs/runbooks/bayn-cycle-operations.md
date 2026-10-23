@@ -205,13 +205,24 @@ Confirm the current Restate registration's label selector before comparing worke
 - `BaynEgressProxyReplicaTargetMissed`: compare the `bayn-egress-proxy` Deployment's desired and available replicas.
   Preserve both stateless proxy replicas and their hostname spread so one node loss does not remove broker read
   connectivity. Do not bypass the proxy or broaden broker egress.
-- `BaynExecutionWorkerUnavailable`: inspect the Restate-managed `bayn-execution-controller-*` ReplicaSets and pods,
-  then the active Restate worker revision and controller projection. Keep trading fail-closed until at least one
-  configured worker is Ready; never create a second scheduler or bypass Restate to recover execution.
-- `BaynExecutionWorkerReplicaTargetMissed`: compare the summed desired and Ready replicas across the
-  Restate-managed `bayn-execution-controller-*` ReplicaSets. A healthy active controller with fewer Ready workers than
-  desired has lost failover capacity. Restore the missing worker while preserving Restate serialization and the
-  PostgreSQL writer fence; do not promote a pod to an independent writer.
+- `BaynExecutionWorkerObservationUnavailable`: the current worker count is **unknown**, not zero or healthy.
+  Inspect the `bayn/bayn-execution-controller` RestateDeployment, its observed versus metadata generation, and the
+  existing kube-state-metrics/Alloy path. All four scalar observations and scrape health must be less than 90 seconds
+  old; conflicting fresh metadata generations also remain unknown. The warning fires after two minutes, allowing a
+  bounded rollout transition but never silently treating missing telemetry as a healthy worker count.
+- `BaynExecutionWorkerUnavailable`: current-generation RestateDeployment `status.readyReplicas` has been zero for
+  one minute while `spec.replicas` is positive. This status counts **updated** ready workers, not retained revisions.
+  Inspect the current revision's ReplicaSet and controller projection. Keep trading fail-closed until a configured
+  current worker is Ready; never create a second scheduler or bypass Restate to recover execution.
+- `BaynExecutionWorkerReplicaTargetMissed`: compare fresh current-generation `status.readyReplicas` with
+  `spec.replicas`, not a sum across retained ReplicaSets. Below-target readiness for two minutes loses current-revision
+  failover capacity. Restore the missing worker while preserving Restate serialization and the PostgreSQL writer
+  fence; do not promote a pod to an independent writer or delete retained workers.
+  These rules require the separately staged exporter/Alloy gauges from PR #15272 to be present in Mimir first.
+  Verify the exact namespace/resource labels, desired and observed generation, and updated-ready count against the
+  CR before installing the rules. Missing telemetry immediately removes the known-count record and starts the
+  observation warning's pending period; a cleared capacity alert alone never proves recovery. Worker readiness does
+  not establish successful activation, broker freshness, or durable execution progress.
 - `BaynExecutionControllerOverdue`: compare the active controller's `lastSequence`, `completedAt`, and `nextDueAt` in
   `GET /v1/status`, then inspect Restate for a paused or retrying `BaynExecutionController/.../tick` invocation. Ready
   worker replicas do not prove durable execution progress. Restore the existing Restate invocation path; never create

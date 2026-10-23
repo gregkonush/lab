@@ -58,7 +58,7 @@ func TestCodexActivityPendingStartSurvivesDisconnectedCaller(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
+		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true, nil)
 		done <- err
 	}()
 	request := readCodexWireRequest(t, writer)
@@ -87,7 +87,7 @@ func TestCodexActivityFailedStartAndLateCompletion(t *testing.T) {
 	supervisor, writer := readyCodexSupervisor(t)
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(context.Background(), "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
+		_, err := supervisor.request(context.Background(), "turn/start", json.RawMessage(`{"threadId":"a"}`), true, nil)
 		done <- err
 	}()
 	request := readCodexWireRequest(t, writer)
@@ -104,8 +104,12 @@ func TestCodexActivityFailedStartAndLateCompletion(t *testing.T) {
 		t.Fatal("late completion cannot clear a newer turn")
 	}
 	workEvent(t, supervisor, "thread/status/changed", `{"threadId":"a","status":{"type":"idle"}}`)
+	if !supervisor.activitySnapshot().Working {
+		t.Fatal("thread idle cannot release an unfinished turn's command ownership")
+	}
+	workEvent(t, supervisor, "turn/completed", `{"threadId":"a","turn":{"id":"new","status":"completed"}}`)
 	if supervisor.activitySnapshot().Working {
-		t.Fatal("authoritative idle status clears work")
+		t.Fatal("the matching terminal receipt clears work")
 	}
 }
 
@@ -151,7 +155,7 @@ func TestCodexActivityCancelledBeforeWriteDoesNotRemainBusy(t *testing.T) {
 	defer cancel()
 	done := make(chan error, 1)
 	go func() {
-		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true)
+		_, err := supervisor.request(ctx, "turn/start", json.RawMessage(`{"threadId":"a"}`), true, nil)
 		done <- err
 	}()
 	deadline := time.Now().Add(time.Second)

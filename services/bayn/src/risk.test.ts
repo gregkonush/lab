@@ -1505,6 +1505,75 @@ test('rejects entry quotes from after the bound pricing observation and invalid 
   expect(() => makeState({ entryQuote: { eventAt: state.marketDataObservedAt, maximumAgeMs: 0 } })).toThrow()
 })
 
+test.each([OrderType.Limit, OrderType.StopLimit])(
+  'fractional %s protection retains the exact minimum sell proceeds',
+  (orderType) => {
+    const quantityAtoms = 41_753_408_340n
+    const limitPriceMicros = 104_177_219n
+    const stopPriceMicros = 104_281_500n
+    const notionalFloor = (quantityAtoms * limitPriceMicros) / 1_000_000_000n
+    const marketValue = (quantityAtoms * stopPriceMicros + 999_999_999n) / 1_000_000_000n
+    const timeInForce =
+      orderType === OrderType.StopLimit ? TimeInForce.GoodUntilCanceled : TimeInForce.ImmediateOrCancel
+    const policy = makePolicy({
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedSymbols: ['SOL/USD'],
+      allowedOrderTypes: [orderType],
+      allowedTimeInForce: [timeInForce],
+    })
+    const intent = makeIntent({
+      symbol: 'SOL/USD',
+      side: OrderSide.Sell,
+      orderType,
+      timeInForce,
+      quantityAtoms: quantityAtoms.toString(),
+      limitPriceMicros: limitPriceMicros.toString(),
+      notionalLimitMicros: notionalFloor.toString(),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
+      ...(orderType === OrderType.StopLimit
+        ? {
+            protection: {
+              _tag: 'StopLimit',
+              stopPriceMicros: stopPriceMicros.toString(),
+              entryDecisionHash: hash('8'),
+            },
+          }
+        : {}),
+    })
+    const base = makeState()
+    const position = base.positions[0]
+    if (position === undefined) throw new Error('position fixture required')
+    const equityMicros = (BigInt(base.account.cashMicros) + marketValue).toString()
+    const state = makeState({
+      account: { ...base.account, equityMicros },
+      positions: [
+        {
+          ...position,
+          symbol: 'SOL/USD',
+          quantityAtoms: quantityAtoms.toString(),
+          costBasisMicros: marketValue.toString(),
+          averageEntryPriceMicros: stopPriceMicros.toString(),
+          marketPriceMicros: stopPriceMicros.toString(),
+          marketValueMicros: marketValue.toString(),
+          unrealizedPnlMicros: '0',
+        },
+      ],
+      marketDataSymbol: 'SOL/USD',
+      referencePriceMicros: stopPriceMicros.toString(),
+      expectedExecutionPriceMicros: limitPriceMicros.toString(),
+      dayStartEquityMicros: equityMicros,
+      peakEquityMicros: equityMicros,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T19:35:00.000Z',
+    })
+    const result = evaluateSuccess(intent, state, policy)
+    expect(notionalFloor).toBe(4_349_753_964n)
+    expect(result.metrics.orderNotionalMicros).toBe('4349753965')
+    expect(result.gates.find((gate) => gate.name === Gate.IntentNotional)?.passed).toBe(true)
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+  },
+)
+
 test('property: fractional LIMIT buys honor a spending ceiling and sells honor a proceeds floor', () => {
   checkProperty(
     'fractional-limit-notional',

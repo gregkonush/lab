@@ -95,21 +95,25 @@ type codexApproval struct {
 }
 
 type codexProcessGeneration struct {
-	id      string
-	ready   chan struct{}
-	failure error
+	id       string
+	ready    chan struct{}
+	failure  error
+	commands map[codexTurnIdentity]map[string]struct{}
 }
 
 type codexSupervisor struct {
-	binary          string
-	browserMCP      bool
-	cwd             string
-	closed          atomic.Bool
-	requestID       atomic.Uint64
-	writePermit     chan struct{}
-	loginMu         sync.Mutex
-	operationMu     sync.Mutex
-	responseTimeout time.Duration
+	binary            string
+	browserMCP        bool
+	cwd               string
+	closed            atomic.Bool
+	requestID         atomic.Uint64
+	writePermit       chan struct{}
+	loginMu           sync.Mutex
+	relayMu           sync.Mutex
+	relayRoot         string
+	connectorsEnabled bool
+	operationMu       sync.Mutex
+	responseTimeout   time.Duration
 
 	mu              sync.Mutex
 	command         *exec.Cmd
@@ -137,25 +141,26 @@ type codexSupervisor struct {
 
 func newCodexSupervisor(binary, cwd string) *codexSupervisor {
 	supervisor := &codexSupervisor{
-		binary:          binary,
-		cwd:             cwd,
-		writePermit:     make(chan struct{}, 1),
-		responseTimeout: codexResponseWriteTimeout,
-		generation:      newCodexProcessGeneration(),
-		workRequests:    make(map[string]struct{}),
-		activeTurns:     make(map[string]string),
-		workChangedAt:   time.Now(),
-		pending:         make(map[string]chan codexPendingResult),
-		approvals:       make(map[string]codexApproval),
-		subscriptions:   make(map[uint64]codexSubscription),
-		shutdown:        make(chan struct{}),
+		binary:            binary,
+		connectorsEnabled: os.Getenv("TENGRI_CONNECTORS_ENABLED") == "true",
+		cwd:               cwd,
+		writePermit:       make(chan struct{}, 1),
+		responseTimeout:   codexResponseWriteTimeout,
+		generation:        newCodexProcessGeneration(),
+		workRequests:      make(map[string]struct{}),
+		activeTurns:       make(map[string]string),
+		workChangedAt:     time.Now(),
+		pending:           make(map[string]chan codexPendingResult),
+		approvals:         make(map[string]codexApproval),
+		subscriptions:     make(map[uint64]codexSubscription),
+		shutdown:          make(chan struct{}),
 	}
 	supervisor.writePermit <- struct{}{}
 	return supervisor
 }
 
 func newCodexProcessGeneration() *codexProcessGeneration {
-	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{})}
+	return &codexProcessGeneration{id: fmt.Sprintf("%x", randBytes()), ready: make(chan struct{}), commands: make(map[codexTurnIdentity]map[string]struct{})}
 }
 
 func randBytes() []byte {
@@ -249,7 +254,6 @@ func (supervisor *codexSupervisor) runProcess() error {
 	if err != nil {
 		return err
 	}
-	command.Stderr = io.Discard
 	if err := command.Start(); err != nil {
 		return err
 	}
@@ -274,7 +278,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		},
 	})
 	if err == nil {
-		_, err = supervisor.request(ctx, "initialize", initialize, false)
+		_, err = supervisor.request(ctx, "initialize", initialize, false, nil)
 	}
 	cancel()
 	if err != nil {
@@ -290,6 +294,10 @@ func (supervisor *codexSupervisor) runProcess() error {
 	supervisor.mu.Lock()
 	closeSignal(generation.ready)
 	supervisor.mu.Unlock()
+	supervisor.publish("tengri/runtimeReady", "", map[string]any{
+		"method": "tengri/runtimeReady",
+		"params": map[string]string{"generationId": generation.id},
+	})
 	waitErr := command.Wait()
 	processErr := errors.New("Codex app-server exited")
 	if waitErr != nil {
@@ -339,6 +347,9 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	}
 	if method == "account/login/start" {
 		return supervisor.startLogin(ctx, params)
+	}
+	if strings.HasPrefix(method, "relay/") {
+		return supervisor.relayCall(ctx, method, params)
 	}
 	if method == "tengri/pending" {
 		return supervisor.pendingApprovals(params)
@@ -395,7 +406,7 @@ func (supervisor *codexSupervisor) call(ctx context.Context, method string, para
 	if method == "turn/start" || method == "turn/steer" || method == "turn/interrupt" || method == "tengri/resolveApproval" {
 		return supervisor.operation(ctx, method, params)
 	}
-	return supervisor.request(ctx, method, params, true)
+	return supervisor.request(ctx, method, params, true, nil)
 }
 
 func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.RawMessage) (codexCallResult, error) {
@@ -422,7 +433,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 	if previousLoginID != "" {
 		cancelParams, _ := json.Marshal(map[string]string{"loginId": previousLoginID})
 		cancelContext, cancel := context.WithTimeout(ctx, 10*time.Second)
-		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true)
+		_, cancelErr := supervisor.request(cancelContext, "account/login/cancel", cancelParams, true, nil)
 		cancel()
 		if cancelErr != nil {
 			return codexCallResult{}, fmt.Errorf("cancel previous Codex device login: %w", cancelErr)
@@ -433,7 +444,7 @@ func (supervisor *codexSupervisor) startLogin(ctx context.Context, params json.R
 		}
 		supervisor.mu.Unlock()
 	}
-	result, err := supervisor.request(ctx, "account/login/start", params, true)
+	result, err := supervisor.request(ctx, "account/login/start", params, true, nil)
 	if err != nil {
 		return codexCallResult{}, err
 	}
@@ -484,12 +495,14 @@ func (supervisor *codexSupervisor) request(
 	method string,
 	params json.RawMessage,
 	waitReady bool,
+	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
-	var generation *codexProcessGeneration
 	if waitReady {
-		supervisor.mu.Lock()
-		generation = supervisor.generation
-		supervisor.mu.Unlock()
+		if generation == nil {
+			supervisor.mu.Lock()
+			generation = supervisor.generation
+			supervisor.mu.Unlock()
+		}
 		if err := supervisor.waitForGeneration(ctx, generation); err != nil {
 			return codexCallResult{}, err
 		}
@@ -540,7 +553,7 @@ func (supervisor *codexSupervisor) request(
 			return codexCallResult{}, result.localErr
 		}
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
+			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
 		}
 		return codexCallResult{
 			result:        result.result,
@@ -671,6 +684,7 @@ func (supervisor *codexSupervisor) handleServerMessage(
 	if !supervisor.isCurrentGeneration(generation) {
 		return
 	}
+	supervisor.observeCommands(generation, message)
 	if message.Method == "turn/completed" {
 		if err := supervisor.recordTerminal(generation, message.Params); err != nil {
 			supervisor.publish("error", "", map[string]any{"method": "error", "params": map[string]string{"message": "Codex terminal receipt could not be persisted; recovery may require reconciliation"}})
@@ -1581,7 +1595,7 @@ func codexResumeThreadID(params json.RawMessage) (string, bool) {
 
 func allowedCodexMethod(method string) bool {
 	switch method {
-	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval":
+	case "account/read", "account/login/start", "model/list", "mcpServerStatus/list", "thread/start", "thread/read", "thread/resume", "thread/turns/list", "thread/items/list", "turn/start", "turn/steer", "turn/interrupt", "tengri/pending", "tengri/operation", "tengri/reconcileOperation", "tengri/resolveApproval", "relay/identity", "relay/configure", "relay/remove":
 		return true
 	default:
 		return false

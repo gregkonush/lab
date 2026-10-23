@@ -175,6 +175,21 @@ describe('Codex event replay', () => {
     expect(next).toEqual([turnError, warning, started])
   })
 
+  test('clears a restart notice on initialized runtime recovery without starting a turn', () => {
+    const ready: TengriCodexEvent = {
+      ...runtimeError,
+      sequence: 8,
+      kind: 'thread-state',
+      method: 'tengri/runtimeReady',
+      text: '',
+    }
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    expect(appendCodexEvent([runtimeError, turnError, warning], ready)).toEqual([turnError, warning, ready])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEvent([laterError], ready)).toEqual([laterError, ready])
+  })
+
   test('does not replay a runtime error older than a successful thread snapshot', () => {
     expect(appendCodexEventAfterRestore([], runtimeError, new Map(), 8)).toEqual([])
     const laterError = { ...runtimeError, sequence: 9 }

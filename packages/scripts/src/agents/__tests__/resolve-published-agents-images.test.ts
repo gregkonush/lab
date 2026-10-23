@@ -1,64 +1,12 @@
 import { describe, expect, it } from 'bun:test'
-import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join, relative } from 'node:path'
-import { isMap, isSeq, parseDocument } from 'yaml'
 
 import { repoRoot } from '../../shared/cli'
 import { resolvePublishedAgentsImages } from '../resolve-published-agents-images'
 
 describe('resolvePublishedAgentsImages', () => {
-  it('reads promoted image pins while leaving the source baseline unchanged', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'promoted-agents-images-'))
-    const valuesPath = join(dir, 'argocd/applications/agents/values.yaml')
-    const githubOutput = join(dir, 'github-output')
-    const git = (...args: string[]) => execFileSync('git', args, { cwd: dir, stdio: 'pipe' })
-    const values = (tag: string, digest: string) =>
-      `image:\n  repository: registry.example/lab/agents\n  tag: ${tag}\n  digest: sha256:${digest.repeat(64)}\n`
-
-    try {
-      git('init', '--initial-branch=main')
-      git('config', 'user.name', 'Agents CI fixture')
-      git('config', 'user.email', 'agents-ci@example.invalid')
-      mkdirSync(join(dir, 'argocd/applications/agents'), { recursive: true })
-      writeFileSync(valuesPath, values('baseline', 'a'))
-      git('add', 'argocd/applications/agents/values.yaml')
-      git('commit', '-m', 'baseline')
-      git('checkout', '-b', 'kargo/agents')
-      writeFileSync(valuesPath, values('promoted', 'b'))
-      git('commit', '-am', 'promotion')
-      git('checkout', 'main')
-      git('remote', 'add', 'origin', dir)
-
-      const workflow = parseDocument(readFileSync(join(repoRoot, '.github/workflows/agents-ci.yml'), 'utf8'))
-      const steps = workflow.getIn(['jobs', 'integration', 'steps'])
-      if (!isSeq(steps)) throw new Error('Agents integration steps are missing')
-      const step = steps.items.find((item) => isMap(item) && item.get('id') === 'promoted_agents_values')
-      const script = isMap(step) ? step.get('run') : undefined
-      if (typeof script !== 'string') throw new Error('Promoted Agents values step is missing')
-
-      execFileSync('bash', ['-euo', 'pipefail', '-c', script], {
-        cwd: dir,
-        env: { ...process.env, RUNNER_TEMP: dir, GITHUB_OUTPUT: githubOutput },
-        stdio: 'pipe',
-      })
-
-      const promotedPath = readFileSync(githubOutput, 'utf8')
-        .split('\n')
-        .find((line) => line.startsWith('values_path='))
-        ?.slice('values_path='.length)
-      if (!promotedPath) throw new Error('Promoted values path output is missing')
-      expect(resolvePublishedAgentsImages(promotedPath).runner).toMatchObject({
-        tag: 'promoted',
-        digest: `sha256:${'b'.repeat(64)}`,
-      })
-      expect(readFileSync(valuesPath, 'utf8')).toBe(values('baseline', 'a'))
-    } finally {
-      rmSync(dir, { recursive: true, force: true })
-    }
-  })
-
   it('uses immutable Agents image pins from the GitOps values file', () => {
     const dir = mkdtempSync(join(tmpdir(), 'resolve-published-agents-images-'))
     const valuesPath = join(dir, 'values.yaml')

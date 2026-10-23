@@ -29,6 +29,19 @@ enter cycle execution. Timeouts after that boundary retain fail-closed mutation 
 [October 17 runtime and crypto entry investigation](../../docs/bayn/crypto-entry-research-2026-10-17.md) for the
 reproduction, cost evidence and research limitations; this recovery does not establish profitable trading.
 
+Live market-data reference verification retains a bounded fingerprint of each fully verified captured snapshot.
+An exact match across the manifest, bars, quotes, trades and latest quotes reuses that capture's source proof without
+reconstructing it again after entry pricing. Changed data still requires full replay verification; unobserved cuts
+also require an exact committed database reference. Retained and returned references have separate manifest copies.
+Quote age, inference expiry, current authority, risk evaluation and durable decision guards remain independent checks.
+
+Jev batch admission detaches the selected source observation before reproducing it once, then carries that private
+verified graph into persistence. Mutating a caller or database-result alias during an awaited read cannot change the
+verified bytes or their sealed hash. The writer still checks the cycle, authority generation, exact reconciliation
+and portfolio sources in its transaction before
+recording the observation and request claims. Admission keeps its original deadline checks before and after that work;
+reusing the verified observation does not extend the inference window or authorize an incomplete batch.
+
 A preflight failure can also restrict a generation whose earlier cycles all finished without targets. Native recovery
 accepts those completed decisions only when every generation-bound decision matches a terminal `NO_TRADE` cycle's
 account, plan, strategy, protocol, snapshot and submission deadline with empty intent lists, and the generation has
@@ -41,10 +54,12 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v16 / signal state v15. Jev selects one complete, cost-valid entry/stop/target
-plan or abstains through a single Choice. Code supplies bounded hypothetical order scenarios and observed price context,
+The source selects `jev` protocol v18 / signal state v16. Jev separately judges the current setup and whether an actual
+complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
+`setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
+setup. Code supplies bounded hypothetical order scenarios and observed price context,
 labels the scenarios explicitly, and validates/funds every candidate before inference. A price above a recent high is
-an order proposal, never fabricated market history. There are no independent entry and protection answers, no default
+an order proposal, never fabricated market history. The stop and target remain one complete plan, with no default
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
 constraints and the hard migration. These model decisions have no demonstrated profitable edge.
@@ -59,6 +74,11 @@ the execution-session status and metric report `BLOCKED`, not an input outage. I
 abstention or a risk-approved order. Position management and reducing exits continue
 through their existing path, and full submission-time risk checks still run for every order. Read-only OBSERVE
 research is unaffected. Capital activation and recovery retain the account's original peak and daily turnover.
+
+Durable pass readers and public status support optional typed `accountProtectionReasons`:
+`DAILY_LOSS_EXCEEDED`, `DRAWDOWN_EXCEEDED`, or both. Historical observations without this field remain readable.
+This reader-first rollout keeps both entry writers on their existing shape; enable the field only after the
+updated readers are deployed, so older status pods can decode shared controller evidence during the transition.
 
 After unfinished work is recovered or an expired unused lease is terminalized, an exact flat reconciliation
 preflight can hold entry admission before creating another cycle. The existing daily-loss and drawdown comparisons
@@ -83,12 +103,17 @@ rolls back the new observation and plan. Each response receipt remains independe
 expiry, its claims receive undispatched receipts without provider I/O. The existing ten-second inference validity,
 quote freshness checks, complete-batch requirement and risk limits are unchanged.
 
-Migration 133 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
-complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
-retained generations remain immutable audit evidence. New authority requires the v16 strategy identity.
+When every candidate already has a committed resolution, finalization verifies the persisted requests, receipts,
+resolutions and source observations, then commits the complete result with one idempotent insert. Immutable evidence
+does not require another locking transaction. Concurrent finalizers retain the first committed result; pending claims
+still use the locked recovery and abandonment path. The result must remain usable at the actual post-commit clock.
 
-Migration 136 closes the remaining retired authority write paths: new PAPER generations require the research v3
-activation contract and Jev v16, while OBSERVE initialization and recovery remain available. It changes constraints
+Migration 140 retires prior executable Jev authority after terminal mutation cycles, flat inventory, settled orders,
+complete accounting and fresh exact reconciliation. It clamps prior PAPER authority for native OBSERVE recovery;
+retained generations remain immutable audit evidence. New authority requires the v18 strategy identity.
+
+Migration 136 closed the remaining retired authority write paths at Jev v16. Migration 137 advances that same
+research v3 activation contract to Jev v17, while OBSERVE initialization and recovery remain available. It changes constraints
 only, without rotating active authority, rewriting retained generations or changing accounting history. Historical
 qualified and retired-strategy generations remain readable and can still recover through their existing OBSERVE path.
 
@@ -101,7 +126,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v16 uses state v15.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v18 uses state v16.
 Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
@@ -121,6 +146,13 @@ unfinished bound cycles or unresolved mutations before installing the new write 
 same version. Historical rows retain their original bytes and cannot enter the current executable codecs. Accounting
 reads retain historical identities and report unsupported execution evidence as unknown rather than inventing prices.
 Recovery derives duration from the held instruments and processes one market per pass. There is no MARKET submission path; GTC is restricted to strategy-bound crypto protective stops.
+SELL STOP_LIMIT protection uses the same minimum-proceeds floor as SELL LIMIT orders, including fractional inventory
+after crypto fees. Conservative order-risk ceilings remain separate from that floor. When a native protection check
+observes a flat account, the controller still settles any committed close intents before requesting cycle completion.
+Flat inventory cannot bypass durable terminal-intent and accounting completion evidence.
+Final instrument admission accepts crypto SELL STOP_LIMIT/GTC only through close-only submission, with positive,
+broker-aligned stop and limit prices and a sell limit no higher than its stop. Ordinary LIMIT durations and price
+increments remain enforced; held inventory, current authority and account risk checks still apply before transmission.
 An unused entry admission expires after one minute. Completed or unused attempts rotate eligible equity and crypto
 profiles by their persisted attempt ordinal, so an empty equity session cannot hold the account until its closing bell.
 Entry construction checks that original admission lease after inference and again after reconciliation and pricing.
@@ -167,9 +199,9 @@ above the inference-bound ceiling is rejected before decision construction and a
 Entry and liquidation pricing may use a quote from just before the completed-minute boundary while it remains
 within the exact quote-age limit. Crossing that boundary does not renew the quote or inference lifetime.
 
-Protocol v16 and trading-signal input v15 replace their executable predecessors. Migration 133 requires flat,
+Protocol v18 and trading-signal input v16 replace their executable predecessors. Migration 140 requires flat,
 settled inventory, terminal mutation cycles, fresh reconciliation and complete accounting before restricting new Jev
-authority generations to v16. Create a new same-account PAPER mandate against the verified published v16 image through
+authority generations to v18. Create a new same-account PAPER mandate against the verified published v18 image through
 its sealed GitOps path after cutover. Historical evidence remains immutable. Retired model exits and fixed-percentage
 execution policies cannot authorize current execution. See [strategy protection](../../docs/bayn/strategy-protection.md)
 for the rule, supported broker orders, failure behavior and parameter evidence.
@@ -324,6 +356,15 @@ catalog evidence, dashboard panels and alerts. The API reuses its existing metri
 native Effect metrics to the existing Mimir gateway. The runbook includes a read-only rollout acceptance command.
 
 ## Broker observation owner
+
+Stable history compares broker order facts before and after the account read. It excludes
+the local `observedAt` timestamp on both parent orders and bracket children, because each
+HTTP read assigns a new timestamp. Child execution facts, including status, prices,
+filled quantity and submission time, still invalidate a changed snapshot.
+
+Alpaca's nested order history counts bracket children toward the requested page limit.
+Pagination counts both parent rows and their children before deciding that history is complete.
+A page containing 498 parents and two children therefore continues to older orders at a 500-order limit.
 
 Broker position symbols must agree with their asset class before entering
 reconciliation. A canonical crypto pair labeled as an equity, or an equity symbol
@@ -572,7 +613,7 @@ evidence deadline after persistence. Synchronous commit and standby durability a
 
 The submission window follows the entitled market calendar. Bayn can evaluate after the first completed minute and
 the two-second decision delay, at 08:01:02 New York time when the current IEX window opens at 08:00. Crypto evaluates continuously. It uses up to 30 minutes of actual
-completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. Jev selects complete plans and ranks simultaneous eligible entries by the selected plan probability, for both equities and crypto. Entry spreads may not exceed five basis
+completed history and evaluates the source-controlled candidate universe against SPY until five minutes before the close. Jev selects complete plans and ranks simultaneous eligible entries by the upward setup probability, for both equities and crypto. Entry spreads may not exceed five basis
 points for equities or 25 basis points for crypto. The market profile is part of the strategy identity. It selects at most one long position, capped at 20% of account equity and reduced when
 the actual weighted target would exceed order, symbol, exposure or remaining daily turnover limits. The daily counter
 includes both buys and sells. Allocation reserves slippage and any current exposure's liquidation notional before
@@ -612,10 +653,12 @@ quantity caps and final submission deadlines still apply. This entry check never
 Before selecting a nonempty entry's execution quote, a pass cache cut without the protocol's ten-second quote
 headroom is reconciled once. Bayn then checks the original observation times against the existing broker-risk age
 limit, current authority and clock again. If the refreshed facts cannot cover that quote lifetime or the model batch
-deadline expires, the unbound entry waits for fresh evidence. Short reconciliation cadences remain supported and may
-still require a later refresh. The model evidence remains immutable, current reconciled facts supply risk inputs, and
-final intent, writer-fence and submission-expiry checks still apply. Ordinary reconciliation reads and quote or broker
-freshness limits are unchanged; the preparation ordering does not guarantee submission.
+deadline expires, the unbound entry waits for fresh evidence. Changed authority or expired broker facts still require
+reconciliation. The model evidence remains immutable, current reconciled facts supply risk inputs, and
+final intent, writer-fence and submission-expiry checks still apply. The controller's reconciliation cadence schedules
+preflights; it does not expire broker-valid facts during one serialized preparation. The pass rechecks authority on
+every reuse and discards its cache before post-mutation continuation. Quote and broker freshness limits are unchanged;
+the preparation ordering does not guarantee submission.
 
 Position management binds original accounted entry fills, posted inventory debits, and fresh reconciliation.
 Gross entry fills minus posted coin debits and accounted protective disposals must equal held quantity. A missing or unposted debit cannot authorize
@@ -1480,6 +1523,11 @@ codecs remain available to historical performance reporting, and the write const
 
 ## Replay and backtesting
 
+Native simulated broker state uses `bayn.simulated-broker-state.v7`. Fill activity IDs include a zero-padded global
+execution ordinal before the order ID, so same-millisecond buys and protective sells retain their execution order
+during accounting and checkpoint recovery. Earlier v6 checkpoints require their original executable; new runs and
+restores accept v7 only. Production broker activity IDs and accounting ordering are unchanged.
+
 `bayn-gap-recovery` is an offline, original-receipt decision replay command built by
 `bun run --filter @proompteng/bayn build:research`. Run it with
 `bun run --filter @proompteng/bayn gap:recovery`. It implements the fixed gap-recovery entry rule, with a separate
@@ -1531,7 +1579,7 @@ it does not reuse historical model answers or establish profitability. A new evi
 
 `entry: "DETERMINISTIC"` with `management: "MECHANICAL"` creates no provider client. Jev is available only for
 entry selection. Independent controls share their explicit IOC execution, finite liquidity, fees, turnover,
-loss/drawdown, stop, holding and close rules. They do not qualify the v16 native broker lifecycle or grant authority.
+loss/drawdown, stop, holding and close rules. They do not qualify the v18 native broker lifecycle or grant authority.
 
 `turnoverPolicy: "ENTRY_AND_EXPECTED_EXIT"` reserves both entry notional and a modeled exit allowance;
 `IMMEDIATE_ADJUSTMENT` uses immediate entry admission. These scenario choices cannot block mandatory reducing exits
@@ -1558,7 +1606,7 @@ The separate [control portfolio command](../../docs/bayn/control-portfolios.md) 
 development portfolios with independent cash and positions, repeated entries, partial exits, and shared execution
 accounting. External data expenses reduce reported net equity without changing broker cash, sizing or risk, as in
 native replay. The control command accepts only `MECHANICAL` management. Its independent fixed exit profile is an
-offline comparison and does not qualify the active v16 strategy or its native broker lifecycle. Retired research model
+offline comparison and does not qualify the active v18 strategy or its native broker lifecycle. Retired research model
 management and its duplicate execution implementation have been removed. Timing and execution assumptions still
 require calibration before prospective acceptance.
 
@@ -1614,7 +1662,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v15"`, and positive `maximumCalls`. The input
+`inputDefinition: "bayn.jev-trading-signal-state.v16"`, and positive `maximumCalls`. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
@@ -1835,44 +1883,17 @@ failures with observation age, without recording account identifiers or payloads
 
 ## Independent Jev instruction research
 
-The [Harness2 adapter](../../docs/bayn/harness2.md) refines the same Jev complete-plan entry
-question instruction used by the trading runtime. Native probes reproduce retained observations and use Bayn's
-funded entry-selection code. A separate generative editor proposes instructions; it cannot change market evidence,
-answer choices or execution controls. Frozen candidates are compared with the baseline on later observations hidden
-from the editor. The old Alpha-R1 factor-selection adapter is removed. Research output does not grant trading
-authority or establish economic improvement.
+The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
+consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
+runner and active factor/editor contracts are removed. Jev remains the typed System One model; the pinned Qwen3-8B
+endpoint only edits the question document through the signed research workflow.
 
-`BaynResearchRun` runs at a dedicated authenticated Restate endpoint and never joins the account execution object.
-The [runtime contract](../../docs/bayn/harness2.md) describes frozen development context, decoding policy,
-original-input eligibility, deadline/cancellation, ambiguous recovery and complete-cost requirements.
-The [GitOps runbook](../../argocd/applications/bayn/README.md#isolated-jev-instruction-research) defines the approved restricted
-database identity, separate run-approval credential and normal Kargo release path. The source includes no broker or capital capability in the research server.
-
-The pinned vLLM endpoint supplies cumulative usage on streaming chunks. The decoder requires stable prompt counts,
-nondecreasing completion counts within the approved budget, and one final usage summary after normal generation
-finish. Intermediate counts never substitute for that final summary or complete stream termination.
-The request remains limited to 256 KiB. The raw response allows 2 MiB so per-token cumulative-usage frames fit the
-4,096-token ceiling. The receipt's base64 limit derives from that raw bound, and the operator limits the serialized
-receipt to 5 MiB, including base64 and JSON text escaping. Byte limits never replace token, deadline or termination checks.
-The failed-attempt alert uses the exported OTLP counter `bayn_research_attempts` without an added `_total` suffix.
-The worker alert checks the native Restate ReplicaSets' desired replicas. Metrics include the worker instance ID,
-matching trace identity and keeping cumulative series separate during revision overlap.
-
-The installed `bayn-research` command validates a frozen run without credentials or submits it to a configured native
-Restate ingress. It writes a private receipt exclusively and never overwrites an existing evidence file.
-Submission requires `BAYN_RESEARCH_APPROVAL_KEY` from the approved secret-management path. The CLI signs the exact
-run identity; only its approval proof is submitted, and the key is never logged or journaled in Restate.
-
-```sh
-bayn-research --validate run.json
-RESTATE_INGRESS_ORIGIN=http://restate.restate.svc.cluster.local:8080 \
-  bayn-research --run run.json --output new-receipt.json
-```
-
-A completed proposal, token usage and known editor allocation remain UNQUALIFIED. The original full-session capture,
-Flamingo preparation costs, shared allocation evidence, untouched comparisons and session-time execution/closure
-measurements are required before economic promotion. Missing prices stay unknown. Research expense posting reuses
-the existing asynchronous journal and USD_PICO ledger 7002; it preserves all Jev identities and trading accounts.
+The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
+Research variants change one validated data module and retain exact source, dependency, request/response, cost and
+execution evidence. The runner reserves paid calls before dispatch, rejects ambiguous retries, keeps evaluation
+feedback out of proposals and retains an unchanged-question repeat. Existing numerical controls provide a separate
+common mechanical-exit comparison. Unknown costs remain explicit; all outputs are unqualified and grant no capital authority.
+Use the runbook for existing-data manifests, isolated local accounting targets, compiler source mounts and receipts.
 
 ### Independent public information jobs
 
@@ -2003,9 +2024,9 @@ per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. 
 quote, trade and feature checks still govern every order.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
-predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 133 owns the
-current complete-plan v16 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
-reconciliation before activating a new same-account v16 PAPER mandate against its verified published image.
+predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 140 owns the
+current economic-plan v18 cutover. Verify these migrations, flat settled inventory, terminal orders and fresh exact
+reconciliation before activating a new same-account v18 PAPER mandate against its verified published image.
 Operator restrictions and immutable financial evidence remain enforced throughout OBSERVE recovery.
 See the [Alpaca hours investigation](../../docs/bayn/alpaca-equity-hours-2026-10-16.md) for feed entitlements and
 current execution limits. This migration grants no live capital authority.

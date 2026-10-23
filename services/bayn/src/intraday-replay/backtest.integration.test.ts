@@ -18,7 +18,7 @@ import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
-import { jevHarnessBacktestOutcome } from '../jev/harness2-economics'
+import { jevBacktestOutcome } from '../jev/experiment-economics'
 import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
@@ -247,7 +247,7 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
             mode: 'measured-provider',
             maximumCalls: 1000,
             model: jevModel,
-            inputDefinition: 'bayn.jev-trading-signal-state.v15',
+            inputDefinition: 'bayn.jev-trading-signal-state.v16',
             costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
           },
           allocatedDataCostPerSessionMicros: boundary === 'unknown-data-cost' ? null : '0',
@@ -365,7 +365,7 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
         }
         expect(
           Result.isFailure(
-            jevHarnessBacktestOutcome({
+            jevBacktestOutcome({
               report,
               variantBuild: null,
               instructions: jevInstructions,

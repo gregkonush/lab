@@ -429,25 +429,20 @@ impl TengriAgentRun {
         };
         let workspace =
             ctx.object_client::<TengriWorkspaceRunsClient>(&admission.claim.workspace_uid);
-        if let Err(error) = workspace.claim(Json(admission.claim.clone())).call().await {
-            if error.code() != 409 {
-                return Err(error.into());
+        let mut stop = match workspace.claim(Json(admission.claim.clone())).call().await {
+            Ok(stop) => stop.into_inner(),
+            Err(error) => {
+                if error.code() != 409 {
+                    return Err(error.into());
+                }
+                snapshot.state = State::Rejected {
+                    reason: "workspace already has an active run".into(),
+                };
+                ctx.set("snapshot", Json(snapshot.clone()));
+                return Ok(Json(snapshot.state));
             }
-            snapshot.state = State::Rejected {
-                reason: "workspace already has an active run".into(),
-            };
-            ctx.set("snapshot", Json(snapshot.clone()));
-            return Ok(Json(snapshot.state));
-        }
+        };
         ctx.set("snapshot", Json(snapshot.clone()));
-        let mut stop = workspace
-            .latest_stop(Json(StopQuery {
-                claim: admission.claim.clone(),
-                known_id: String::new(),
-            }))
-            .call()
-            .await?
-            .into_inner();
         snapshot.state = if stop.is_some() {
             State::Cancelled {
                 turn_id: String::new(),
@@ -1005,10 +1000,18 @@ impl TengriWorkspaceRuns {
     }
 
     #[handler(ingress_private = true)]
-    async fn claim(&self, ctx: ObjectContext<'_>, claim: Json<Claim>) -> HandlerResult<()> {
+    async fn claim(
+        &self,
+        ctx: ObjectContext<'_>,
+        claim: Json<Claim>,
+    ) -> HandlerResult<Json<Option<Control>>> {
         let active = ctx.get::<Json<Claim>>("active").await?;
         if active.as_ref().is_some_and(|active| active.0 == claim.0) {
-            return Ok(());
+            return Ok(Json(
+                ctx.get::<Json<Control>>("stop")
+                    .await?
+                    .map(Json::into_inner),
+            ));
         }
         if active.is_some() {
             return Err(
@@ -1020,7 +1023,7 @@ impl TengriWorkspaceRuns {
         }
         ctx.clear("stop");
         ctx.set("active", claim);
-        Ok(())
+        Ok(Json(None))
     }
 
     #[handler(ingress_private = true)]
@@ -1281,6 +1284,11 @@ impl ControlPlane {
             .and_then(serde_json::Value::as_str)
             .filter(|status| matches!(*status, "completed" | "failed" | "interrupted"))
         {
+            if status == "interrupted" {
+                return State::Cancelled {
+                    turn_id: turn_id.into(),
+                };
+            }
             return observed_turn(
                 &serde_json::json!({"thread":{"turns":[{"id":turn_id,"status":status}]}}),
                 turn_id,
@@ -1495,8 +1503,9 @@ fn observed_turn(value: &serde_json::Value, turn_id: &str) -> State {
             turn_id: turn_id.into(),
             reason: "Codex reported a failed turn".into(),
         },
-        Some("interrupted") => State::Cancelled {
-            turn_id: turn_id.into(),
+        Some("interrupted") => State::Cancelling {
+            turn_id: Some(turn_id.into()),
+            reason: "waiting for the interrupted turn's command cleanup receipt".into(),
         },
         Some("inProgress") => State::Running {
             turn_id: turn_id.into(),

@@ -545,7 +545,8 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v8',
+          schemaVersion: 'bayn.control-study-input.v9',
+          costObjective: 'ALL_COSTS',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,
           management: ControlManagementMode.Mechanical,
@@ -562,7 +563,7 @@ test.each(['cash', 'filled'] as const)(
               mode: 'measured-provider',
               maximumCalls: 1000,
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v15',
+              inputDefinition: 'bayn.jev-trading-signal-state.v16',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
@@ -594,7 +595,7 @@ test.each(['cash', 'filled'] as const)(
           },
         }
         const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-        expect(report.schemaVersion).toBe('bayn.control-study-report.v6')
+        expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
         expect(report.sessions.map((result) => result.policy)).toEqual([
           ControlPolicy.Ridge,
           ControlPolicy.TrainingMean,

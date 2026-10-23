@@ -21,7 +21,7 @@ func (supervisor *codexSupervisor) activitySnapshot() *pb.CodexActivity {
 	if supervisor.generation.failure != nil || supervisor.stdin == nil || supervisor.workUnknown {
 		return nil
 	}
-	working := len(supervisor.workRequests) > 0 || len(supervisor.activeTurns) > 0 || len(supervisor.approvals) > 0
+	working := len(supervisor.workRequests) > 0 || len(supervisor.activeTurns) > 0 || len(supervisor.approvals) > 0 || len(supervisor.generation.commands) > 0
 	idle := time.Since(supervisor.workChangedAt)
 	if working || idle < 0 {
 		idle = 0

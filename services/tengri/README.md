@@ -1,5 +1,10 @@
 # Tengri control plane
 
+The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
+`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
+workspace and conversation requests do not call Relay.
+
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
@@ -411,7 +416,15 @@ are accepted, and zero disables automatic sleep. Manual sleep always releases re
 starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
 Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
 no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
-unavailable, restarting or older guests without work metadata defer automatic sleep. Manual sleep remains explicit.
+unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
+activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
+is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
+each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
+reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
+admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
+perform admission even when no guest control RPC is sent. Metadata work probes and background editor/browser renewals
+do not perform admission. Manual sleep remains explicit.
 Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
@@ -524,7 +537,9 @@ conversation. Attachment and native operation receipts remain with the retained 
 
 ## Durable Codex runs
 
-Guest API 6 requires canonical UUID operation identities for every submission and control. `SendCodexInput` returns a
+Guest API 7 requires canonical UUID operation identities for every submission and control, plus confirmed native
+command cleanup before reporting cancellation. Old guests require a fenced cold replacement on their retained home.
+`SendCodexInput` returns a
 durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
 returns its current state. The public controller stages content-addressed image references and acknowledges a run
 after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
@@ -542,8 +557,11 @@ admission or transcript does not grant execution authority.
 Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
 transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
 receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
-notifications are fsynced under their accepting generation, thread and turn before publication, so confirmed failure
-and interruption survive process replacement without trusting a reconstructed interrupted history.
+notifications are fsynced under their accepting generation, thread and turn. Version 2 interrupted receipts additionally
+require confirmed termination of that turn's native command sessions. Nanoagent tracks command item IDs before
+interruption, inventories and terminates only those background terminals, and verifies their absence before writing
+the receipt. Other turns' background commands remain running. Cleanup retries cannot target a replacement process.
+Confirmed failure and interruption survive process replacement without trusting reconstructed interrupted history.
 
 Committed receipts return the original result across retries
 and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
@@ -559,7 +577,8 @@ admission deadline, so a new login can replace an expired cancellation context. 
 that context. The run polls this short object call and retains sole ownership of native interruption and completion.
 It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
 Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
-an exact terminal turn. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
+the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
+and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
 of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
 runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
 displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
@@ -571,6 +590,11 @@ using MicroVM UID and resource-version preconditions.
 Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
 terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
 Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
+Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
+the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
+Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
+Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
+run and control invocations before registering this worker version, and retain earlier versions for pinned history.
 Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
 content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
 conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails

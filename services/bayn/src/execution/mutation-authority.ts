@@ -1055,9 +1055,14 @@ export const validateExecutionBrokerSubmitSnapshot = (
   if (Result.isFailure(request))
     return Result.fail(new InstrumentError({ symbol: intent.symbol, message: request.failure.message }))
   const limit = 'limit_price' in request.success ? quantityFromDecimal(request.success.limit_price) : undefined
+  const stop = request.success.stop_price === undefined ? undefined : quantityFromDecimal(request.success.stop_price)
   if (limit !== undefined && Result.isFailure(limit))
     return Result.fail(
       new InstrumentError({ symbol: intent.symbol, message: 'broker limit price is outside the exact price domain' }),
+    )
+  if (stop !== undefined && Result.isFailure(stop))
+    return Result.fail(
+      new InstrumentError({ symbol: intent.symbol, message: 'broker stop price is outside the exact price domain' }),
     )
   const instrument = validateInstrumentOrder(
     {
@@ -1072,6 +1077,7 @@ export const validateExecutionBrokerSubmitSnapshot = (
       closeOnly: context.closeOnly,
       fractionable: asset.fractionable,
       ...(limit === undefined || Result.isFailure(limit) ? {} : { limitPriceAtoms: limit.success }),
+      ...(stop === undefined || Result.isFailure(stop) ? {} : { stopPriceAtoms: stop.success }),
     },
   )
   if (Result.isFailure(instrument)) return instrument

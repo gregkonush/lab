@@ -91,7 +91,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 6
+let receiverGuestApiProtocolVersion = 7
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -672,7 +672,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       const threadId = String(call.request.threadId)
       if (threadId === 'missing-conversation') {
-        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
+        call.emit('error', serviceError(grpc.status.NOT_FOUND, 'Codex conversation could not be found'))
         return
       }
       if (threadId === 'missing-resource') {
@@ -683,7 +683,7 @@ beforeAll(async () => {
         return
       }
       if (threadId === 'unavailable-conversation') {
-        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
+        call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
       call.write({
@@ -803,7 +803,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 5, 7]) {
+      for (const version of [0, 4, 5, 6, 8]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -811,7 +811,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 6
+      receiverGuestApiProtocolVersion = 7
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)

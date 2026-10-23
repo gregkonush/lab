@@ -13,6 +13,7 @@ import {
   sealResearchReceipt,
   maximumResearchStreamBytes,
   type ResearchRun,
+  type ResearchReceipt,
 } from './contract'
 
 const maximumRequestBytes = 262144
@@ -179,8 +180,9 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   runId: string,
   endpoint: string,
   traceHeaders: Readonly<Record<string, string>> = {},
+  workerSourceRevision: string | null = null,
 ) {
-  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v2')
+  if (run.schemaVersion !== 'bayn.jev-editor.v1')
     return yield* new ResearchError({ message: 'Retired research contracts cannot dispatch new model inference' })
   const startedAtMs = yield* Clock.currentTimeMillis
   const deadline = Date.parse(run.deadlineAt)
@@ -195,7 +197,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   const state: { outcome: ResearchOutcome } = {
     outcome: startedAtMs < cutoff ? ResearchOutcome.Rejected : ResearchOutcome.Expired,
   }
-  let factors: readonly string[] = []
+  let instructions: ResearchReceipt['instructions'] = null
   if (startedAtMs >= cutoff && startedAtMs < deadline) {
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
@@ -232,7 +234,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
           }),
         ),
       )
-      factors = yield* Effect.fromResult(stream.complete())
+      instructions = yield* Effect.fromResult(stream.complete())
       state.outcome = ResearchOutcome.Complete
     }).pipe(Effect.timeout(`${deadline - startedAtMs} millis`), Effect.result)
     if (Result.isFailure(response) && (yield* Clock.currentTimeMillis) >= deadline)
@@ -242,11 +244,12 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
   const completedAtMs = yield* Clock.currentTimeMillis
   if (completedAtMs >= deadline && state.outcome === ResearchOutcome.Complete) {
     state.outcome = ResearchOutcome.Expired
-    factors = []
+    instructions = null
   }
   return yield* Effect.fromResult(
     sealResearchReceipt(run, {
       runId,
+      workerSourceRevision,
       requestHash,
       startedAtMs,
       completedAtMs,
@@ -254,7 +257,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
       httpStatus,
       servingIdentity,
       ...stream.snapshot(),
-      factors,
+      instructions,
     }),
   )
 }, Effect.scoped)

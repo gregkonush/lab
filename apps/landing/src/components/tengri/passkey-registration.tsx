@@ -25,11 +25,11 @@ export function PasskeyRegistration() {
           })
         }}
       >
-        {state.status === 'redirecting' ? 'Opening passkey setup…' : 'Add passkey'}
+        {state.status === 'redirecting' ? 'Opening passkey setup…' : 'Add another passkey'}
       </Button>
       <p className="text-xs leading-5 text-zinc-400">
-        Verify with your current passkey, then save another in 1Password or on your phone. You can also choose a phone
-        from your computer’s passkey dialog.
+        Use your saved passkey to sign in. To add a different device or password manager, verify with your current
+        passkey, then save the new one in 1Password, on your phone, or on a security key.
       </p>
       {state.status === 'error' ? (
         <p role="alert" className="text-sm text-red-300">

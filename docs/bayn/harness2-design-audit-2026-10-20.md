@@ -1,20 +1,180 @@
 # Harness2 and Jev design audit
 
-Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-21.
+Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-22.
 Initial implementation inspected at
 `fc73e8967522bf788b3539d4686d6237f5655a4b`; the earlier native integration is deployed from
 `8bed05c8f6ca87e428522e76716e75e85cb40f5c`. This is a design assessment, not a real-market improvement result.
 
-The current adapter is a native Jev instruction proposal and decision-comparison tool. It is not a completed
-Bayn decision-improvement experiment. Its request reproduction and funded selection checks are useful, but its
-comparison cannot establish economic improvement. Delivering another healthy image would not close that gap.
+At the initial assessment, the adapter was a native Jev instruction proposal and decision-comparison tool.
+Its request reproduction and funded selection checks did not establish economic improvement. Delivering another
+healthy image would not close that gap. The October 22 follow-up completed a bounded existing-session comparison
+using independently audited terminal execution evidence recovered after a report-finalization failure. That result
+does not establish profitable trading or an optimizer ranking. Private execution artifacts remain outside this note.
 PR [#15233](https://github.com/proompteng/lab/pull/15233) delivers research tooling; its review and deployment do not
 establish economic acceptance of a generated candidate.
 
+## Optimizer recommendation, rechecked October 22
+
+**Choose GEPA's generic `optimize_anything` interface for the present typed-question editing task, using the
+single `gepa` search engine and Bayn's native outcome evaluator.** Keep Jev as the typed System One model. This is
+an engineering recommendation from the editable surface, evaluator contract, integration cost and available
+controls. It is not a demonstrated Bayn performance ranking between optimizer algorithms.
+
+For the larger objective of improving actual trading, the first experiment should measure Jev's incremental
+value against cash and the existing numerical controls. A question search is justified only if the component adds
+useful predictive information. The goal is higher execution value under the same risk limits after costs, not
+more entries, a sharper option distribution or an editor's preferred explanation.
+
+### What can be optimized
+
+[TypeSafe's model contract](https://docs.typesafe.ai/models) keeps Jev weights fixed and exposes customization
+through state, question instructions and criteria. Its [state contract](https://docs.typesafe.ai/concepts/state)
+evaluates independent typed questions against supplied facts. Jev is not the generative model in this design.
+A separate generative editor proposes serialized question definitions; the evaluator calls Jev's native typed API.
+No OpenAI chat adapter should be placed in front of Jev or used to fabricate its answers.
+
+Current Bayn source at `eee94a5509ba82d734c7fca333bc390b5339b66e` further restricts the experiment:
+
+- `services/bayn/src/jev/trade-plan-choices.ts` asks a source-controlled setup `Choice` and a separate conditional
+  complete-plan `Choice`. The setup question explicitly judges observed support rather than predicting a future
+  price. Code constructs, prices and funds the available plans.
+- `services/bayn/src/jev/decision.ts` requires supported setup and a valid funded plan. It ranks eligible symbols by
+  the selected **setup** probability. The plan-probability observation in the earlier audit describes an older revision.
+- `services/bayn/src/jev/instructions-contract.ts` exposes only one `entry` string to the editor. Changing this text
+  cannot change signal fields, the setup question, plan coverage, quantities, fees, risk or authority.
+- TypeSafe's [Jev 1.13 limitations](https://docs.typesafe.ai/model-jaggedness/jev-1.13) specifically favor direct
+  semantic judgments and code-owned arithmetic. Its [confidence definition](https://docs.typesafe.ai/confidence)
+  describes a statistic of the option distribution, not financial expected value.
+
+The economic target must therefore be independently defined. A judgment that a current pattern is supported is not
+an already calibrated probability of a profitable round trip. A downstream model predicting a financial event
+from that judgment is learning a new target, not correcting an error in the original semantic question.
+
+### Reviewed alternatives
+
+The table distinguishes documented capabilities from the Bayn-specific recommendation. Author-reported code,
+science, classification and wine-review benchmarks are not trading benchmarks.
+
+| Tool or method                                                                                               | Primary-source capability                                                                                                                                          | Decision for this job                                                                                                                                                                                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| [GEPA `optimize_anything`](https://gepa-ai.github.io/gepa/api/optimize_anything/optimize_anything/)          | Evolves a text artifact against an external numeric score and diagnostic feedback; examples can be opaque objects.                                                 | Best interface fit for the existing one-document intervention. Invoke Bayn's compiler and evaluator directly; the target need not be a generative LLM.                                                                                                                                           |
+| [Harness2](https://arxiv.org/html/2610.14224v1)                                                              | Propose–Probe–Compose uses behavioral contrasts and model judgment without ground-truth supervision; the authors warn about variation, shared biases and transfer. | Keep as a proposal control in existing evidence. Do not use its preference as the primary financial selection criterion. Replacing that criterion would remove much of the reason to choose this framework.                                                                                      |
+| [TypeSafe feature-discovery autoresearch](https://docs.typesafe.ai/cookbooks/autoresearch_feature_discovery) | An LLM proposes typed questions; Jev answers become numeric features; a supervised CatBoost model's errors guide revisions.                                        | Closest vendor-supported design for learning which Jev judgments help an outcome. A larger policy/feature research change than editing the current string. The cookbook's wine results and random folds do not validate market predictions.                                                      |
+| [Optuna](https://optuna.readthedocs.io/en/stable/tutorial/20_recipes/002_multi_objective.html)               | TPE and other samplers search defined parameter spaces, with constrained and multiple-objective optimization.                                                      | Prefer for authorized numeric policy weights, thresholds or finite question catalogs. It does not propose arbitrary semantic revisions itself. Do not expose account-risk or capital authority as tunable parameters.                                                                            |
+| [Ax / BoTorch](https://ax.dev/docs/tutorials/getting_started/)                                               | Stateful ask/tell experimentation for expensive and noisy black-box objectives, with parameters, constraints and outcome observations.                             | Strong alternative for a small structured numerical search with repeated measurements. It needs an encoding for arbitrary instruction text and adds experiment-state ownership already partly provided by Bayn.                                                                                  |
+| [Nevergrad](https://facebookresearch.github.io/nevergrad/)                                                   | Derivative-free ask/tell optimization over mixed numerical and discrete spaces, including noise-aware optimizers.                                                  | Useful for a broader numerical policy search. Less direct than GEPA for an unrestricted question string; no source establishes that its numerical benchmarks transfer to this strategy.                                                                                                          |
+| [DSPy MIPROv2](https://dspy.ai/3.1.0/learn/optimization/optimizers/)                                         | Searches instructions and demonstrations for DSPy predictors with Bayesian optimization.                                                                           | Valid explicit-metric alternative, but converting the existing typed API and native strategy into DSPy predictors brings additional adaptation with little benefit for one string.                                                                                                               |
+| [TextGrad](https://github.com/zou-group/textgrad)                                                            | Uses LLM-produced textual feedback to optimize text variables through an autograd-like interface with customizable loss.                                           | Potentially adaptable; it does not provide true gradients through Jev or make an LLM financial critic reliable. More adapter work than the direct artifact/evaluator interface.                                                                                                                  |
+| [OpenEvolve](https://github.com/algorithmicsuperintelligence/openevolve)                                     | Evolutionary program search, populations, checkpoints and cascaded evaluator metrics.                                                                              | Better matched when algorithm/code evolution is authorized. Its larger search machinery is unnecessary for the current bounded document. Its current default configuration includes evaluation retries and optional model feedback; Bayn would still need to own paid-call and metric authority. |
+| [SkyDiscover AdaEvolve / EvoX](https://github.com/skydiscover-ai/skydiscover)                                | Adaptive program evolution and adaptive search-strategy evolution, with strong author-reported systems and algorithm benchmarks.                                   | Serious alternative for future program search. Those benchmark wins do not rank typed Jev question search. A wider editable program and larger search budget are not current requirements.                                                                                                       |
+| Existing Bayn Ridge and matched-entry controls                                                               | Native numerical fit/scoring, execution-derived labels and matched timing controls already exist in this repository.                                               | Use as controls before adding a more expressive learner. They are research tools, not an established profitable live replacement. Their source-admission requirements must be satisfied.                                                                                                         |
+| Jev fine-tuning, LoRA or policy-gradient training                                                            | The hosted TypeSafe API exposes no customer weight adaptation.                                                                                                     | Inapplicable to the current service contract. Training a separate downstream policy is possible; training Jev through this API is not.                                                                                                                                                           |
+
+### API choice is not proof of the best search algorithm
+
+The [July `optimize_anything` release](https://gepa-ai.github.io/gepa/blog/2026/07/22/optimize-anything-omni/)
+separates the API from its engines: `gepa`, `autoresearch` and `meta_harness` share the same task/evaluator boundary.
+Its own matched-budget Frontier-CS study reports that no single optimizer dominates. The combined `omni` system
+wins that code benchmark, but that is not a reason to add several optimizers to Bayn's one-string experiment.
+Start with one bounded engine and one evaluator. A future equal-budget comparison may reject that choice.
+
+The [GEPA paper](https://arxiv.org/abs/2507.19457),
+[generic optimization paper](https://arxiv.org/abs/2605.19633),
+[AdaEvolve paper](https://arxiv.org/abs/2602.20133) and
+[EvoX paper](https://arxiv.org/abs/2602.23413) evaluate different task populations. Their headline gains cannot be
+combined into a universal leaderboard or a Bayn return estimate. Selecting the largest published improvement
+would not answer this question.
+
+Source inspection pinned GEPA to `8f287de942f41a6d1e0e7e5b2d576247c4bedee9`, OpenEvolve to
+`515d1bcb7b36ac64bbe028f8d83b5d08315ca4b5`, and SkyDiscover to
+`0d932b690670a7e544388ad362e9876c8bd256a0`. The reviewed Ax docs are 1.3.1 and Optuna docs 5.0.0.
+These are research snapshots, not newly installed dependencies. GEPA's current source budget module limits
+evaluator calls, not the number of Jev requests dispatched inside a full portfolio evaluation. Its documented
+held-out test evaluation also occurs outside the search budget. Keep Bayn's total reservation, provider and expense
+limits authoritative across proposal, validation, test and failure paths.
+
+### Reuse the evidence and controls already present
+
+The repository already contains:
+
+- `services/bayn/src/intraday-replay/backtest.ts`: independently evolving native portfolios, simulated broker,
+  real Jev calls, accounting and reconciliation.
+- `services/bayn/src/jev/harness2-economics.ts`: identity, request/response, expense and ledger verification for
+  native evidence. Its complete native comparison includes an unchanged-question repeat.
+- `services/bayn/src/intraday-replay/matched-entry-command.test.ts` and `docs/bayn/matched-entry-study.md`:
+  separate immediate numerical selection, that selection delayed to Jev's commitment, and Jev selection.
+- `services/bayn/src/intraday-replay/six-bar-ridge-fit.ts` and `ridge-training.ts`: a small existing numerical
+  control with disjoint training/evaluation and causal execution labels.
+
+A practical limitation matters: the current Ridge training command requires original-capture provenance, a priced
+data allocation and separate training/evaluation sessions. The REST reconstruction used for the bounded
+one-session question comparison does not meet that contract. Do not relabel REST history as original capture,
+replace unknown costs with zero or weaken those checks to claim an available trained model. A one-session
+engineering comparison remains valid at its declared narrower scope; a new within-session training protocol would
+be a separate explicit design.
+
+Retained Jev answers can support numerical-policy experiments when every input and decision opportunity matches.
+They cannot be transplanted to states produced by another holding, cash, plan menu or decision time. Cache exact
+serialized request identities, not just symbol/minute. Do not sample only the incumbent's flat periods or completed
+profitable trades; the existing incremental-value audit explains that selection bias. A normalizer and model
+trained on all rows before a chronological split still leak future information.
+
+### Recommended objective and experiment
+
+The recommended goal is to establish whether Jev contributes execution value above cash and numerical controls,
+under fixed capital and risk, then improve only the component that demonstrates value.
+
+1. Freeze the economic event and execution policy. Code owns entry/exit prices, fees, quantities, risk and actual
+   lifecycle labels. Keep unfilled, partial, expired, rejected, unavailable and abstaining cases in the evidence.
+2. Compare the unchanged strategy and a frozen intervention on existing data. Use independently evolving portfolios
+   for portfolio P&L, with exact accounting and known inference costs. Distinguish selection improvement from delay
+   cost with the existing matched timing controls. Cash is a required economic reference; a smaller loss is not
+   positive alpha.
+3. For the present text intervention, let GEPA propose only schema-valid question documents. Return explicit
+   native outcomes and diagnostics. Failed accounting, unknown mutations, unvalued held inventory and missing
+   costs stay explicit rather than becoming invented fitness. No optimizer output grants trading authority.
+4. If Jev contributes useful information, fit a small downstream outcome model before expanding it. The TypeSafe
+   feature-discovery pattern can propose additional atomic judgments; compare numerical-only and numerical-plus-Jev
+   models. Start with the existing simple control; CatBoost is an option, not a required new dependency.
+5. Split development and later evaluation by time and overlapping label horizon. One existing session is enough
+   for a bounded diagnostic; no twenty-new-session collection requirement follows. Data already inspected for
+   candidate selection is development evidence, even when a library names it `test_set`.
+
+Use independently measured held-out execution returns, not an arbitrary product of Jev probabilities.
+[Calibration guidance](https://scikit-learn.org/stable/modules/calibration.html) distinguishes probabilistic quality
+from calibration alone. A defined event and out-of-time labels are necessary; high win rate still does not measure
+profit magnitude. TypeSafe's [composite scoring example](https://docs.typesafe.ai/patterns/composite-scoring) shows
+code-owned combinations, not a proof that hand-chosen weights predict market returns.
+
+The [time-series split guidance](https://scikit-learn.org/stable/modules/generated/sklearn.model_selection.TimeSeriesSplit.html)
+explains future-to-past leakage and gap handling. Irregular market events require grouping by actual time and label
+intervals, not merely dropping a fixed count of rows. The
+[backtest-overfitting paper](https://www.davidhbailey.com/dhbpapers/backtest-prob.pdf) explains why repeated selection
+inflates historical results. Retain every trial and failed screen. The separate prospective adoption protocol does
+not block shipping an evaluator or reporting a bounded negative result.
+
+### Evidence limits and decision
+
+The investigation used current repository source and tests, native provider and serving receipts, the retained
+historical source catalog, existing-session execution/accounting evidence, deployed revision readback, TypeSafe
+contracts, primary optimizer code/docs and the cited research papers. Private execution data stays in private
+operator evidence; public benchmark claims remain attributed to their authors. No optimizer head-to-head Bayn
+benchmark was performed, no numeric-only control was silently added to the completed question experiment, and no
+new backend or production policy was installed for this assessment.
+
+**Decision:** choose the generic GEPA artifact/evaluator interface for the next authorized question-search
+experiment. Reuse Bayn's native engine and receipts, retain one active optimizer implementation, and establish
+incremental value over the existing controls before expanding to learned features or policy search. Harness2 is
+compatible as a bounded proposer, but its verifier-free preference is a weaker fit to this financial objective.
+
+## Earlier implementation findings
+
 The follow-up source now replaces the active Alpha-R1 policy with a pinned general instruction editor, supplies a
 research-only compiler for the native portfolio executable, binds its instruction hash and provider-call budget,
-and reads native economic reports. These implementation changes address parts of the gaps below. Full orchestration,
-real editor qualification, independent market coverage and a completed economic experiment remain unverified.
+and reads native economic reports. These implementation changes addressed parts of the gaps below. At that
+follow-up revision, full orchestration, real editor qualification, independent market coverage and a completed
+economic experiment remained unverified. These paragraphs retain the earlier assessment rather than describing
+the October 22 deployment and bounded comparison.
 Main subsequently adopted complete funded trade-plan choices in
 [PR #15230](https://github.com/proompteng/lab/pull/15230). The adapter and compiler now expose only that plan question's
 single `entry` instruction and reject the retired separate stop-loss and take-profit strings. The findings below

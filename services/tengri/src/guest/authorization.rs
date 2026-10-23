@@ -54,6 +54,7 @@ pub struct GuestAuthorization {
 #[derive(Clone)]
 pub(super) struct GuestRequestIssuer {
     authority: GuestAuthority,
+    activity: Option<crate::activity::ActivityTracker>,
     source: Source,
     claim: Claim,
     pod_uid: String,
@@ -145,6 +146,7 @@ impl GuestAuthorization {
             ));
         }
         Ok(GuestRequestIssuer {
+            activity: None,
             authority: self.authority,
             source: self.source,
             claim,
@@ -155,6 +157,7 @@ impl GuestAuthorization {
     #[cfg(test)]
     pub(super) fn fixture_issuer() -> GuestRequestIssuer {
         GuestRequestIssuer {
+            activity: None,
             authority: GuestAuthority::fixture(),
             source: Source::Fixture,
             claim: Claim {
@@ -176,6 +179,7 @@ impl GuestAuthorization {
         let mut authority = GuestAuthority::fixture();
         authority.database = AuthorityDatabase::Shared(database);
         GuestRequestIssuer {
+            activity: None,
             authority,
             source: Source::Fixture,
             claim,
@@ -185,6 +189,11 @@ impl GuestAuthorization {
 }
 
 impl GuestRequestIssuer {
+    pub(super) fn with_activity(mut self, activity: crate::activity::ActivityTracker) -> Self {
+        self.activity = Some(activity);
+        self
+    }
+
     pub(super) fn claim(&self) -> &Claim {
         &self.claim
     }
@@ -210,6 +219,7 @@ impl GuestRequestIssuer {
             .ok_or_else(|| Status::permission_denied("unknown guest request"))?;
         let actor;
         let decision;
+        let mut control = false;
         let probe =
             method == "/proompteng.runtime.guest.v1.NanoagentService/GetInfo" && target.is_empty();
         match &self.source {
@@ -218,6 +228,7 @@ impl GuestRequestIssuer {
                     .map_err(|_| Status::internal("encode guest action"))?;
                 let action = authz::Action::from_str_name(name.as_str().unwrap_or_default())
                     .ok_or_else(|| Status::permission_denied("unknown Ofz guest action"))?;
+                control = crate::authz::is_control(action);
                 let (context, checked) = access
                     .guest_decision(
                         action,
@@ -327,6 +338,19 @@ impl GuestRequestIssuer {
             ));
         }
         let fence = self.fence().await?;
+        let admission_deadline = if control {
+            let at = self
+                .activity
+                .as_ref()
+                .ok_or_else(|| Status::unavailable("guest control admission unavailable"))?
+                .admit_control(&self.claim)
+                .await?;
+            // A delayed API response must not mint fresh authority after its
+            // activity interval. Guest verification enforces this same deadline.
+            (at.timestamp_millis() as u64).saturating_add(5000)
+        } else {
+            u64::MAX
+        };
         let now = ofz::now_ms()?;
         let context = GuestContext {
             protocol_version: PROTOCOL_VERSION,
@@ -344,7 +368,10 @@ impl GuestRequestIssuer {
             target: target.into(),
             body_sha256: body_sha256(body),
             issued_at_unix_ms: now,
-            deadline_unix_ms: decision.valid_until_unix_ms.min(now + 5000),
+            deadline_unix_ms: decision
+                .valid_until_unix_ms
+                .min(now + 5000)
+                .min(admission_deadline),
             nonce: Uuid::new_v4().to_string(),
             observation: decision.effective_scope.map(|scope| ObservationBudget {
                 max_bytes: scope.max_bytes,

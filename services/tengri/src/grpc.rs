@@ -85,6 +85,7 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
+    connectors_enabled: bool,
 }
 
 pub struct ControlPlaneConfig {
@@ -133,6 +134,7 @@ impl ControlPlane {
             activity,
             terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
+            connectors_enabled: std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true"),
         })
     }
 
@@ -212,7 +214,7 @@ impl ControlPlane {
     ) -> Result<GuestClient, Status> {
         self.guest_access(principal, id, target)
             .await
-            .map(|(guest, _)| guest)
+            .map(|(_, guest, _)| guest)
     }
 
     async fn guest_access(
@@ -220,7 +222,7 @@ impl ControlPlane {
         principal: &Principal,
         id: &str,
         target: &str,
-    ) -> Result<(GuestClient, WorkspaceAccess), Status> {
+    ) -> Result<(MicroVM, GuestClient, WorkspaceAccess), Status> {
         let (agent, access) = self.agent_access(principal, id, target).await?;
         if agent.spec.desired_state != MicroVMDesiredState::Running
             || !agent_ready_for_guest(&agent)
@@ -235,10 +237,7 @@ impl ControlPlane {
             .await
             .map_err(map_guest_error)?;
         access.require().await?;
-        if crate::authz::is_control(principal.action) {
-            self.activity.touch(id);
-        }
-        Ok((guest, access))
+        Ok((agent, guest, access))
     }
 
     pub fn guest_pool(&self) -> GuestPool {
@@ -609,7 +608,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchFilesStream>, Status> {
         let principal = self.authorize(&request, "WatchFiles").await?;
         let request = request.into_inner();
-        let (guest, access) = self
+        let (_, guest, access) = self
             .guest_access(&principal, &request.agent_id, &request.path)
             .await?;
         let stream = guest
@@ -736,12 +735,8 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<TerminalTicket>, Status> {
         let principal = self.authorize(&request, "IssueTerminalTicket").await?;
         let request = request.into_inner();
-        let terminals = self
-            .guest(&principal, &request.agent_id, "")
-            .await?
-            .list_terminals()
-            .await
-            .map_err(map_guest_error)?;
+        let (agent, guest, _) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let terminals = guest.list_terminals().await.map_err(map_guest_error)?;
         metrics::global().replace_pty_sessions(
             &request.agent_id,
             terminals.iter().map(|terminal| terminal.id.clone()),
@@ -752,9 +747,12 @@ impl MicroVmControlPlane for ControlPlane {
         else {
             return Err(Status::not_found("terminal session was not found"));
         };
+        let claim = crate::slot::client::claim_for(&agent)
+            .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
         let issued = self
             .provisional_terminal_leases
             .issue_and_confirm(&request.agent_id, &request.terminal_id, || async {
+                self.activity.admit_control(&claim).await?;
                 self.tickets
                     .issue_terminal(&principal, &request.agent_id, &request.terminal_id)
                     .await
@@ -814,6 +812,39 @@ impl MicroVmControlPlane for ControlPlane {
             .map_err(map_guest_error)?;
         Ok(Response::new(CodexModels {
             raw_json: value.to_string(),
+        }))
+    }
+
+    async fn connector_agent(
+        &self,
+        request: Request<proto::ConnectorAgentRequest>,
+    ) -> Result<Response<CodexModels>, Status> {
+        if !self.connectors_enabled {
+            return Err(Status::unimplemented("connectors are not enabled"));
+        }
+        let principal = self.authorize(&request, "ConnectorAgent").await?;
+        let request = request.into_inner();
+        let method = match request.action.as_str() {
+            "identity" => "relay/identity",
+            "configure" => "relay/configure",
+            "remove" => "relay/remove",
+            _ => return Err(Status::invalid_argument("unknown connector agent action")),
+        };
+        if request.raw_json.len() > 512 * 1024 {
+            return Err(Status::invalid_argument(
+                "connector configuration is too large",
+            ));
+        }
+        let params: Value = serde_json::from_str(&request.raw_json)
+            .map_err(|_| Status::invalid_argument("invalid connector configuration"))?;
+        let result = self
+            .guest(&principal, &request.agent_id, "")
+            .await?
+            .codex_call(method, params)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(CodexModels {
+            raw_json: result.to_string(),
         }))
     }
 
@@ -904,7 +935,7 @@ impl MicroVmControlPlane for ControlPlane {
         validate_codex_id(&request.thread_id)?;
         let options = CodexOptions::parse(request.model, request.reasoning_effort)
             .map_err(Status::invalid_argument)?;
-        let (guest, access) = self
+        let (_, guest, access) = self
             .guest_access(&principal, &request.agent_id, &request.thread_id)
             .await?;
         let history = guest
@@ -1138,7 +1169,7 @@ impl MicroVmControlPlane for ControlPlane {
     ) -> Result<Response<Self::WatchCodexEventsStream>, Status> {
         let principal = self.authorize(&request, "WatchCodexEvents").await?;
         let request = request.into_inner();
-        let (guest, access) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let (_, guest, access) = self.guest_access(&principal, &request.agent_id, "").await?;
         let stream = guest
             .watch_codex_events(request.after_sequence)
             .await
@@ -1187,7 +1218,10 @@ impl MicroVmControlPlane for ControlPlane {
         let port = validate_preview_port(request.port)?;
         let path = validate_preview_path(&request.path)?;
         let fragment = validate_preview_fragment(&request.fragment)?;
-        self.guest(&principal, &request.agent_id, "").await?;
+        let (agent, _, _) = self.guest_access(&principal, &request.agent_id, "").await?;
+        let claim = crate::slot::client::claim_for(&agent)
+            .map_err(|_| Status::unavailable("workspace runtime claim unavailable"))?;
+        self.activity.admit_control(&claim).await?;
         let issued = self
             .tickets
             .issue_preview(&principal, &request.agent_id, port, &path, &fragment)
@@ -2699,6 +2733,23 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
+    async fn dormant_connector_rpc_stops_before_authentication_and_workspace_access() {
+        let (service, _handle) =
+            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
+        let mut control = test_control_plane(Client::new(service, "tengri"));
+        control.connectors_enabled = false;
+        let denied = control
+            .connector_agent(Request::new(proto::ConnectorAgentRequest {
+                agent_id: "unavailable-workspace".into(),
+                action: "identity".into(),
+                raw_json: "{}".into(),
+            }))
+            .await
+            .unwrap_err();
+        assert_eq!(denied.code(), tonic::Code::Unimplemented);
+    }
+
+    #[tokio::test]
     async fn stream_admission_checks_one_workspace_and_keeps_ofz_denial() {
         use std::sync::atomic::AtomicUsize;
         for (method, action) in [
@@ -2800,6 +2851,273 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+    async fn runtime_shared_state_capability_issuance_admits_activity_before_tickets() {
+        use crate::{
+            activity::{ACTIVE_RUN_ANNOTATION, LAST_ACTIVITY_ANNOTATION},
+            guest::rpc::{
+                proto as guest_proto,
+                test_server::{TestServer, TestService},
+            },
+        };
+        use std::sync::{Mutex, atomic::AtomicU8};
+
+        let database = Arc::new(
+            crate::control::Database::from_environment("tengri_controller")
+                .await
+                .unwrap(),
+        );
+        database.verify_schema().await.unwrap();
+        let mut agent = provisional_terminal_test_agent(Utc::now());
+        agent.metadata.resource_version = Some("11".into());
+        agent.spec.created_at = (Utc::now() - chrono::Duration::hours(3)).to_rfc3339();
+        agent.spec.idle_deadline = (Utc::now() - chrono::Duration::hours(1)).to_rfc3339();
+        agent.spec.slot = Some(crate::crd::MicroVMSlot {
+            name: "slot-a".into(),
+            pod_uid: "55555555-5555-4555-8555-555555555555".into(),
+            pvc_name: "home-a".into(),
+            pvc_uid: "home-uid".into(),
+            epoch: 7,
+        });
+        agent.status = Some(MicroVMStatus {
+            phase: MicroVMPhase::Ready,
+            guest_ready: true,
+            pod_uid: Some("55555555-5555-4555-8555-555555555555".into()),
+            pod_ip: Some("127.0.0.1".into()),
+            ..Default::default()
+        });
+        let current = Arc::new(Mutex::new(agent.clone()));
+        let state = current.clone();
+        // 1: sleep wins the CAS; 2: admission cannot reach Kubernetes.
+        let mode = Arc::new(AtomicU8::new(0));
+        let admission_mode = mode.clone();
+        let patches = Arc::new(AtomicUsize::new(0));
+        let writes = patches.clone();
+        let service = tower::service_fn(move |request: http::Request<KubeBody>| {
+            let state = state.clone();
+            let mode = admission_mode.clone();
+            let writes = writes.clone();
+            async move {
+                let mut status = HttpStatusCode::OK;
+                let body = if request.uri().path().ends_with("/secrets/slot-a-bootstrap") {
+                    json!({"apiVersion":"v1","kind":"Secret","immutable":true,"data":{"token":"Zml4dHVyZS10b2tlbg=="}})
+                } else if request.method() == http::Method::PATCH {
+                    let patch: Value =
+                        serde_json::from_slice(&request.into_body().collect_bytes().await.unwrap())
+                            .unwrap();
+                    let mut agent = state.lock().unwrap();
+                    assert_eq!(patch["metadata"]["uid"], agent.uid().unwrap());
+                    assert_eq!(
+                        patch["metadata"]["resourceVersion"],
+                        agent.resource_version().unwrap()
+                    );
+                    if mode.load(Ordering::SeqCst) == 1 {
+                        let claim = format!("idle-sleep/{}", agent.spec.runtime_epoch);
+                        agent
+                            .metadata
+                            .annotations
+                            .get_or_insert_default()
+                            .insert(ACTIVE_RUN_ANNOTATION.into(), claim);
+                        status = HttpStatusCode::CONFLICT;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"Conflict","message":"sleep won admission","code":409})
+                    } else if mode.load(Ordering::SeqCst) == 2 {
+                        status = HttpStatusCode::SERVICE_UNAVAILABLE;
+                        json!({"apiVersion":"v1","kind":"Status","status":"Failure","reason":"ServiceUnavailable","message":"API unavailable","code":503})
+                    } else {
+                        let at = patch["metadata"]["annotations"][LAST_ACTIVITY_ANNOTATION]
+                            .as_str()
+                            .unwrap();
+                        agent
+                            .metadata
+                            .annotations
+                            .get_or_insert_default()
+                            .insert(LAST_ACTIVITY_ANNOTATION.into(), at.into());
+                        let version = agent.resource_version().unwrap().parse::<u64>().unwrap() + 1;
+                        agent.metadata.resource_version = Some(version.to_string());
+                        writes.fetch_add(1, Ordering::SeqCst);
+                        json!(*agent)
+                    }
+                } else {
+                    assert_eq!(request.method(), http::Method::GET);
+                    assert!(request.uri().path().ends_with("/microvms/agent-current"));
+                    json!(*state.lock().unwrap())
+                };
+                Ok::<_, std::convert::Infallible>(
+                    HttpResponse::builder()
+                        .status(status)
+                        .header("content-type", "application/json")
+                        .body(KubeBody::from(body.to_string().into_bytes()))
+                        .unwrap(),
+                )
+            }
+        });
+        let probes = Arc::new(AtomicUsize::new(0));
+        let seen = probes.clone();
+        let server = TestServer::start(TestService {
+            get_info: Some(Arc::new(move |_| {
+                seen.fetch_add(1, Ordering::SeqCst);
+                Ok(guest_proto::GuestInfo {
+                    microvm_id: "55555555-5555-4555-8555-555555555555".into(),
+                    protocol_version: tengri::GUEST_API_PROTOCOL_VERSION,
+                    ..Default::default()
+                })
+            })),
+            list_terminals: Some(Arc::new(|_| {
+                Ok(guest_proto::TerminalList {
+                    sessions: vec![guest_proto::TerminalSession {
+                        id: "terminal-existing".into(),
+                        ..Default::default()
+                    }],
+                })
+            })),
+            ..Default::default()
+        })
+        .await;
+        let client = Client::new(service, "tengri");
+        let mut control = test_control_plane(client.clone());
+        let port = server
+            .guest
+            .base_url()
+            .strip_prefix("http://")
+            .unwrap()
+            .parse::<std::net::SocketAddr>()
+            .unwrap()
+            .port();
+        control.guests = GuestPool::new(
+            client,
+            "tengri",
+            crate::identity::WorkloadIdentity::Fixture(port),
+        );
+        control.tickets =
+            TicketStore::new("https://tengri.example.test".into(), database.clone()).unwrap();
+        let auth_mode = Arc::new(AtomicU8::new(0));
+        control.authorization = WorkspaceAuthorization::ControlledFixture(auth_mode.clone());
+        let mut principal = Principal::fixture(
+            &agent.spec.owner_hash,
+            &agent.uid().unwrap(),
+            crate::ofz::proto::Action::PreviewAccess,
+        );
+        principal.context.runtime_epoch = agent.spec.runtime_epoch.clone();
+        let issue = |terminal: bool| {
+            let control = &control;
+            let agent = &agent;
+            let mut principal = principal.clone();
+            async move {
+                if terminal {
+                    principal.action = crate::ofz::proto::Action::TerminalControl;
+                    let request = crate::auth::signed_fixture_request(
+                        IssueTerminalTicketRequest {
+                            agent_id: agent.name_any(),
+                            terminal_id: "terminal-existing".into(),
+                        },
+                        &principal,
+                        &format!("/{CONTROL_PLANE_SERVICE}/IssueTerminalTicket"),
+                        control.request_audience(),
+                    );
+                    control
+                        .issue_terminal_ticket(request)
+                        .await
+                        .map(|response| response.into_inner().websocket_url)
+                } else {
+                    let request = crate::auth::signed_fixture_request(
+                        IssuePreviewSessionRequest {
+                            agent_id: agent.name_any(),
+                            port: 3000,
+                            path: "/".into(),
+                            fragment: String::new(),
+                        },
+                        &principal,
+                        &format!("/{CONTROL_PLANE_SERVICE}/IssuePreviewSession"),
+                        control.request_audience(),
+                    );
+                    control
+                        .issue_preview_session(request)
+                        .await
+                        .map(|response| response.into_inner().launch_url)
+                }
+            }
+        };
+        let count = || async {
+            let client = database.connection().await.unwrap();
+            client
+                .query_one(
+                    "SELECT count(*) FROM tengri.tickets WHERE workspace_uid=$1",
+                    &[&Uuid::parse_str(&agent.uid().unwrap()).unwrap()],
+                )
+                .await
+                .unwrap()
+                .get::<_, i64>(0)
+        };
+        let mut admitted = 0;
+        for terminal in [false, true] {
+            mode.store(0, Ordering::SeqCst);
+            auth_mode.store(0, Ordering::SeqCst);
+            *current.lock().unwrap() = agent.clone();
+            let initial_tickets = count().await;
+            for offset in 1..=2 {
+                assert!(!issue(terminal).await.unwrap().is_empty());
+                admitted += 1;
+                assert_eq!(
+                    patches.load(Ordering::SeqCst),
+                    admitted,
+                    "cold and cached ticket issuance must admit activity before returning a capability"
+                );
+                assert_eq!(count().await, initial_tickets + offset);
+                assert!(!crate::activity::idle_deadline_passed(
+                    &current.lock().unwrap(),
+                    Utc::now()
+                ));
+            }
+            // A reservation may already exist, or win after admission's GET.
+            for already_reserved in [true, false] {
+                *current.lock().unwrap() = agent.clone();
+                if already_reserved {
+                    current
+                        .lock()
+                        .unwrap()
+                        .metadata
+                        .annotations
+                        .get_or_insert_default()
+                        .insert(
+                            ACTIVE_RUN_ANNOTATION.into(),
+                            format!("idle-sleep/{}", agent.spec.runtime_epoch),
+                        );
+                }
+                mode.store(u8::from(!already_reserved), Ordering::SeqCst);
+                assert_eq!(
+                    issue(terminal).await.unwrap_err().code(),
+                    tonic::Code::FailedPrecondition
+                );
+                assert_eq!(
+                    count().await,
+                    initial_tickets + 2,
+                    "reserved sleep must not create a capability"
+                );
+            }
+            *current.lock().unwrap() = agent.clone();
+            mode.store(2, Ordering::SeqCst);
+            assert_eq!(
+                issue(terminal).await.unwrap_err().code(),
+                tonic::Code::Unavailable
+            );
+            assert_eq!(count().await, initial_tickets + 2);
+            mode.store(0, Ordering::SeqCst);
+            auth_mode.store(1, Ordering::SeqCst);
+            assert_eq!(
+                issue(terminal).await.unwrap_err().code(),
+                tonic::Code::PermissionDenied
+            );
+            assert_eq!(patches.load(Ordering::SeqCst), admitted);
+            assert_eq!(count().await, initial_tickets + 2);
+        }
+        assert_eq!(
+            probes.load(Ordering::SeqCst),
+            1,
+            "later issuances must use the cached connection"
+        );
     }
 
     #[tokio::test]
