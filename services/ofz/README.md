@@ -93,7 +93,11 @@ platform objects keep activation fenced. The final authority check repeats that 
 It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
 fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
-recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the
+recovery fence. Once both bootstrap and activation have committed, retries match the original manifest and return
+the original receipts even when the binary packages a newer source schema. They do not install that schema or change
+existing relationships. Unfinished initialization and activation remain bound to their original compiled schema;
+installing later policy definitions requires a separate reviewed migration. Bootstrap markers use a separate namespace
+from ordinary policy-command UUIDs. Audit identifies the
 actual PostgreSQL owner authority rather than claiming an API SPIFFE caller.
 
 Before running these commands in production, verify old-writer fencing, the reviewed native credential rotation and
