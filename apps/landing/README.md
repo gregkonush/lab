@@ -291,6 +291,13 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+Use the pin button in a file preview to keep the file in **Pinned** in the conversation sidebar. Pins retain an
+optional line and column and remain available after closing their tabs. Open a pin to restore that location, or
+unpin it without closing the preview. Each window restores its own tabs and selected view after reload; workspace
+pins are shared across windows. Selecting a conversation returns to Chat without closing resource tabs.
+Tabs and pins each retain up to 20 files. Persistence contains validated `/workspace` paths and locations only,
+with no file contents or credentials. Restored inactive tabs do not read files until selected. Deleting the workspace
+clears its resource metadata along with its conversation state.
 Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
 PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
 Local image links can open image file tabs. Retained image reads use the authenticated,
