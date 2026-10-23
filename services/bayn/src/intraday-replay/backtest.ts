@@ -293,9 +293,10 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       assets,
       identity,
       reportingWindows: sessions,
-      brokerSessions: calendar.sessions.filter(
-        (session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs,
-      ),
+      brokerSessions: calendarDays
+        .flatMap((day) => day.providerSessions)
+        .map((session) => ({ date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }))
+        .filter((session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs),
       openMs,
       closeMs,
       buildEvidence: {

@@ -899,6 +899,10 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    if (prepared.brokerSessions.length === 0)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Control interval must contain a complete regular broker session' }),
+      )
     const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
     if (dataCostMicros === null && (input.costObjective !== 'KNOWN_COST_DIAGNOSTIC' || input.ridge !== undefined))
       return yield* Result.fail(
