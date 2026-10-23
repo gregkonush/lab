@@ -1075,12 +1075,30 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* completionMatches()).toBe(true)
             expect(yield* completionMatches('2026-09-08T17:02:00.000Z')).toBe(false)
 
+            // Observe the migrated function directly. This private one-row table has no indexes;
+            // transaction-local counters avoid cumulative statistics, plan text and timing assertions.
+            // PostgreSQL reports a NULL idx_scan for relations without indexes.
+            const decisionScans = sql`SELECT (seq_scan + COALESCE(idx_scan, 0))::integer AS scans
+              FROM pg_stat_xact_user_tables
+              WHERE relid = 'pg_temp.autonomous_cycle_shadow_decisions'::regclass
+            `.pipe(
+              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ scans: Schema.Number })]))),
+              Effect.map(([row]) => row.scans),
+            )
+
             // Exercise the currently installed predicate, not a historical function copy. Each
             // mutation must independently refuse completion and its restoration must admit it.
             for (const timeInForce of ['DAY', 'IOC']) {
               yield* sql`UPDATE intents SET time_in_force = ${timeInForce}`
               yield* sql`UPDATE orders SET time_in_force = ${timeInForce}`
-              expect(yield* completionMatches(), `${timeInForce}: valid evidence`).toBe(true)
+              // A second invocation must advance the counter again, not reuse a stale snapshot.
+              for (const calls of [1, 2]) {
+                const before = yield* decisionScans
+                for (let call = 0; call < calls; call++)
+                  expect(yield* completionMatches(), `${timeInForce}: valid evidence`).toBe(true)
+                const after = yield* decisionScans
+                expect(after - before, `${timeInForce}: one decision scan per call (${calls} calls)`).toBe(calls)
+              }
               for (const [column, original] of [
                 ['account_id', 'account'],
                 ['cycle_id', 'cycle'],
