@@ -18,6 +18,165 @@ import { NativeArrivalEpochSchema } from '../src/market-data/streaming/native-ar
 import { priceNumberToMicros } from '../src/strategy/execution-model/fixed-point'
 import { auditNativeArrivalCoverage, nativeCoverageMaximumInputBytes } from './native-arrival-coverage'
 import { historicalFeeProvenance, hypotheticalCryptoFeeSensitivity } from './jev-fee-sensitivity'
+import { AccountingTransactionSchema } from '../src/accounting/schema'
+import { PositionOutcomeSchema } from '../src/forward-performance/position-outcomes'
+import { instrumentMarket, MarketKind } from '../src/instruments'
+
+const JoinedCycle = Schema.Struct({
+  cycleId: Sha256Schema,
+  state: Schema.Literals(['COMPLETED', 'NO_TRADE', 'BLOCKED', 'ACTIVE']),
+  sourceRevision: Schema.String.check(Schema.isPattern(/^[a-f0-9]{40}$/)),
+  authorityGenerationHash: Sha256Schema,
+  decisionDocument: Schema.NullOr(Schema.Unknown),
+  strategyDecisionHash: Schema.NullOr(Sha256Schema),
+  transactions: Schema.Array(
+    Schema.Struct({
+      cycleId: Sha256Schema,
+      strategyDecisionHash: Sha256Schema,
+      transaction: AccountingTransactionSchema,
+    }),
+  ),
+  outcome: Schema.NullOr(Schema.Struct({ contentHash: Sha256Schema, value: PositionOutcomeSchema })),
+  exitObservation: Schema.NullOr(
+    Schema.Struct({
+      cycleId: Sha256Schema,
+      openingTransactionId: Sha256Schema,
+      sourceHash: Sha256Schema,
+      reason: Schema.Literals(['PROTECTIVE_STOP', 'PROFIT_TARGET', 'MAXIMUM_HOLD', 'RECOVERY', 'OTHER']),
+    }),
+  ),
+})
+
+/** Consistency join of private exports, not a replacement for receipt/ledger verification. */
+export const reportJevRealizedEvidence = (input: unknown) => {
+  const bundle = Result.getOrThrow(
+    Schema.decodeUnknownResult(
+      Schema.Struct({
+        schemaVersion: Schema.Literal('bayn.jev-realized-evidence-input.v1'),
+        cycles: Schema.Array(JoinedCycle),
+      }),
+      strictParseOptions,
+    )(input),
+  )
+  const cycleIds = new Set<string>()
+  const transactionIds = new Set<string>()
+  const rows = bundle.cycles.map((row) => {
+    if (cycleIds.has(row.cycleId)) throw new Error('Duplicate cycle in denominator')
+    cycleIds.add(row.cycleId)
+    const document =
+      row.decisionDocument === null
+        ? null
+        : Result.getOrThrow(Schema.decodeUnknownResult(Document)(row.decisionDocument))
+    const decision = document === null ? null : reportJevAbstention(row.decisionDocument)
+    if ((document === null) !== (row.strategyDecisionHash === null))
+      throw new Error('Decision/hash availability differs')
+    if (
+      document !== null &&
+      (document.bindings.cycleId !== row.cycleId ||
+        document.strategyDecision.evidence.observation.authorityGenerationHash !== row.authorityGenerationHash ||
+        Result.getOrThrow(canonicalHashV1Result(document.strategyDecision)) !== row.strategyDecisionHash)
+    )
+      throw new Error('Foreign cycle or strategy decision hash')
+    const trades = row.transactions
+      .map((link) => {
+        const trade = link.transaction
+        if (
+          document === null ||
+          link.cycleId !== row.cycleId ||
+          link.strategyDecisionHash !== row.strategyDecisionHash ||
+          trade.intentId === undefined ||
+          trade.accountId !== document.strategyDecision.evidence.observation.portfolio.brokerState.account.accountId ||
+          !document.strategyDecision.selectedSymbols.includes(trade.symbol) ||
+          trade.occurredAt < document.strategyDecision.observedAt
+        )
+          throw new Error('Transaction is not bound to this selected cycle/account/symbol')
+        if (transactionIds.has(trade.transactionId)) throw new Error('Duplicate transaction in cohort')
+        transactionIds.add(trade.transactionId)
+        return trade
+      })
+      .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.transactionId.localeCompare(b.transactionId))
+    if (row.state === 'NO_TRADE' && trades.length > 0) throw new Error('No-entry cycle has execution transactions')
+    const outcome = row.outcome?.value ?? null
+    if (row.outcome !== null && Result.getOrThrow(canonicalHashV1Result(outcome)) !== row.outcome.contentHash)
+      throw new Error('Imported outcome hash differs')
+    if (outcome !== null) {
+      const first = trades.find((trade) => trade.transactionId === outcome.openingTransactionId)
+      const last = trades.find((trade) => trade.transactionId === outcome.closingTransactionId)
+      const buys = trades.filter((trade) => trade.side === 'BUY')
+      const sum = (key: 'notionalMicros' | 'realizedPnlMicros', values = trades) =>
+        values.reduce((n, t) => n + BigInt(t[key]), 0n)
+      if (
+        row.state !== 'COMPLETED' ||
+        first?.side !== 'BUY' ||
+        last?.side !== 'SELL' ||
+        first.symbol !== outcome.symbol ||
+        trades.some(
+          (trade) =>
+            trade.symbol !== outcome.symbol ||
+            trade.occurredAt < outcome.openedAt ||
+            trade.occurredAt > outcome.closedAt,
+        ) ||
+        first.occurredAt !== outcome.openedAt ||
+        last.occurredAt !== outcome.closedAt ||
+        Date.parse(outcome.closedAt) - Date.parse(outcome.openedAt) !== outcome.holdingDurationMs ||
+        buys.length !== outcome.buyFillCount ||
+        trades.length - buys.length !== outcome.sellFillCount ||
+        sum('notionalMicros', buys).toString() !== outcome.buyNotionalMicros ||
+        sum('notionalMicros').toString() !== outcome.turnoverMicros ||
+        sum('realizedPnlMicros').toString() !== outcome.grossRealizedPnlMicros
+      )
+        throw new Error('Imported episode does not match linked transaction set')
+      if (
+        outcome.costs.status === 'ATTRIBUTED_ACCRUALS' &&
+        (instrumentMarket(outcome.symbol) !== MarketKind.Crypto ||
+          BigInt(outcome.costs.attributedCostMicros) <
+            trades.reduce((sum, trade) => sum + BigInt(trade.feeMicros), 0n) ||
+          BigInt(outcome.grossRealizedPnlMicros) - BigInt(outcome.costs.attributedCostMicros) !==
+            BigInt(outcome.costs.netPnlAfterAttributedCostsMicros))
+      )
+        throw new Error('Imported attributed net is inconsistent')
+    }
+    if (
+      row.exitObservation !== null &&
+      (outcome === null ||
+        row.exitObservation.cycleId !== row.cycleId ||
+        row.exitObservation.openingTransactionId !== outcome.openingTransactionId)
+    )
+      throw new Error('Exit observation belongs to a different episode')
+    return {
+      cycleId: row.cycleId,
+      state: row.state,
+      sourceRevision: row.sourceRevision,
+      authorityGenerationHash: row.authorityGenerationHash,
+      authorityBinding: document === null ? 'DECLARED_UNVERIFIED' : 'SEALED_DECISION_MATCH',
+      sourceRevisionBinding: 'DECLARED_UNVERIFIED',
+      transactionIntegrity: 'NOT_REVERIFIED',
+      exitSourceProvenance: 'DECLARED_UNVERIFIED',
+      strategyDecisionHash: row.strategyDecisionHash,
+      decision,
+      transactionIds: trades.map((trade) => trade.transactionId),
+      importedOutcomeHash: row.outcome?.contentHash ?? null,
+      importedOutcome: outcome,
+      observedExit: row.exitObservation,
+      targetBeforeStop: 'UNKNOWN',
+      targetPathCensored: true,
+      quantityConservation: 'NOT_REVERIFIED',
+      executionEvidence: outcome === null ? 'UNKNOWN_OR_OPEN' : 'IMPORTED_EPISODE_CONSISTENT',
+      allInProfitMicros: null,
+    }
+  })
+  return {
+    schemaVersion: 'bayn.jev-realized-evidence-report.v1',
+    inputHash: Result.getOrThrow(canonicalHashV1Result(bundle)),
+    qualification: 'UNQUALIFIED_IMPORTED_EVIDENCE_JOIN',
+    independentlyVerifiedLedger: false,
+    completeOpportunityScheduleProven: false,
+    probabilityInterpretation: 'CATEGORICAL_CHOICE_MASS_NOT_PROFIT_PROBABILITY',
+    calibrationFitted: false,
+    denominatorCount: rows.length,
+    rows,
+  }
+}
 
 const Document = Schema.Struct({
   bindings: Schema.Struct({ cycleId: Sha256Schema }),
@@ -402,17 +561,21 @@ if (import.meta.main) {
   const raw: unknown = JSON.parse(readFileSync(path, 'utf8'))
   const assumptionsPath = process.argv[3]
   const sourcePath = process.argv[4]
-  if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
-    throw new Error('Provide both an assumption manifest and native source bundle, or neither')
-  console.log(
-    JSON.stringify(
-      assumptionsPath === undefined || sourcePath === undefined
-        ? reportJevAbstention(raw)
-        : reportAuditedJevPlanPath({
-            decisionDocument: raw,
-            assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
-            sourceBundle: readFileSync(sourcePath),
-          }),
-    ),
-  )
+  if (assumptionsPath === '--realized-evidence' && sourcePath === undefined) {
+    console.log(JSON.stringify(reportJevRealizedEvidence(raw)))
+  } else {
+    if ((assumptionsPath === undefined) !== (sourcePath === undefined) || process.argv.length > 5)
+      throw new Error('Provide both an assumption manifest and native source bundle, or neither')
+    console.log(
+      JSON.stringify(
+        assumptionsPath === undefined || sourcePath === undefined
+          ? reportJevAbstention(raw)
+          : reportAuditedJevPlanPath({
+              decisionDocument: raw,
+              assumptions: JSON.parse(readFileSync(assumptionsPath, 'utf8')),
+              sourceBundle: readFileSync(sourcePath),
+            }),
+      ),
+    )
+  }
 }
