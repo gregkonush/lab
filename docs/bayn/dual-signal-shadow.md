@@ -28,8 +28,17 @@ approved research environment has provider credentials and outbound access:
 bayn-dual-signal --request /private/jev-evaluation-request.json --output /private/dual-signal-report.json
 ```
 
-It rejects an existing report path, uses file mode `0600`, prints only status/hash metadata, and fails rather than
-treating absent metering as free usage. The output estimates pico-USD from October 22, 2026 list assumptions:
+It rejects an existing report path before dispatch, retains an exclusive final write with file mode `0600`, and
+prints only status/hash metadata. A path created concurrently still cannot be overwritten. Reports use
+`bayn.dual-signal-shadow-report.v2`: alongside the source-data hashes, they bind the fixed visual endpoint and
+SHA-256 of the complete serialized visual request, including model, prompt, choices and image. Historical v1
+reports do not provide that full-request binding and are not upgraded in place.
+
+Verified rejected Jev receipts retain their response hash, HTTP status and token usage for cost estimation,
+but never count as a usable decision. Missing, malformed or unbound metering remains unknown, not free.
+Transport/JSON failures retain a redacted internal cause and expose only a bounded diagnostic tag in the report.
+The CLI retains partial reports and exits unsuccessfully for either incomplete decisions or missing metering.
+The output estimates pico-USD from October 22, 2026 list assumptions:
 Jev $0.042/1M input, OpenAI $0.10/1M ordinary input, $0.01/1M cached reads, $0.125/1M default 30-minute cache
 writes, with no charged output. These are **not invoice-reconciled costs** and do not post to TigerBeetle.
 
