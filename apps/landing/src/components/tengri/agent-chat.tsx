@@ -13,6 +13,7 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
+  Skeleton,
 } from '@proompteng/design/ui'
 import {
   ArrowDown,
@@ -1390,6 +1391,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
       ),
   )
+  const conversationLoading = Boolean(threadId && !threadReady && !recoveryFailed)
   const agentStatus =
     eventStreamState === 'reconnecting'
       ? 'Reconnecting'
@@ -1539,7 +1541,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 lastScrollTop.current = conversation.scrollTop
               }}
             >
-              {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
+              {conversationLoading ? <ConversationSkeleton /> : null}
+              {(!threadId || threadReady) && transcriptCards.length === 0 && !activeTurnId && !submitting ? (
                 <EmptyConversation
                   onSelectPrompt={(text) => {
                     setPrompt(text)
@@ -1556,6 +1559,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 className="mx-auto w-full max-w-3xl space-y-2"
                 role="log"
                 aria-label="Conversation"
+                aria-busy={conversationLoading || replayRecovering}
                 aria-live="polite"
                 aria-relevant="additions text"
               >
@@ -1927,6 +1931,25 @@ export function CodexLogin({
             {error}
           </p>
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ConversationSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-8" role="status" aria-label="Loading conversation">
+      <span className="sr-only">Loading conversation…</span>
+      <div aria-hidden="true" className="space-y-8">
+        <div className="ml-auto w-2/3 space-y-2 rounded-2xl bg-zinc-900/60 p-4">
+          <Skeleton className="h-3 w-full bg-zinc-800 motion-reduce:animate-none" />
+          <Skeleton className="h-3 w-2/3 bg-zinc-800 motion-reduce:animate-none" />
+        </div>
+        <div className="space-y-3 py-2">
+          {['w-5/6', 'w-full', 'w-4/5', 'w-1/2'].map((width) => (
+            <Skeleton key={width} className={cn('h-3 bg-zinc-900 motion-reduce:animate-none', width)} />
+          ))}
+        </div>
       </div>
     </div>
   )

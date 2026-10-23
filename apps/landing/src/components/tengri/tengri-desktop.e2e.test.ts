@@ -2321,6 +2321,47 @@ test('ignores an old conversation failure after switching to a successfully load
   await expect(tengri.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
 })
 
+for (const width of [1440, 390]) {
+  test(`shows a conversation skeleton while saved history loads at ${width}px`, async ({ page }, testInfo) => {
+    await page.setViewportSize({ width, height: 900 })
+    const mock = await mockTengri(page, {
+      holdInitialResume: true,
+      resumeThreadRawJson: JSON.stringify({
+        thread: {
+          id: 'thread-existing',
+          turns: [
+            {
+              id: 'turn-existing',
+              status: 'completed',
+              items: [{ id: 'reply-existing', type: 'agentMessage', text: 'Restored conversation content' }],
+            },
+          ],
+        },
+      }),
+    })
+    await page.emulateMedia({ reducedMotion: 'no-preference' })
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+    await page.goto('/')
+    await mock.waitForHeldResume()
+    const tengri = page.getByRole('region', { name: 'Tengri window' })
+    const loading = tengri.getByRole('status', { name: 'Loading conversation', exact: true })
+    const conversation = tengri.getByRole('log', { name: 'Conversation', exact: true })
+    await expect(loading).toBeVisible()
+    await expect(conversation).toHaveAttribute('aria-busy', 'true')
+    await expect(tengri.getByRole('button', { name: 'Explore the project', exact: true })).toHaveCount(0)
+    const placeholder = loading.locator('[data-slot="skeleton"]').first()
+    await expect(placeholder).toHaveCSS('animation-name', 'pulse')
+    await page.screenshot({ path: testInfo.outputPath('conversation-loading.png'), animations: 'disabled' })
+    await page.emulateMedia({ reducedMotion: 'reduce' })
+    await expect(placeholder).toHaveCSS('animation-name', 'none')
+    mock.releaseHeldResume()
+    await expect(conversation.getByText('Restored conversation content', { exact: true })).toBeVisible()
+    await expect(loading).toHaveCount(0)
+    await expect(conversation).toHaveAttribute('aria-busy', 'false')
+    await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
+  })
+}
+
 test('automatically recovers a saved conversation after a temporary control-plane failure', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page, {
