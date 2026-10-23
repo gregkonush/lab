@@ -39,6 +39,7 @@ const nativeRequest = JSON.stringify({
   max_completion_tokens: 4096,
   temperature: 0.6,
   tool_choice: 'none',
+  reasoning_effort: 'low',
   response_format: openCodeConfiguration.providers.opencode.body.response_format,
   messages: [
     { role: 'user', content: `Bayn research attempt ${runId}\n${run.promptTemplate}\n${run.context.memory.text}` },

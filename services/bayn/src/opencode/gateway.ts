@@ -12,6 +12,7 @@ const NativeRequestSchema = Schema.Struct({
   max_completion_tokens: Schema.Literal(4096),
   temperature: Schema.Literal(0.6),
   tool_choice: Schema.Literal('none'),
+  reasoning_effort: Schema.Literal('low'),
   response_format: Schema.Unknown,
   messages: Schema.Array(
     Schema.Struct({

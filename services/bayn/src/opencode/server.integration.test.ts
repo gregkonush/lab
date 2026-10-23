@@ -165,6 +165,7 @@ nativeTest(
         expect(secondRequest).toContain('second-proposal-only')
         expect(secondRequest).not.toContain('first-proposal-only')
         expect(JSON.parse(secondRequest).tool_choice).toBe('none')
+        expect(JSON.parse(secondRequest).reasoning_effort).toBe('low')
         const ambiguousStudy = { ...run, studyHash: 'e'.repeat(64) }
         yield* fs.writeFileString(`${directory}/studies/${ambiguousStudy.studyHash}.claim.json`, '{}', { flag: 'wx' })
         const ambiguousCreation = yield* post(ambiguousStudy)

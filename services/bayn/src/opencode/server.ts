@@ -351,7 +351,7 @@ export const serveOpenCode = (
             Effect.gen(function* () {
               const prompt = yield* native('POST', `${sessionPath}/prompt`, {
                 id: `msg_bayn_${runId}`,
-                text: `Bayn research attempt ${runId}\n${run.promptTemplate}\n\n${run.context.memory.text}\n\nAll feedback is supplied above. Do not use tools. Jev is a typed System One decision model, not a text-generating LLM. Change only its conditional complete-plan entry question, maximum 2000 characters. Code owns all arithmetic, position sizing, risk gates and execution. Return only the complete instruction JSON object with exactly one entry string. No markdown, notes, paths or external references in the entry. Your one model-call budget cannot be retried.`,
+                text: `Bayn research attempt ${runId}\n${run.promptTemplate}\n\n${run.context.memory.text}\n\nAll feedback is supplied above. Do not use tools. Jev is a typed System One decision model, not a text-generating LLM. Change only its actual-entry complete-plan entry question, maximum 2000 characters. Code owns all arithmetic, position sizing, risk gates and execution. Return only the complete instruction JSON object with exactly one entry string. No markdown, notes, paths or external references in the entry. Your one model-call budget cannot be retried.`,
               })
               if (prompt.status !== 200)
                 return yield* new ResearchError({ message: 'OpenCode native prompt was not accepted' })

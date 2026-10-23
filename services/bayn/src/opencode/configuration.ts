@@ -45,6 +45,7 @@ export const makeOpenCodeConfiguration = (directory = openCodeDirectory, relayOr
       body: {
         temperature: 0.6,
         tool_choice: 'none',
+        reasoning_effort: 'low',
         response_format: {
           type: 'json_schema',
           json_schema: {
