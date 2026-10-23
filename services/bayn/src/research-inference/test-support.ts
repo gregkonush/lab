@@ -13,8 +13,8 @@ import {
   type RetainedResearchRun,
 } from './contract'
 
-export const editorFixture = () =>
-  Result.getOrThrow(
+export const editorFixture = () => {
+  const run = Result.getOrThrow(
     decodeResearchRun({
       schemaVersion: 'bayn.jev-editor.v1',
       purpose: 'prompt-edit',
@@ -61,6 +61,9 @@ export const editorFixture = () =>
       },
     }),
   )
+  if ('harness' in run.policy) throw new Error('Expected the Flamingo test policy')
+  return { ...run, policy: run.policy }
+}
 
 export const retainedEditorFixture = () => {
   const run = editorFixture()

@@ -8,6 +8,7 @@
 }:
 
 let
+  openCode = import ./bayn-opencode.nix { inherit pkgs lib; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.jev.net-payoff-plan-coverage.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52";
@@ -98,10 +99,12 @@ let
   };
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
+    "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
     "bun --cwd=services/bayn run build ${buildDefines}"
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
+    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/opencode-command.js"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
@@ -169,6 +172,7 @@ import ./bun-workspace-service.nix {
   workingDir = "/app/services/bayn";
   includeBunRuntime = false;
   extraContents = [
+    openCode
     nodejs
     pkgs.cacert
     forwardPerformanceCommand

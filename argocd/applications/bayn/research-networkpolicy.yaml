@@ -20,6 +20,13 @@ spec:
           protocol: TCP
   egress:
     - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: bayn-opencode
+      ports:
+        - port: 4096
+          protocol: TCP
+    - to:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: glitchtip
