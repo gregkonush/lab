@@ -1,6 +1,17 @@
 import { Result } from 'effect'
 import { sha256 } from '../hash'
-import { decodeResearchRun, editorModel, editorCheckpoint } from './contract'
+import {
+  decodeResearchRun,
+  decodeRetainedResearchRun,
+  editorModel,
+  editorCheckpoint,
+  hashResearch,
+  ResearchOutcome,
+  researchRequest,
+  researchServingIdentity,
+  sealResearchReceipt,
+  type RetainedResearchRun,
+} from './contract'
 
 export const editorFixture = () =>
   Result.getOrThrow(
@@ -50,6 +61,46 @@ export const editorFixture = () =>
       },
     }),
   )
+
+export const retainedEditorFixture = () => {
+  const run = editorFixture()
+  const checkpoint = 'b968826d9c46dd6066d109eabc6255188de91218'
+  return Result.getOrThrow(
+    decodeRetainedResearchRun({
+      ...run,
+      policy: {
+        ...run.policy,
+        model: 'qwen3-jev-editor-b968826d9c46',
+        checkpoint,
+        tokenizerRevision: checkpoint,
+        chatTemplateRevision: checkpoint,
+      },
+    }),
+  )
+}
+
+export const retainedReceiptFixture = (run: RetainedResearchRun) => {
+  const wire = streamFixture('{"entry":"Assess"}', run.policy.model)
+  return Result.getOrThrow(
+    sealResearchReceipt(run, {
+      runId: Result.getOrThrow(hashResearch(run)),
+      workerSourceRevision: null,
+      requestHash: Result.getOrThrow(hashResearch(researchRequest(run))),
+      startedAtMs: 0,
+      completedAtMs: 1001,
+      firstTokenAtMs: 1,
+      outcome: ResearchOutcome.Complete,
+      httpStatus: 200,
+      servingIdentity: researchServingIdentity(run.policy),
+      serverRequestId: 'chatcmpl-synthetic',
+      responseBase64: Buffer.from(wire).toString('base64'),
+      responseHash: sha256(wire),
+      responseText: '{"entry":"Assess"}',
+      instructions: { entry: 'Assess' },
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    }),
+  )
+}
 
 export const streamFixture = (content = '{"entry":"Assess"}', model: string = editorModel) =>
   [

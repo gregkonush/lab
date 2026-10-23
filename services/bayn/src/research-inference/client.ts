@@ -13,6 +13,7 @@ import {
   sealResearchReceipt,
   maximumResearchStreamBytes,
   type ResearchRun,
+  type RetainedResearchRun,
   type ResearchReceipt,
 } from './contract'
 
@@ -38,7 +39,7 @@ const ChunkSchema = Schema.Struct({
   ),
 })
 
-export const makeResearchStreamDecoder = (run: ResearchRun) => {
+export const makeResearchStreamDecoder = (run: RetainedResearchRun) => {
   let output = ''
   let pending = ''
   let totalBytes = 0
