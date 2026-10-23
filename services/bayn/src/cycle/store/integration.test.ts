@@ -1077,7 +1077,8 @@ describePostgres('PostgreSQL intraday cycle store', () => {
 
             // Observe the migrated function directly. This private one-row table has no indexes;
             // transaction-local counters avoid cumulative statistics, plan text and timing assertions.
-            const decisionScans = sql`SELECT (seq_scan + idx_scan)::integer AS scans
+            // PostgreSQL reports a NULL idx_scan for relations without indexes.
+            const decisionScans = sql`SELECT (seq_scan + COALESCE(idx_scan, 0))::integer AS scans
               FROM pg_stat_xact_user_tables
               WHERE relid = 'pg_temp.autonomous_cycle_shadow_decisions'::regclass
             `.pipe(
