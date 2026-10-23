@@ -8,6 +8,9 @@ option go_package = "github.com/proompteng/lab/gen/proompteng/authz/v1;authzv1";
 // All methods require an attested, explicitly allowed SPIFFE workload identity.
 service AuthorizationService {
   rpc Check(CheckRequest) returns (CheckResponse);
+  // Connector broker only: authenticates an agent's proof-bound grant before
+  // returning an operation-specific decision and server-derived actor context.
+  rpc CheckConnectorAgent(CheckConnectorAgentRequest) returns (CheckConnectorAgentResponse);
   rpc AuthorizeCommand(AuthorizeCommandRequest) returns (AuthorizeCommandResponse);
   rpc ExecuteCommand(ExecuteCommandRequest) returns (ExecuteCommandResponse);
   rpc GetCommand(GetCommandRequest) returns (GetCommandResponse);
@@ -67,6 +70,9 @@ enum Action {
   ACTION_SESSION_INSPECT = 38;
   ACTION_WORKSPACE_POLICY_READ = 39;
   ACTION_SESSION_REVOKE = 40;
+  ACTION_CONNECTOR_CREATE = 41;
+  ACTION_CONNECTOR_MANAGE = 42;
+  ACTION_CONNECTOR_INVOKE = 43;
 }
 
 enum ResourceKind {
@@ -112,6 +118,11 @@ message ObservationScope {
   bool browser_screenshot = 4;
   uint32 max_bytes = 5;
   uint32 max_items = 6;
+  // Exact reviewed gateway operations. Empty grants cannot use CheckConnectorAgent;
+  // legacy diagnostic ConnectorRead grants retain their existing contract.
+  repeated string connector_operations = 7;
+  // Server-owned epoch captured when a connector capability is issued.
+  string connector_runtime_epoch = 8;
 }
 
 message CheckRequest {
@@ -130,6 +141,22 @@ message CheckResponse {
   uint64 valid_until_unix_ms = 4;
   uint64 recovery_generation = 5;
   ObservationScope effective_scope = 6;
+}
+
+message CheckConnectorAgentRequest {
+  string grant_id = 1;
+  string credential = 2;
+  string proof = 3;
+  bytes request_hash = 4;
+  string connection_id = 5;
+  string operation = 6;
+  // Selected by the trusted broker from the reviewed provider catalog.
+  Action action = 7;
+}
+
+message CheckConnectorAgentResponse {
+  RequestContext context = 1;
+  CheckResponse decision = 2;
 }
 
 enum GuestMaintenancePurpose {
@@ -221,6 +248,14 @@ message SetTargetAccess {
   string human_id = 2;
   Action action = 3;
   bool enabled = 4;
+}
+
+// BFF only. Creation binds the immutable connection UUID to the authenticated
+// human. Subsequent enable/disable requires its current owner permission.
+message ConfigureConnector {
+  string connection_id = 1;
+  bool create = 2;
+  bool enabled = 3;
 }
 
 message SetQuota {
@@ -318,6 +353,7 @@ message ExecuteCommandRequest {
     ReleaseReservation release_reservation = 16;
     SetWorkspaceRuntime set_workspace_runtime = 17;
     CompleteWorkspaceRemoval complete_workspace_removal = 18;
+    ConfigureConnector configure_connector = 21;
     BeginWorkspaceEnrollment begin_workspace_enrollment = 20;
   }
 }

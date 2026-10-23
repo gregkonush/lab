@@ -1,5 +1,11 @@
 # Nanoagent guest API
 
+The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Its connector handlers require the exact server-side setting
+`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
+identity files or changing Codex configuration. Packaging the client does not
+install a connector or change normal conversation startup.
+
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
 proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact

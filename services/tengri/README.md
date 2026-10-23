@@ -1,5 +1,10 @@
 # Tengri control plane
 
+The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
+`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
+workspace and conversation requests do not call Relay.
+
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519

@@ -164,6 +164,7 @@ RUN set -eux; \
     chmod -R a+rX /usr/share/nanoagent/novnc; \
     rm /tmp/novnc.tgz
 COPY --chmod=0555 bootstrap-codex.sh /usr/local/bin/bootstrap-codex
+COPY --chmod=0555 relay-client.mjs /usr/local/bin/tengri-relay
 COPY --chmod=0555 bootstrap-code-server.sh /usr/local/bin/bootstrap-code-server
 COPY --chmod=0555 tengri-init.sh /usr/local/sbin/tengri-init
 COPY --chmod=0555 bootstrap-developer-tools.sh /usr/local/bin/bootstrap-developer-tools
