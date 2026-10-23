@@ -85,3 +85,6 @@ spec:
     - stageSelector:
         name: temporal-worker
       autoPromotionEnabled: true
+    - stageSelector:
+        name: relay
+      autoPromotionEnabled: false

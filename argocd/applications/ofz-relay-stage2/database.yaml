@@ -1,0 +1,14 @@
+apiVersion: postgresql.cnpg.io/v1
+kind: Database
+metadata:
+  name: relay-control
+  annotations:
+    argocd.argoproj.io/sync-wave: '-7'
+    argocd.argoproj.io/sync-options: Prune=false,Delete=false
+spec:
+  cluster:
+    name: ofz-db
+  name: relay_control
+  owner: relay_migrator
+  databaseReclaimPolicy: retain
+  ensure: present

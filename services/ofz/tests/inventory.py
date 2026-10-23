@@ -279,6 +279,15 @@ def main():
     assert schema_actions == actual["bff"], (
         "BFF schema and handler classification disagree"
     )
+    relay = (ROOT / "services/relay/src/main.rs").read_text()
+    actual["relay_http"] = rust_routes(relay)
+    relay_service = (ROOT / "services/relay/src/service.rs").read_text()
+    start = relay_service.index("pub enum Command {")
+    command = relay_service[start:relay_service.index("\n}", start)]
+    variants = set(re.findall(r"^    ([A-Z]\w*)(?: \{|,)$", command, re.M))
+    handled = set(re.findall(r"Command::(\w+)", relay_service[relay_service.index("pub async fn handle"):]))
+    assert variants == handled, "Relay commands and explicit handlers disagree"
+    actual["relay_command"] = variants
     gateway = (ROOT / "services/tengri/src/gateway.rs").read_text()
     actual["gateway"] = rust_routes(gateway, "preview_host_proxy")
     actual["gateway"].add("* {*preview_host_proxy}")

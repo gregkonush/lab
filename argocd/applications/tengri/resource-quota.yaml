@@ -14,4 +14,4 @@ spec:
     requests.cpu: "27"
     requests.memory: 57Gi
     requests.storage: 192Gi
-    secrets: "12"
+    secrets: "16"

@@ -147,6 +147,24 @@ spec:
                     pod-security.kubernetes.io/warn: restricted
                   annotations:
                     argocd.argoproj.io/sync-options: Prune=false,Delete=false
+              - name: relay
+                path: argocd/applications/relay
+                namespace: tengri
+                targetRevision: kargo/relay
+                renderWithLovely: false
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:relay
+                automation: auto
+                enabled: "false"
+                managedNamespaceMetadata:
+                  labels:
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                    external-secrets.proompteng.ai/enabled: "true"
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: ofz
                 path: argocd/applications/ofz
                 namespace: ofz
@@ -159,6 +177,7 @@ spec:
                 enabled: "true"
                 managedNamespaceMetadata:
                   labels:
+                    external-secrets.proompteng.ai/enabled: "true"
                     pod-security.kubernetes.io/enforce: restricted
                     pod-security.kubernetes.io/audit: restricted
                     pod-security.kubernetes.io/warn: restricted

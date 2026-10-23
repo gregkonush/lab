@@ -39,6 +39,7 @@ on:
       - 'argocd/applications/kargo/**'
       - 'argocd/applications/keycloak/tengri/**'
       - 'argocd/applications/ofz/**'
+      - 'argocd/applications/ofz-relay-stage2/**'
       - 'argocd/applications/proompteng/**'
       - 'argocd/applications/proompteng/ingressroute.yaml'
       - 'argocd/applications/tengri/**'
