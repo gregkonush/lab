@@ -20,17 +20,20 @@ Management still asks whether to hold or exit.
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 [System One programming model](https://docs.typesafe.ai/concepts/system-one).
 
-Code builds at most sixteen plans from four representative stop levels and four target levels. The candidate menu combines
-observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed OHLC range,
-with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid. Target scenarios
-lie those steps above the observed bid. The menu also includes the exact minimum fee-covering target. Code solves
-for conservative liquidation proceeds of acquisition cost plus one micro-dollar, then rounds the price up to the
-instrument tick. This retains a mathematically funded option when the observed range is narrower than transaction
-costs. The threshold includes the same entry and exit fees, adverse execution allowances and cash rounding as every
-other plan. It is labeled `MINIMUM_FEE_COVERING_ORDER_PRICE`; range proposals are labeled
-`OBSERVED_RANGE_ORDER_SCENARIO`. Neither label establishes likely attainment or expected profit. Deduplication,
-conservative instrument rounding and four evenly spaced representatives bound each set. The model selects the
-actual plan; these construction rules never select a default exit.
+Code builds at most sixteen plans from four representative stop levels and up to four targets per stop. The candidate menu
+combines observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed
+OHLC range, with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid.
+Market-price target scenarios lie those steps above the observed bid; three representative targets retain the range's
+price anchors after the existing fee-covering filter.
+
+Each stop can also have a `NET_REWARD_ORDER_SCENARIO`. Code solves for conservative target proceeds equal to acquisition
+cost plus the complete modeled stop loss, then rounds the target up to the executable tick. Entry and exit fees, adverse
+execution allowances and cash rounding remain included. This proposes a net reward of at least the modeled loss rather
+than offering a fee-only target with microscopic profit. It is a conditional payoff scenario, not an expected return or
+evidence that the price can be reached. If it cannot fit the existing liquidation search bound, code omits that scenario
+while retaining other fundable market-price choices. Range proposals retain `OBSERVED_RANGE_ORDER_SCENARIO`. Deduplication
+and conservative instrument rounding preserve the sixteen-plan bound. Jev selects the actual plan; these construction
+rules never select an entry or default exit.
 
 Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
 nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
