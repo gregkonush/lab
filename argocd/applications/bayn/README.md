@@ -199,6 +199,11 @@ published and verified, the matching same-account PAPER request is sealed and re
 together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
 account losses, peak equity and turnover history remain in place.
 
+The authored v20 PAPER request is `933a611d7eebc8a1348cb615550b3374eddec41f64cb90b3a2be23ea39ea838a`.
+It binds reviewed source `0bd754692dc5c281fb77725ddd47d704237c9098` and verified image
+`sha256:b015e9ec3c22dfda4c21b19a4278c79938a8440a76d942b9c16c292dcdda828a` after the completed OBSERVE cutover.
+The native hook still requires fresh flat/exact accounting before PAPER activation.
+
 Image promotion does not grant capital authority. The existing sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
 strategy or risk-policy change requires a fresh OBSERVE cutover and a new reviewed same-account mandate.
