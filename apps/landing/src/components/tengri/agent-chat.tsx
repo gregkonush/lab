@@ -71,7 +71,12 @@ import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
 import { groupCodexActivity } from './codex-activity'
 import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
-import { WorkspaceFileLinkProvider } from './workspace-file-link'
+import {
+  WorkspaceFileLinkProvider,
+  WorkspaceFileTabs,
+  WorkspacePinnedResources,
+  useWorkspaceResources,
+} from './workspace-file-link'
 import { CodexCopyButton } from './codex-copy-button'
 import {
   appendCodexEvent,
@@ -157,6 +162,15 @@ async function waitForRunCompletion(agentId: string, runId: string, threadId: st
 }
 
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
+  return (
+    <WorkspaceFileLinkProvider key={agentId} agentId={agentId}>
+      <AgentChatView active={active} agentId={agentId} />
+    </WorkspaceFileLinkProvider>
+  )
+}
+
+function AgentChatView({ active, agentId }: { active: boolean; agentId: string }) {
+  const { showChat } = useWorkspaceResources()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
@@ -1415,6 +1429,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   function newConversation() {
     if (!canChangeConversation) return
+    showChat()
     removeStoredThread(agentId)
     resetTranscriptUi('')
     focusComposerAfterConversationChange()
@@ -1422,6 +1437,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   function switchConversation(nextThreadId: string) {
     if (!canChangeConversation) return
+    showChat()
     if (nextThreadId === threadIdRef.current) {
       focusComposerAfterConversationChange()
       return
@@ -1550,6 +1566,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <Plus className="size-3.5" aria-hidden="true" />
           </button>
         </div>
+        <WorkspacePinnedResources
+          onOpen={() => {
+            if (!sidebarWide) setSidebarOpen(false)
+          }}
+        />
         <nav
           aria-label="Conversations"
           className="tengri-chat-scrollbar min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]"
@@ -1621,7 +1642,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           )}
         </div>
 
-        <WorkspaceFileLinkProvider agentId={agentId} conversationId={threadId}>
+        <WorkspaceFileTabs>
           <div className="relative min-h-0 flex-1">
             <div
               ref={conversationRef}
@@ -1936,7 +1957,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               </form>
             </div>
           </div>
-        </WorkspaceFileLinkProvider>
+        </WorkspaceFileTabs>
       </div>
     </div>
   )
