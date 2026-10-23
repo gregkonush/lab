@@ -319,7 +319,13 @@ export const makeBrokerObservationStore = (
           )
       `.pipe(Effect.flatMap(decodeProjectionRows))
           if (awaiting.length === 0)
-            return yield* observationUnavailable('Broker observation is unavailable or invalidated by a mutation')
+            return yield* new BrokerReadError({
+              operation: 'preflight',
+              kind: BrokerReadErrorKind.Timeout,
+              retryable: true,
+              observationFailure: 'NO_ADMISSIBLE_CUT',
+              message: 'Broker observation is unavailable or invalidated by a mutation',
+            })
           const pending = awaiting[0]
           if (pending === undefined) return yield* observationUnavailable('Broker observation metadata is absent')
           return { ...pending, pending: true }
