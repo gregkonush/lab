@@ -22,6 +22,13 @@ The ApplicationSet entry is disabled and Relay's exact automatic promotion polic
 still renders `argocd/applications/ofz`; the prepared `argocd/applications/ofz-relay-stage2` overlay is not selected.
 This prevents missing new credentials from disrupting the current authority database.
 
+The BFF egress addition is provided as the unapplied JSON patch `bff-egress.patch.yaml`.
+It is not a resource in this Kustomization and does not change the current Proompteng policy.
+Apply it to the BFF's existing policy through reviewed desired state during private qualification;
+preserve every existing rule. Enrollment also adds Relay policies to Tengri's policy set: include those
+sources in kube-router's policy inventory and update both Tengri and Proompteng reviewed-policy fingerprints
+in the corresponding activation change. Do not weaken or bypass the live policy comparison.
+
 ## Secret inputs
 
 Provision one item named `relay-runtime` in the existing `infra` 1Password vault:
@@ -46,7 +53,8 @@ public PostgreSQL CA certificate to Tengri.
 3. Verify both Ofz ExternalSecrets are Ready, all three database instances are Ready, the dedicated database is owned
    by `relay_migrator`, existing application roles remain intact, and no connection budget changed unexpectedly.
 4. After the storage prerequisite is proven, enable the Relay ApplicationSet entry and its exact automatic promotion
-   policy in reviewed main. Keep `RELAY_DISPATCH_ENABLED=false`, the catalog empty, and the BFF endpoint absent.
+   policy in reviewed main. Add the prepared BFF egress rule and its reviewed kube-router policy fingerprint through
+   the BFF's normal promotion. Keep `RELAY_DISPATCH_ENABLED=false`, the catalog empty, and the BFF endpoint absent.
 5. Require the successful immutable Relay build receipt, selected Freight, generated `kargo/relay` commit, migration
    hook and healthy rollout. Compare both running image IDs to the selected digest/platform child digest.
 6. From the existing BFF workload identity, call the private `POST /v1/request` with `{"command":{"action":"providers"}}`.

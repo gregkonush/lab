@@ -19,16 +19,6 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: tengri
-          podSelector:
-            matchLabels:
-              app.kubernetes.io/name: tengri-connector-broker
-      ports:
-        - protocol: TCP
-          port: 8443
-    - to:
-        - namespaceSelector:
-            matchLabels:
               kubernetes.io/metadata.name: glitchtip
           podSelector:
             matchLabels:

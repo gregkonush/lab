@@ -1,0 +1,13 @@
+- op: add
+  path: /spec/egress/-
+  value:
+    to:
+      - namespaceSelector:
+          matchLabels:
+            kubernetes.io/metadata.name: tengri
+        podSelector:
+          matchLabels:
+            app.kubernetes.io/name: tengri-connector-broker
+    ports:
+      - protocol: TCP
+        port: 8443

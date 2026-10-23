@@ -850,6 +850,7 @@ describe('Kargo direct-push GitOps contract', () => {
     ).toBe(false)
     expect(JSON.parse(readRepoFile('argocd/applications/relay/providers.json'))).toEqual([])
     expect(readRepoFile('argocd/applications/proompteng/deployment.yaml')).not.toContain('RELAY_ENDPOINT')
+    expect(readRepoFile('argocd/applications/proompteng/network-policy.yaml')).not.toContain('tengri-connector-broker')
     const workflow = YAML.parse(readRepoFile('.github/workflows/relay-images.yml')) as Record<string, any>
     expect(workflow.jobs.build.if).toBe("github.event_name != 'pull_request' && github.ref == 'refs/heads/main'")
     expect(workflow.jobs.build.needs).toBe('validate')
