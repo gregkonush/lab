@@ -134,6 +134,12 @@ delivered event streams without duplication. Device login and thread state persi
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
 
+Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
+start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
+such as `agents_shell` from the default tool set. Native shell, file editing, Git, and repository setup run inside
+the guest's retained `/workspace`. The explicitly configured Tengri browser and Relay MCP servers remain separate
+from the ChatGPT app catalog. This default is not a network sandbox; the guest administrator retains full guest access.
+
 Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
 from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
 inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
@@ -246,7 +252,7 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,

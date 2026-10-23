@@ -60,8 +60,9 @@ required by normal cycle recovery.
 The source selects `jev` protocol v19 / signal state v16. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
-setup. Code supplies a bounded menu containing the minimum fee-covering target, hypothetical order scenarios and observed price context,
-labels the scenarios explicitly, and validates/funds every candidate before inference. A price above a recent high is
+setup. Code supplies a bounded menu of market-price targets and per-stop net-reward scenarios whose conservative modeled
+profit covers the modeled loss. It labels the hypothetical scenarios explicitly and validates/funds every candidate
+before inference. A price above a recent high is
 an order proposal, never fabricated market history. The stop and target remain one complete plan, with no default
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
@@ -956,6 +957,11 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
 - Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
   preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
+- Rejected positions responses emit one bounded schema diagnostic on the existing read span and a warning. The
+  `broker.decode_field` path uses only authored position fields and `[]` in place of array indices; issue, expected type
+  and actual type use fixed categories. Payload values, arbitrary keys, schema messages and account identifiers are
+  omitted. The response remains `INVALID_RESPONSE`; unsupported issue shapes report `unknown` rather than formatting
+  the error. Successful reads, other endpoints, deadlines, retries, validation and freshness are unchanged.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
@@ -1888,8 +1894,10 @@ failures with observation age, without recording account identifiers or payloads
 
 The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
 consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
-runner and active factor/editor contracts are removed. Jev remains the typed System One model; the pinned Qwen3-8B
-endpoint only edits the question document through the signed research workflow.
+runner and active factor/editor contracts are removed. Jev remains the typed System One model. The selected shared Flamingo or native OpenCode free endpoint only edits
+the question document through the signed research workflow. The CPU OpenCode server retains one session per study,
+with one hosted call per proposal and no paid fallback. Its actual provider input, raw response and source/configuration
+identity travel in the verified research receipt. See the runbook for native session and budget enforcement.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and
@@ -2025,6 +2033,8 @@ indicator math is unchanged, sparse intervals remain missing, and the first comp
 observation without waiting thirty minutes. Extended transport health requires quote delivery while retaining
 per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
 quote, trade and feature checks still govern every order.
+Equity admission starts after that first completed minute and its existing decision delay; the unused-entry lease
+remains 60 seconds. Continuous markets remain eligible before that boundary.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
 predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 140 owns the

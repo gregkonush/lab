@@ -56,7 +56,7 @@ def read_json(path):
 def instructions(value):
     if not isinstance(value, dict) or set(value) != {"entry"}:
         raise ValueError(
-            "Only the native conditional complete-plan instruction is editable"
+            "Only the native actual-entry complete-plan instruction is editable"
         )
     if (
         not isinstance(value["entry"], str)
@@ -426,7 +426,7 @@ class Study:
         }:
             raise ValueError("GEPA can edit only the complete native question document")
         prompt = (
-            "Improve the conditional complete-plan instruction for TypeSafe Jev, a typed System One decision model. "
+            "Improve the actual-entry complete-plan instruction for TypeSafe Jev, a typed System One decision model. "
             "Jev receives immutable trading signal state and code-supplied plans. It cannot execute tools or generate text. "
             "The independent setup judgment, plan construction, arithmetic, risk, quantities and authority remain in code. "
             "Only one entry instruction string of at most 2000 characters is editable. Return only its complete JSON document. "
