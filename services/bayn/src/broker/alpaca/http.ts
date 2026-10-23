@@ -1,12 +1,12 @@
 import { NodeHttpClient } from '@effect/platform-node'
 import * as Undici from '@effect/platform-node/Undici'
-import { Cause, Context, Effect, Layer, pipe, Redacted, Result, Scope } from 'effect'
+import { Cause, Context, Effect, Layer, Redacted, Result, Scope } from 'effect'
 import { Headers, HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 
 import { canonicalHashV1Result, renderCanonicalJsonFailure } from '../../hash'
 import { currentUtcInstant } from '../../time'
 import { withObservedStage } from '../../telemetry'
-import { decodeBrokerProxyUrl, type BrokerConnection } from '../connection'
+import { type BrokerConnection } from '../connection'
 import { BrokerEnvironment } from '../identity'
 import {
   BrokerReadContractFailure,
@@ -31,6 +31,7 @@ import {
   decodeExternalClientOrderId,
   decodeFillActivities,
   decodeFeeActivities,
+  decodeFeeActivitiesQuery,
   decodeFillActivitiesQuery,
   decodeMarketCalendar,
   decodeMarketCalendarQuery,
@@ -44,6 +45,7 @@ import {
   type BrokerReadShape,
   type Decoder,
   type FillActivitiesQuery,
+  type FeeActivitiesQuery,
   type MarketCalendarQuery,
   type OrdersQuery,
   type ProxyDispatcherDependencies,
@@ -74,7 +76,7 @@ import {
   positionsUrl,
   responseEvidenceResult,
 } from './requests'
-import { Pipeable } from '../../pipeable'
+
 import { makeReadDiagnostics, projectReadDiagnostic, type ReadDiagnostic } from './read-diagnostics'
 
 const decodeResponseHeaders = HttpClientResponse.schemaHeaders(ResponseHeadersSchema, responseParseOptions)
@@ -108,49 +110,6 @@ const normalizeRead = <A>(
     ),
   )
 
-const makeProxyDispatcherDataFirst = (
-  proxyUrl: string,
-  dependencies: ProxyDispatcherDependencies = {
-    create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-    destroy: (dispatcher) => dispatcher.destroy(),
-  },
-): Effect.Effect<Undici.Dispatcher, BrokerReadError, Scope.Scope> =>
-  Effect.acquireRelease(
-    pipe(
-      Effect.fromResult(parseProxyUrl(proxyUrl)),
-      Effect.flatMap((url) =>
-        Effect.try({
-          try: () => dependencies.create(url),
-          catch: (cause) =>
-            configurationError({ operation: 'proxy', message: 'Alpaca proxy dispatcher acquisition failed', cause }),
-        }),
-      ),
-    ),
-    (dispatcher) => Effect.promise(() => dependencies.destroy(dispatcher)),
-  )
-
-export const makeProxyDispatcher = Pipeable.by<
-  (dependencies?: ProxyDispatcherDependencies) => (proxyUrl: string) => ReturnType<typeof makeProxyDispatcherDataFirst>,
-  typeof makeProxyDispatcherDataFirst
->((arguments_) => typeof arguments_[0] === 'string', makeProxyDispatcherDataFirst)
-
-export const parseProxyUrl = (proxyUrl: string): Result.Result<URL, BrokerReadError> =>
-  pipe(
-    decodeBrokerProxyUrl(proxyUrl),
-    Result.map((origin) => new URL(origin)),
-    Result.mapError((cause) => {
-      const message =
-        cause.reason === 'INVALID_URL'
-          ? 'invalid Alpaca proxy configuration'
-          : cause.reason === 'HTTP_OR_HTTPS_REQUIRED'
-            ? 'Alpaca proxy URL must use HTTP or HTTPS'
-            : cause.reason === 'CREDENTIALS_FORBIDDEN'
-              ? 'Alpaca proxy credentials must not be embedded in the URL'
-              : 'Alpaca proxy URL must contain only an origin'
-      return configurationError({ operation: 'proxy', message, cause })
-    }),
-  )
-
 const defaultProxyDispatcherDependencies: ProxyDispatcherDependencies = {
   create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
   destroy: (dispatcher) => dispatcher.destroy(),
@@ -175,21 +134,11 @@ const proxyLayer = (
 ): Layer.Layer<NodeHttpClient.Dispatcher, BrokerReadError> =>
   Layer.effect(NodeHttpClient.Dispatcher, makeVerifiedProxyDispatcher(connection.proxyUrl, dependencies))
 
-const alpacaHttpLayerDataFirst = (
+export const alpacaHttpLayer = (
   connection: BrokerConnection,
   dependencies: ProxyDispatcherDependencies = defaultProxyDispatcherDependencies,
 ): Layer.Layer<HttpClient.HttpClient, BrokerReadError> =>
   NodeHttpClient.layerUndiciNoDispatcher.pipe(Layer.provide(proxyLayer(connection, dependencies)))
-
-export const alpacaHttpLayer = Pipeable.by<
-  (
-    dependencies?: ProxyDispatcherDependencies,
-  ) => (connection: BrokerConnection) => ReturnType<typeof alpacaHttpLayerDataFirst>,
-  typeof alpacaHttpLayerDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'baseUrl' in arguments_[0],
-  alpacaHttpLayerDataFirst,
-)
 
 export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShape, never, HttpClient.HttpClient> =>
   Effect.gen(function* () {
@@ -316,7 +265,7 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               : transportError(operation, cause, sensitiveValues),
         ),
         Effect.provideService(Headers.CurrentRedactedNames, redactedHeaders),
-        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca' }),
+        withObservedStage('bayn.alpaca.read', { dependency: 'alpaca', operation }),
         Effect.annotateLogs({ operation }),
         Effect.withSpan('broker.read', { attributes: { 'broker.system': 'alpaca', 'broker.operation': operation } }),
       )
@@ -478,8 +427,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
         ),
       )
 
-    const feeActivities = (query: FillActivitiesQuery = {}) =>
-      decodeInput('fee-activities', decodeFillActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
+    const feeActivities = (query: FeeActivitiesQuery = {}) =>
+      decodeInput('fee-activities', decodeFeeActivitiesQuery, query, 'invalid Alpaca fee activities query').pipe(
         Effect.flatMap((decoded) => {
           const request = feeActivitiesRequest(connection, decoded)
           return readJson('fee-activities', request.url, decodeFeeActivities).pipe(

@@ -2,11 +2,7 @@ import { SimulatedSnapshotSourceSchema } from './evidence-schema'
 import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../../hash'
 import { sha256 } from '../../hash'
-import {
-  CaptureDisposition,
-  OriginalKafkaTransportSchema,
-  restoreKafkaTransportTimestamp,
-} from '../../research-capture/capture'
+import { CaptureDisposition, OriginalKafkaTransportSchema, restoreKafkaTransportTimestamp } from './transport-evidence'
 import { kafkaCaptureDisposition } from './kafka'
 import {
   NonNegativeIntegerSchema,
@@ -17,7 +13,7 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { emptyStreamingProjection, incorporateSimulatedMarketRecord, topicPartitionKey } from './projection'
-import type { StreamingUniverse } from './raw-events'
+import { MarketSourcesSchema, marketSourceForTopic, type MarketSources } from './raw-events'
 
 const ArrivalFields = {
   availableAtMs: NonNegativeIntegerSchema,
@@ -31,15 +27,6 @@ const ArrivalFields = {
 }
 export const HistoricalMarketArrivalSchema = Schema.Union([
   Schema.Struct(ArrivalFields),
-  Schema.Struct({
-    schemaVersion: Schema.Literal('bayn.original-market-arrival.v1'),
-    ...ArrivalFields,
-    receipt: Schema.Struct({
-      captureId: StrictNonEmptyStringSchema,
-      consumerEpoch: StrictNonEmptyStringSchema,
-      sequence: PositiveIntegerSchema,
-    }),
-  }),
   Schema.Struct({
     schemaVersion: Schema.Literal('bayn.original-market-arrival.v2'),
     ...ArrivalFields,
@@ -60,6 +47,7 @@ export const HistoricalMarketArrivalSchema = Schema.Union([
   }),
 ])
 export type HistoricalMarketArrival = typeof HistoricalMarketArrivalSchema.Type
+const decodeHistoricalMarketArrival = Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)
 
 /** Explicit counterfactual delivery; computedAt and the published payload are never rewritten. */
 export const HistoricalStreamingInputSchema = Schema.Struct({
@@ -87,7 +75,7 @@ export class HistoricalMarketArrivalFailure extends Data.TaggedError('Historical
   readonly offset: string
 }> {}
 
-export const replayHistoricalMarketArrivals = (input: unknown, universe: StreamingUniverse) =>
+export const replayHistoricalMarketArrivals = (input: unknown, marketSources: MarketSources) =>
   Result.gen(function* () {
     const decoded = yield* Schema.decodeUnknownResult(HistoricalStreamingInputSchema, strictParseOptions)(input)
     const original = decoded.events.find((event) => 'receipt' in event)
@@ -100,11 +88,11 @@ export const replayHistoricalMarketArrivals = (input: unknown, universe: Streami
           offset: original.record.offset,
         }),
       )
-    const inputHash = yield* canonicalHashV1Result({ input: decoded, universe })
+    const inputHash = yield* canonicalHashV1Result({ input: decoded, marketSources })
     const events = [...decoded.events].sort((a, b) => compareArrivalPositions(arrivalPosition(a), arrivalPosition(b)))
     const cursor = yield* createHistoricalMarketCursor(
       decoded.runId,
-      universe,
+      marketSources,
       decoded.regeneratedFeatures?.recordedAtMs,
     )
     // Validate the entire supplied ordering, including records after this observation.
@@ -168,7 +156,7 @@ export const compareArrivalPositions = (a: HistoricalArrivalPosition, b: Histori
 export interface HistoricalMarketCursor {
   readonly source?: typeof SimulatedSnapshotSourceSchema.Type
   readonly runId: string
-  readonly universe: StreamingUniverse
+  readonly marketSources: MarketSources
   readonly regeneratedFeaturesRecordedAtMs?: number
   readonly regeneratedTechnicalFeaturesRecordedAtMs?: number
   readonly projection: ReturnType<typeof emptyStreamingProjection>
@@ -179,12 +167,26 @@ export interface HistoricalMarketCursor {
 
 export const createHistoricalMarketCursor = (
   runId: string,
-  universe: StreamingUniverse,
+  inputSources: MarketSources,
   regeneratedFeaturesRecordedAtMs?: number,
   source?: typeof SimulatedSnapshotSourceSchema.Type,
 ) =>
   Result.gen(function* () {
     yield* Schema.decodeUnknownResult(Sha256Schema, strictParseOptions)(runId)
+    const marketSources = yield* Schema.decodeUnknownResult(MarketSourcesSchema, strictParseOptions)(inputSources)
+    const technicalTopics = marketSources.flatMap((source) =>
+      source.topics.technicalFeatures === undefined ? [] : [source.topics.technicalFeatures],
+    )
+    if (technicalTopics.length > 1)
+      return yield* Result.fail(
+        new HistoricalMarketArrivalFailure({
+          message: 'A replay projection supports one native technical feature topic',
+          topic: technicalTopics.join(','),
+          partition: 0,
+          offset: '0',
+        }),
+      )
+    const sourcesHash = yield* canonicalHashV1Result(marketSources)
     if (regeneratedFeaturesRecordedAtMs !== undefined)
       yield* Schema.decodeUnknownResult(NonNegativeIntegerSchema, strictParseOptions)(regeneratedFeaturesRecordedAtMs)
     const provenance =
@@ -195,11 +197,9 @@ export const createHistoricalMarketCursor = (
               Schema.makeFilter(
                 (value) =>
                   value.runId === runId &&
-                  value.featureTopic === universe.topics.features &&
-                  value.technicalFeatureTopic === universe.topics.technicalFeatures &&
+                  Result.getOrElse(canonicalHashV1Result(value.marketSources), () => '') === sourcesHash &&
                   value.regeneratedFeaturesRecordedAtMs === regeneratedFeaturesRecordedAtMs &&
-                  (value.regeneratedTechnicalFeaturesRecordedAtMs === undefined ||
-                    value.technicalFeatureTopic !== undefined),
+                  (value.regeneratedTechnicalFeaturesRecordedAtMs === undefined || technicalTopics.length === 1),
               ),
             ),
             strictParseOptions,
@@ -207,13 +207,13 @@ export const createHistoricalMarketCursor = (
     return {
       ...(provenance === undefined ? {} : { source: provenance }),
       runId,
-      universe,
+      marketSources,
       ...(regeneratedFeaturesRecordedAtMs === undefined ? {} : { regeneratedFeaturesRecordedAtMs }),
       ...(provenance?.regeneratedTechnicalFeaturesRecordedAtMs === undefined
         ? {}
         : { regeneratedTechnicalFeaturesRecordedAtMs: provenance.regeneratedTechnicalFeaturesRecordedAtMs }),
       projection: {
-        ...emptyStreamingProjection(`historical-${runId}`, universe.topics.technicalFeatures),
+        ...emptyStreamingProjection(`historical-${runId}`, technicalTopics[0]),
         availabilityMode: 'simulated',
       },
       processedRecords: 0,
@@ -224,7 +224,7 @@ export const createHistoricalMarketCursor = (
 
 export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, input: unknown) =>
   Result.gen(function* () {
-    const event = yield* Schema.decodeUnknownResult(HistoricalMarketArrivalSchema, strictParseOptions)(input)
+    const event = yield* decodeHistoricalMarketArrival(input)
     const { record } = event
     const last = cursor.lastArrival
     const receipt = 'receipt' in event ? event.receipt : undefined
@@ -233,7 +233,7 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
     const model = cursor.source?.deliveryModel
     const originalModel = model?.schemaVersion === 'bayn.original-capture-arrivals.v1' ? model : undefined
     if (
-      (receipt !== undefined && cursor.source !== undefined && originalModel === undefined) ||
+      (receipt !== undefined && originalModel === undefined) ||
       (originalModel !== undefined &&
         (original === undefined ||
           receipt?.captureId !== originalModel.captureId ||
@@ -256,7 +256,8 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       )
     const partitionKey = topicPartitionKey(record.topic, record.partition)
     const offset = cursor.suppliedOffsets.get(partitionKey)
-    const order = last === null ? 1 : compareArrivalPositions(arrivalPosition(event), last)
+    const position = arrivalPosition(event)
+    const order = last === null ? 1 : compareArrivalPositions(position, last)
     if (order < 0 || (offset !== undefined && BigInt(record.offset) < BigInt(offset)))
       return yield* Result.fail(
         new HistoricalMarketArrivalFailure({
@@ -267,6 +268,16 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
         }),
       )
     let projection = cursor.projection
+    const universe = marketSourceForTopic(cursor.marketSources, record.topic)
+    if (universe === undefined)
+      return yield* Result.fail(
+        new HistoricalMarketArrivalFailure({
+          message: 'Arrival topic is absent from the frozen market sources',
+          topic: record.topic,
+          partition: record.partition,
+          offset: record.offset,
+        }),
+      )
     if (original !== undefined) {
       const raw = original.rawValueBase64 === null ? null : Buffer.from(original.rawValueBase64, 'base64')
       const priorConsumerSequence =
@@ -299,7 +310,7 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
         projection = incorporateSimulatedMarketRecord(
           cursor.projection,
           { ...record, ...(timestampMs === undefined ? {} : { timestampMs }) },
-          cursor.universe,
+          universe,
           event.availableAtMs,
         )
       }
@@ -321,7 +332,7 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       projection = incorporateSimulatedMarketRecord(
         cursor.projection,
         record,
-        cursor.universe,
+        universe,
         event.availableAtMs,
         cursor.regeneratedFeaturesRecordedAtMs ?? event.availableAtMs,
         cursor.regeneratedTechnicalFeaturesRecordedAtMs ?? event.availableAtMs,
@@ -331,6 +342,6 @@ export const advanceHistoricalMarketCursor = (cursor: HistoricalMarketCursor, in
       projection,
       processedRecords: cursor.processedRecords + 1,
       suppliedOffsets: new Map(cursor.suppliedOffsets).set(partitionKey, record.offset),
-      lastArrival: arrivalPosition(event),
+      lastArrival: position,
     } satisfies HistoricalMarketCursor
   })

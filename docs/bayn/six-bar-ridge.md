@@ -1,7 +1,8 @@
 # Offline six-bar ridge core
 
-The ridge core fits and scores synthetic or caller-supplied research rows. It has no command, market-data reader,
-portfolio adapter, or live strategy registration. Every artifact and score remains `UNQUALIFIED`, with controller
+The ridge core fits and scores research rows. The offline training command generates execution labels from admitted
+original capture using the shared serial portfolio engine; the v6 control study evaluates frozen artifacts. There is
+no live strategy registration. Every artifact and score remains `UNQUALIFIED`, with controller
 coverage `UNKNOWN`. A fitted coefficient is not evidence of profitability or permission to trade.
 
 ## Fit contract
@@ -78,5 +79,120 @@ An eight-row orthogonal design with original slopes 2, 4, ..., 14 yields ridge c
 Seeded property tests cover row permutation and within-day replication.
 
 The solver has four transitive packages, all MIT licensed, with no native or GPU dependency. The scorer does not
-import the fitting module. Existing production entry points do not import either module. No statistical registration,
-real-data fitting, costs, serial portfolio evaluation, or economic qualification is implemented here.
+import the fitting module. The live service entry points do not import either module. The pure core does not implement
+statistical registration or economic qualification. The following offline commands own data and execution mechanics.
+
+## Causal execution training command
+
+`bayn-ridge-training` is an offline command built by `bun run --filter @proompteng/bayn build:research`.
+Run it with `bun run --filter @proompteng/bayn ridge:training`. It does not construct a model provider, broker client or live journal.
+
+```sh
+node services/bayn/dist/research/ridge-training-command.js \
+  --input training-input.json --input-sha256 <raw-input-byte-sha256> \
+  --arrivals original-arrivals.ndjson.gz \
+  --source-receipt original-replay-receipt.json --source-receipt-sha256 <raw-receipt-byte-sha256> \
+  --output new-training-report.json
+```
+
+The strict `bayn.ridge-training-input.v1` input contains `sampling: INDEPENDENT_SERIAL_FIXED_CANDIDATES`,
+the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v5` `backtest`, full raw research `calendar`,
+`expectedCalendarHash`, chronological `sessions`, `fitCutoffAt`, fixed `allocationBudgetMicros`,
+`decisionLatencyMs`, and `turnoverPolicy`. Each session contains its date, UTC open/close and first decision,
+and a `TRAINING`, `VALIDATION` or `HOLDOUT` partition. Declared sessions must be a contiguous slice of the
+pinned calendar. The backtest executes exactly the training sessions; its calendar contains those sessions plus
+their immediate successor. Original-capture arrivals and independently byte-pinned replay receipts are required.
+Training source coverage ends no later than the fitting cutoff and strictly before the first evaluation session
+opens. Archive or reconstructed REST sources are rejected.
+
+Each candidate starts its own independent portfolio with the same initial capital and fixed allocation budget.
+At every eligible flat window it enters that candidate if the existing causal six-bar extractor admits it. The
+engine carries that chain's cash, equity peaks and external costs across sessions and resets daily turnover only
+at session boundaries. Native warmup, risk bounds, stops, maximum hold, close exits, fees, IOC limits and displayed
+liquidity remain the same as v6 evaluation. There is no entry-threshold search or profitable-outcome selection.
+Features and the selection hash are retained before decision and routing latency. Final labels use actual cash
+changes after the last partial exit and its precise execution completion time, with the unchanged
+`ridgeExecutionLabelDefinition` hash and fixed principal denominator. A proven canceled or risk-blocked entry is a
+zero `NO_ENTRY_FILL` label. Unselected or excluded candidates and missing data are never assigned zero labels.
+
+The report retains every returned chain session, decision, attempted entry, order and incomplete outcome. A thrown
+source or engine failure retains prior completed sessions, its typed cause and the uncompleted session dates;
+unreturned partial session state supplies no labels. An unresolved
+position stops that candidate's later sessions without resetting its capital, records skipped dates and prevents
+fitting for the entire run. Missing required data, typed source failures or zero training rows also produce no
+artifact. The command writes a diagnostic report and exits unsuccessfully when the run cannot fit; it refuses to
+overwrite a report. Invalid input or receipt admission fails before execution. Complete runs produce a v2 training
+manifest with zero-row sessions preserved, content-pinned labels and the existing v2 artifact. Those extractor pins
+are created after outcomes are resolved; they are not evidence of independent prospective registration.
+
+These are policy-conditioned development labels: opportunity availability depends on each fixed-candidate chain's
+past positions, cash, risk and turnover. They are not a uniform candidate-time panel, and the independent chains'
+P&Ls cannot be summed into one achievable portfolio. Evaluate a frozen artifact and the training-mean baseline
+through the v6 paired portfolio on separate declared evaluation capture before considering economic qualification.
+Retain the actual executable revision and runtime separately from the caller-supplied source-revision field.
+Bundled executables verify the embedded build identity through existing backtest admission. Source-mode development
+builds lack that embedded verification by default. Execution labels include modeled transaction fees; allocated data
+charges and other operating costs stay in the chain's cost accounting and are not part of the label cash delta.
+The fitted target is not all-in economic profit, and unknown operating costs still prevent full qualification.
+Synthetic end-to-end tests establish mechanics, not profitability. A valid original-capture corpus is still required
+for any real-data fit; a command build does not establish that such a corpus exists.
+
+## Offline paired portfolio
+
+`bayn.control-study-input.v7` with `entry: "DETERMINISTIC"` opts into `SIX_BAR_RIDGE_V1` versus `SIX_BAR_TRAINING_MEAN_V1` through the
+existing `bayn-control-study` command. It requires mechanical management and a v2 artifact. The baseline
+assigns the training-only weighted target mean to every admissible candidate. It does not use the full model
+intercept. Strictly positive scores beat cash; exact ties choose ascending symbol order.
+
+Both policies poll from the first completed session minute plus the native two-second delay. The first poll is
+rounded up to the configured session-open cadence. During the first five completed minutes they retain evidenced
+cash decisions with `six-completed-session-minutes-required`; no six-bar score exists yet. After that, six actual
+contiguous bars and the required quote and trade evidence determine feature availability. Missing inputs remain
+explicit and make the study incomplete. They use independent portfolios with
+identical initial capital and rules. Different entries can change subsequent cash, risk and opportunity
+availability. This is a policy-level comparison, not exposure-matched alpha.
+
+The v6 input has `backtest`, `decisionLatencyMs`, `turnoverPolicy`, `management: MECHANICAL`, and `ridge`. Its
+`ridge` object contains `artifact`, `expectedArtifact` with independently pinned `artifactHash`, `manifestHash`
+and `sourceRevision`, the full raw research `calendar`, `expectedCalendarHash`, `evaluationSourceManifestHash`,
+and `partition: VALIDATION | HOLDOUT`. It has no equity-relative repeated target weight. The command retains its
+existing independently pinned input and source-receipt byte hashes.
+
+Admission verifies the artifact and its full normalized calendar. The calendar contains declared training and
+evaluation sessions. The execution calendar must be the exact contiguous subset through the immediate successor
+of its final executed session. The successor supplies calendar context and is not executed. Selected dates,
+partitions, open/close bounds and first eligible polls must match the artifact. Six-bar queries carry the full
+calendar and verify its actual evidence hash; the execution-subset hash cannot stand in for it. The evaluation
+source must be original capture and match the independently admitted manifest hash. Training and evaluation
+sources can differ.
+
+The model's label-definition hash must equal `ridgeExecutionLabelDefinition` for the actual execution settings.
+It binds fixed principal budget, latency, cadence, execution model, IOC/liquidity and fee assumptions, cash and
+whole-share rules, protective exits, turnover policy and economic risk bounds including gross/symbol weight limits.
+An arbitrary caller-supplied artifact is not assumed to match those mechanics.
+
+The fixed allocation budget is an adverse-limit principal cap. Current cash including fees, native risk and
+turnover limits can reduce or block quantity; partial or absent fills never change the model-label denominator.
+Session reports expose `sizing.mode: FIXED_PRINCIPAL_BUDGET` and the budget. Fills, partial exits, quote
+liquidity, fees, marks and cash carry use the existing stateful control engine. Overlapping hypothetical labels
+are never summed into portfolio returns.
+
+Each candidate uses the existing causal six-bar extractor. Full-row content hashes are retained immediately after
+verified extraction, before rows are projected for scoring. Both policies require exact membership and cardinality
+against those original pins. The constant validates those contents without depending on Ridge normalization
+arithmetic. Candidate-local missing, stale or over-late evidence and evidenced spread or size exclusions remain
+explicit, retain their original observation and receipt hashes, and receive no allocation while other candidates
+may proceed. Required benchmark gaps or spread/size exclusions make the whole decision unavailable, even when
+every candidate also has missing evidence and even for a zero or negative training-mean baseline. Malformed,
+premature, mixed-contract, ordering and watermark failures remain global. An unavailable decision makes the
+session incomplete and leaves the minute window unconsumed so a later
+causal poll can retry. Cash and canceled-entry sessions retain scheduled opportunities and allocated data
+charges. Mechanical mode has no provider client or Jev journal. The legacy snapshot preflight explicitly rejects
+v6 because its native snapshot contract does not establish six-bar input coverage.
+
+Reports remain `UNQUALIFIED` with controller coverage `UNKNOWN`. The simulated poll denominator does not prove
+production controller coverage. Original byte/receipt identity does not prove capture completeness or source
+authenticity. Quote units, capacity, market impact, full latency and operating costs remain uncalibrated.
+Known-cost replay P&L is not fully costed economic P&L. Existing operating-cost composition retains null
+qualification when costs are unknown. No training run, holdout inspection, strategy activation or trading
+authority is added by this adapter.

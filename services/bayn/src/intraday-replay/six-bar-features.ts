@@ -1,3 +1,5 @@
+import { isContinuousMarket } from '../market-hours'
+import { exchangeSessions } from '../market-hours'
 import { Data, Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
@@ -40,7 +42,7 @@ export const sixBarResearchDefinition = {
   maximumQuoteAgeMs: 10_000,
   maximumSpreadBps: 5,
   producerClockSkewAllowanceMs: 0,
-  barPublicationPolicy: BarPublicationPolicy.TimelyEquivalentRevision,
+  barPublicationPolicy: BarPublicationPolicy.ObservedHistory,
   candidateEvidencePolicy: IntradayCandidateEvidencePolicy.QuoteWithWindowTrade,
   quotePolicy: 'Both symbols require positive displayed sizes and spread at most five basis points.',
   benchmarkTradePolicy: 'Post-window trade with observation age between zero and ten seconds.',
@@ -62,6 +64,7 @@ export enum SixBarResearchStatus {
 }
 
 export enum SixBarUnavailableReason {
+  SessionHistory = 'six-completed-session-minutes-required',
   RetainedCut = 'retained-cut-unavailable',
   Bars = 'six-contiguous-bars-unavailable',
   Quote = 'quote-unavailable',
@@ -97,14 +100,17 @@ type RecordEntry = ObservedMarketValue<IntradayBar | IntradayQuote | IntradayTra
 /** Research evidence only. The cursor must come from verified original-capture replay, advanced no later than observation. */
 export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor, query: IntradaySnapshotQuery) =>
   Result.gen(function* () {
-    const request = yield* verifyIntradaySnapshotQuery(query)
+    const verified = yield* verifyIntradaySnapshotQuery(query)
+    if (isContinuousMarket(verified.calendar))
+      return yield* Result.fail(fail('Six-bar equity research requires exchange hours'))
+    const request = { ...verified, calendar: verified.calendar }
     const source = yield* Schema.decodeUnknownResult(SimulatedSnapshotSourceSchema, strictParseOptions)(cursor.source)
     const candidate = request.candidateSymbols?.[0]
     const observedAtMs = Date.parse(request.observedAt)
     const start = intradayInstantNanos(request.rangeStartAt)
     const end = intradayInstantNanos(request.rangeEndAt)
     const minute = 60_000_000_000n
-    const session = request.calendar.sessions.find((entry) => entry.date === request.sessionDate)
+    const session = exchangeSessions(request.calendar).find((entry) => entry.date === request.sessionDate)
     if (
       candidate === undefined ||
       candidate === sixBarResearchDefinition.benchmarkSymbol ||
@@ -112,34 +118,38 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       request.symbols?.length !== 2 ||
       !request.symbols.includes(sixBarResearchDefinition.benchmarkSymbol) ||
       request.purpose !== undefined ||
-      end - start !== 6n * minute ||
+      end <= start ||
+      end - start > 6n * minute ||
       request.maximumQuoteAgeMs !== sixBarResearchDefinition.maximumQuoteAgeMs ||
       request.minimumWatermarkLagMs !== sixBarResearchDefinition.minimumWatermarkLagMs ||
       request.candidateEvidencePolicy !== sixBarResearchDefinition.candidateEvidencePolicy ||
       request.feed !== 'iex' ||
       request.delayClass !== 'real_time_exchange_only' ||
       session === undefined ||
+      Date.parse(request.rangeStartAt) !==
+        Math.max(Date.parse(session.openAt), Date.parse(request.rangeEndAt) - 6 * 60_000) ||
       observedAtMs >= Date.parse(session.closeAt)
     )
       return yield* Result.fail(
         fail('Six-bar research requires its exact candidate, benchmark, window and timing contract'),
       )
+    const market = cursor.marketSources.find((value) => value.universeId === request.universeId)
     if (
+      market === undefined ||
+      (yield* canonicalHashV1Result(source.marketSources)) !== (yield* canonicalHashV1Result(cursor.marketSources)) ||
       source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       source.runId !== cursor.runId ||
       cursor.projection.availabilityMode !== 'simulated' ||
-      source.featureTopic !== cursor.universe.topics.features ||
-      source.technicalFeatureTopic !== cursor.universe.topics.technicalFeatures ||
       source.regeneratedFeaturesRecordedAtMs !== undefined ||
       source.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
-      cursor.universe.universeId !== request.universeId ||
-      cursor.universe.universeSymbolHash !== request.universeSymbolHash ||
-      cursor.universe.symbols.join(',') !== request.universe.join(',') ||
-      cursor.universe.topics.bars !== request.sourceTopics.bars ||
-      cursor.universe.topics.quotes !== request.sourceTopics.quotes ||
-      cursor.universe.topics.trades !== request.sourceTopics.trades ||
+      market.universeId !== request.universeId ||
+      market.universeSymbolHash !== request.universeSymbolHash ||
+      market.symbols.join(',') !== request.universe.join(',') ||
+      market.topics.bars !== request.sourceTopics.bars ||
+      market.topics.quotes !== request.sourceTopics.quotes ||
+      market.topics.trades !== request.sourceTopics.trades ||
       (cursor.lastArrival !== null &&
         (cursor.lastArrival.availableAtMs > observedAtMs ||
           cursor.lastArrival.receipt === undefined ||
@@ -219,6 +229,15 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       symbol: string | null = null,
       missingBarInstants: readonly string[] = [],
     ) => finish({ status: SixBarResearchStatus.Unavailable, reason, message, symbol, missingBarInstants })
+    const inputIssues: Exclude<Outcome, { status: SixBarResearchStatus.Available }>[] = []
+    const recordUnavailable = (
+      reason: SixBarUnavailableReason,
+      message: string,
+      symbol: string | null = null,
+      missingBarInstants: readonly string[] = [],
+    ) => {
+      inputIssues.push({ status: SixBarResearchStatus.Unavailable, reason, message, symbol, missingBarInstants })
+    }
     if (
       state.minimumObservationMs > observedAtMs ||
       discardedRejectionsOverlap(state, Date.parse(request.rangeStartAt))
@@ -240,13 +259,18 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
     yield* validateIdentity(request, [...quotes, ...trades], request.observedAt, true)
     yield* validateBarStructure(request, bars)
     yield* validateBarStructure(request, publications)
+    if (end - start < 6n * minute)
+      return yield* unavailable(
+        SixBarUnavailableReason.SessionHistory,
+        'Waiting for six completed session minutes; no six-bar score is defined yet',
+      )
     for (const input of selected) {
       const present = new Set(input.bars.map((entry) => intradayInstantNanos(entry.value.eventAt)))
       const missing: string[] = []
       for (let at = start; at < end; at += minute)
         if (!present.has(at)) missing.push(new Date(Number(at / 1_000_000n)).toISOString())
       if (input.bars.length !== 6 || missing.length > 0)
-        return yield* unavailable(
+        recordUnavailable(
           SixBarUnavailableReason.Bars,
           'Six exact contiguous completed RTH bars are required',
           input.symbol,
@@ -256,44 +280,41 @@ export const extractSixBarResearchObservation = (cursor: HistoricalMarketCursor,
       if (quoteReason !== null) {
         if (quoteReason !== ReplayQuoteRejection.Missing && quoteReason !== ReplayQuoteRejection.Stale)
           return yield* Result.fail(fail(`Invalid quote for ${input.symbol}: ${quoteReason}`))
-        return yield* unavailable(SixBarUnavailableReason.Quote, quoteReason, input.symbol)
+        recordUnavailable(SixBarUnavailableReason.Quote, quoteReason, input.symbol)
       }
       if (input.trade === undefined)
-        return yield* unavailable(SixBarUnavailableReason.Trade, 'A real observed trade is required', input.symbol)
+        recordUnavailable(SixBarUnavailableReason.Trade, 'A real observed trade is required', input.symbol)
       if (
         input.symbol === sixBarResearchDefinition.benchmarkSymbol &&
+        input.trade !== undefined &&
         BigInt(observedAtMs) * 1_000_000n - intradayInstantNanos(input.trade.value.eventAt) > 10_000_000_000n
       )
-        return yield* unavailable(
+        recordUnavailable(
           SixBarUnavailableReason.BenchmarkTrade,
           'SPY trade exceeds the ten-second observation-age bound',
           input.symbol,
         )
     }
-    const availability = candidateAvailability(
-      request,
-      publications,
-      quotes,
-      trades,
-      0,
-      BarPublicationPolicy.TimelyEquivalentRevision,
-    )
+    const availability = candidateAvailability(request, publications, quotes, trades, 0)
     if (Result.isFailure(availability)) {
       const cause = availability.failure
       if (
         cause.reason === 'not-ready' ||
         (cause.reason === 'freshness' && cause.ingestionDelayDirection === IntradayIngestionDelayDirection.AboveMaximum)
       )
-        return yield* unavailable(SixBarUnavailableReason.Freshness, cause.message)
-      return yield* Result.fail(cause)
+        recordUnavailable(SixBarUnavailableReason.Freshness, cause.message)
+      else return yield* Result.fail(cause)
     }
-    const exclusion = availability.success.exclusions[0]
+    const exclusion = Result.isSuccess(availability) ? availability.success.exclusions[0] : undefined
     if (exclusion !== undefined)
-      return yield* unavailable(SixBarUnavailableReason.Freshness, exclusion.message, exclusion.symbol)
+      recordUnavailable(SixBarUnavailableReason.Freshness, exclusion.message, exclusion.symbol)
     for (const quote of quotes) {
-      const reason = yield* jevEntryQuoteExclusion(quote, sixBarResearchDefinition.maximumSpreadBps)
-      if (reason !== null) return yield* finish({ status: SixBarResearchStatus.Excluded, symbol: quote.symbol, reason })
+      const reason = yield* jevEntryQuoteExclusion(quote)
+      if (reason !== null) inputIssues.push({ status: SixBarResearchStatus.Excluded, symbol: quote.symbol, reason })
     }
+    // A candidate-local gap must never hide invalid required benchmark evidence.
+    const issue = inputIssues.find((entry) => entry.symbol !== candidate) ?? inputIssues[0]
+    if (issue !== undefined) return yield* finish(issue)
     const candidateInput = selected.find((input) => input.symbol === candidate)
     const benchmarkInput = selected.find((input) => input.symbol === sixBarResearchDefinition.benchmarkSymbol)
     const closes = candidateInput?.bars.map((entry) => entry.value.close) ?? []

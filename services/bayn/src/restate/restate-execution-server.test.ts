@@ -1,31 +1,16 @@
+import { decodeRestateRequestIdentityKeys } from './restate-identity'
 import { connect, createServer as createHttp2Server, type ClientHttp2Session } from 'node:http2'
-import { createServer as createHttpServer } from 'node:http'
-import type { AddressInfo } from 'node:net'
 
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect } from 'effect'
 
 import { acquireRestateHttp2Server } from './restate-http2-server'
-import {
-  decodeRestateRequestIdentityKeys,
-  makeRestateExecutionEndpointHandler,
-  restateExecutionServerConfig,
-} from './restate-execution-server'
+import { makeRestateExecutionEndpointHandler, restateExecutionServerConfig } from './restate-execution-server'
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
 const sourceRevision = 'c'.repeat(40)
 const requestIdentityKey = 'publickeyv1_2G8dCQhArfvGpzPw5Vx2ALciR4xCLHfS5YaT93XjNxX9'
-
-const reservePort = (): Promise<number> =>
-  new Promise((resolve, reject) => {
-    const server = createHttpServer()
-    server.once('error', reject)
-    server.listen(0, '127.0.0.1', () => {
-      const address = server.address() as AddressInfo
-      server.close((cause) => (cause === undefined ? resolve(address.port) : reject(cause)))
-    })
-  })
 
 const connectSession = (origin: string): Promise<ClientHttp2Session> =>
   new Promise((resolve, reject) => {
@@ -91,20 +76,25 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },
     )
-    const port = await reservePort()
 
     const discovery = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
+          const server = createHttp2Server(handler)
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
           const manifest = yield* Effect.promise(() => readDiscovery(client))
           client.close()
           return manifest
@@ -132,10 +122,14 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'status', 'activateDeployment'],
+        handlers: ['activate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
+    expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+    })
     expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
       ty: 'SHARED',
       ingressPrivate: false,
@@ -153,6 +147,7 @@ describe('native Restate execution server', () => {
       { name: 'activate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
+      { name: 'prepareActivation', ingressPrivate: true },
       { name: 'status', ingressPrivate: true },
     ])
   })
@@ -186,13 +181,7 @@ describe('native Restate execution server', () => {
       port: 9080,
       requestIdentityKeys: requestIdentityKey,
     })
-    expect(Object.keys(configured).sort()).toEqual([
-      'activationToken',
-      'port',
-      'previousPlanHash',
-      'previousSourceRevision',
-      'requestIdentityKeys',
-    ])
+    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'port', 'requestIdentityKeys'])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {
@@ -208,20 +197,25 @@ describe('native Restate execution server', () => {
       {
         runtime: {
           activate: () => Promise.resolve(),
-          nextPollNotBeforeMs: () => Promise.resolve(0),
-          preparePoll: () => Promise.resolve('test-capture'),
-          poll: () => Promise.resolve({ _tag: 'Unavailable', nextPollNotBeforeMs: 0 }),
+          poll: () =>
+            Promise.resolve({
+              poll: { _tag: 'Unavailable', nextPollNotBeforeMs: 0 },
+              startedAtMs: 0,
+              completedAtMs: 0,
+            }),
         },
         pollIntervalMs: 30_000,
       },
     )
-    const port = await reservePort()
 
     const status = await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* acquireRestateHttp2Server(createHttp2Server(handler), port)
-          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${port}`))
+          const server = createHttp2Server(handler)
+          yield* acquireRestateHttp2Server(server, 0)
+          const address = server.address()
+          if (address === null || typeof address === 'string') throw new Error('Restate test server did not bind TCP')
+          const client = yield* Effect.promise(() => connectSession(`http://127.0.0.1:${address.port}`))
           const responseStatus = yield* Effect.promise(() => readUnsignedDiscoveryStatus(client))
           client.close()
           return responseStatus

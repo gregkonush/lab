@@ -1,17 +1,18 @@
-import { Effect } from 'effect'
+import { Effect, Option } from 'effect'
 import { makeBrokerStateCache } from '../execution/broker-state-cache'
 
 import type { ExecutionCycleClosureStoreShape } from '../db/execution-cycle-closure'
 import { operationalError } from '../errors'
 import type { ExecutionAuthority } from '../execution/authority'
-import type { BlockedCycleIntentStoreShape } from '../execution/intents'
+import type { BlockedCycleIntentStoreShape } from '../execution/intents/blocked-cycle'
 import { makeExecutionProgram, type ExecutionProgramDependencies } from '../execution/runtime-program'
-import type { IntradayMarketDataService } from '../market-data'
+import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import type { MutationCycleExecutionMode, ObserveAutonomousCycleInput } from '../observe-composition/model'
 import { loadStrategyExecutionRiskPolicy, makeMutationAutonomousCycleStartup } from '../observe-composition/startup'
 
 export interface TradingEngineInput {
   readonly authority: ExecutionAuthority
+  readonly riskPolicyHash: string
   readonly cycle: ObserveAutonomousCycleInput & {
     readonly intradayMarketData: IntradayMarketDataService
     readonly executionCycleClosureStore: ExecutionCycleClosureStoreShape
@@ -29,13 +30,30 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
         operation: 'trading-engine',
         message: 'Trading engine cycle and broker authority must use the same account',
       })
-    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(input.cycle.accountId, input.cycle.strategy)
+    const brokerEnvironment = input.authority.brokerIdentity.environment
+    const riskPolicy = yield* loadStrategyExecutionRiskPolicy(
+      input.cycle.accountId,
+      input.cycle.strategy,
+      brokerEnvironment,
+      input.riskPolicyHash,
+    )
     const executionProgram = yield* Effect.fromResult(
       makeExecutionProgram(input.authority, {
         ...input.execution,
         brokerStateCache: makeBrokerStateCache(input.cycle.accountId, input.cycle.authorityGenerationHash),
         riskPolicy,
-        isCloseOnlyIntent: (intentId) => input.cycle.executionCycleClosureStore.containsIntent(intentId),
+        isCloseOnlyIntent: (intentId) =>
+          input.execution.intentStore
+            .read(intentId)
+            .pipe(
+              Effect.flatMap((stored) =>
+                Option.isSome(stored) &&
+                stored.value.intent.protection !== undefined &&
+                stored.value.intent.protection._tag !== 'Bracket'
+                  ? Effect.succeed(true)
+                  : input.cycle.executionCycleClosureStore.containsIntent(intentId),
+              ),
+            ),
       }),
     ).pipe(
       Effect.mapError((cause) =>
@@ -49,6 +67,9 @@ export const makeTradingEngine = (input: TradingEngineInput) =>
     )
     return {
       executionProgram,
-      startCycle: makeMutationAutonomousCycleStartup({ ...input.cycle, executionProgram }, input.executionMode),
+      startCycle: makeMutationAutonomousCycleStartup(
+        { ...input.cycle, brokerEnvironment, riskPolicyHash: input.riskPolicyHash, executionProgram },
+        input.executionMode,
+      ),
     }
   })

@@ -1,9 +1,16 @@
+import { ValkeyCache } from '../../valkey-cache'
+import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
-import { ConfigProvider, Deferred, Effect, Fiber, Logger, Result } from 'effect'
+import type { PgClient } from '@effect/sql-pg'
+import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
 import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
+import { checkHealth } from '../../health/program'
+import { makeBrokerObservationStore } from '../../db/broker-observations'
+import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
+import { readStableBrokerSnapshot } from '../../simulation-reconciliation/broker-history'
 import { currentUtcInstant } from '../../time'
 import { unusedAssetBySymbol, unusedMarketCalendar } from '../alpaca-test-support'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
@@ -49,7 +56,7 @@ const fixture = (
         evidence: {
           requestId: `request-${operation}-${calls.length}`,
           status: 200,
-          contentHash: canonicalHashV1(observed),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(observed)),
           observedAt: at,
         },
       }
@@ -65,6 +72,10 @@ const fixture = (
                     ? pendingEquity.value
                     : equityMicros
                 return {
+                  cryptoStatus: null,
+                  cashReportingQuantumMicros: '1' as const,
+                  nonMarginableBuyingPowerMicros: null,
+
                   id: accountId,
                   status: AccountStatus.Active,
                   currency: 'USD',
@@ -132,6 +143,28 @@ const run = <A, E>(effect: Effect.Effect<A, E>) =>
     effect.pipe(Effect.provide(TestClock.layer()), Effect.provideService(Logger.CurrentLoggers, new Set())),
   )
 
+const healthPass = (read: BrokerReadShape, timeoutMs = 1000) =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(readyState())
+    yield* checkHealth(
+      { ...runtimeConfig, operationTimeoutMs: timeoutMs },
+      state,
+      {
+        postgresql: Effect.void,
+        journal: {
+          check: Effect.void,
+          post: () => Effect.die('unexpected ledger write'),
+          verifyAccount: () => Effect.die('unexpected ledger verification'),
+          journalAndReconcile: () => Effect.die('unexpected ledger mutation'),
+          checkRun: () => Effect.die('unexpected ledger result check'),
+        },
+        cycleObservability: { read: () => Effect.die('unexpected unbound cycle read') },
+      },
+      { read, expectedAccountId: accountId, executionEligible: true, executionDisabledReason: null },
+    )
+    return (yield* Ref.get(state)).broker
+  })
+
 describe('durable broker observations', () => {
   test('cancels broker acquisition at the polling deadline without producing a partial cut', async () => {
     const source = fixture()
@@ -161,6 +194,32 @@ describe('durable broker observations', () => {
       }),
     )
   })
+  test('independent history endpoints complete in one wave per stability scan', async () => {
+    const source = fixture()
+    const delayed: BrokerReadShape = {
+      ...source.read,
+      account: Effect.sleep(100).pipe(Effect.andThen(source.read.account)),
+      positions: Effect.sleep(100).pipe(Effect.andThen(source.read.positions)),
+      orders: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.orders(query))),
+      fillActivities: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.fillActivities(query))),
+      feeActivities: (query) => Effect.sleep(100).pipe(Effect.andThen(source.read.feeActivities(query))),
+    }
+    const elapsed = await run(
+      Effect.gen(function* () {
+        const start = yield* Clock.currentTimeMillis
+        const task = yield* readStableBrokerSnapshot(delayed, currentUtcInstant).pipe(
+          Effect.andThen(Clock.currentTimeMillis),
+          Effect.forkChild({ startImmediately: true }),
+        )
+        for (let step = 0; step < 6; step++) yield* TestClock.adjust(100)
+        return (yield* Fiber.join(task)) - start
+      }),
+    )
+    expect(elapsed).toBe(300)
+    expect(source.calls.filter((call) => call === 'fees')).toHaveLength(2)
+    expect(source.calls.filter((call) => call.startsWith('fills:'))).toHaveLength(2)
+  })
+
   test('captures complete stable history with its original poll start and validates durable bytes', async () => {
     const source = fixture()
     const value = await run(
@@ -173,6 +232,255 @@ describe('durable broker observations', () => {
     expect(value.snapshot.account.value.id).toBe(accountId)
     expect(source.calls.length).toBeGreaterThan(3)
   })
+  test('each health pass reads one fresh complete broker cut instead of six copies', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        const directCalls = source.calls.length
+        let reads = 0
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.sync(() => {
+              reads += 1
+              return value
+            }),
+            readState: Effect.sync(() => {
+              reads += 1
+              return value
+            }),
+            readForSubmit: () => Effect.die('unexpected submit read'),
+            invalidate: Effect.void,
+          }),
+        )
+        expect((yield* healthPass(projected))?.readAvailable).toBe(true)
+        expect(reads).toBe(1)
+        expect((yield* healthPass(projected))?.readAvailable).toBe(true)
+        expect(reads).toBe(2)
+        expect(source.calls.length).toBe(directCalls)
+      }),
+    )
+  })
+
+  test('health reads the compact Valkey materialization and rejects corrupted or stale state', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        let payload: unknown = {
+          snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          state: observedBrokerState(value),
+        }
+        let snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
+        let queries = 0
+        const sql = (() =>
+          Effect.sync(() => {
+            queries += 1
+            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
+          })) as unknown as PgClient.PgClient
+        const store = makeBrokerObservationStore(
+          sql,
+          accountId,
+          'a'.repeat(40),
+          60_000,
+          ValkeyCache.of({
+            get: (key) => {
+              expect(key.startsWith('bayn:broker:state:')).toBe(true)
+              return Effect.succeed(Option.some(JSON.stringify(payload)))
+            },
+            put: () => Effect.die('read-only probe'),
+            remove: () => Effect.die('read-only probe'),
+          }),
+        )
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, store),
+        )
+        expect((yield* healthPass(projected))?.readAvailable).toBe(true)
+        expect(queries).toBe(1)
+        snapshotHash = 'b'.repeat(64)
+        const changed = yield* healthPass(projected)
+        expect(changed?.readAvailable).toBe(false)
+        expect(changed?.error).toContain('content hash changed')
+        expect(queries).toBe(2)
+        payload = {
+          snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          state: { snapshot: { account: {} } },
+        }
+        snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
+        expect((yield* healthPass(projected))?.readAvailable).toBe(false)
+        expect(queries).toBe(3)
+        payload = { snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)), state: observedBrokerState(value) }
+        snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
+        expect((yield* healthPass(projected))?.readAvailable).toBe(true)
+        yield* TestClock.adjust(60_001)
+        const expired = yield* healthPass(projected)
+        expect(expired?.readAvailable).toBe(false)
+        expect(expired?.error).toContain('stale-observation')
+        expect(queries).toBe(5)
+      }),
+    )
+  })
+
+  test('a failed first health cut is not cached and account/configuration permission drift remains visible', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
+        let unavailable = true
+        let reads = 0
+        let current = value
+        const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+          Effect.provideService(BrokerObservations, {
+            read: Effect.suspend(() => {
+              reads += 1
+              return unavailable
+                ? Effect.fail(
+                    new BrokerReadError({
+                      operation: 'preflight',
+                      kind: BrokerReadErrorKind.ObservationPending,
+                      retryable: true,
+                      message: 'post-mutation cut pending',
+                    }),
+                  )
+                : Effect.succeed(current)
+            }),
+            readState: Effect.suspend(() => {
+              reads += 1
+              return unavailable
+                ? Effect.fail(
+                    new BrokerReadError({
+                      operation: 'preflight',
+                      kind: BrokerReadErrorKind.ObservationPending,
+                      retryable: true,
+                      message: 'post-mutation cut pending',
+                    }),
+                  )
+                : Effect.succeed(current)
+            }),
+            readForSubmit: () => Effect.die('unexpected submit read'),
+            invalidate: Effect.sync(() => {
+              unavailable = true
+            }),
+          }),
+        )
+        const failed = yield* healthPass(projected)
+        expect(failed?.readAvailable).toBe(false)
+        for (const name of [
+          'account read',
+          'account configuration read',
+          'positions read',
+          'open orders read',
+          'recent orders read',
+          'recent fills read',
+        ])
+          expect(failed?.error).toContain(`Alpaca ${name} unavailable: post-mutation cut pending`)
+        expect(reads).toBe(1)
+        unavailable = false
+        expect((yield* healthPass(projected))?.readAvailable).toBe(true)
+        current = {
+          ...value,
+          configuration: { ...value.configuration, value: { ...value.configuration.value, fractionalTrading: false } },
+        }
+        expect((yield* healthPass(projected))?.error).toContain('fractional trading is disabled')
+        current = {
+          ...value,
+          snapshot: {
+            ...value.snapshot,
+            account: { ...value.snapshot.account, value: { ...value.snapshot.account.value, tradingBlocked: true } },
+          },
+        }
+        expect((yield* healthPass(projected))?.error).toContain('trading is blocked')
+        yield* projected.projection?.invalidate ?? Effect.die('missing projection')
+        expect((yield* healthPass(projected))?.readAvailable).toBe(false)
+        expect(reads).toBe(5)
+      }),
+    )
+  })
+
+  test('health timeout and caller interruption cancel the single read exactly once', async () => {
+    for (const interrupt of [false, true]) {
+      const source = fixture()
+      await run(
+        Effect.gen(function* () {
+          const started = yield* Deferred.make<void>()
+          let reads = 0
+          let finalized = 0
+          const projected = yield* makeProjectedBrokerRead(source.read).pipe(
+            Effect.provideService(BrokerObservations, {
+              read: Effect.sync(() => {
+                reads += 1
+              }).pipe(
+                Effect.andThen(Deferred.succeed(started, undefined)),
+                Effect.andThen(Effect.never),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    finalized += 1
+                  }),
+                ),
+              ),
+              readState: Effect.sync(() => {
+                reads += 1
+              }).pipe(
+                Effect.andThen(Deferred.succeed(started, undefined)),
+                Effect.andThen(Effect.never),
+                Effect.ensuring(
+                  Effect.sync(() => {
+                    finalized += 1
+                  }),
+                ),
+              ),
+              readForSubmit: () => Effect.die('unexpected submit read'),
+              invalidate: Effect.void,
+            }),
+          )
+          const fiber = yield* healthPass(projected, 1000).pipe(Effect.forkChild({ startImmediately: true }))
+          yield* Deferred.await(started)
+          if (interrupt) {
+            yield* Fiber.interrupt(fiber)
+            expect(Exit.isFailure(yield* Fiber.await(fiber))).toBe(true)
+          } else {
+            yield* TestClock.adjust(1000)
+            const result = yield* Fiber.join(fiber)
+            expect(result?.readAvailable).toBe(false)
+            for (const name of [
+              'account read',
+              'account configuration read',
+              'positions read',
+              'open orders read',
+              'recent orders read',
+              'recent fills read',
+            ])
+              expect(result?.error).toContain(`Alpaca ${name} timed out after 1000ms`)
+          }
+          expect(reads).toBe(1)
+          expect(finalized).toBe(1)
+        }),
+      )
+    }
+  })
+
+  test('unprojected health retains all six independent broker reads', async () => {
+    const source = fixture()
+    await run(
+      Effect.gen(function* () {
+        expect((yield* healthPass(source.read))?.readAvailable).toBe(true)
+        expect(source.calls).toHaveLength(6)
+        expect(source.calls).toContain('account')
+        expect(source.calls).toContain('configuration')
+        expect(source.calls).toContain('positions')
+        source.failAccount(
+          new BrokerReadError({
+            operation: 'account',
+            kind: BrokerReadErrorKind.Timeout,
+            retryable: true,
+            message: 'account failed',
+          }),
+        )
+        expect((yield* healthPass(source.read))?.error).toContain('Alpaca account read unavailable: account failed')
+      }),
+    )
+  })
+
   test('routine and final submit reads never invoke the direct source', async () => {
     const source = fixture()
     await run(
@@ -182,6 +490,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.void,
           }),
@@ -206,6 +515,7 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.succeed(value),
+            readState: Effect.succeed(value),
             readForSubmit: () => Effect.succeed(value),
             invalidate: Effect.sync(() => {
               invalidations += 1
@@ -253,6 +563,14 @@ describe('durable broker observations', () => {
         const projected = yield* makeProjectedBrokerRead(source.read).pipe(
           Effect.provideService(BrokerObservations, {
             read: Effect.fail(
+              new BrokerReadError({
+                operation: 'preflight',
+                kind: BrokerReadErrorKind.Timeout,
+                retryable: true,
+                message: 'unavailable',
+              }),
+            ),
+            readState: Effect.fail(
               new BrokerReadError({
                 operation: 'preflight',
                 kind: BrokerReadErrorKind.Timeout,

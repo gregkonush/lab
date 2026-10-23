@@ -13,9 +13,9 @@ import {
   type Position,
   type ReadEvidence,
   type ReadResult,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations'
+import { BrokerMutationError, MutationFailure } from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
 import { ReplayBrokerFailure } from '../intraday-replay/broker'
 import { makeReplayJevTiming } from '../intraday-replay/jev-timing'
@@ -39,13 +39,14 @@ import {
   type Intent,
   type RiskDecision,
 } from './contracts'
-import type { StoredIntent } from './intents'
+import type { StoredIntent } from './intents/domain'
 import {
   authorizeFinalBrokerSubmit as authorizeCachedFinalBrokerSubmit,
   makeExecutionProgram,
   type ExecutionProgramDependencies,
 } from './runtime-program'
 import {
+  brokerAssetFixture,
   cachedBrokerStateFixture,
   nativeBrokerStateFixture,
   submissionProjectionFixture,
@@ -82,11 +83,11 @@ const strategy: ExecutionStrategyIdentity = {
   parameterSchemaVersion: 'bayn.risk-balanced-trend.protocol.v4',
 }
 const riskPolicy: Policy = {
-  schemaVersion: 'bayn.paper-risk-policy.v2',
+  schemaVersion: 'bayn.execution-risk-policy.v4',
   accountId,
   brokerMode: BrokerMode.Execution,
   allowedSymbols: ['AMD'],
-  allowedOrderTypes: [OrderType.Market],
+  allowedOrderTypes: [OrderType.Limit],
   allowedTimeInForce: [TimeInForce.Day],
   maxOrderNotionalMicros: '10000000000',
   maxSymbolExposureMicros: '25000000000',
@@ -147,6 +148,10 @@ const readEvidence: ReadEvidence = {
 }
 const readResult = <A>(value: A): ReadResult<A> => ({ value, evidence: readEvidence })
 const brokerAccount = (overrides: Partial<Account> = {}): Account => ({
+  cryptoStatus: null,
+  cashReportingQuantumMicros: '1' as const,
+  nonMarginableBuyingPowerMicros: null,
+
   id: accountId,
   status: AccountStatus.Active,
   currency: 'USD',
@@ -167,8 +172,9 @@ const brokerPosition = (overrides: Partial<Position> = {}): Position => ({
   exchange: AssetExchange.Nasdaq,
   assetClass: AssetClass.UsEquity,
   side: PositionSide.Long,
-  quantityMicros: '1000000',
+  quantityAtoms: '1000000000',
   averageEntryPriceMicros: '100000000',
+  costBasisMicros: '100000000',
   marketPriceMicros: '100000000',
   marketValueMicros: '100000000',
   unrealizedPnlMicros: '0',
@@ -181,7 +187,7 @@ const stableBrokerRead = (positions: readonly Position[] = [], account: Account 
   return submissionProjectionFixture({
     account: Effect.succeed(readResult(account)),
     accountConfiguration: unusedRead,
-    assetBySymbol: () => unusedRead,
+    assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
     positions: Effect.succeed(readResult(positions)),
     orders: () => Effect.succeed(readResult([])),
     orderById: () => unusedRead,
@@ -225,7 +231,7 @@ const finalLiveFixture = () => {
   if (authority.brokerAccess !== BrokerAccess.Mutation) throw new Error('fixture requires mutation authority')
   const riskDecisionId = '6'.repeat(64)
   const intent: Intent = {
-    schemaVersion: 'bayn.paper-intent.v3',
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: '5'.repeat(64),
     authorityGenerationHash,
     riskDecisionId,
@@ -237,10 +243,11 @@ const finalLiveFixture = () => {
     clientOrderId: `b1_${'C'.repeat(43)}`,
     symbol: 'AMD',
     side: OrderSide.Buy,
-    orderType: OrderType.Market,
+    orderType: OrderType.Limit,
     timeInForce: TimeInForce.Day,
-    quantityMicros: '1000000',
+    quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
+    limitPriceMicros: '100000000',
     state: IntentState.IoStarted,
     createdAt: '2026-07-28T07:59:00.000Z',
   }
@@ -970,7 +977,7 @@ describe('same-code execution program composition', () => {
               assetId: '7781125b-04ba-4fcb-903f-ad4c34eb6832',
               symbol: 'NVDA',
               side: PositionSide.Short,
-              quantityMicros: '-2000000',
+              quantityAtoms: '-2000000000',
               marketValueMicros: '-200000000',
             }),
           ]),
@@ -1084,7 +1091,7 @@ describe('same-code execution program composition', () => {
     const intentId = 'a'.repeat(64)
     const decisionId = 'b'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1096,10 +1103,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'A'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }
@@ -1126,6 +1134,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('final-risk'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('final risk proof must not commit')),
         read: () =>
           Effect.sync(() => {
@@ -1183,7 +1193,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         positionReads += 1
@@ -1204,6 +1214,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-position'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock position proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1247,7 +1259,7 @@ describe('same-code execution program composition', () => {
         return readResult(brokerAccount())
       }),
       accountConfiguration: unusedRead,
-      assetBySymbol: () => unusedRead,
+      assetBySymbol: (symbol) => Effect.succeed(readResult(brokerAssetFixture(symbol, observedAt))),
       positions: Effect.sync(() => {
         trace.push('positions')
         return readResult([])
@@ -1268,6 +1280,8 @@ describe('same-code execution program composition', () => {
       ...dependencies('post-lock-quote'),
       brokerRead,
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-lock quote proof must not commit')),
         read: () => Effect.succeed(Option.some(stored)),
       },
@@ -1315,7 +1329,7 @@ describe('same-code execution program composition', () => {
     const intentId = '7'.repeat(64)
     const decisionId = '8'.repeat(64)
     const intent: Intent = {
-      schemaVersion: 'bayn.paper-intent.v3',
+      schemaVersion: 'bayn.execution-intent.v5',
       intentId,
       authorityGenerationHash,
       riskDecisionId: decisionId,
@@ -1327,10 +1341,11 @@ describe('same-code execution program composition', () => {
       clientOrderId: `b1_${'B'.repeat(43)}`,
       symbol: 'AMD',
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
-      quantityMicros: '1000000',
+      quantityAtoms: '1000000000',
       notionalLimitMicros: '100000000',
+      limitPriceMicros: '100000000',
       state: IntentState.IoStarted,
       createdAt: '2026-07-28T07:59:00.000Z',
     }
@@ -1360,6 +1375,8 @@ describe('same-code execution program composition', () => {
     const testDependencies: ExecutionProgramDependencies = {
       ...dependencies('post-transmit'),
       intentStore: {
+        protectionForCycle: () => Effect.succeed([]),
+        beginProtectionCancel: () => Effect.die(new Error('unexpected protection cancellation')),
         commit: () => Effect.die(new Error('post-transmit proof must not commit an intent')),
         read: () => Effect.succeed(Option.some(stored)),
       },

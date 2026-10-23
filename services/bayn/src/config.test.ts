@@ -4,19 +4,19 @@ import { ConfigProvider, Effect, Redacted, Result } from 'effect'
 
 import { BrokerProvider, alpacaLiveBaseUrl, alpacaSandboxBaseUrl } from './broker/connection'
 import type { EmbeddedBuildMetadata } from './build'
+import { loadConfig } from './config/load'
+import { resolveRuntimeConfig } from './config/resolution'
 import {
-  loadConfig,
-  resolveRuntimeConfig,
   type ParsedRuntimeConfig,
   type RuntimeConfigResolutionFailure,
   type RuntimeConfigResolutionInput,
-} from './config'
+} from './config/model'
 import { BrokerAccess, BrokerEnvironment, CapitalAuthorityKind } from './execution/authority'
 import { CapitalAuthoritySelection } from './execution/configuration'
 import { loadApplicationPlan } from './application-plan'
 import { executionControllerConfig, executionControllerPlanHash } from './composition/native-execution-runtime'
 import { loadForwardPerformanceConfig } from './forward-performance/config'
-import { canonicalHashV1OrThrow } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { activeStrategyBehaviorHash, loadActiveStrategyProtocol } from './strategy'
 import { historicalSignalConfig } from './testing/historical-signal-fixture'
 
@@ -416,14 +416,16 @@ describe('runtime configuration loading', () => {
     })
   })
 
-  test('requires explicit historical inputs when loading a forward-performance report', async () => {
-    const missing = await Effect.runPromise(
-      Effect.result(provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment)),
+  test('loads native forward reporting without inventing a historical snapshot', async () => {
+    const report = await Effect.runPromise(
+      provideEnvironment(loadForwardPerformanceConfig(buildMetadata), runtimeEnvironment),
     )
-    expect(missing).toMatchObject({
-      _tag: 'Failure',
-      failure: { component: 'config', operation: 'historical-signal', retryable: false },
-    })
+    const runtime = await Effect.runPromise(provideEnvironment(loadConfig(buildMetadata), runtimeEnvironment))
+    expect(report).toEqual(runtime)
+    expect(report.historicalSignal).toBeUndefined()
+  })
+
+  test('preserves complete explicit historical inputs for legacy forward reporting', async () => {
     const environment = new Map(runtimeEnvironment)
     for (const [key, value] of Object.entries({
       BAYN_SIGNAL_SNAPSHOT_ID: historicalSignalConfig.snapshotId,
@@ -447,7 +449,7 @@ describe('runtime configuration loading', () => {
 
   test('keeps strategy and controller identities independent of stale historical settings', async () => {
     const environment = new Map(runtimeEnvironment)
-    const parameterHash = canonicalHashV1OrThrow(Result.getOrThrow(loadActiveStrategyProtocol()))
+    const parameterHash = Result.getOrThrow(canonicalHashV1Result(Result.getOrThrow(loadActiveStrategyProtocol())))
     environment.set('BAYN_PROVENANCE_MODE', 'development')
     environment.set('BAYN_STRATEGY_BEHAVIOR_HASH', activeStrategyBehaviorHash)
     environment.set('BAYN_STRATEGY_PARAMETER_HASH', parameterHash)
@@ -465,7 +467,7 @@ describe('runtime configuration loading', () => {
       environment.set(`BAYN_SIGNAL_${suffix}`, 'not-a-live-runtime-input')
     const stale = await Effect.runPromise(provideEnvironment(loadApplicationPlan, environment))
 
-    expect(stale.parameterHash).toBe('86a3015dca27e514c7d3f53ecb27d3648e7fce1ea0c2e25325df6bbff83524bd')
+    expect(stale.parameterHash).toBe('167b5258319906743909ed89d6bb8fec7a01e4a134825cc64aa30d65a229f3be')
     expect(stale.parameterHash).toBe(baseline.parameterHash)
     expect(stale.strategyProtocolHash).toBe(baseline.strategyProtocolHash)
     const firstController = Result.getOrThrow(executionControllerConfig(baseline))

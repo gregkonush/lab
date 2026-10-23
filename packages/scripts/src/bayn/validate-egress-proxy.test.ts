@@ -6,10 +6,19 @@ import { validateBaynEgressProxy } from './validate-egress-proxy'
 const deployedConfig = readFileSync('argocd/applications/bayn/squid.conf', 'utf8')
 
 describe('Bayn egress proxy contract', () => {
-  test('allows only the exact Alpaca and TypeSafe API hosts over TLS CONNECT', () => {
+  test('allows only the exact trading API and official public-source hosts over TLS CONNECT', () => {
     expect(validateBaynEgressProxy(deployedConfig)).toEqual({
       aclName: 'trading_api',
-      allowedHosts: ['api.alpaca.markets', 'api.typesafe.ai', 'data.alpaca.markets', 'paper-api.alpaca.markets'],
+      allowedHosts: [
+        'api.alpaca.markets',
+        'api.typesafe.ai',
+        'data.alpaca.markets',
+        'data.sec.gov',
+        'paper-api.alpaca.markets',
+        'www.bls.gov',
+        'www.federalreserve.gov',
+        'www.sec.gov',
+      ],
     })
   })
 
@@ -18,6 +27,8 @@ describe('Bayn egress proxy contract', () => {
     ['unrelated domain', deployedConfig.replace('api.alpaca.markets', 'example.com')],
     ['wildcard TypeSafe domain', deployedConfig.replace('api.typesafe.ai', '.typesafe.ai')],
     ['duplicate replacing TypeSafe', deployedConfig.replace('api.typesafe.ai', 'api.alpaca.markets')],
+    ['wildcard SEC domain', deployedConfig.replace('www.sec.gov', '.sec.gov')],
+    ['unrelated research domain', deployedConfig.replace('www.bls.gov', 'example.com')],
     [
       'additional allow rule',
       deployedConfig.replace('http_access deny all', 'http_access allow all\nhttp_access deny all'),

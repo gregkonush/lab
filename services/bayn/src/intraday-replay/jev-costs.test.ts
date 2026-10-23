@@ -1,7 +1,7 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1OrThrow } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevFailure, jevModel, prepareJevRequest, type JevResponse } from '../jev/contract'
 import { calculateReplayJevCosts } from './jev-costs'
 import type { ReplayJevCall } from './jev-timing'
@@ -31,7 +31,7 @@ const call = (inputTokens: number, outputTokens = 0): ReplayJevCall => {
       status: 'RECEIVED',
       inference: {
         requestHash: prepared.requestHash,
-        responseHash: canonicalHashV1OrThrow(response),
+        responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
         startedAt: '2026-09-21T12:00:00.000Z',
         completedAt: '2026-09-21T12:00:00.500Z',
         response,
@@ -43,7 +43,7 @@ const call = (inputTokens: number, outputTokens = 0): ReplayJevCall => {
 const rejectedCall = (
   response: unknown,
   failure = JevFailure.Response,
-  responseHash: string | null = canonicalHashV1OrThrow(response),
+  responseHash: string | null = Result.getOrThrow(canonicalHashV1Result(response)),
 ): ReplayJevCall => ({
   ...call(0),
   outcome: { status: 'FAILED', failure, httpStatus: null, responseHash, rejectedResponse: response },
@@ -114,4 +114,17 @@ test('does not infer charges from missing, changed, mismatched or malformed usag
     outputTokens: '0',
     knownCostMicros: '0',
   })
+})
+
+test('retained HTTP failure usage is included while status failure remains unusable', () => {
+  const response = { model: jevModel, usage: { input_tokens: 7858, output_tokens: 150 }, error: 'fixture rejection' }
+  const retained = rejectedCall(response, JevFailure.Status)
+  expect(calculateReplayJevCosts([retained], costs)).toMatchObject({
+    callCount: 1,
+    unresolvedCallCount: 0,
+    inputTokens: '7858',
+    outputTokens: '150',
+    knownCostMicros: '331',
+  })
+  expect(retained.outcome.status).toBe('FAILED')
 })

@@ -1,17 +1,18 @@
+import { cashSpotLimitTimeInForce } from './order-terms'
 import { Result } from 'effect'
+import { quantityScale } from '../quantity'
 
-import { quantizeAlpacaLimitPriceMicros } from '../broker/alpaca-price'
-import type { ExecutionModel } from '../execution-model-contract'
-import { makeFillTerms, MICROS, notionalMicros, type ExecutionModelFailure } from '../execution-model'
+import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
+import { instrumentMarket } from '../instruments'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
 
 export interface ExecutionIntentPricingInput {
+  readonly symbol: string
   readonly side: OrderSide
   readonly orderType: OrderType
   readonly timeInForce: TimeInForce
-  readonly quantityMicros: bigint
+  readonly quantityAtoms: bigint
   readonly referencePriceMicros: bigint
-  readonly executionModel: ExecutionModel
   readonly limitSlippageBps: bigint
 }
 
@@ -21,7 +22,6 @@ export interface ExecutionIntentPricing {
 }
 
 export type ExecutionIntentPricingFailure =
-  | ExecutionModelFailure
   | {
       readonly _tag: 'UnsupportedExecutionTerms'
       readonly orderType: OrderType
@@ -29,50 +29,29 @@ export type ExecutionIntentPricingFailure =
     }
   | {
       readonly _tag: 'InvalidQuoteBoundIntent'
-      readonly reason: 'invalid-quantity-or-price' | 'fractional-quantity' | 'invalid-slippage'
-      readonly quantityMicros: bigint
+      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage'
+      readonly quantityAtoms: bigint
       readonly referencePriceMicros: bigint
     }
 
 export const deriveExecutionIntentPricing = (
   input: ExecutionIntentPricingInput,
 ): Result.Result<ExecutionIntentPricing, ExecutionIntentPricingFailure> => {
-  if (input.orderType === OrderType.Market && input.timeInForce === TimeInForce.Day) {
-    return Result.map(
-      makeFillTerms(
-        input.side === OrderSide.Buy ? 'buy' : 'sell',
-        input.quantityMicros,
-        input.referencePriceMicros,
-        input.executionModel,
-        MICROS,
-      ),
-      (terms) => ({
-        expectedExecutionPriceMicros: terms.fillPriceMicros,
-        notionalLimitMicros: terms.notionalMicros,
-      }),
-    )
-  }
-
-  if (input.orderType !== OrderType.Limit || input.timeInForce !== TimeInForce.ImmediateOrCancel) {
+  if (
+    input.orderType !== OrderType.Limit ||
+    input.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
+  ) {
     return Result.fail({
       _tag: 'UnsupportedExecutionTerms',
       orderType: input.orderType,
       timeInForce: input.timeInForce,
     })
   }
-  if (input.quantityMicros <= 0n || input.referencePriceMicros <= 0n) {
+  if (input.quantityAtoms <= 0n || input.referencePriceMicros <= 0n) {
     return Result.fail({
       _tag: 'InvalidQuoteBoundIntent',
       reason: 'invalid-quantity-or-price',
-      quantityMicros: input.quantityMicros,
-      referencePriceMicros: input.referencePriceMicros,
-    })
-  }
-  if (input.quantityMicros % MICROS !== 0n) {
-    return Result.fail({
-      _tag: 'InvalidQuoteBoundIntent',
-      reason: 'fractional-quantity',
-      quantityMicros: input.quantityMicros,
+      quantityAtoms: input.quantityAtoms,
       referencePriceMicros: input.referencePriceMicros,
     })
   }
@@ -80,18 +59,24 @@ export const deriveExecutionIntentPricing = (
     return Result.fail({
       _tag: 'InvalidQuoteBoundIntent',
       reason: 'invalid-slippage',
-      quantityMicros: input.quantityMicros,
+      quantityAtoms: input.quantityAtoms,
       referencePriceMicros: input.referencePriceMicros,
     })
   }
   const buy = input.side === OrderSide.Buy
   const boundary = input.referencePriceMicros * (10_000n + (buy ? input.limitSlippageBps : -input.limitSlippageBps))
-  const price =
-    input.limitSlippageBps === 0n
-      ? input.referencePriceMicros
-      : quantizeAlpacaLimitPriceMicros((boundary + (buy ? 0n : 9_999n)) / 10_000n, buy ? 'DOWN' : 'UP')
-  return Result.map(notionalMicros(input.quantityMicros, price), (notionalLimitMicros) => ({
-    expectedExecutionPriceMicros: price,
-    notionalLimitMicros,
-  }))
+  const price = quantizeInstrumentPriceMicros(
+    input.symbol,
+    (boundary + (buy ? 0n : 9_999n)) / 10_000n,
+    buy ? 'DOWN' : 'UP',
+  )
+  const notionalLimitMicros = (input.quantityAtoms * price + (buy ? quantityScale - 1n : 0n)) / quantityScale
+  if (price <= 0n || notionalLimitMicros <= 0n)
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-quantity-or-price',
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  return Result.succeed({ expectedExecutionPriceMicros: price, notionalLimitMicros })
 }

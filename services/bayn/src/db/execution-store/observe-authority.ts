@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../../telemetry'
+import { databaseUtcInstant } from '../clock'
 
 import {
   BrokerEnvironment,
@@ -8,8 +9,9 @@ import {
   decodePersistedBrokerIdentity,
   type BrokerIdentity,
 } from '../../broker/identity'
-import { Authority, type AuthorityState, type ResearchCapitalGrantGeneration } from '../../execution/contracts'
+import { Authority, type AuthorityState } from '../../execution/contracts'
 import {
+  strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   reconciliationDiscrepancyRestrictionPattern,
   executionMandateCompletedRestrictionReason,
@@ -31,7 +33,7 @@ import {
   researchCapitalGrantGenerationFromRow,
   type AuthorityPostgres,
 } from './authority-shared'
-import type { AuthorityGenerationLineage, EnsureAuthorityGenerationInput, ExecutionStoreError } from './contract'
+import type { AuthorityGenerationStoreShape, EnsureAuthorityGenerationInput } from './contract'
 import { failExecutionStore, liftAuthorityDecision, runExecutionOperation } from './errors'
 import {
   decodeAuthorityStateObservationRows,
@@ -40,7 +42,6 @@ import {
   decodeEnsureAuthorityGenerationInput,
   type AuthorityGenerationRow,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
@@ -67,7 +68,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-const validateObserveGenerationBrokerIdentityReplayDataFirst = (
+export const validateObserveGenerationBrokerIdentityReplay = (
   history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
@@ -118,32 +119,11 @@ const validateObserveGenerationBrokerIdentityReplayDataFirst = (
       })
 }
 
-export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
-  2,
-  validateObserveGenerationBrokerIdentityReplayDataFirst,
-)
-
-export interface ObserveAuthorityInterpreter {
-  readonly ensureAuthorityGeneration: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readOrInitializeObserveAuthority: (
-    input: EnsureAuthorityGenerationInput,
-  ) => Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readAuthorityState: Effect.Effect<AuthorityState, ExecutionStoreError>
-  readonly readResearchAuthorityGeneration: (
-    generationHash: string,
-  ) => Effect.Effect<ResearchCapitalGrantGeneration | undefined, ExecutionStoreError>
-  readonly readAuthorityGenerationLineage: (
-    generationHash: string,
-  ) => Effect.Effect<AuthorityGenerationLineage | undefined, ExecutionStoreError>
-}
-
-const makeObserveAuthorityInterpreterDataFirst = (
+export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
-): ObserveAuthorityInterpreter => {
+): AuthorityGenerationStoreShape => {
   const requireBrokerIdentity = () =>
     brokerIdentity === undefined
       ? failExecutionStore('authority', 'invariant', 'authority generation requires a configured broker identity')
@@ -156,7 +136,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const [existing] = yield* authority.readGeneration(decision.generationHash)
       yield* authority.requireUnusedGeneration(decision.generationHash, existing)
       const [databaseTime] = yield* sql<Record<string, unknown>>`
-        SELECT ${authority.clock.now} AS activated_at
+        SELECT to_char(${authority.clock.now} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS activated_at
       `.pipe(Effect.flatMap(decodeDatabaseInstant))
       if (databaseTime === undefined) {
         return yield* failExecutionStore('authority', 'invariant', 'authority initialization time is unavailable')
@@ -185,7 +165,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
         )
         RETURNING
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const insertedRow = inserted[0]
       if (insertedRow === undefined) {
@@ -208,10 +188,10 @@ const makeObserveAuthorityInterpreterDataFirst = (
       return current
     })
 
-  const terminalizeUnusedPreSubmissionResearchCycles = (
+  const terminalizeUnusedResearchCycles = (
     decision: Extract<ObserveGenerationDecision, { readonly _tag: 'RotateObserveGeneration' }>,
     request: ObserveGenerationRequest,
-    activatedAt: Date,
+    activatedAt: string,
   ) =>
     sql`
       UPDATE autonomous_cycles AS cycle
@@ -247,6 +227,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
               state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
               OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
               OR state.reason = ${incompletePassReason}
+              OR state.reason = ${strategyProtocolCutoverRestrictionReason}
               OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
               OR (
                 state.reason IN (
@@ -255,10 +236,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   ${legacyV1CompletedRestrictionReason},
                   ${legacyExecutionActivationExpiredRestrictionReason}
                 )
-                AND EXISTS (
-                  SELECT 1
-                  FROM autonomous_forward_performance_receipts AS receipt
-                  WHERE receipt.authority_generation_hash = state.generation_hash
+                AND (
+                  EXISTS (
+                    SELECT 1
+                    FROM autonomous_forward_performance_receipts AS receipt
+                    WHERE receipt.authority_generation_hash = state.generation_hash
+                  )
+                  OR research_paper_expired_zero_execution_settled(state.generation_hash)
                 )
               )
             )
@@ -278,7 +262,18 @@ const makeObserveAuthorityInterpreterDataFirst = (
         AND cycle.state IN ('PENDING', 'ACTIVE')
         AND cycle.decision_hash IS NULL
         AND cycle.updated_at <= ${activatedAt}
-        AND ${activatedAt} < cycle.submission_open_at
+        AND (
+          ${activatedAt} < cycle.submission_open_at
+          OR (
+            state.reason = ${strategyProtocolCutoverRestrictionReason}
+            AND cycle.snapshot_id IS NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM autonomous_cycle_shadow_decisions AS decision
+              WHERE decision.cycle_id = cycle.cycle_id
+            )
+          )
+        )
         AND NOT EXISTS (
           SELECT 1
           FROM intents AS intent
@@ -310,7 +305,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           ${activatedAt}
         )
       `
-      yield* terminalizeUnusedPreSubmissionResearchCycles(decision, request, activatedAt)
+      yield* terminalizeUnusedResearchCycles(decision, request, activatedAt)
       const rotated = yield* sql<Record<string, unknown>>`
         WITH latest_reconciliation AS (
           SELECT
@@ -375,6 +370,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
                   state.reason LIKE ${`${executionMandateFailureRestrictionPrefix}%`}
                   OR state.reason LIKE ${`${legacyExecutionMandateFailureRestrictionPrefix}%`}
                   OR state.reason = ${incompletePassReason}
+                  OR state.reason = ${strategyProtocolCutoverRestrictionReason}
                   OR state.reason ~ ${reconciliationDiscrepancyRestrictionPattern}
                   OR (
                     state.reason IN (
@@ -383,10 +379,13 @@ const makeObserveAuthorityInterpreterDataFirst = (
                       ${legacyV1CompletedRestrictionReason},
                       ${legacyExecutionActivationExpiredRestrictionReason}
                     )
-                    AND EXISTS (
-                      SELECT 1
-                      FROM autonomous_forward_performance_receipts AS receipt
-                      WHERE receipt.authority_generation_hash = state.generation_hash
+                    AND (
+                      EXISTS (
+                        SELECT 1
+                        FROM autonomous_forward_performance_receipts AS receipt
+                        WHERE receipt.authority_generation_hash = state.generation_hash
+                      )
+                      OR research_paper_expired_zero_execution_settled(state.generation_hash)
                     )
                   )
                 )
@@ -432,7 +431,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
           AND (NOT research_rearm.candidate OR research_rearm.eligible)
         RETURNING
           state.schema_version, state.generation_hash, state.maximum, state.effective, state.kill_state, state.reason,
-          state.version::text AS version, state.updated_at
+          state.version::text AS version, ${databaseUtcInstant(sql, sql`state.updated_at`)} AS updated_at
       `.pipe(Effect.flatMap(decodeAuthorityStateRows))
       const rotatedRow = rotated[0]
       if (rotatedRow === undefined) {
@@ -447,7 +446,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -486,7 +486,8 @@ const makeObserveAuthorityInterpreterDataFirst = (
       const rows = yield* sql<Record<string, unknown>>`
         SELECT
           schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at, ${authority.clock.now} AS observed_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at,
+          ${authority.clock.now} AS observed_at
         FROM authority_state
         WHERE singleton
         FOR UPDATE
@@ -522,7 +523,7 @@ const makeObserveAuthorityInterpreterDataFirst = (
 
   const authorityStateQuery = sql`
         SELECT schema_version, generation_hash, maximum, effective, kill_state, reason,
-          version::text AS version, updated_at
+          version::text AS version, ${databaseUtcInstant(sql, sql`updated_at`)} AS updated_at
         FROM authority_state
         WHERE singleton
       `
@@ -592,5 +593,3 @@ const makeObserveAuthorityInterpreterDataFirst = (
     readAuthorityGenerationLineage,
   }
 }
-
-export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)
