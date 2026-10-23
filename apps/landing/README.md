@@ -147,7 +147,7 @@ Consecutive tools appear in compact, collapsible groups. Each row keeps its comm
 expanding it shows arguments and results. Terminal output removes ANSI controls and decodes JSON string wrappers while
 preserving columns. Conversation and tool-output scrollbars use a thin thumb with a transparent track.
 
-Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+Submitted messages and active turns share the same quiet Thinking animation. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
 appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and

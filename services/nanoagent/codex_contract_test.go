@@ -33,10 +33,10 @@ func TestPinnedCodexRecoversAcceptanceFromPersistedClientIdentity(t *testing.T) 
 func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 	binary := os.Getenv("TENGRI_CODEX_CONTRACT_BINARY")
 	if binary == "" {
-		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.159.2 binary")
+		t.Skip("set TENGRI_CODEX_CONTRACT_BINARY to the pinned Codex 0.164.0 binary")
 	}
 	version, err := exec.Command(binary, "--version").Output()
-	if err != nil || strings.TrimSpace(string(version)) != "codex-cli 0.159.2" {
+	if err != nil || strings.TrimSpace(string(version)) != "codex-cli 0.164.0" {
 		t.Fatalf("wrong native contract binary: %s %v", version, err)
 	}
 	home := t.TempDir()
