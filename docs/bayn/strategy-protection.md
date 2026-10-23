@@ -1,7 +1,7 @@
 # Jev-selected trade plans and broker protection
 
 Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
-Protocol v19 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
+Protocol v20 / signal state v17, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
@@ -27,8 +27,8 @@ Market-price target scenarios lie those steps above the observed bid; three repr
 price anchors after the existing fee-covering filter.
 
 Each stop can also have a `NET_REWARD_ORDER_SCENARIO`. Code solves for conservative target proceeds equal to acquisition
-cost plus the complete modeled stop loss, then rounds the target up to the executable tick. Entry and exit fees, adverse
-execution allowances and cash rounding remain included. This proposes a net reward of at least the modeled loss rather
+cost plus the complete modeled stop loss, then rounds the target up to the executable tick. Entry and exit fees, entry
+and stop execution allowances, and cash rounding remain included. This proposes a net reward of at least the modeled loss rather
 than offering a fee-only target with microscopic profit. It is a conditional payoff scenario, not an expected return or
 evidence that the price can be reached. If it cannot fit the existing liquidation search bound, code omits that scenario
 while retaining other fundable market-price choices. Range proposals retain `OBSERVED_RANGE_ORDER_SCENARIO`. Deduplication
@@ -41,7 +41,10 @@ have candidate targets without inventing historical highs. Candidate coverage an
 validation; a supplied candidate is not evidence that the market will reach it.
 
 Code funds every complete plan before inference. Target proceeds must exceed acquisition cost after modeled entry and exit
-fees and adverse execution allowances. Stop proceeds must be positive and below acquisition cost. If allocation or prices
+fees at the enforced take-profit sell limit. The limit is already the minimum execution price; discounting it again
+would count an additional allowance that the order does not permit. State exposes `takeProfitBreakEvenLimitUsd` and
+`takeProfitRequiredBidRiseBps` separately from `holdingExitBreakEvenBidUsd` and `holdingExitRequiredBidRiseBps`.
+Holding-time liquidation retains the adverse quote allowance. Stop proceeds must be positive and below acquisition cost. If allocation or prices
 cannot fund any plan, only abstention remains. The exact sealed request, response and deterministic reconstruction bind the
 chosen plan. A missing, foreign, altered, stale or unsupported choice cannot authorize an order. Model abstention remains
 explicit in `entryPlanRejections`, and public no-trade status distinguishes `JEV_MODEL_ABSTAINED` from
@@ -99,10 +102,18 @@ require a new reconciliation. Retrying cancellation addresses the same broker or
 terminal, with fresh exact inventory and accounting, before a new close sells the residual. A filled parent does not
 make its remaining children disappear. Unknown submissions are recovered by their original client identity.
 
+Application take-profit closes preserve the sealed profit limit even if a refreshed quote falls below the trigger.
+Protection cancellation stores the verified exit target with its existing durable command. Position recovery checks
+the original entry, account and plan binding and retains `profitExitRequested`; releasing protection cannot erase the profit floor.
+The pricing, immutable decision verifier and submission reconstruction enforce the same floor. An unfilled or partial
+profit order is canceled at the actual first-fill holding deadline, including while new submissions are disabled.
+Residual closes release the profit floor when the current bid crosses the original stop or holding time elapses.
+Existing quote/risk expiration and cancel-confirm-reconcile requirements still apply; a profit limit never guarantees a fill.
+
 ## Hard cutover
 
-Migration 141 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v19, and accepts only current batch and
+Migration 143 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v20, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects

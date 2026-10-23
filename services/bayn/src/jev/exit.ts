@@ -193,3 +193,45 @@ export const JevExitTargetSchema = Schema.Struct({
   }),
 )
 export type JevExitTarget = typeof JevExitTargetSchema.Type
+
+const isProfitExit = (target: JevExitTarget | undefined): target is JevExitTarget =>
+  target !== undefined &&
+  (target.reason === JevExitReason.ProfitTarget ||
+    (target.reason === JevExitReason.ProtectionReleased &&
+      target.evidence.portfolio.purpose === JevPurpose.Manage &&
+      target.evidence.portfolio.profitExitRequested))
+
+export const jevProfitTargetLimitFloors = (
+  target: JevExitTarget | undefined,
+  observedAt: string,
+  references: readonly { readonly symbol: string; readonly referencePriceMicros: string }[],
+): Result.Result<Readonly<Record<string, bigint>>, JevContractError> =>
+  Result.gen(function* () {
+    if (!isProfitExit(target)) return {}
+    const portfolio = target.evidence.portfolio
+    if (portfolio.purpose !== JevPurpose.Manage)
+      return yield* invalid('A profit limit requires the entry-bound managed portfolio')
+    const plan = yield* jevManagedExitPlan(portfolio)
+    const firstFill = portfolio.entryFills[0]
+    const reference = references.find(({ symbol }) => symbol === plan.levels.symbol)
+    if (firstFill === undefined || reference === undefined)
+      return yield* invalid('A profit limit requires its first fill and current close reference')
+    if (
+      observedAt >= jevMaximumHoldDueAt(firstFill.occurredAt, target.evidence.protocol.maximumHoldingMinutes) ||
+      jevProtectiveStopCrossed(BigInt(reference.referencePriceMicros), plan.levels)
+    )
+      return {}
+    return { [plan.levels.symbol]: BigInt(plan.levels.profitLimitPriceMicros) }
+  })
+
+export const jevProfitTargetHoldingDeadlineAt = (
+  target: JevExitTarget | undefined,
+): Result.Result<string | undefined, JevContractError> => {
+  if (!isProfitExit(target)) return Result.succeed(undefined)
+  const portfolio = target.evidence.portfolio
+  if (portfolio.purpose !== JevPurpose.Manage || portfolio.entryFills[0] === undefined)
+    return invalid('A profit limit requires the entry-bound first fill')
+  return Result.succeed(
+    jevMaximumHoldDueAt(portfolio.entryFills[0].occurredAt, target.evidence.protocol.maximumHoldingMinutes),
+  )
+}
