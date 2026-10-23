@@ -67,12 +67,47 @@ test.each([0, 0.1, 0.25])('a %s USD observed range retains a fee-covering hypoth
   }
 })
 
+test.each([0, 0.1, 0.25])('a quiet %s USD range offers net reward that covers its modeled loss', (range) => {
+  const { plans } = plansForRange(range)
+  expect(plans.length).toBeGreaterThan(0)
+  expect(plans.length).toBeLessThanOrEqual(16)
+  for (const plan of plans) {
+    const acquisition = BigInt(plan.acquisitionCostMicros)
+    const loss = acquisition - BigInt(plan.estimatedStopNetMicros)
+    expect(BigInt(plan.estimatedTargetNetMicros) - acquisition).toBeGreaterThanOrEqual(loss)
+  }
+})
+
 test('a sub-unit BTC allocation has strictly positive funded proceeds despite price and cash rounding', () => {
-  const { plans, economics } = plansForRange(0, '94321650000', 80_000, 'BTC/USD')
+  const { plans, economics } = plansForRange(0, '90000000000', 80_000, 'BTC/USD')
   expect(Number(economics.receivedQuantityAtoms)).toBeLessThan(1_000_000_000)
   expect(plans.length).toBeGreaterThan(0)
-  for (const plan of plans)
-    expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
+  for (const plan of plans) {
+    const acquisition = BigInt(plan.acquisitionCostMicros)
+    expect(BigInt(plan.estimatedTargetNetMicros) - acquisition).toBeGreaterThanOrEqual(
+      acquisition - BigInt(plan.estimatedStopNetMicros),
+    )
+  }
+})
+
+test('an unreachable net-reward scenario retains other fundable market-price choices', () => {
+  const { plans, question, economics } = plansForRange(99.99)
+  expect(plans.length).toBeGreaterThan(0)
+  expect(plans.length).toBeLessThanOrEqual(16)
+  const deepestStop = plans.reduce(
+    (minimum, plan) => (BigInt(plan.levels.stopPriceMicros) < minimum ? BigInt(plan.levels.stopPriceMicros) : minimum),
+    BigInt(economics.maximumEntryPriceMicros),
+  )
+  const alternatives = Object.values(question.criteria).flatMap((criterion) => {
+    if (criterion === null || typeof criterion !== 'object' || Array.isArray(criterion) || !('plan' in criterion))
+      return []
+    const plan = Schema.decodeUnknownSync(JevFundedExitPlanSchema)(criterion['plan'])
+    return BigInt(plan.levels.stopPriceMicros) === deepestStop
+      ? ['targetBasis' in criterion ? criterion['targetBasis'] : undefined]
+      : []
+  })
+  expect(alternatives.length).toBeGreaterThan(0)
+  expect(alternatives.every((targetBasis) => targetBasis === 'OBSERVED_RANGE_ORDER_SCENARIO')).toBe(true)
 })
 
 test('missing allocation economics still supplies only abstention', () => {
@@ -85,15 +120,28 @@ test('missing allocation economics still supplies only abstention', () => {
 
 test('funded targets retain their market-price anchors when position size changes', () => {
   const targetPrices = (capital: string) => {
-    const { plans } = plansForRange(4, capital)
+    const { plans, question } = plansForRange(4, capital)
     expect(plans.length).toBeGreaterThan(0)
     for (const plan of plans) {
       expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
       expect(BigInt(plan.estimatedStopNetMicros)).toBeLessThan(BigInt(plan.acquisitionCostMicros))
     }
-    return [...new Set(plans.map((plan) => plan.levels.profitLimitPriceMicros))].filter(
-      (price) => Number(price) / 1_000_000 >= 101,
-    )
+    return [
+      ...new Set(
+        Object.values(question.criteria).flatMap((criterion) => {
+          if (
+            criterion === null ||
+            typeof criterion !== 'object' ||
+            Array.isArray(criterion) ||
+            !('targetBasis' in criterion) ||
+            criterion['targetBasis'] !== 'OBSERVED_RANGE_ORDER_SCENARIO' ||
+            !('plan' in criterion)
+          )
+            return []
+          return [Schema.decodeUnknownSync(JevFundedExitPlanSchema)(criterion['plan']).levels.profitLimitPriceMicros]
+        }),
+      ),
+    ]
   }
   expect(targetPrices('100000000000')).toEqual(['101000000', '102000000', '108000000'])
   expect(targetPrices('1000000000000')).toEqual(targetPrices('100000000000'))
