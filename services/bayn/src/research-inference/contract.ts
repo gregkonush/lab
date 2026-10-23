@@ -17,13 +17,13 @@ export class ResearchError extends Data.TaggedError('ResearchError')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
-export const editorModel = 'qwen3-jev-editor-b968826d9c46'
-export const editorCheckpoint = 'b968826d9c46dd6066d109eabc6255188de91218'
+export const editorModel = 'qwen36-flamingo'
+export const editorCheckpoint = '739af1e7aac320af1682ed1e0cce369af4c5265d'
 export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
 const Unit = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
-export const ResearchPolicySchema = Schema.Struct({
+export const FlamingoResearchPolicySchema = Schema.Struct({
   model: Schema.Literal(editorModel),
   checkpoint: Schema.Literal(editorCheckpoint),
   servingImage: Schema.Literal('sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2'),
@@ -41,6 +41,17 @@ export const ResearchPolicySchema = Schema.Struct({
   max_tokens: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(4096)),
   stop: Schema.Array(Text).check(Schema.isMaxLength(8)),
 })
+export const OpenCodeResearchPolicySchema = Schema.Struct({
+  harness: Schema.Literal('opencode'),
+  harnessVersion: Schema.Literal('2.1.3'),
+  model: Schema.Literal('glm-5.3-flash-free'),
+  configurationHash: Sha256Schema,
+  maximumModelCalls: Schema.Literal(1),
+  maximumInputBytes: Schema.Literal(32768),
+  temperature: Schema.Literal(0.6),
+  max_tokens: Schema.Literal(4096),
+})
+export const ResearchPolicySchema = Schema.Union([FlamingoResearchPolicySchema, OpenCodeResearchPolicySchema])
 export const ResearchRunSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-editor.v1'),
   purpose: Schema.Literal('prompt-edit'),
@@ -68,32 +79,59 @@ export const ResearchRunSchema = Schema.Struct({
   ),
 })
 export type ResearchRun = typeof ResearchRunSchema.Type
-export const ResearchServingIdentitySchema = Schema.Struct({
+const RetainedResearchRunSchema = Schema.Struct({
+  ...ResearchRunSchema.fields,
+  policy: Schema.Union([
+    ResearchPolicySchema,
+    Schema.Struct({
+      ...FlamingoResearchPolicySchema.fields,
+      model: Schema.Literal('qwen3-jev-editor-b968826d9c46'),
+      checkpoint: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+      tokenizerRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+      chatTemplateRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+    }),
+  ]),
+})
+export type RetainedResearchRun = typeof RetainedResearchRunSchema.Type
+const FlamingoServingIdentitySchema = Schema.Struct({
   model: StrictNonEmptyStringSchema.check(Schema.isMaxLength(160)),
   checkpoint: GitSourceRevisionSchema,
   servingImage: Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/)),
   tokenizerRevision: GitSourceRevisionSchema,
   chatTemplateRevision: GitSourceRevisionSchema,
 })
-export const researchServingIdentity = (policy: typeof ResearchServingIdentitySchema.Type) => ({
-  model: policy.model,
-  checkpoint: policy.checkpoint,
-  servingImage: policy.servingImage,
-  tokenizerRevision: policy.tokenizerRevision,
-  chatTemplateRevision: policy.chatTemplateRevision,
-})
+export const ResearchServingIdentitySchema = Schema.Union([
+  FlamingoServingIdentitySchema,
+  Schema.Struct({
+    harness: Schema.Literal('opencode'),
+    harnessVersion: Schema.Literal('2.1.3'),
+    model: Schema.Literal('glm-5.3-flash-free'),
+    configurationHash: Sha256Schema,
+  }),
+])
+export const researchServingIdentity = (policy: RetainedResearchRun['policy']) =>
+  'harness' in policy
+    ? {
+        harness: policy.harness,
+        harnessVersion: policy.harnessVersion,
+        model: policy.model,
+        configurationHash: policy.configurationHash,
+      }
+    : {
+        model: policy.model,
+        checkpoint: policy.checkpoint,
+        servingImage: policy.servingImage,
+        tokenizerRevision: policy.tokenizerRevision,
+        chatTemplateRevision: policy.chatTemplateRevision,
+      }
 
 export const hashResearch = (input: unknown) =>
   canonicalHashV1Result(input).pipe(
     Result.mapError((cause) => new ResearchError({ message: 'Research evidence cannot be hashed', cause })),
   )
 
-export const decodeResearchRun = (input: unknown) =>
+const validateResearchRun = <Run extends RetainedResearchRun>(run: Run) =>
   Result.gen(function* () {
-    const run = yield* Schema.decodeUnknownResult(
-      ResearchRunSchema,
-      strictParseOptions,
-    )(input).pipe(Result.mapError((cause) => new ResearchError({ message: 'Research run is malformed', cause })))
     if (Buffer.byteLength(JSON.stringify(run)) > 262144)
       return yield* Result.fail(new ResearchError({ message: 'Research registration exceeds 256 KiB' }))
     if (sha256(run.context.memory.text) !== run.context.memory.sha256)
@@ -127,7 +165,27 @@ export const decodeResearchRun = (input: unknown) =>
     return run
   })
 
-export const researchRequest = (run: ResearchRun) => {
+export const decodeResearchRun = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    ResearchRunSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new ResearchError({ message: 'Research run is malformed', cause })),
+    Result.flatMap(validateResearchRun),
+  )
+
+export const decodeRetainedResearchRun = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    RetainedResearchRunSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new ResearchError({ message: 'Retained research run is malformed', cause })),
+    Result.flatMap(validateResearchRun),
+  )
+
+export const researchRequest = (run: RetainedResearchRun) => {
+  if ('harness' in run.policy) return { schemaVersion: 'bayn.opencode-proposal.v1', registration: run }
+
   const {
     model,
     temperature,
@@ -182,6 +240,25 @@ export enum ResearchOutcome {
   Ambiguous = 'AMBIGUOUS',
   Unavailable = 'UNAVAILABLE',
 }
+const Base64Schema = Schema.String.check(
+  Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+)
+export const OpenCodeEvidenceSchema = Schema.Struct({
+  firstTokenAtMs: NonNegativeIntegerSchema,
+  serverSourceRevision: GitSourceRevisionSchema,
+  sessionId: StrictNonEmptyStringSchema.check(Schema.isMaxLength(128), Schema.isPattern(/^ses_[A-Za-z0-9]+$/)),
+  studyHash: Sha256Schema,
+  configurationHash: Sha256Schema,
+  modelCalls: Schema.Literal(1),
+  providerCostUsd: Schema.Literal(0),
+  providerRequestHash: Sha256Schema,
+  providerRequestBase64: Base64Schema.check(Schema.isMaxLength(4 * Math.ceil(32768 / 3))),
+})
+export const OpenCodeResponseSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.opencode-response.v1'),
+  harnessEvidence: OpenCodeEvidenceSchema,
+  providerResponseBase64: Base64Schema.check(Schema.isMaxLength(4 * Math.ceil(maximumResearchStreamBytes / 3))),
+})
 export const ResearchReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-receipt.v2'),
   workerSourceRevision: Schema.NullOr(GitSourceRevisionSchema),
@@ -193,6 +270,7 @@ export const ResearchReceiptSchema = Schema.Struct({
   outcome: Schema.Enum(ResearchOutcome),
   httpStatus: Schema.NullOr(NonNegativeIntegerSchema),
   servingIdentity: Schema.NullOr(ResearchServingIdentitySchema),
+  harnessEvidence: Schema.optionalKey(OpenCodeEvidenceSchema),
   serverRequestId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(160))),
   responseHash: Schema.NullOr(Sha256Schema),
   responseText: Schema.String.check(Schema.isMaxLength(262144)),
@@ -215,7 +293,7 @@ export const ResearchReceiptSchema = Schema.Struct({
 export type ResearchReceipt = typeof ResearchReceiptSchema.Type
 
 export const sealResearchReceipt = (
-  run: ResearchRun,
+  run: RetainedResearchRun,
   material: Omit<ResearchReceipt, 'schemaVersion' | 'qualification' | 'receiptHash' | 'costPicoUsd'>,
 ) =>
   Result.gen(function* () {
@@ -237,7 +315,7 @@ export const sealResearchReceipt = (
     return { ...receipt, receiptHash: yield* hashResearch(receipt) }
   })
 
-export const parseResearchOutput = (_run: ResearchRun, output: string) =>
+export const parseResearchOutput = (_run: RetainedResearchRun, output: string) =>
   Schema.decodeUnknownResult(
     Schema.fromJsonString(JevInstructionsSchema),
     strictParseOptions,
