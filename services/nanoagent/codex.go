@@ -546,7 +546,7 @@ func (supervisor *codexSupervisor) request(
 			return codexCallResult{}, result.localErr
 		}
 		if len(result.err) > 0 && string(result.err) != "null" {
-			return codexCallResult{}, codexRPCErrorFromRaw(result.err)
+			return codexCallResult{eventSequence: result.eventSequence, generation: generation}, codexRPCErrorFromRaw(result.err)
 		}
 		return codexCallResult{
 			result:        result.result,
