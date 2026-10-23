@@ -704,6 +704,42 @@ test('unallocated native operating expenses and missing session rows cannot comp
   expect(Result.isFailure(project(report, []))).toBe(true)
 })
 
+test.each([
+  {
+    name: 'known infrastructure and unknown research',
+    infrastructure: '1000000000',
+    research: null,
+    known: 1000000000n,
+  },
+  {
+    name: 'unknown infrastructure and known research',
+    infrastructure: null,
+    research: '1000000000',
+    known: 1000000000n,
+  },
+  { name: 'both known expenses exactly once', infrastructure: '2', research: '3', known: 5n },
+  { name: 'both unknown expenses', infrastructure: null, research: null, known: 0n },
+  { name: 'explicit zero and unknown expense', infrastructure: '0', research: null, known: 0n },
+])('known-cost fitness retains $name without completing unknown costs', ({ infrastructure, research, known }) => {
+  const report = nativeReportFixture()
+  const operatingAllocations = allocations.map((row) => ({
+    ...row,
+    infrastructure: infrastructure === null ? null : { ...row.infrastructure, costMicros: infrastructure },
+    research: research === null ? null : { ...row.research, costMicros: research },
+  }))
+  const outcome = Result.getOrThrow(project(report, operatingAllocations))
+  const complete = infrastructure !== null && research !== null
+  const expectedKnownNet = String(BigInt(report.reconciledNetPnlAfterCostsMicros) - known)
+  expect(outcome.knownNetPnlMicros).toBe(expectedKnownNet)
+  expect(outcome.costCoverage).toBe(complete ? 'COMPLETE' : 'KNOWN_COSTS_ONLY')
+  expect(outcome.rows[0]?.complete).toBe(complete)
+  expect(outcome.rows[0]?.netMicros).toBe(complete ? expectedKnownNet : null)
+  expect(outcome.conservativeMaximumDrawdownMicros).toBe(complete ? String(100n + known) : null)
+  expect(outcome.rows[0]?.infrastructure).toEqual(operatingAllocations[0]?.infrastructure)
+  expect(outcome.rows[0]?.research).toEqual(operatingAllocations[0]?.research)
+  if (known === 1000000000n) expect(BigInt(outcome.knownNetPnlMicros ?? '0')).toBeLessThan(0n)
+})
+
 test('comparison command reads complete digest-bound native files above 256 MiB without provider credentials', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {

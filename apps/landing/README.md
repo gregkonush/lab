@@ -98,7 +98,9 @@ An explicit symbol fallback preserves monospace columns for glyphs Geist Mono do
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
 right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
-thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. Saved history
+loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
+reduced motion, and failures show the existing recovery controls. You can start or
 switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
