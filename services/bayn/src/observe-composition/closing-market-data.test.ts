@@ -548,7 +548,13 @@ describe('closing market-data fallback boundaries', () => {
             if (scenario === 'pending-stop-unavailable') return Effect.fail(marketFailure)
             if (scenario === 'pending-stop-error')
               return Effect.fail(
-                new OperationalError({ ...marketFailure, retryable: false, cause: { _tag: 'FixtureContractFailure' } }),
+                new OperationalError({
+                  component: 'market-data',
+                  operation: 'snapshot',
+                  message: 'Fixture source contract failure',
+                  retryable: false,
+                  cause: { _tag: 'FixtureContractFailure' },
+                }),
               )
             const source = scenario === 'pending-stop-wrong-symbol' ? { ...pricing, symbols: ['AMD'] } : pricing
             const snapshot = snapshotAt(source, scenario === 'pending-before-holding' ? floor - 0.01 : stopBid)
