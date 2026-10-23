@@ -84,6 +84,38 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
 })
 
+test('broker sessions retain regular hours when the provider includes wider data hours', () => {
+  const input = fixture()
+  const calendar = input.calendar.map((session) => ({ ...session, session_open: '0400', session_close: '2000' }))
+  const prepared = Result.getOrThrow(prepareBacktest({ ...input, calendar }))
+  expect(prepared.brokerSessions).toEqual([
+    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T20:00:00.000Z' },
+  ])
+  expect(Result.getOrThrow(canonicalHashV1Result(prepared.input.calendar))).toBe(
+    Result.getOrThrow(canonicalHashV1Result(calendar)),
+  )
+  expect(prepared.input.interval).toEqual(input.interval)
+})
+
+test('broker sessions retain an early regular close inside wider provider hours', () => {
+  const input = fixture()
+  const prepared = Result.getOrThrow(
+    prepareBacktest({
+      ...input,
+      interval: { ...input.interval, endAt: '2026-09-04T17:00:00.000Z' },
+      calendar: input.calendar.map((session) => ({
+        ...session,
+        ...(session.date === '2026-09-04' ? { close: '13:00' } : {}),
+        session_open: '0400',
+        session_close: '2000',
+      })),
+    }),
+  )
+  expect(prepared.brokerSessions).toEqual([
+    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T17:00:00.000Z' },
+  ])
+})
+
 test('native backtest binds Jev identity, provider cost assumptions and the unchanged financial grant', () => {
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
