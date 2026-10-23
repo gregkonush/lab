@@ -101,7 +101,9 @@ browser-local conversations for the agent (newest first) with an active highligh
 thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. Saved history
 loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
 reduced motion, and failures show the existing recovery controls. You can start or
-switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
+switch conversations while another response runs or its submission is pending. Late thread creation and send replies
+cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
@@ -270,10 +272,17 @@ workspace and automatically resolves advertised action confirmations while the c
 native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+Resolved approvals and answers stay retired for the open workspace, including across conversation changes. Older
+run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
+navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
 
 Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
-stay out of these activity labels. Failed status reads show a reconnect message, retry, and clear their own error
-after a successful read. Authentication and permission failures keep their original errors.
+stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
+appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
+failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
+retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
+approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
