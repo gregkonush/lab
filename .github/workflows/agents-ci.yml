@@ -334,12 +334,23 @@ jobs:
             extra-trusted-public-keys = ${{ vars.ATTIC_PUBLIC_KEY }}
             fallback = true
 
-      - name: Resolve published Agents images from GitOps values
+      - name: Fetch promoted Agents values
+        id: promoted_agents_values
+        run: |
+          set -euo pipefail
+          git fetch --no-tags --depth=1 origin refs/heads/kargo/agents
+          promoted_values="${RUNNER_TEMP}/agents-promoted-values.yaml"
+          git show FETCH_HEAD:argocd/applications/agents/values.yaml > "${promoted_values}"
+          printf 'values_path=%s\n' "${promoted_values}" >> "${GITHUB_OUTPUT}"
+
+      - name: Resolve published Agents images from promoted values
         id: published_agents_images
+        env:
+          PROMOTED_VALUES_PATH: ${{ steps.promoted_agents_values.outputs.values_path }}
         run: |
           set -euo pipefail
           bun run packages/scripts/src/agents/resolve-published-agents-images.ts \
-            --values-path argocd/applications/agents/values.yaml \
+            --values-path "${PROMOTED_VALUES_PATH}" \
             --output "${GITHUB_OUTPUT}"
 
       - name: Select published defaults for the smoke test
