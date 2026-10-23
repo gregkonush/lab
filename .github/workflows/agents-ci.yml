@@ -343,7 +343,7 @@ jobs:
           git show FETCH_HEAD:argocd/applications/agents/values.yaml > "${promoted_values}"
           printf 'values_path=%s\n' "${promoted_values}" >> "${GITHUB_OUTPUT}"
 
-      - name: Resolve published Agents images from promoted values
+      - name: Resolve published Agents images from GitOps values
         id: published_agents_images
         env:
           PROMOTED_VALUES_PATH: ${{ steps.promoted_agents_values.outputs.values_path }}
