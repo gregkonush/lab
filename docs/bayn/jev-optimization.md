@@ -124,6 +124,11 @@ data or operating allocations remain null and produce `KNOWN_COSTS_ONLY`; they a
 or all-cost profit. Unpriced model requests, unclosed inventory, inexact accounting, unresolved mutations and invalid
 native evidence cannot supply fitness. Retain exclusions and unavailable decisions in the diagnostics.
 
+An HTTP 402 response from the native Jev provider is retained before the current replay pass fails. The research
+command stops instead of dispatching later opportunities against an account requiring payment. Calls already in
+flight retain their original outcomes and costs; missing metering remains unresolved. The failed reservation is not
+refunded or retried.
+
 `maximumSearchEvaluations` is GEPA's library budget. The outer native-call budget additionally reserves the full
 per-evaluation provider cap across search, held-out evaluation, unchanged repeats and failed work. Editor calls have
 a separate finite cap. Library test passes occur outside the library search budget but inside Bayn's reservations.
