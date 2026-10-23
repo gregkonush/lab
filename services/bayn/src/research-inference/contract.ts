@@ -17,8 +17,8 @@ export class ResearchError extends Data.TaggedError('ResearchError')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
-export const editorModel = 'qwen3-jev-editor-b968826d9c46'
-export const editorCheckpoint = 'b968826d9c46dd6066d109eabc6255188de91218'
+export const editorModel = 'qwen36-flamingo'
+export const editorCheckpoint = '739af1e7aac320af1682ed1e0cce369af4c5265d'
 export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
@@ -68,6 +68,20 @@ export const ResearchRunSchema = Schema.Struct({
   ),
 })
 export type ResearchRun = typeof ResearchRunSchema.Type
+const RetainedResearchRunSchema = Schema.Struct({
+  ...ResearchRunSchema.fields,
+  policy: Schema.Union([
+    ResearchPolicySchema,
+    Schema.Struct({
+      ...ResearchPolicySchema.fields,
+      model: Schema.Literal('qwen3-jev-editor-b968826d9c46'),
+      checkpoint: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+      tokenizerRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+      chatTemplateRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
+    }),
+  ]),
+})
+export type RetainedResearchRun = typeof RetainedResearchRunSchema.Type
 export const ResearchServingIdentitySchema = Schema.Struct({
   model: StrictNonEmptyStringSchema.check(Schema.isMaxLength(160)),
   checkpoint: GitSourceRevisionSchema,
@@ -88,12 +102,8 @@ export const hashResearch = (input: unknown) =>
     Result.mapError((cause) => new ResearchError({ message: 'Research evidence cannot be hashed', cause })),
   )
 
-export const decodeResearchRun = (input: unknown) =>
+const validateResearchRun = <Run extends RetainedResearchRun>(run: Run) =>
   Result.gen(function* () {
-    const run = yield* Schema.decodeUnknownResult(
-      ResearchRunSchema,
-      strictParseOptions,
-    )(input).pipe(Result.mapError((cause) => new ResearchError({ message: 'Research run is malformed', cause })))
     if (Buffer.byteLength(JSON.stringify(run)) > 262144)
       return yield* Result.fail(new ResearchError({ message: 'Research registration exceeds 256 KiB' }))
     if (sha256(run.context.memory.text) !== run.context.memory.sha256)
@@ -127,7 +137,25 @@ export const decodeResearchRun = (input: unknown) =>
     return run
   })
 
-export const researchRequest = (run: ResearchRun) => {
+export const decodeResearchRun = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    ResearchRunSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new ResearchError({ message: 'Research run is malformed', cause })),
+    Result.flatMap(validateResearchRun),
+  )
+
+export const decodeRetainedResearchRun = (input: unknown) =>
+  Schema.decodeUnknownResult(
+    RetainedResearchRunSchema,
+    strictParseOptions,
+  )(input).pipe(
+    Result.mapError((cause) => new ResearchError({ message: 'Retained research run is malformed', cause })),
+    Result.flatMap(validateResearchRun),
+  )
+
+export const researchRequest = (run: RetainedResearchRun) => {
   const {
     model,
     temperature,
@@ -215,7 +243,7 @@ export const ResearchReceiptSchema = Schema.Struct({
 export type ResearchReceipt = typeof ResearchReceiptSchema.Type
 
 export const sealResearchReceipt = (
-  run: ResearchRun,
+  run: RetainedResearchRun,
   material: Omit<ResearchReceipt, 'schemaVersion' | 'qualification' | 'receiptHash' | 'costPicoUsd'>,
 ) =>
   Result.gen(function* () {
@@ -237,7 +265,7 @@ export const sealResearchReceipt = (
     return { ...receipt, receiptHash: yield* hashResearch(receipt) }
   })
 
-export const parseResearchOutput = (_run: ResearchRun, output: string) =>
+export const parseResearchOutput = (_run: RetainedResearchRun, output: string) =>
   Schema.decodeUnknownResult(
     Schema.fromJsonString(JevInstructionsSchema),
     strictParseOptions,
