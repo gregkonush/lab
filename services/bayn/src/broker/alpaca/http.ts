@@ -249,6 +249,8 @@ export const make = (connection: BrokerConnection): Effect.Effect<BrokerReadShap
               Effect.andThen(
                 Effect.logWarning('Broker positions response schema rejected').pipe(Effect.annotateLogs(annotations)),
               ),
+              // Optional telemetry cannot replace the provider rejection; cancellation must still interrupt.
+              Effect.catchCause((cause) => (Cause.hasInterrupts(cause) ? Effect.failCause(cause) : Effect.void)),
             )
           }),
           Effect.mapError((cause) =>

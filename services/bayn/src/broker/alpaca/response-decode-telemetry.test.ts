@@ -35,15 +35,40 @@ const position = {
 }
 const warning = 'Broker positions response schema rejected'
 
-const observe = async (operation: 'positions' | 'account-configuration', raw: unknown, status = 200) => {
+const observe = async (
+  operation: 'positions' | 'account-configuration',
+  raw: unknown,
+  status = 200,
+  diagnosticFault?: 'logger' | 'span' | 'interrupt',
+) => {
+  const controller = new AbortController()
+  let faultAttempts = 0
   const logs: Array<{ message: unknown; annotations: Readonly<Record<string, unknown>> }> = []
-  const logger = Logger.make((entry) =>
-    logs.push({ message: entry.message, annotations: entry.fiber.getRef(References.CurrentLogAnnotations) }),
-  )
+  const logger = Logger.make((entry) => {
+    if (JSON.stringify(entry.message).includes(warning)) {
+      if (diagnosticFault === 'logger') {
+        faultAttempts += 1
+        throw new Error('private-logger-defect')
+      }
+      if (diagnosticFault === 'interrupt') {
+        faultAttempts += 1
+        controller.abort()
+      }
+    }
+    logs.push({ message: entry.message, annotations: entry.fiber.getRef(References.CurrentLogAnnotations) })
+  })
   const spans: Tracer.Span[] = []
   const tracer = Tracer.make({
     span(options) {
       const span = Tracer.nativeTracer.span(options)
+      const attribute = span.attribute.bind(span)
+      span.attribute = (key, value) => {
+        if (diagnosticFault === 'span' && key.startsWith('broker.decode_')) {
+          faultAttempts += 1
+          throw new Error('private-span-defect')
+        }
+        attribute(key, value)
+      }
       spans.push(span)
       return span
     },
@@ -71,13 +96,14 @@ const observe = async (operation: 'positions' | 'account-configuration', raw: un
       Effect.provideService(Tracer.Tracer, tracer),
       Effect.provide(Logger.layer([logger])),
     ),
+    { signal: controller.signal },
   )
   const attributes = spans.map((span) => Object.fromEntries(span.attributes))
   const diagnostics = logs.filter((entry) => JSON.stringify(entry.message).includes(warning))
   const diagnosticSpans = attributes.filter((entry) =>
     Object.keys(entry).some((key) => key.startsWith('broker.decode_')),
   )
-  return { exit, calls, logs, attributes, diagnostics, diagnosticSpans }
+  return { exit, calls, logs, attributes, diagnostics, diagnosticSpans, faultAttempts }
 }
 
 test.each([null, 'private-position-value'])(
@@ -176,4 +202,34 @@ test('positions HTTP permission rejection is not relabeled as a schema failure',
   expect(calls).toBe(1)
   expect(diagnostics).toEqual([])
   expect(diagnosticSpans).toEqual([])
+})
+
+test.each(['logger', 'span'] as const)('a defective diagnostic %s cannot replace INVALID_RESPONSE', async (fault) => {
+  const { exit, calls, faultAttempts, logs, attributes } = await observe(
+    'positions',
+    [{ ...position, qty: null }],
+    200,
+    fault,
+  )
+  if (Exit.isSuccess(exit)) throw new Error('Expected schema rejection')
+  expect(faultAttempts).toBe(1)
+  expect(calls).toBe(1)
+  expect(Cause.hasDies(exit.cause)).toBe(false)
+  expect(Option.getOrThrow(Cause.findErrorOption(exit.cause))).toMatchObject({
+    operation: 'positions',
+    kind: BrokerReadErrorKind.InvalidResponse,
+    message: 'Alpaca positions response body does not match its schema',
+    retryable: false,
+    cause: { tag: 'SchemaError' },
+  })
+  expect(JSON.stringify({ logs, attributes })).not.toContain(`private-${fault}-defect`)
+})
+
+test('cancellation during diagnostic emission remains interruption', async () => {
+  const { exit, calls, faultAttempts } = await observe('positions', [{ ...position, qty: null }], 200, 'interrupt')
+  if (Exit.isSuccess(exit)) throw new Error('Expected interruption')
+  expect(faultAttempts).toBe(1)
+  expect(calls).toBe(1)
+  expect(Cause.hasInterrupts(exit.cause)).toBe(true)
+  expect(Cause.findErrorOption(exit.cause)).toEqual(Option.none())
 })
