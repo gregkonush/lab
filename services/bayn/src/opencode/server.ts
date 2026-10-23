@@ -49,6 +49,9 @@ const SessionMappingSchema = Schema.Struct({
   sessionId: Schema.String.check(Schema.isMaxLength(128), Schema.isPattern(/^ses_[A-Za-z0-9]+$/)),
 })
 const InfoSchema = Schema.Struct({ version: Schema.Literal(openCodeVersion) })
+const UserMessagesSchema = Schema.Struct({
+  data: Schema.Array(Schema.Struct({ id: Schema.String, type: Schema.Literal('user') })),
+})
 const SessionSchema = Schema.Struct({
   data: Schema.Struct({
     id: Schema.String,
@@ -305,6 +308,22 @@ export const serveOpenCode = (
             (yield* Effect.fromResult(hashResearch(metadata)))
         )
           return yield* new ResearchError({ message: 'OpenCode session belongs to a different frozen study' })
+        const userMessages = Effect.gen(function* () {
+          const response = yield* native('GET', `${sessionPath}/message?order=asc&type=user&limit=1`)
+          if (response.status !== 200)
+            return yield* new ResearchError({ message: 'OpenCode study context could not be inspected' })
+          return yield* Schema.decodeUnknownEffect(UserMessagesSchema)(yield* response.json)
+        })
+        const previous = (yield* userMessages).data[0]
+        if (previous !== undefined) {
+          // Attempt inputs and outputs are retained separately; inference sees only the current frozen feedback.
+          const staged = yield* native('POST', `${sessionPath}/revert/stage`, { messageID: previous.id, files: false })
+          if (staged.status !== 200)
+            return yield* new ResearchError({ message: 'OpenCode previous proposal context could not be staged' })
+          const committed = yield* native('POST', `${sessionPath}/revert/commit`, {})
+          if (committed.status !== 204 || (yield* userMessages).data.length !== 0)
+            return yield* new ResearchError({ message: 'OpenCode previous proposal context was not cleared' })
+        }
         const cancelled = yield* Deferred.make<never, ResearchError>()
         const attempt: ActiveAttempt = {
           sessionId,
@@ -330,15 +349,9 @@ export const serveOpenCode = (
         ).pipe(
           Effect.flatMap(() =>
             Effect.gen(function* () {
-              const feedbackPath = `${studyDirectory}/${runId}-feedback.json`
-              yield* fs.writeFileString(
-                feedbackPath,
-                JSON.stringify({ instructions: run.promptTemplate, developmentFeedback: run.context.memory.text }),
-                { flag: 'wx', mode: 0o400 },
-              )
               const prompt = yield* native('POST', `${sessionPath}/prompt`, {
                 id: `msg_bayn_${runId}`,
-                text: `Bayn research attempt ${runId}\n${run.promptTemplate}\n\n${run.context.memory.text}\n\nThe frozen feedback file is ${feedbackPath}. Jev is a typed System One decision model, not a text-generating LLM. Change only its conditional complete-plan entry question, maximum 2000 characters. Code owns all arithmetic, position sizing, risk gates and execution. Return only the complete instruction JSON object with exactly one entry string. No markdown, notes, paths or references to a feedback file in the entry. Your one model-call budget cannot be retried.`,
+                text: `Bayn research attempt ${runId}\n${run.promptTemplate}\n\n${run.context.memory.text}\n\nAll feedback is supplied above. Do not use tools. Jev is a typed System One decision model, not a text-generating LLM. Change only its conditional complete-plan entry question, maximum 2000 characters. Code owns all arithmetic, position sizing, risk gates and execution. Return only the complete instruction JSON object with exactly one entry string. No markdown, notes, paths or external references in the entry. Your one model-call budget cannot be retried.`,
               })
               if (prompt.status !== 200)
                 return yield* new ResearchError({ message: 'OpenCode native prompt was not accepted' })

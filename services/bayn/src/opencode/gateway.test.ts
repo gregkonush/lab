@@ -12,6 +12,7 @@ const request = (change: object = {}) => ({
     stream_options: { include_usage: true },
     max_completion_tokens: 4096,
     temperature: 0.6,
+    tool_choice: 'none',
     response_format: openCodeConfiguration.providers.opencode.body.response_format,
     messages: [{ role: 'user', content: 'Native Jev feedback' }],
     tools: [],
@@ -38,6 +39,7 @@ test('paid models, extra output, altered schema and oversized input are denied b
     { model: 'gpt-5' },
     { max_completion_tokens: 8192 },
     { max_tokens: 100000 },
+    { tool_choice: 'auto' },
     { response_format: { type: 'text' } },
     { messages: [{ role: 'user', content: 'x'.repeat(32768) }] },
   ]) {

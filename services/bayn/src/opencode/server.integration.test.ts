@@ -6,6 +6,7 @@ import { Clock, Deferred, Effect, FileSystem, Fiber, Layer, Schedule, Stream } f
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { ChildProcessSpawner } from 'effect/process'
 
+import { sha256 } from '../hash'
 import { inferResearch } from '../research-inference/client'
 import { verifyResearchReceipt } from '../research-inference/store'
 import { decodeResearchRun, hashResearch, researchRequest, ResearchOutcome } from '../research-inference/contract'
@@ -97,9 +98,11 @@ nativeTest(
         )
         const now = yield* Clock.currentTimeMillis
         const base = editorFixture()
+        const firstFeedback = `first-proposal-only ${'a'.repeat(14000)}`
         const run = yield* Effect.fromResult(
           decodeResearchRun({
             ...base,
+            context: { memory: { ...base.context.memory, text: firstFeedback, sha256: sha256(firstFeedback) } },
             sourceRevision: 'b'.repeat(40),
             featureCutoff: new Date(now).toISOString(),
             registeredAt: new Date(now).toISOString(),
@@ -144,12 +147,24 @@ nativeTest(
           Effect.retry({ schedule: Schedule.spaced('100 millis'), times: 200 }),
           Effect.timeout('25 seconds'),
         )
-        const secondRun = { ...run, attempt: 1 }
+        const secondFeedback = `second-proposal-only ${'b'.repeat(14000)}`
+        const secondRun = {
+          ...run,
+          attempt: 1,
+          context: { memory: { ...run.context.memory, text: secondFeedback, sha256: sha256(secondFeedback) } },
+        }
         const second = yield* infer(secondRun)
         expect(second.outcome).toBe(ResearchOutcome.Complete)
         yield* Effect.fromResult(verifyResearchReceipt(secondRun, second))
         expect(providerCalls).toBe(2)
         expect(nativeSessionCreations).toBe(1)
+        const secondRequest = yield* fs.readFileString(
+          `${directory}/attempts/${yield* Effect.fromResult(hashResearch(secondRun))}.provider-request.json`,
+        )
+        expect(Buffer.byteLength(secondRequest)).toBeLessThanOrEqual(32768)
+        expect(secondRequest).toContain('second-proposal-only')
+        expect(secondRequest).not.toContain('first-proposal-only')
+        expect(JSON.parse(secondRequest).tool_choice).toBe('none')
         const ambiguousStudy = { ...run, studyHash: 'e'.repeat(64) }
         yield* fs.writeFileString(`${directory}/studies/${ambiguousStudy.studyHash}.claim.json`, '{}', { flag: 'wx' })
         const ambiguousCreation = yield* post(ambiguousStudy)
@@ -158,7 +173,7 @@ nativeTest(
         expect(providerCalls).toBe(2)
         const sessionId = first.harnessEvidence?.sessionId
         if (sessionId === undefined) return yield* Effect.fail(new Error('Native session identity missing'))
-        for (const attempt of [run, { ...run, attempt: 1 }]) {
+        for (const attempt of [run, secondRun]) {
           const id = yield* Effect.fromResult(hashResearch(attempt))
           const record = yield* fs.readFileString(`${directory}/attempts/${id}.session.json`)
           expect(record).toContain(sessionId)

@@ -44,6 +44,7 @@ export const makeOpenCodeConfiguration = (directory = openCodeDirectory, relayOr
       settings: { baseURL: `${relayOrigin}/provider/v1`, timeout: 120000 },
       body: {
         temperature: 0.6,
+        tool_choice: 'none',
         response_format: {
           type: 'json_schema',
           json_schema: {
