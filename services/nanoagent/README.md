@@ -1,5 +1,11 @@
 # Nanoagent guest API
 
+The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Its connector handlers require the exact server-side setting
+`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
+identity files or changing Codex configuration. Packaging the client does not
+install a connector or change normal conversation startup.
+
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
 proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact
@@ -113,7 +119,11 @@ development hosts retain process-group cleanup when Linux process identity metad
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
 ready, and restarts failed processes with bounded backoff. Successful initialization publishes a replayable
-`tengri/runtimeReady` event with the process generation. The chat clears earlier restart notices on this event,
+`tengri/runtimeReady` event with the process generation. A new process has not loaded retained conversations. When
+`turn/start` receives the exact native `thread not found` rejection, Nanoagent resumes that same conversation and
+repeats the unaccepted operation once, fenced to the rejecting process generation. Other errors and uncertain
+dispatches are never retried this way. The stable operation receipt still prevents duplicate accepted turns.
+The chat clears earlier restart notices on this event,
 without requiring another user turn. Its authenticated `GetInfo` metadata reports whether Codex
 is working across any conversation and the monotonic time since work ended. Starts and steering remain active while
 awaiting a response even if the caller disconnects; turn/status notifications and process generations settle work state.
