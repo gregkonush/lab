@@ -129,4 +129,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.funded-plan-coverage.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.net-payoff-plan-coverage.behavior.v1')

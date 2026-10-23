@@ -178,7 +178,7 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v19`, `bayn.jev.funded-plan-coverage.behavior.v1`,
+The implementation uses `bayn.jev.protocol.v19`, `bayn.jev.net-payoff-plan-coverage.behavior.v1`,
 trading-signal state v16, batch v6 and pinned `jev-1.13.0`. Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
 separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
@@ -186,7 +186,7 @@ and remaining economic assumptions. Native children and protective disposals sha
 
 Migration 141 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `d9e9ff26982c868ea3af59a11ee111103476b1787903ac7f2957cdbbdd057d57`.
+history. The strategy protocol hash is `faa9278528a758e00138e32486df84662e38443191aa8154ed75354daa1110b0`.
 The protocol cutover uses OBSERVE authority. The source cutover intentionally removes the retired request and its runtime lineages. After the v19 image is
 published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
 together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
