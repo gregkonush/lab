@@ -1,7 +1,7 @@
 # Jev-selected trade plans and broker protection
 
 Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
-Protocol v18 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
+Protocol v19 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
@@ -23,10 +23,14 @@ See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 Code builds at most sixteen plans from four representative stop levels and four target levels. The candidate menu combines
 observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed OHLC range,
 with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid. Target scenarios
-lie those steps above the observed bid. The cost break-even price only filters targets; it cannot push them farther
-away to manufacture a funded option in a flat or small-range window. Deduplication, conservative instrument rounding
-and four evenly spaced representatives bound each set. The model selects the actual plan; these construction rules
-never select a default exit.
+lie those steps above the observed bid. The menu also includes the exact minimum fee-covering target. Code solves
+for conservative liquidation proceeds of acquisition cost plus one micro-dollar, then rounds the price up to the
+instrument tick. This retains a mathematically funded option when the observed range is narrower than transaction
+costs. The threshold includes the same entry and exit fees, adverse execution allowances and cash rounding as every
+other plan. It is labeled `MINIMUM_FEE_COVERING_ORDER_PRICE`; range proposals are labeled
+`OBSERVED_RANGE_ORDER_SCENARIO`. Neither label establishes likely attainment or expected profit. Deduplication,
+conservative instrument rounding and four evenly spaced representatives bound each set. The model selects the
+actual plan; these construction rules never select a default exit.
 
 Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
 nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
@@ -94,8 +98,8 @@ make its remaining children disappear. Unknown submissions are recovered by thei
 
 ## Hard cutover
 
-Migration 140 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v18, and accepts only current batch and
+Migration 141 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v19, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects

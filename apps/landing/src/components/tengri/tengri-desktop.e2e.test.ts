@@ -7547,6 +7547,122 @@ test('reopens terminally closed chat and Finder streams without reloading the de
   expect(activeUrls.some((url) => url.includes('/api/tengri/events?') && url.endsWith('&after=73'))).toBe(true)
 })
 
+for (const width of [1440, 390]) {
+  test(`restores resource tabs and reopens pinned files without background reads at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 900 })
+    const mock = await mockTengri(page, { preserveDraftStorageOnReload: true })
+    await page.addInitScript(() => {
+      if (sessionStorage.getItem('resource-test-initialized')) return
+      sessionStorage.setItem('resource-test-initialized', 'true')
+      sessionStorage.setItem(
+        'tengri-resources:microvm-ada',
+        JSON.stringify({
+          tabs: [{ path: '/workspace/README.md', line: 2 }, { path: '/workspace/src/main.ts' }],
+          activePath: '/workspace/README.md',
+        }),
+      )
+      localStorage.setItem(
+        'tengri-resource-pins:microvm-ada',
+        JSON.stringify([{ path: '/workspace/README.md', line: 2 }]),
+      )
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const sidebar = chat.getByTestId('agent-conversation-sidebar')
+    const readmeTab = chat.getByRole('tab', { name: 'README.md', exact: true })
+    await expect(readmeTab).toHaveAttribute('aria-selected', 'true')
+    const preview = chat.getByRole('region', { name: 'File preview' })
+    await expect(preview.getByRole('heading', { name: '/workspace/README.md:2', exact: true })).toBeVisible()
+    await expect(preview.getByText('A persistent Firecracker workspace.', { exact: true })).toBeVisible()
+    expect(mock.actions.filter((action) => action.action === 'read-file').map((action) => action.path)).toEqual([
+      '/workspace/README.md',
+    ])
+    await chat.getByRole('button', { name: 'Close /workspace/README.md', exact: true }).click()
+    await chat.getByRole('textbox', { name: 'Message your agent', exact: true }).fill('Keep my resource draft')
+    if (width === 390) await chat.getByRole('button', { name: 'Show conversations', exact: true }).click()
+    const pins = sidebar.getByRole('navigation', { name: 'Pinned resources', exact: true })
+    await pins.getByRole('button', { name: 'Open /workspace/README.md', exact: true }).click()
+    if (width === 390) await expect(sidebar).toBeHidden()
+    await expect(readmeTab).toHaveAttribute('aria-selected', 'true')
+    await expect(preview.getByRole('heading', { name: '/workspace/README.md:2', exact: true })).toBeVisible()
+    await chat.getByRole('tab', { name: 'Chat', exact: true }).click()
+    await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toHaveValue(
+      'Keep my resource draft',
+    )
+    await readmeTab.click()
+    await page.reload()
+    await expect(readmeTab).toHaveAttribute('aria-selected', 'true')
+    await expect(preview.getByText('A persistent Firecracker workspace.', { exact: true })).toBeVisible()
+    expect(
+      mock.actions.filter((action) => action.action === 'read-file' && action.path === '/workspace/src/main.ts'),
+    ).toHaveLength(0)
+    await preview.getByRole('button', { name: 'Unpin /workspace/README.md', exact: true }).click()
+    await expect(readmeTab).toHaveAttribute('aria-selected', 'true')
+    await expect.poll(() => page.evaluate(() => localStorage.getItem('tengri-resource-pins:microvm-ada'))).toBe('[]')
+    await preview.getByRole('button', { name: 'Pin /workspace/README.md', exact: true }).click()
+    await expect
+      .poll(() => page.evaluate(() => JSON.parse(localStorage.getItem('tengri-resource-pins:microvm-ada') ?? '[]')))
+      .toEqual([{ path: '/workspace/README.md', line: 2 }])
+    expect((await new AxeBuilder({ page }).include('[aria-label="Tengri window"]').analyze()).violations).toEqual([])
+    await chat.screenshot({ path: test.info().outputPath(`workspace-resources-${width}.png`) })
+  })
+}
+
+test('shares resource pins across windows while keeping tab selection independent', async ({ page }) => {
+  await mockTengri(page, { preserveDraftStorageOnReload: true })
+  await page.addInitScript(() =>
+    sessionStorage.setItem(
+      'tengri-resources:microvm-ada',
+      JSON.stringify({ tabs: [{ path: '/workspace/README.md' }], activePath: '/workspace/README.md' }),
+    ),
+  )
+  await page.goto('/')
+  const other = await page.context().newPage()
+  try {
+    await mockTengri(other, { preserveDraftStorageOnReload: true })
+    await other.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const otherChat = other.getByRole('region', { name: 'Tengri window' })
+    await expect(chat.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await expect(otherChat.getByRole('tab', { name: 'Chat', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await chat.getByRole('button', { name: 'Pin /workspace/README.md', exact: true }).click()
+    const otherPins = otherChat.getByRole('navigation', { name: 'Pinned resources', exact: true })
+    await otherPins.getByRole('button', { name: 'Open /workspace/README.md', exact: true }).click()
+    await expect(otherChat.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute(
+      'aria-selected',
+      'true',
+    )
+    await otherChat.getByRole('tab', { name: 'Chat', exact: true }).click()
+    await expect(chat.getByRole('tab', { name: 'README.md', exact: true })).toHaveAttribute('aria-selected', 'true')
+    await chat.getByRole('button', { name: 'Unpin /workspace/README.md', exact: true }).click()
+    await expect(otherPins).toHaveCount(0)
+    await expect(otherChat.getByRole('tab', { name: 'README.md', exact: true })).toHaveCount(1)
+    await expect(otherChat.getByRole('tab', { name: 'Chat', exact: true })).toHaveAttribute('aria-selected', 'true')
+  } finally {
+    await other.close()
+  }
+})
+
+test('ignores invalid persisted resources without reading their paths', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.addInitScript(() => {
+    sessionStorage.setItem(
+      'tengri-resources:microvm-ada',
+      JSON.stringify({
+        tabs: [{ path: '/etc/passwd' }],
+        activePath: '/etc/passwd',
+      }),
+    )
+    localStorage.setItem('tengri-resource-pins:microvm-ada', JSON.stringify([{ path: '/workspace/../outside' }]))
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  await expect(chat.getByRole('textbox', { name: 'Message your agent', exact: true })).toBeEnabled()
+  await expect(chat.getByRole('tab')).toHaveText(['Chat'])
+  await expect(chat.getByRole('navigation', { name: 'Pinned resources', exact: true })).toHaveCount(0)
+  expect(mock.actions.filter((action) => action.action === 'read-file')).toHaveLength(0)
+})
+
 test('opens local file references as rendered agent tabs and preserves the chat draft', async ({ page }) => {
   const mock = await mockTengri(page)
   const reads = new Map<string, number>()
