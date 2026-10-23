@@ -4,6 +4,9 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+The optional [OHLCV + image dual-signal shadow command](../../docs/bayn/dual-signal-shadow.md) compares Jev and
+OpenAI Decisions over correlated views of the same market data without changing order authority.
+
 The [October 20 system cleanup](../../docs/bayn/system-cleanup-2026-10-20.md) records the database and
 observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
 event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.

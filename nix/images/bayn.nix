@@ -39,6 +39,11 @@ let
     root="''${BAYN_IMAGE_ROOT:-}"
     exec "$root/bin/node" "$root/app/services/bayn/dist/jev-evaluation-command.js" "$@"
   '';
+  dualSignalCommand = pkgs.writeShellScriptBin "bayn-dual-signal" ''
+    set -eu
+    root="''${BAYN_IMAGE_ROOT:-}"
+    exec "$root/bin/node" "$root/app/services/bayn/dist/dual-signal-command.js" "$@"
+  '';
   backtestCommand = pkgs.writeShellScriptBin "bayn-backtest" ''
     set -eu
     root="''${BAYN_IMAGE_ROOT:-}"
@@ -98,6 +103,7 @@ let
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
     "node services/bayn/dist/jev-evaluation-command.js --help"
+    "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
     "node services/bayn/dist/control-study-command.js --help"
     "node services/bayn/dist/valkey-command.js --help"
@@ -173,6 +179,7 @@ import ./bun-workspace-service.nix {
     bun
     pkgs.git
     evaluationCommand
+    dualSignalCommand
     backtestCommand
     controlCommand
     gepaPython
