@@ -26,6 +26,8 @@ Registration and authentication request `client-device`, `hybrid`, and `security
 password managers such as 1Password, a nearby phone through a QR code, and hardware keys. The hints do not restrict
 authenticators or change credential validation. The browser fixture records real WebAuthn requests and verifies
 fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
+Verification delegates credential selection to the browser or password manager. Its Continue button becomes disabled
+while the passkey request is pending. Stored credential labels and transport details stay out of the page.
 
 Sign in through **Continue with GitHub**, then use your saved passkey. First-time sign-in asks you to create one.
 Use **Settings > Access > Add another passkey** to enroll an additional credential.
@@ -42,7 +44,8 @@ The unchanged wallpaper is attributed in the [landing asset README](../../../../
 Geist retains its [SIL Open Font License](theme/login/resources/fonts/OFL.txt), and the pear retains the
 [Pictogrammers notice](theme/login/resources/img/pictogrammers-LICENSE.txt) under Apache 2.0.
 The browser fixture checks desktop and 320px setup, verification and error layouts, font loading, reduced motion,
-keyboard activation and WCAG A/AA rules. Set `TENGRI_IDENTITY_SCREENSHOTS` to a directory to retain its six screenshots.
+keyboard activation and WCAG A/AA rules. It also covers multiple saved credentials and a pending prompt recovered by
+reload. Set `TENGRI_IDENTITY_SCREENSHOTS` to a directory to retain the screenshots.
 
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note

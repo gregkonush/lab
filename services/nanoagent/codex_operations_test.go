@@ -14,6 +14,41 @@ import (
 
 const operationParams = `{"threadId":"thread-1","clientUserMessageId":"11111111-1111-4111-8111-111111111111","input":[{"type":"text","text":"Create the requested file"}]}`
 
+func TestCodexOperationDoesNotResumeForOtherRejections(t *testing.T) {
+	for _, test := range []struct {
+		method  string
+		code    int
+		message string
+	}{
+		{"turn/start", -32600, "thread not found: another-thread"},
+		{"turn/start", -32600, "invalid request"},
+		{"turn/start", -32602, "thread not found: thread-1"},
+		{"turn/steer", -32600, "thread not found: thread-1"},
+	} {
+		t.Run(test.method+test.message+fmt.Sprint(test.code), func(t *testing.T) {
+			supervisor, writer := readyCodexSupervisor(t)
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			done := make(chan error, 1)
+			go func() {
+				_, err := supervisor.call(ctx, test.method, json.RawMessage(operationParams))
+				done <- err
+			}()
+			request := readCodexWireRequest(t, writer)
+			response, _ := json.Marshal(map[string]any{"id": request.ID, "error": map[string]any{"code": test.code, "message": test.message}})
+			supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(string(response)+"\n"), codexProtocolLineMaxBytes)
+			if err := <-done; !errors.Is(err, errCodexOperationRejected) {
+				t.Fatalf("unrelated rejection was retried: %v", err)
+			}
+			select {
+			case request := <-writer.messages:
+				t.Fatalf("rejection dispatched another request: %s", request)
+			default:
+			}
+		})
+	}
+}
+
 func acceptOperation(t *testing.T, supervisor *codexSupervisor, writer *codexWireWriter) codexCallResult {
 	t.Helper()
 	type reply struct {
