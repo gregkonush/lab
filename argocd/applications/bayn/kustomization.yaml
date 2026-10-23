@@ -31,6 +31,7 @@ resources:
 - bayn-research-db-sealedsecret.yaml
 - bayn-research-authority-sealedsecret.yaml
 - research-worker.yaml
+- opencode.yaml
 - research-networkpolicy.yaml
 configMapGenerator:
 - name: bayn-telemetry
@@ -45,4 +46,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:2cde62abbb9b0468725101c7fbc0e01c4618667662bfb3ebb3f28b93495d0584
+  digest: sha256:8a6bbef4b4fd0d70ece16a8d9fa7e1c22cb981dbebc20a9bf08eabe023b0531f

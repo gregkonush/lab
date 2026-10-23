@@ -78,6 +78,13 @@ model/tokenizer revisions and five response serving-identity fields before the f
 Flamingo's reviewed GitOps manifests own its deployment; there is no separate Bayn model Stage or provisioner.
 An endpoint without the identity header is rejected; research cannot fall back to alias-only provenance.
 
+The CPU-only `bayn-opencode` Deployment shares Bayn's immutable image and Kargo Stage. It receives no financial or
+provider credential. Only the research worker can call its proposal Service; its native API and one-call provider relay
+remain on loopback. Preserve `bayn-opencode-state`: it contains the study sessions and exclusive claims used to reject
+ambiguous retries. `Recreate` keeps one writer. The worker admits explicit policies through
+`BAYN_RESEARCH_INFERENCE_POLICIES`; changing a policy requires a reviewed release. Verify a real signed proposal and
+retained native receipt after rollout. Neither a healthy pod nor a zero-cost provider response establishes improvement.
+
 Original-session eligibility, preparation expenses and comparison requirements are described in the
 [research contract](../../../docs/bayn/jev-optimization.md). Invalidated or unsealed captures cannot establish
 complete original coverage; do not manufacture descriptions or later outcomes to make old captures eligible.

@@ -91,9 +91,9 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn's GEPA worker uses the shared Flamingo deployment for instruction proposals. Its worker image follows Bayn's
-normal receipt-bearing Kargo path. There is no separate Bayn model image, Warehouse, or Stage; Flamingo's reviewed
-manifests pin its serving image and model revision.
+Bayn's research worker and CPU-only OpenCode proposer consume the same immutable Bayn image through
+`lab-delivery/bayn`. The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains
+independent, with its pinned serving identity verified by research receipts.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the

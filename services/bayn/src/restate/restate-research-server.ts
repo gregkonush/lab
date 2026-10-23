@@ -42,7 +42,10 @@ export const researchServerConfig = Config.all({
       ? Config.schema(GitSourceRevisionSchema, 'BAYN_CODE_REVISION')
       : Config.succeed(embeddedBuildMetadata.sourceRevision),
   identityKeys: Config.NonEmptyString('RESTATE_REQUEST_IDENTITY_KEYS'),
-  policy: Config.schema(Schema.fromJsonString(ResearchPolicySchema), 'BAYN_RESEARCH_INFERENCE_POLICY'),
+  policies: Config.schema(
+    Schema.fromJsonString(Schema.Array(ResearchPolicySchema).check(Schema.isMinLength(1), Schema.isMaxLength(2))),
+    'BAYN_RESEARCH_INFERENCE_POLICIES',
+  ),
   approvalKey: Config.Redacted('BAYN_RESEARCH_APPROVAL_KEY'),
   url: Config.Redacted('BAYN_POSTGRES_URL'),
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
@@ -61,7 +64,9 @@ export const researchServerProgram = Effect.gen(function* () {
     ...telemetryConfig,
     serviceVersion: config.sourceRevision,
   })
-  const servingPolicyHash = yield* Effect.fromResult(hashResearch(config.policy))
+  const servingPolicyHashes = yield* Effect.forEach(config.policies, (policy) =>
+    Effect.fromResult(hashResearch(policy)),
+  )
   const serve = Effect.gen(function* () {
     const sql = yield* PgClient.PgClient
     yield* sql`SELECT run_id FROM research_inference_runs LIMIT 0`
@@ -97,7 +102,7 @@ export const researchServerProgram = Effect.gen(function* () {
         run: (run, signal) => {
           const parent = currentOpenTelemetryParentSpan()
           const attempt = Effect.gen(function* () {
-            if ((yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash)
+            if (!servingPolicyHashes.includes(yield* Effect.fromResult(hashResearch(run.policy))))
               return yield* new ResearchError({
                 message: 'Research run differs from the frozen serving policy',
               })
@@ -163,7 +168,7 @@ export const researchServerProgram = Effect.gen(function* () {
       Effect.forkScoped,
     )
     yield* Effect.logInfo('Bayn independent research endpoint is listening').pipe(
-      Effect.annotateLogs({ sourceRevision: config.sourceRevision, servingPolicyHash, port: config.port }),
+      Effect.annotateLogs({ sourceRevision: config.sourceRevision, servingPolicyHashes, port: config.port }),
     )
     return yield* Effect.never
   })
