@@ -187,7 +187,7 @@ function DesktopGate({
     return (
       <StatusWindow
         icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
-        title="Tengri"
+        title="Starting Tengri"
         detail="Loading your workspace…"
         progress
       />

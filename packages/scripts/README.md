@@ -80,10 +80,6 @@ Manual selection retains each workflow's existing controls. Native Tengri images
 and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
 use the root Bun lockfile.
 
-The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
-commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
-digests. The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
-
 Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
 database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
 Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.

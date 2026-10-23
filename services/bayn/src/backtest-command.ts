@@ -1,5 +1,4 @@
 import { createHash } from 'node:crypto'
-import { gzipSync } from 'node:zlib'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 import { OperationDeadlineClock } from './operation-timeout'
 import { NodeRuntime, NodeServices } from '@effect/platform-node'
@@ -103,17 +102,6 @@ export const hashBacktestPassLog = (filePath: string) =>
     yield* fs.stream(filePath).pipe(Stream.runForEach((chunk) => Effect.sync(() => hash.update(chunk))))
     return hash.digest('hex')
   })
-export const compressBacktestPass = (line: string) =>
-  Effect.try({
-    try: () => gzipSync(`${line}\n`, { level: 1 }),
-    catch: (cause) =>
-      operationalError({
-        component: 'strategy',
-        operation: 'replay-pass',
-        message: 'Cannot compress execution pass',
-        cause,
-      }),
-  })
 const main = Effect.scoped(
   Effect.gen(function* () {
     const args = parseBacktestArgs(process.argv.slice(2))
@@ -159,7 +147,7 @@ const main = Effect.scoped(
     yield* fs.makeDirectory(args.outputPath, { mode: 0o700 })
     yield* fs.writeFileString(path.join(args.outputPath, 'input.json'), raw, { flag: 'wx' })
     yield* fs.writeFileString(path.join(args.outputPath, 'source-receipt.json'), sourceReceiptText, { flag: 'wx' })
-    const passesPath = path.join(args.outputPath, 'passes.ndjson.gz')
+    const passesPath = path.join(args.outputPath, 'passes.ndjson')
     const inferencePath = path.join(args.outputPath, 'jev-calls.ndjson')
     const inferenceWrite = yield* Semaphore.make(1)
     const base = Layer.mergeAll(WriterFenceLive, JournalLive(databases)).pipe(
@@ -179,8 +167,7 @@ const main = Effect.scoped(
       databases,
       (pass) =>
         Effect.fromResult(canonicalJsonV1Result(pass)).pipe(
-          Effect.flatMap(compressBacktestPass),
-          Effect.flatMap((bytes) => fs.writeFile(passesPath, bytes, { flag: 'a' })),
+          Effect.flatMap((line) => fs.writeFileString(passesPath, `${line}\n`, { flag: 'a' })),
           Effect.mapError((cause) =>
             operationalError({
               component: 'strategy',
@@ -229,12 +216,7 @@ const main = Effect.scoped(
     const material = {
       ...reportBody,
       executableSha256: sha256(yield* fs.readFile(yield* path.fromFileUrl(new URL(import.meta.url)))),
-      passLog: {
-        file: 'passes.ndjson.gz',
-        encoding: 'gzip-members-json-lines',
-        sha256: passHash,
-        records: report.schedule.passCount,
-      },
+      passLog: { file: 'passes.ndjson', sha256: passHash, records: report.schedule.passCount },
     }
     const output = yield* Effect.fromResult(
       canonicalJsonV1Result({

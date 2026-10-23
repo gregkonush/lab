@@ -1,7 +1,7 @@
 # Bayn Jev instruction editor
 
 `bayn-model` serves the pinned general instruction model [Qwen/Qwen3-8B](https://huggingface.co/Qwen/Qwen3-8B)
-on Turin's Blackwell GPU for GEPA proposals about Jev's question instructions. It replaces
+on Turin's Blackwell GPU for Harness2 proposals and reflection about Jev's question instructions. It replaces
 the Alpha-R1 factor-selection checkpoint and has no active factor-selection contract or model fallback.
 It serves private, bounded research inference at
 `http://bayn-model.bayn-model.svc.cluster.local:8080/v1/chat/completions`.
@@ -32,16 +32,22 @@ this deployment.
   response generator. The pinned vLLM non-streaming handler leaves detached tasks on parent cancellation, so that
   path is closed rather than wrapped in another serving layer.
 
-GEPA supplies the frozen question and bounded native development execution feedback. Evaluation outcomes never
-enter proposal context. Prompt edits use a JSON schema for the complete one-field instruction document. The
-[vLLM structured-output API](https://docs.vllm.ai/en/v0.29.0/features/structured_outputs/) constrains the response;
-it does not establish an edit's financial value.
+The editor retains all candidate signal groups, exclusions and complete-plan alternatives, including stop, target,
+estimated loss and estimated profit. Repeated immutable facts share references within the prompt; archived
+trajectories retain their original evidence. The pinned tokenizer measured up to 22,304 input tokens for the
+19-candidate, 16-plan synthetic composition/reflection fixture. Its 4,096-token output allowance exceeds a 16,384-token
+context and fits the 32,768-token budget. Actual serving and shared-GPU capacity still require runtime proof.
 
-The sole active `bayn.jev-editor.v1` contract changes only the conditional complete-plan `entry` instruction.
-Generated text is data. The editor cannot alter state or choices, add executable code, change risk or submit an
-order. Truncated, timed-out, malformed and foreign-model responses cannot be completed proposals. Retired factor
-and reflection contracts are rejected; historical records remain immutable. The native evaluator uses the
-production Jev request, decision and execution code.
+Prompt-edit requests constrain generation with a JSON schema for the native one-field instruction document.
+Reflection requests keep their separate text format. The pinned [vLLM structured-output API](https://docs.vllm.ai/en/v0.29.0/features/structured_outputs/) supports both request types; this does
+not qualify an editor's financial reasoning or a generated strategy.
+
+The current `bayn.jev-harness2-editor.v3` contract accepts bounded instruction proposals and evidence-supported
+reflection. A proposal changes only the complete-plan `entry` instruction. Validate their schema and
+native request identity before a probe. Generated text is data; the editor cannot add executable code, change
+market state or choices, alter risk policy, or submit an order. A truncated, timed-out, malformed or foreign-model
+response cannot be a completed proposal. Retained Alpha-R1 registrations remain readable immutable evidence;
+the worker and submission command reject them for new inference.
 
 `model-source.json` is the generator input. `python3 lock_model.py` resolves exact byte lengths and SHA-256 hashes
 into `model-lock.json`; review checkpoint changes together. The init container downloads public files without an HF
@@ -75,22 +81,22 @@ flowchart LR
   O --> L[TigerBeetle and retained receipts]
   C --> X[Deterministic deadline and protective exits]
   X --> R
-  S[Retained development captures] --> H[GEPA question search]
+  S[Retained development captures] --> H[Harness2 propose and compose]
   H --> W[Separate Restate research Workflow per run]
   W --> M[Qwen3 private instruction editor]
   M --> E[Instruction proposals and metered receipts]
-  E --> J2[Native Jev portfolio evaluation]
+  E --> J2[Native Jev probes and portfolio evaluation]
 ```
 
 The research worker uses a separate deployment, process, connection pools and immutable run identity. It reads
 retained captures independently; execution adds no editor RPC, send acknowledgement or outbox wait. The editor
-has no access to final-test results during proposal. Native probe completion is distinct from full
+has no access to final-test results during proposal or composition. Native probe completion is distinct from full
 portfolio evaluation and acceptance. Research results require untouched comparisons with the unchanged strategy,
 repeatability and financial controls before adoption.
 Shared-GPU contention still needs a measured baseline and overload test; asynchronous orchestration alone does not
 provide resource isolation.
 
-The [Jev optimization contract](../../docs/bayn/jev-optimization.md) defines the current integration, and its linked design
+The [Jev Harness2 contract](../../docs/bayn/harness2.md) defines the current integration, and its linked design
 audit records remaining evaluation requirements. The former factor-screening plan is historical design evidence.
 
 ## Observability and cost

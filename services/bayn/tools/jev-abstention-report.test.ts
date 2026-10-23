@@ -21,216 +21,9 @@ import { replayTestInstruments } from '../src/testing/replay-instruments'
 import {
   reportAuditedJevPlanPath,
   reportJevAbstention,
-  reportJevRealizedEvidence,
   reportJevPlanPath,
   summarizeJevChoiceMass,
 } from './jev-abstention-report'
-
-const joinFixture = (crypto = false) => {
-  const observation = crypto
-    ? Result.getOrThrow(
-        jevObservationForSnapshot(cryptoMarketFixture('SOL/USD', { observedPriceChoices: true }).snapshot),
-      )
-    : null
-  const evidence =
-    observation === null
-      ? null
-      : nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'enter')
-  const decision =
-    evidence === null
-      ? documentFor('enter')
-      : {
-          mode: 'PAPER',
-          bindings: { cycleId: evidence.observation.cycleId },
-          strategyDecision: Result.getOrThrow(decideJevEntry(evidence)),
-        }
-  const symbol = crypto ? 'SOL/USD' : 'AAPL'
-  const cycleId = decision.bindings.cycleId
-  const strategyDecisionHash = Result.getOrThrow(canonicalHashV1Result(decision.strategyDecision))
-  const accountId = decision.strategyDecision.evidence.observation.portfolio.brokerState.account.accountId
-  const at = Date.parse(decision.strategyDecision.observedAt)
-  const transaction = (side: 'BUY' | 'SELL', id: string, delta: number) => ({
-    schemaVersion: 'bayn.accounting-transaction.v2',
-    transactionId: id.repeat(64),
-    brokerEventId: id.repeat(64),
-    intentId: id.repeat(64),
-    accountId,
-    symbol,
-    side,
-    quantityAtoms: '1000000',
-    priceAtoms: '100000000000',
-    notionalMicros: '100000000',
-    feeMicros: '0',
-    costBasisMicros: '100000000',
-    realizedPnlMicros: '0',
-    quantityDeltaAtoms: side === 'BUY' ? '1000000' : '-1000000',
-    costBasisDeltaMicros: side === 'BUY' ? '100000000' : '-100000000',
-    cashDeltaMicros: side === 'BUY' ? '-100000000' : '100000000',
-    ledgerPlanHash: id.repeat(64),
-    contentHash: id.repeat(64),
-    occurredAt: new Date(at + delta).toISOString(),
-  })
-  const trades = [transaction('BUY', 'a', 1000), transaction('SELL', 'b', 2000)]
-  const value = {
-    openingTransactionId: 'a'.repeat(64),
-    closingTransactionId: 'b'.repeat(64),
-    symbol,
-    openedAt: new Date(at + 1000).toISOString(),
-    closedAt: new Date(at + 2000).toISOString(),
-    holdingDurationMs: 1000,
-    buyFillCount: 1,
-    sellFillCount: 1,
-    buyNotionalMicros: '100000000',
-    turnoverMicros: '200000000',
-    grossRealizedPnlMicros: '0',
-    costs: {
-      status: 'UNDETERMINED',
-      reason: 'NON_CRYPTO_ALLOCATION_UNAVAILABLE',
-      attributedCostMicros: null,
-      netPnlAfterAttributedCostsMicros: null,
-      allInProfitMicros: null,
-    },
-  }
-  return {
-    schemaVersion: 'bayn.jev-realized-evidence-input.v1',
-    cycles: [
-      {
-        cycleId,
-        state: 'COMPLETED',
-        sourceRevision: 'c'.repeat(40),
-        authorityGenerationHash: decision.strategyDecision.evidence.observation.authorityGenerationHash,
-        decisionDocument: decision,
-        strategyDecisionHash,
-        transactions: trades.map((transaction) => ({ cycleId, strategyDecisionHash, transaction })),
-        outcome: { contentHash: Result.getOrThrow(canonicalHashV1Result(value)), value },
-        exitObservation: {
-          cycleId,
-          openingTransactionId: 'a'.repeat(64),
-          sourceHash: 'e'.repeat(64),
-          reason: 'RECOVERY',
-        },
-      },
-    ],
-  }
-}
-
-test('realized join preserves imported unknown costs and does not turn recovery into a target/stop label', () => {
-  const report = reportJevRealizedEvidence(joinFixture())
-  expect(report.qualification).toBe('UNQUALIFIED_IMPORTED_EVIDENCE_JOIN')
-  expect(report.rows[0]?.observedExit?.reason).toBe('RECOVERY')
-  expect(report.rows[0]?.targetBeforeStop).toBe('UNKNOWN')
-  expect(report.rows[0]?.targetPathCensored).toBe(true)
-  expect(report.rows[0]?.importedOutcome?.costs.netPnlAfterAttributedCostsMicros).toBeNull()
-  expect(report.rows[0]?.allInProfitMicros).toBeNull()
-})
-
-test('realized join retains blocked missing-model and abstention denominator rows and source strata', () => {
-  const decision = documentFor()
-  const base = {
-    sourceRevision: 'a'.repeat(40),
-    authorityGenerationHash: 'b'.repeat(64),
-    transactions: [],
-    outcome: null,
-    exitObservation: null,
-  }
-  const report = reportJevRealizedEvidence({
-    schemaVersion: 'bayn.jev-realized-evidence-input.v1',
-    cycles: [
-      { ...base, cycleId: 'c'.repeat(64), state: 'BLOCKED', decisionDocument: null, strategyDecisionHash: null },
-      {
-        ...base,
-        sourceRevision: 'd'.repeat(40),
-        authorityGenerationHash: decision.strategyDecision.evidence.observation.authorityGenerationHash,
-        cycleId: decision.bindings.cycleId,
-        state: 'NO_TRADE',
-        decisionDocument: decision,
-        strategyDecisionHash: Result.getOrThrow(canonicalHashV1Result(decision.strategyDecision)),
-      },
-    ],
-  })
-  expect(report.denominatorCount).toBe(2)
-  expect(report.rows[0]?.decision).toBeNull()
-  expect(report.rows[1]?.decision?.selectedSymbols).toEqual([])
-  expect(report.rows[0]?.sourceRevision).not.toBe(report.rows[1]?.sourceRevision)
-  expect(report.completeOpportunityScheduleProven).toBe(false)
-})
-
-test.each(['cycle', 'decision', 'authority', 'transaction', 'duplicate', 'outcome', 'exit', 'unknown-field'])(
-  'realized join rejects %s substitution',
-  (kind) => {
-    const input = joinFixture()
-    const row = input.cycles[0]
-    if (row === undefined) throw new Error('Missing row')
-    if (kind === 'cycle') row.cycleId = 'f'.repeat(64)
-    if (kind === 'decision') row.strategyDecisionHash = 'f'.repeat(64)
-    if (kind === 'authority') row.authorityGenerationHash = 'f'.repeat(64)
-    if (kind === 'transaction') {
-      const link = row.transactions[0]
-      if (link !== undefined) link.cycleId = 'f'.repeat(64)
-    }
-    if (kind === 'duplicate') input.cycles.push(row)
-    if (kind === 'outcome') row.outcome.value.grossRealizedPnlMicros = '123'
-    if (kind === 'exit') row.exitObservation.openingTransactionId = 'f'.repeat(64)
-    if (kind === 'unknown-field') Object.assign(row, { calibratedProfitProbability: 0.9 })
-    expect(() => reportJevRealizedEvidence(input)).toThrow()
-  },
-)
-
-test.each(['ACTIVE', 'BLOCKED'])(
-  'realized join retains %s partial execution without manufacturing a closed return',
-  (state) => {
-    const input = joinFixture()
-    const row = input.cycles[0]
-    if (row === undefined) throw new Error('Missing row')
-    const report = reportJevRealizedEvidence({
-      ...input,
-      cycles: [{ ...row, state, transactions: row.transactions.slice(0, 1), outcome: null, exitObservation: null }],
-    })
-    expect(report.rows[0]?.executionEvidence).toBe('UNKNOWN_OR_OPEN')
-    expect(report.rows[0]?.importedOutcome).toBeNull()
-    expect(report.rows[0]?.targetBeforeStop).toBe('UNKNOWN')
-  },
-)
-
-test('realized join preserves imported crypto accrued costs once and rejects resealed wrong net', () => {
-  const input = joinFixture(true)
-  const row = input.cycles[0]
-  if (row === undefined) throw new Error('Missing row')
-  const value = {
-    ...row.outcome.value,
-    costs: {
-      status: 'ATTRIBUTED_ACCRUALS',
-      scope: 'FILL_FEES_AND_SOURCE_LINKED_ACCRUALS',
-      attributedCostMicros: '100',
-      netPnlAfterAttributedCostsMicros: '-100',
-      finalExecutionCostCoverage: 'UNDETERMINED',
-      brokerActivityAdjustmentsIncluded: false,
-      allInProfitMicros: null,
-    },
-  }
-  const withOutcome = () => ({
-    ...input,
-    cycles: [
-      {
-        ...row,
-        outcome: {
-          value,
-          contentHash: Result.getOrThrow(canonicalHashV1Result(value)),
-        },
-      },
-    ],
-  })
-  const report = reportJevRealizedEvidence(withOutcome())
-  expect(report.rows[0]?.importedOutcome?.costs.netPnlAfterAttributedCostsMicros).toBe('-100')
-  expect(report.independentlyVerifiedLedger).toBe(false)
-  value.costs.netPnlAfterAttributedCostsMicros = '-200'
-  expect(() => reportJevRealizedEvidence(withOutcome())).toThrow('Imported attributed net is inconsistent')
-  value.costs.netPnlAfterAttributedCostsMicros = '-100'
-  const first = row.transactions[0]
-  if (first === undefined) throw new Error('Missing fill')
-  first.transaction.feeMicros = '101'
-  expect(() => reportJevRealizedEvidence(withOutcome())).toThrow('Imported attributed net is inconsistent')
-})
 
 const documentFor = (action = 'wait') => {
   const evidence = nativeJevDecisionEvidence(undefined, action)
@@ -551,7 +344,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v19',
+    protocol: 'bayn.jev.protocol.v17',
     inputDefinition: 'bayn.jev-trading-signal-state.v16',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -607,7 +400,7 @@ test('fragmented categorical plan mass is not a profit probability or permission
 })
 
 test('crypto economics and coverage are measured from sealed source rather than choice mass', () => {
-  const { snapshot } = cryptoMarketFixture('SOL/USD', { observedPriceChoices: true })
+  const { snapshot } = cryptoMarketFixture('SOL/USD')
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
   const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'wait')
   const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
@@ -621,7 +414,6 @@ test('crypto economics and coverage are measured from sealed source rather than 
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ estimatedFeeBpsPerSide: 25, estimatedRoundTripFeesBps: 50 })
   expect(candidate.entryEconomics?.requiredBidRiseBps).toBeGreaterThan(80)
-  expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({
     minimum: Math.min(...candidate.plans.map((plan) => plan.netRewardRisk)),
     maximum: Math.max(...candidate.plans.map((plan) => plan.netRewardRisk)),

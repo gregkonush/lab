@@ -1,36 +1,6 @@
 [
   {
     "surface": "controller",
-    "operation": "ConnectorAgent",
-    "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
-  },
-  {
-    "surface": "codex",
-    "operation": "relay/identity",
-    "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "codex",
-    "operation": "relay/configure",
-    "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "codex",
-    "operation": "relay/remove",
-    "action": "ACTION_CODEX_CONTROL",
-    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
-  },
-  {
-    "surface": "ofz",
-    "operation": "CheckConnectorAgent",
-    "action": "ACTION_CONNECTOR_EXECUTE",
-    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
-  },
-  {
-    "surface": "controller",
     "operation": "GetRequestAudience",
     "public": true,
     "internal_only": true,

@@ -21,10 +21,10 @@ import {
   strictParseOptions,
 } from '../schemas'
 import { JevContractError, JevFailure, decodeJevResponse, prepareJevRequest } from './contract'
-import { applyJevInstructions } from './instruction-evaluation'
+import { applyJevInstructions } from './harness2'
 import { jevInstructions } from './instructions'
 import { JevInstructionsSchema, type JevInstructions } from './instructions-contract'
-import { JevInstructionVariantBuildSchema } from './instruction-variant'
+import { JevHarnessVariantBuildSchema } from './harness2-variant'
 import { defaultJevProtocolDocument, jevBehaviorHash } from './protocol'
 
 // Decode only the consumed projection after verifying the complete original document hash.
@@ -79,8 +79,8 @@ const NativeEconomicReportSchema = Schema.Struct({
 const CostAllocationSchema = Schema.NullOr(
   Schema.Struct({ costMicros: UnsignedMicrosSchema, evidenceHash: Sha256Schema }),
 )
-export const JevEconomicRegistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-economic-registration.v2'),
+export const JevHarnessEconomicRegistrationSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-registration.v2'),
   studyId: Sha256Schema,
   evaluatorSourceRevision: GitSourceRevisionSchema,
   compilerDependencyReceiptSha256: Sha256Schema,
@@ -90,8 +90,8 @@ export const JevEconomicRegistrationSchema = Schema.Struct({
   sessionDates: Schema.Array(IsoDateSchema).check(Schema.isMinLength(1), Schema.isMaxLength(366), Schema.isUnique()),
   maximumDrawdownMicros: PositiveMicrosSchema,
 })
-export type JevEconomicRegistration = typeof JevEconomicRegistrationSchema.Type
-export const JevOperatingAllocationsSchema = Schema.Array(
+export type JevHarnessEconomicRegistration = typeof JevHarnessEconomicRegistrationSchema.Type
+export const JevHarnessOperatingAllocationsSchema = Schema.Array(
   Schema.Struct({
     sessionDate: IsoDateSchema,
     infrastructure: CostAllocationSchema,
@@ -101,11 +101,11 @@ export const JevOperatingAllocationsSchema = Schema.Array(
 const NativeReportArtifactSchema = Schema.Struct({
   reportPath: StrictNonEmptyStringSchema,
   reportSha256: Sha256Schema,
-  operatingAllocations: JevOperatingAllocationsSchema,
+  operatingAllocations: JevHarnessOperatingAllocationsSchema,
 })
-export const JevEconomicComparisonManifestSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-economic-manifest.v2'),
-  registration: JevEconomicRegistrationSchema,
+export const JevHarnessEconomicComparisonManifestSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-harness2-economic-manifest.v2'),
+  registration: JevHarnessEconomicRegistrationSchema,
   baseline: NativeReportArtifactSchema,
   baselineRepeat: NativeReportArtifactSchema,
   candidate: Schema.Struct({
@@ -118,7 +118,7 @@ const invalid = (message: string) => Result.fail(new JevContractError({ message 
 const hash = canonicalHashV1Result
 
 /** The caller supplies the actual native replay result, including its complete paid-call and fill inventory. */
-export const jevBacktestOutcome = (input: {
+export const jevHarnessBacktestOutcome = (input: {
   readonly report: unknown
   readonly instructions: JevInstructions
   readonly operatingAllocations: unknown
@@ -133,13 +133,12 @@ export const jevBacktestOutcome = (input: {
     const variantBuild =
       input.variantBuild === null
         ? null
-        : yield* Schema.decodeUnknownResult(JevInstructionVariantBuildSchema, strictParseOptions)(input.variantBuild)
+        : yield* Schema.decodeUnknownResult(JevHarnessVariantBuildSchema, strictParseOptions)(input.variantBuild)
     if (variantBuild === null && (yield* hash(instructions)) !== (yield* hash(jevInstructions)))
       return yield* invalid('Candidate native reports require their compiler build receipt')
     if (variantBuild !== null) {
       const { receiptHash, ...material } = variantBuild
       if (
-        variantBuild.spec.evaluation !== 'portfolio' ||
         receiptHash !== (yield* hash(material)) ||
         variantBuild.executableSha256 !== report.executableSha256 ||
         variantBuild.spec.sourceRevision !== report.build.sourceRevision ||
@@ -239,7 +238,7 @@ export const jevBacktestOutcome = (input: {
     )
       return yield* invalid('Complete native replay requires closed inventory, net costs and drawdown')
     const allocations = yield* Schema.decodeUnknownResult(
-      JevOperatingAllocationsSchema,
+      JevHarnessOperatingAllocationsSchema,
       strictParseOptions,
     )(input.operatingAllocations)
     const dates = report.sessions.map((session) => session.sessionDate)
@@ -267,8 +266,7 @@ export const jevBacktestOutcome = (input: {
       )
         return yield* invalid('Native session inference inventory or expense does not reproduce')
       if (allocation.infrastructure === null || allocation.research === null) operatingComplete = false
-      if (allocation.infrastructure !== null) operatingCost += BigInt(allocation.infrastructure.costMicros)
-      if (allocation.research !== null) operatingCost += BigInt(allocation.research.costMicros)
+      else operatingCost += BigInt(allocation.infrastructure.costMicros) + BigInt(allocation.research.costMicros)
       const delta = BigInt(session.closingNetEquityMicros) - previous
       if (session.netEquityChangeMicros !== null && BigInt(session.netEquityChangeMicros) !== delta)
         return yield* invalid('Native session equity carry differs from its net outcome')
@@ -334,52 +332,38 @@ export const jevBacktestOutcome = (input: {
         sessionDates: report.sessionDates,
       }),
       providerRequests: report.inference.providerDispatchCount,
-      executionPnlMicros: ledger.netRealizedPnlAfterCostsMicros,
-      knownModelCostMicros: costs.knownCostMicros,
-      unresolvedModelCalls: costs.unresolvedCallCount,
-      dataCostMicros: report.dataCostMicros,
-      remainingPositions: ledger.positions.length,
-      issues: [...new Set([...report.issues, ...report.sessions.flatMap((session) => session.issues)])],
-      knownNetPnlMicros:
-        ledger.netRealizedPnlAfterCostsMicros === null || ledger.positions.length !== 0
-          ? null
-          : String(
-              BigInt(ledger.netRealizedPnlAfterCostsMicros) -
-                BigInt(costs.knownCostMicros) -
-                BigInt(report.dataCostMicros ?? '0') -
-                operatingCost,
-            ),
-      costCoverage:
-        operatingComplete && report.dataCostMicros !== null && costs.unresolvedCallCount === 0
-          ? ('COMPLETE' as const)
-          : ('KNOWN_COSTS_ONLY' as const),
       conservativeMaximumDrawdownMicros:
         report.maximumObservedDrawdownMicros === null || !operatingComplete
           ? null
           : String(BigInt(report.maximumObservedDrawdownMicros) + operatingCost),
       rows,
     }
-  }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev native economic evidence failed', cause })))
+  }).pipe(
+    Result.mapError((cause) => new JevContractError({ message: 'Harness2 native economic evidence failed', cause })),
+  )
 
-export type JevBacktestOutcome = Result.Result.Success<ReturnType<typeof jevBacktestOutcome>>
+export type JevHarnessBacktestOutcome = Result.Result.Success<ReturnType<typeof jevHarnessBacktestOutcome>>
 
-export enum JevObservedNetEffect {
+export enum JevHarnessObservedNetEffect {
   Higher = 'HIGHER_NATIVE_REPLAY_NET',
   Lower = 'LOWER_NATIVE_REPLAY_NET',
   Unchanged = 'NO_MEASURED_NET_CHANGE',
   Inconclusive = 'INCONCLUSIVE',
 }
 
-export const compareJevEconomics = (
+export const compareJevHarnessEconomics = (
   input: unknown,
   arms: {
-    readonly baseline: JevBacktestOutcome
-    readonly baselineRepeat: JevBacktestOutcome
-    readonly candidate: JevBacktestOutcome
+    readonly baseline: JevHarnessBacktestOutcome
+    readonly baselineRepeat: JevHarnessBacktestOutcome
+    readonly candidate: JevHarnessBacktestOutcome
   },
 ) =>
   Result.gen(function* () {
-    const registration = yield* Schema.decodeUnknownResult(JevEconomicRegistrationSchema, strictParseOptions)(input)
+    const registration = yield* Schema.decodeUnknownResult(
+      JevHarnessEconomicRegistrationSchema,
+      strictParseOptions,
+    )(input)
     if ((yield* hash(registration.baseline)) !== (yield* hash(jevInstructions)))
       return yield* invalid('Economic baseline differs from the compiled live Jev instructions')
     const { baseline, baselineRepeat, candidate } = arms
@@ -441,19 +425,19 @@ export const compareJevEconomics = (
     if (drawdown === null) reasons.push('UNKNOWN_NATIVE_DRAWDOWN')
     else if (BigInt(drawdown) > BigInt(registration.maximumDrawdownMicros)) reasons.push('DRAWDOWN_LIMIT_EXCEEDED')
     const sum = (values: readonly bigint[]) => String(values.reduce((a, b) => a + b, 0n))
-    const allocationHash = (arm: JevBacktestOutcome) =>
+    const allocationHash = (arm: JevHarnessBacktestOutcome) =>
       hash(arm.rows.map(({ sessionDate, infrastructure, research }) => ({ sessionDate, infrastructure, research })))
     const delta = complete ? sum(deltas) : null
     const observedNetEffect =
       reasons.length > 0 || delta === null
-        ? JevObservedNetEffect.Inconclusive
+        ? JevHarnessObservedNetEffect.Inconclusive
         : BigInt(delta) > 0n
-          ? JevObservedNetEffect.Higher
+          ? JevHarnessObservedNetEffect.Higher
           : BigInt(delta) < 0n
-            ? JevObservedNetEffect.Lower
-            : JevObservedNetEffect.Unchanged
+            ? JevHarnessObservedNetEffect.Lower
+            : JevHarnessObservedNetEffect.Unchanged
     const material = {
-      schemaVersion: 'bayn.jev-economic-comparison.v1',
+      schemaVersion: 'bayn.jev-harness2-economic-comparison.v1',
       registrationHash: yield* hash(registration),
       nativeReportHashes: {
         baseline: baseline.reportHash,
@@ -497,4 +481,4 @@ export const compareJevEconomics = (
       ],
     }
     return { ...material, comparisonHash: yield* hash(material) }
-  }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev economic comparison failed', cause })))
+  }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Harness2 economic comparison failed', cause })))

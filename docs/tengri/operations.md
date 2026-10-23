@@ -190,9 +190,7 @@ filesystem, owner grant, credentials, and native conversations. The replacement 
 old memory snapshot.
 
 1. Qualify the complete Ofz, Tengri, Nanoagent, and Proompteng image cohort from one reviewed source. Record the four
-   digests and the original successful publication runs. Freeze that source for the maintenance window and verify
-   no other main native workflow occupies its publisher concurrency before taking the workspace offline.
-   Finish active work and reconcile uncertain external effects.
+   digests and the original successful publication runs. Finish active work and reconcile uncertain external effects.
    An idle browser, a transcript, or a sleeping snapshot alone does not establish that work completed.
 2. Use authenticated workspace sleep. Verify the exact runtime claim in the committed sleeping journal, the reaped
    Firecracker process, and the absence of another storage writer. Capture a fresh baseline after the work finishes:
@@ -211,8 +209,7 @@ old memory snapshot.
    old controller is absent. Use fresh resourceVersion preconditions for each change.
 6. Release the original successful publishers through the existing hold. Rerun only the native publisher against its
    unchanged architecture artifacts, verify both index digests remain exact, and require successful signing and
-   artifact retention before aliases appear. Retain a queued publisher: cancelling a latest attempt with no jobs can
-   prevent rerunning its original job. Do not rebuild or substitute a guest digest after enrollment.
+   artifact retention before aliases appear. Do not rebuild or substitute a guest digest after enrollment.
 7. Follow the same Freight through Ofz migration and rollout, then the generated `kargo/tengri` commit. Verify that
    commit selects the qualified controller and guest digests before removing the Application's temporary
    `skip-reconcile` annotation. Let Argo restore the reviewed controller replicas from Git.

@@ -206,20 +206,7 @@ func (supervisor *codexSupervisor) reconcileOperation(ctx context.Context, op co
 
 func (supervisor *codexSupervisor) dispatchOperation(ctx context.Context, method string, params json.RawMessage) (codexCallResult, error) {
 	if method != "tengri/resolveApproval" {
-		result, err := supervisor.request(ctx, method, params, true, nil)
-		var input struct {
-			Thread string `json:"threadId"`
-		}
-		var rpcError *codexRPCError
-		if method != "turn/start" || result.generation == nil || json.Unmarshal(params, &input) != nil ||
-			!errors.As(err, &rpcError) || rpcError.code != -32600 || rpcError.message != "thread not found: "+input.Thread {
-			return result, err
-		}
-		resume, _ := json.Marshal(map[string]any{"threadId": input.Thread, "historyMode": "paginated"})
-		if _, err := supervisor.request(ctx, "thread/resume", resume, true, result.generation); err != nil {
-			return result, err
-		}
-		return supervisor.request(ctx, method, params, true, result.generation)
+		return supervisor.request(ctx, method, params, true, nil)
 	}
 	var input struct {
 		Thread   string          `json:"threadId"`

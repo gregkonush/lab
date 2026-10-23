@@ -18,7 +18,7 @@ import { MutationStoreLive } from '../execution/mutations/program'
 import { WriterFenceLive } from '../execution/writer-fence'
 import { JournalLive } from '../ledger'
 import { JevClient } from '../jev/client'
-import { jevBacktestOutcome } from '../jev/experiment-economics'
+import { jevHarnessBacktestOutcome } from '../jev/harness2-economics'
 import { jevInstructions } from '../jev/instructions'
 import { jevModel } from '../jev/contract'
 import { OperationDeadlineClock } from '../operation-timeout'
@@ -365,7 +365,7 @@ durableTest.each(['opening', 'UTC-midnight', 'unknown-data-cost'] as const)(
         }
         expect(
           Result.isFailure(
-            jevBacktestOutcome({
+            jevHarnessBacktestOutcome({
               report,
               variantBuild: null,
               instructions: jevInstructions,

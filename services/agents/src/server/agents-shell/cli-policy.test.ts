@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 
-import { normalizeCliArgs, readOnlyGitArgs, requireReadOnlyKubectlArgs } from './cli-policy'
+import { normalizeCliArgs, requireReadOnlyGitArgs, requireReadOnlyKubectlArgs } from './cli-policy'
 
 describe('read-only CLI inspection', () => {
   it.each([
@@ -11,7 +11,7 @@ describe('read-only CLI inspection', () => {
     ['worktree', 'list'],
     ['--no-pager', 'diff'],
   ])('accepts git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).not.toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })
 
   it.each([
@@ -30,7 +30,7 @@ describe('read-only CLI inspection', () => {
     ['worktree', 'remove', '/tmp/repo'],
     ['--no-pager', 'reset', '--hard'],
   ])('denies git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
 
   it.each([
@@ -45,41 +45,6 @@ describe('read-only CLI inspection', () => {
 
   it('preserves literal argument whitespace and empty argument values', () => {
     expect(normalizeCliArgs('git', ['grep', ' padded ', ''])).toEqual(['grep', ' padded ', ''])
-  })
-})
-
-describe('branch inspection', () => {
-  it.each([
-    ['branch'],
-    ['branch', '--all', '--no-merged', 'origin/main'],
-    ['branch', '-avv'],
-    ['branch', 'feature-*'],
-    ['--no-pager', 'branch', '--format=%(refname:short)', '--sort=-committerdate'],
-  ])('forces listing for git %j', (...args) => {
-    const inspected = readOnlyGitArgs(args)
-    expect(inspected[inspected.indexOf('branch') + 1]).toBe('--list')
-  })
-
-  it('preserves the standalone current-branch query', () => {
-    expect(readOnlyGitArgs(['branch', '--show-current'])).toEqual(['branch', '--show-current'])
-  })
-
-  it.each([
-    '-d',
-    '-D',
-    '-m',
-    '-M',
-    '-c',
-    '-C',
-    '-l',
-    '--delete',
-    '--force',
-    '--track',
-    '--edit-description',
-    '--set-upstream-to=main',
-    '--recurse-submodules',
-  ])('rejects branch changes with %s even when listing is requested', (option) => {
-    expect(() => readOnlyGitArgs(['branch', '--list', option, 'feature'])).toThrow('use git_write')
   })
 })
 
@@ -98,7 +63,7 @@ describe('remote Git execution requires execution authority', () => {
     ['ls-remote', '--sort', '-version:refname', '--refs', 'git@example.test:repo.git'],
     ['ls-remote', 'file:///tmp/repository'],
   ])('rejects git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
 })
 
@@ -111,7 +76,7 @@ describe('Git object inspection execution boundaries', () => {
     ['cat-file', '--batch', '--filters'],
     ['cat-file', 'blob', 'HEAD:file.txt', '--textconv'],
   ])('rejects git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
   it.each([
     ['cat-file', '-p', 'HEAD:file.txt'],
@@ -120,7 +85,7 @@ describe('Git object inspection execution boundaries', () => {
     ['cat-file', '--batch-command', '--no-buffer'],
     ['cat-file', '-p', '--', 'HEAD:file.txt'],
   ])('retains git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).not.toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })
 })
 
@@ -134,7 +99,7 @@ describe('Git revision inspection execution boundaries', () => {
     ['rev-list', '--textconv', 'HEAD'],
     ['rev-list', '--alternate-refs'],
   ])('rejects git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).toThrow()
   })
   it.each([
     ['rev-list', '--count', '--all'],
@@ -143,6 +108,6 @@ describe('Git revision inspection execution boundaries', () => {
     ['rev-list', '--branches=release/*', '--not', '--tags'],
     ['rev-list', '--left-right', '--cherry-pick', 'main...feature'],
   ])('retains git %j', (...args) => {
-    expect(() => readOnlyGitArgs(args)).not.toThrow()
+    expect(() => requireReadOnlyGitArgs(args)).not.toThrow()
   })
 })

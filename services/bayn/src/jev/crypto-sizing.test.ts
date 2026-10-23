@@ -10,7 +10,7 @@ import { makeJevTradingSignalBatch } from './trading-signals'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test(`${symbol} compiles the model-selected complete plan with a funded quantity ceiling`, () => {
-    const { snapshot } = cryptoMarketFixture(symbol, { quoteAskSize: 0.8, observedPriceChoices: true })
+    const { snapshot } = cryptoMarketFixture(symbol, { quoteAskSize: 0.8 })
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const batchPlan = Result.getOrThrow(
       makeJevTradingSignalBatch({

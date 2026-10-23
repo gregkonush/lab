@@ -3,9 +3,8 @@ import { Schema } from 'effect'
 import { GitSourceRevisionSchema, ImageDigestSchema, ImageRepositorySchema, Sha256Schema } from '../schemas'
 import { JevInstructionsSchema } from './instructions-contract'
 
-export const JevInstructionVariantSpecSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-instruction-variant.v1'),
-  evaluation: Schema.Literals(['portfolio', 'entry-controls']),
+export const JevHarnessVariantSpecSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-harness2-variant.v2'),
   sourceRevision: GitSourceRevisionSchema,
   imageRepository: ImageRepositorySchema,
   baseImageDigest: ImageDigestSchema,
@@ -13,9 +12,9 @@ export const JevInstructionVariantSpecSchema = Schema.Struct({
   dependencyReceiptSha256: Sha256Schema,
 })
 
-export const JevInstructionVariantBuildSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-instruction-variant-build.v1'),
-  spec: JevInstructionVariantSpecSchema,
+export const JevHarnessVariantBuildSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.jev-harness2-variant-build.v2'),
+  spec: JevHarnessVariantSpecSchema,
   baselineInstructionsHash: Sha256Schema,
   instructionsHash: Sha256Schema,
   strategyBehaviorHash: Sha256Schema,
@@ -31,10 +30,9 @@ export const JevInstructionVariantBuildSchema = Schema.Struct({
 })
 
 export const JevCompilerDependencyReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v2'),
+  schemaVersion: Schema.Literal('bayn.jev-compiler-dependencies.v1'),
   sourceRevision: GitSourceRevisionSchema,
   bunVersion: Schema.Literal('1.4.2'),
   files: Schema.Record(Schema.String, Sha256Schema),
-  controlFiles: Schema.Record(Schema.String, Sha256Schema),
   compilerFiles: Schema.Record(Schema.String, Sha256Schema),
 })

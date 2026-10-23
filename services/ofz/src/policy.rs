@@ -11,20 +11,6 @@ pub struct Permission {
     pub diagnostic: bool,
 }
 
-/// Stage-one binaries ship connector contracts without activating their entry points.
-/// Only an exact server-side opt-in enables the later connector rollout.
-pub fn connectors_enabled() -> bool {
-    std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true")
-}
-
-pub fn require_connectors() -> Result<(), Status> {
-    if connectors_enabled() {
-        Ok(())
-    } else {
-        Err(Status::unimplemented("connectors are not enabled"))
-    }
-}
-
 impl Action {
     pub fn permission(self) -> Result<Permission, Status> {
         use Action::*;
@@ -65,9 +51,6 @@ impl Action {
             KubeLogsRead => (KubeNamespace, "read_logs", true),
             KubeEventsRead => (KubeNamespace, "read_events", true),
             ConnectorRead => (ConnectorConnection, "read", true),
-            ConnectorCreate => (Platform, "create_connector", false),
-            ConnectorManage => (ConnectorConnection, "manage", false),
-            ConnectorInvoke => (ConnectorConnection, "invoke", false),
             SessionEstablish => (Platform, "establish_session", false),
             WorkspaceEnroll => (Platform, "enroll_workspace", false),
             KubeExecute => (Platform, "execute_kube", false),
@@ -135,8 +118,6 @@ pub fn requires_fresh_mfa(action: Action) -> bool {
         Action::MembersManage
             | Action::QuotasManage
             | Action::TargetsManage
-            | Action::ConnectorCreate
-            | Action::ConnectorManage
             | Action::CollaboratorsManage
             | Action::GrantsManage
             | Action::WorkspaceTransfer
@@ -161,7 +142,6 @@ pub fn requires_mfa(action: Action) -> bool {
                 | Action::WorkspaceResume
                 | Action::WorkspaceSleep
                 | Action::WorkspacePowerConfigure
-                | Action::ConnectorInvoke
         )
 }
 
@@ -169,9 +149,6 @@ pub fn renews_session(action: Action) -> bool {
     matches!(
         action,
         Action::WorkspaceCreate
-            | Action::ConnectorCreate
-            | Action::ConnectorManage
-            | Action::ConnectorInvoke
             | Action::MembersManage
             | Action::QuotasManage
             | Action::TargetsManage
@@ -286,9 +263,6 @@ mod tests {
             Action::GrantsManage,
             Action::KubeExecute,
             Action::ConnectorExecute,
-            Action::ConnectorInvoke,
-            Action::ConnectorManage,
-            Action::ConnectorCreate,
         ] {
             assert!(!action.permission().unwrap().diagnostic, "{action:?}");
         }

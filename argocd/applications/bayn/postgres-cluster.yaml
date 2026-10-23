@@ -29,7 +29,7 @@ spec:
         replication: false
         bypassrls: false
         connectionLimit: 2
-        comment: Isolated native Jev editor claims and receipts
+        comment: Isolated Alpha-R1 research claims and receipts
         passwordSecret:
           name: bayn-research-db
   primaryUpdateStrategy: unsupervised

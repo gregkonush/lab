@@ -551,16 +551,6 @@ impl AuthorizationService for Service {
             .await
             .map(Response::new)
     }
-    async fn check_connector_agent(
-        &self,
-        request: Request<proto::CheckConnectorAgentRequest>,
-    ) -> Result<Response<proto::CheckConnectorAgentResponse>, Status> {
-        let _capacity = self.acquire()?;
-        let peer = transport::peer(&request)?;
-        crate::connector_agent::check(&self.database, &self.native, &peer, request.into_inner())
-            .await
-            .map(Response::new)
-    }
     async fn execute_command(
         &self,
         request: Request<proto::ExecuteCommandRequest>,

@@ -6,8 +6,8 @@ It evaluates opportunities from its own position state, including periods when t
 position. It never synthesizes Jev responses or supplies production trading authority.
 
 Build the offline commands with `bun run --filter @proompteng/bayn build:research`, then run
-`node services/bayn/dist/research/control-study-command.js` with the same flags. The published Bayn image also
-contains `bayn-control-study`.
+`node services/bayn/dist/research/control-study-command.js` with the same flags. The service image contains only
+runtime and operational commands.
 `--help` requires no credentials. `--mode preflight` verifies the supplied source and writes coverage diagnostics
 without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
 Installing the command does not schedule a capture, run a study, or qualify the input.
@@ -16,16 +16,8 @@ This command produces development evidence. It does not satisfy the frozen
 [Jev acceptance protocol](jev-migration-acceptance-v2.json). `entry: "JEV"` adds an independent native entry
 portfolio with mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. Only
 `management: "MECHANICAL"` is executable. The retired research model-management path is removed. The independent
-control profile does not qualify strategy-derived prices or the broker-held protection lifecycle. Acceptance
+control profile does not qualify v14 strategy-derived prices or its broker-held protection lifecycle. Acceptance
 still needs frozen definitions, calibrated execution assumptions and untouched prospective sessions.
-
-Controls require a complete regular broker session inside the replay interval. The broker calendar's `open` and
-`close` fields define that session, including early closes. Wider `session_open` and `session_close` bounds describe
-provider hours; the separate data window does not replace regular trading hours. Keep the original calendar and
-source unchanged. Preparation retains the complete reviewed Jev protocol for native observation and journal
-validation. The separate equity market profile selects source symbols; it cannot replace protocol fields or add
-market metadata to the serialized native protocol. Preparation rejects an interval with no complete regular
-session before any model dispatch.
 
 ## Offline input preflight
 
@@ -50,7 +42,7 @@ An available benchmark with every candidate excluded cannot pass it. Partial cov
 The original source receipt is retained unchanged. A complete screen does not establish original stream
 availability, prospective completeness, executable liquidity, calibrated latency, costs or profitability. Keep the
 input and diagnostic output private, outside Git and CI artifacts. Omitting `--mode`, or using `--mode study`, retains
-the registered study behavior. The sole development input contract is v9. Preflight never starts that study
+the registered study behavior. The sole development input contract is v7. Preflight never starts that study
 automatically.
 
 ## Fixed policies
@@ -62,10 +54,12 @@ automatically.
 | `REPEATED_JEV_ENTRY`         | Native observation, model batch, entry probability gate and decision against this portfolio                                | Native allocation, matched to momentum | Same mechanical exits                                                                           |
 | `REPEATED_RELATIVE_MOMENTUM` | Positive return from the earliest common observed candidate and benchmark minute, with native spread and liquidity filters | Same research weight                   | Same mechanical management                                                                      |
 
-The table describes the mechanical lifecycles. Jev selects entries and does not manage held positions in this
-comparison. Each portfolio retains its own simulated fills, cash, fees and inventory. Existing exit triggers,
-protective stops, net-profit targets, maximum holding time and the close window take precedence over another entry.
-Partial exit retries preserve the original mechanical trigger and require no new inference.
+The table describes the mechanical lifecycles. In research-only `JEV` mode, simulated model exits are also available to the two
+repeated controls. Existing exit triggers, protective stops, net-profit targets, maximum holding time and the close window take
+precedence over a new inference. Each management request contains the control's own actual simulated fill quantity,
+cost basis, fees, entry time and current market evidence. Candidate strategy decisions are never reused as control
+management decisions. Entry and management track completed windows independently; partial exit retries preserve
+the original model trigger and require no new inference.
 
 Every policy starts polling after the first completed session minute and the native two-second delay. The protocol's
 30-minute lookback bounds the available context; it does not require 30 bars or delay admission by 30 minutes.
@@ -89,7 +83,7 @@ fallback. Use the native execution engine to verify those behaviors.
 
 ## Frozen residual-shock falsification candidate
 
-Input `bayn.control-study-input.v9` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
+Input `bayn.control-study-input.v8` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
 `falsificationCandidate`. It requires deterministic entry, mechanical management, `repeatedTargetWeightPpm: 200000`,
 a declared `turnoverPolicy`, and native 30,000 ms polling. Freeze timing, execution and data-cost scenarios before
 any outcome. It cannot be combined with the Jev entry or Ridge experiments.
@@ -275,8 +269,7 @@ claim that controls made Jev calls or executed the production interpreter.
 
 ```json
 {
-  "schemaVersion": "bayn.control-study-input.v9",
-  "costObjective": "ALL_COSTS",
+  "schemaVersion": "bayn.control-study-input.v8",
   "entry": "DETERMINISTIC",
   "turnoverPolicy": "ENTRY_AND_EXPECTED_EXIT",
   "management": "MECHANICAL",

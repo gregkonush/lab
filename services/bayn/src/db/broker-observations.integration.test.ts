@@ -452,9 +452,7 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.invalidate
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.ObservationPending)
         yield* advanceToTicket(first, 60_000)
-        const expired = yield* Effect.flip(store.read)
-        expect(expired.kind).toBe(BrokerReadErrorKind.Timeout)
-        expect(expired.observationFailure).toBe('NO_ADMISSIBLE_CUT')
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
       }),
     ))
   test('does not classify a failed poll, foreign revision or corrupt invalidated cut as an expected wait', async () =>
@@ -469,9 +467,7 @@ describePostgres('Durable per-account broker observations', () => {
         const foreign = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
         expect((yield* Effect.flip(foreign.read)).kind).toBe(BrokerReadErrorKind.Timeout)
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${'0'.repeat(64)} WHERE account_id = ${accountId}`
-        const corrupt = yield* Effect.flip(store.read)
-        expect(corrupt.kind).toBe(BrokerReadErrorKind.Timeout)
-        expect(corrupt.observationFailure).toBeUndefined()
+        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${Result.getOrThrow(canonicalHashV1Result(snapshot(first)))} WHERE account_id = ${accountId}`
         const second = yield* claim(store)
         yield* store.failed(second, 0)

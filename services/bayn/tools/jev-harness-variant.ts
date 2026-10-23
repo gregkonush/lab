@@ -11,9 +11,9 @@ import { defaultJevProtocolDocument, jevBehaviorHash } from '../src/jev/protocol
 import { strictParseOptions } from '../src/schemas'
 import {
   JevCompilerDependencyReceiptSchema,
-  JevInstructionVariantBuildSchema,
-  JevInstructionVariantSpecSchema,
-} from '../src/jev/instruction-variant'
+  JevHarnessVariantBuildSchema,
+  JevHarnessVariantSpecSchema,
+} from '../src/jev/harness2-variant'
 import { compilerDependencyBytes } from './jev-compiler-dependencies'
 
 class VariantBuildError extends Data.TaggedError('VariantBuildError')<{
@@ -74,7 +74,7 @@ const verifySource = (root: string, expected: string) =>
       })
   })
 
-export const buildJevInstructionVariant = (
+export const buildJevHarnessVariant = (
   input: unknown,
   root: string,
   outputDirectory: string,
@@ -82,7 +82,7 @@ export const buildJevInstructionVariant = (
 ) =>
   Effect.scoped(
     Effect.gen(function* () {
-      const spec = yield* Schema.decodeUnknownEffect(JevInstructionVariantSpecSchema, strictParseOptions)(input)
+      const spec = yield* Schema.decodeUnknownEffect(JevHarnessVariantSpecSchema, strictParseOptions)(input)
       if (Bun.version !== '1.4.2')
         return yield* new VariantBuildError({ message: 'Variant builds require the pinned Bun 1.4.2 toolchain' })
       yield* verifySource(root, spec.sourceRevision)
@@ -98,9 +98,7 @@ export const buildJevInstructionVariant = (
         return yield* new VariantBuildError({
           message: 'Compiler dependencies must come from the exact pinned source image',
         })
-      const dependencies = compilerDependencyBytes(
-        spec.evaluation === 'portfolio' ? dependencyReceipt.files : dependencyReceipt.controlFiles,
-      )
+      const dependencies = compilerDependencyBytes(dependencyReceipt.files)
       const instructions = jevInstructionsBuildPlugin(
         path.join(root, 'services/bayn/src/jev/instructions.ts'),
         spec.instructions,
@@ -112,13 +110,7 @@ export const buildJevInstructionVariant = (
         Effect.tryPromise({
           try: () =>
             Bun.build({
-              entrypoints: [
-                path.join(
-                  root,
-                  'services/bayn/src',
-                  spec.evaluation === 'portfolio' ? 'backtest-command.ts' : 'control-study-command.ts',
-                ),
-              ],
+              entrypoints: [path.join(root, 'services/bayn/src/backtest-command.ts')],
               target: 'node',
               external: ['tigerbeetle-node', '@platformatic/kafka'],
               plugins: [instructions.plugin, dependencies.plugin],
@@ -151,9 +143,9 @@ export const buildJevInstructionVariant = (
           catch: (cause) => new VariantBuildError({ message: 'Cannot read native variant bytes', cause }),
         }),
       )
-      yield* fs.writeFile(path.join(outputDirectory, 'evaluation.js'), bytes, { flag: 'wx', mode: 0o600 })
+      yield* fs.writeFile(path.join(outputDirectory, 'backtest.js'), bytes, { flag: 'wx', mode: 0o600 })
       const material = {
-        schemaVersion: 'bayn.jev-instruction-variant-build.v1',
+        schemaVersion: 'bayn.jev-harness2-variant-build.v2',
         spec,
         baselineInstructionsHash: yield* Effect.fromResult(canonicalHashV1Result(jevInstructions)),
         instructionsHash: yield* Effect.fromResult(canonicalHashV1Result(spec.instructions)),
@@ -168,7 +160,7 @@ export const buildJevInstructionVariant = (
         qualification: 'UNQUALIFIED',
       }
       const receipt = { ...material, receiptHash: yield* Effect.fromResult(canonicalHashV1Result(material)) }
-      yield* Schema.decodeUnknownEffect(JevInstructionVariantBuildSchema, strictParseOptions)(receipt)
+      yield* Schema.decodeUnknownEffect(JevHarnessVariantBuildSchema, strictParseOptions)(receipt)
       yield* fs.writeFileString(path.join(outputDirectory, 'build.json'), JSON.stringify(receipt), {
         flag: 'wx',
         mode: 0o600,
@@ -195,7 +187,7 @@ export const runVariantCompiler = () =>
       )
         return yield* new VariantBuildError({
           message:
-            'Usage: bun tools/build-jev-instruction-variant.ts --spec <variant.json> --dependencies <image-receipt.json> --output <new-directory>',
+            'Usage: bun tools/build-jev-harness-variant.ts --spec <variant.json> --dependencies <image-receipt.json> --output <new-directory>',
         })
       const fs = yield* FileSystem.FileSystem
       if ((yield* fs.stat(specPath)).size > 65536n)
@@ -207,7 +199,7 @@ export const runVariantCompiler = () =>
         return yield* new VariantBuildError({ message: 'Compiler dependency receipt exceeds 8 MiB' })
       const dependencyRaw = yield* fs.readFileString(dependencyPath)
       const path = yield* Path.Path
-      const receipt = yield* buildJevInstructionVariant(
+      const receipt = yield* buildJevHarnessVariant(
         spec,
         __BAYN_VARIANT_SOURCE_ROOT__,
         path.resolve(outputPath),

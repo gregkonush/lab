@@ -304,13 +304,6 @@ export const decideExecutionMandateAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash
-  if (
-    isRestrictedPaperAuthority &&
-    facts.reason === strategyProtocolCutoverRestrictionReason &&
-    !facts.currentGenerationMatchesRequest
-  ) {
-    return Result.succeed({ _tag: 'Rearm' })
-  }
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
     return Result.succeed({ _tag: 'Rearm' })
   }

@@ -41,8 +41,6 @@ export class BrokerReadError extends Data.TaggedError('BrokerReadError')<{
   readonly requestId?: string
   readonly contentHash?: string
   readonly observedAt?: string
-  /** Local projection absence, never inferred from a provider timeout or response. */
-  readonly observationFailure?: 'NO_ADMISSIBLE_CUT'
   readonly cause?: unknown
 }> {}
 

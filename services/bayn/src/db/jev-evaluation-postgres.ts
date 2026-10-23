@@ -40,7 +40,7 @@ export const makeJevEvaluationStore = Effect.gen(function* () {
     }
   })
   const read = (input: string) =>
-    readJevEvaluationEvidence(sql, [input]).pipe(Effect.map(({ evidence }) => evidence.get(input) ?? null))
+    readJevEvaluationEvidence(sql, [input]).pipe(Effect.map((evidence) => evidence.get(input) ?? null))
   const lockRequest = (request: JevEvaluationRequest) =>
     sql`
       SELECT payload = ${sql.json(request)} AS matches

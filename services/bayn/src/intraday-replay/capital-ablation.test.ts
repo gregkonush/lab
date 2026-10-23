@@ -86,7 +86,7 @@ const opportunity = (offsetMs = 0, action = 'enter', probability = 0.8): Capital
   }
 }
 const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOpportunity => {
-  const { snapshot } = cryptoMarketFixture(symbol, { observedPriceChoices: true })
+  const { snapshot } = cryptoMarketFixture(symbol)
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
   const batchPlan = Result.getOrThrow(
     makeJevTradingSignalBatch({
@@ -332,8 +332,8 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v19')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-economic-plan')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v17')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-conditional-plan')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)

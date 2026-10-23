@@ -17,9 +17,9 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v19'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v17'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
-  entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
+  entrySelectionPolicy: Schema.Literal('supported-setup-and-conditional-plan'),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
   maximumEntryLimitSlippageBps: Schema.Literal(10),
   entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
@@ -90,9 +90,9 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v19',
+  schemaVersion: 'bayn.jev.protocol.v17',
   entrySizingPolicy: 'capital-weighted-session-limit',
-  entrySelectionPolicy: 'supported-setup-and-economic-plan',
+  entrySelectionPolicy: 'supported-setup-and-conditional-plan',
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
   entrySignalPolicy: 'model-selected-entry-and-protection',
@@ -129,4 +129,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.net-payoff-plan-coverage.behavior.v1')
+export const jevBehaviorHash = sha256('bayn.jev.setup-and-plan.behavior.v1')

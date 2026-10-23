@@ -24,6 +24,49 @@
                         </#list>
                     </form>
 
+                    <#if shouldDisplayAuthenticators?? && shouldDisplayAuthenticators>
+                        <#if authenticators.authenticators?size gt 1>
+                            <p class="${properties.kcSelectAuthListItemTitle!}">${msg("webauthn-available-authenticators")}</p>
+                        </#if>
+
+                        <div class="${properties.kcFormClass!}">
+                            <#list authenticators.authenticators as authenticator>
+                                <div id="kc-webauthn-authenticator-item-${authenticator?index}" class="${properties.kcSelectAuthListItemClass!}">
+                                    <div class="${properties.kcSelectAuthListItemIconClass!}">
+                                        <i class="${(properties['${authenticator.transports.iconClass}'])!'${properties.kcWebAuthnDefaultIcon!}'} ${properties.kcSelectAuthListItemIconPropertyClass!}"></i>
+                                    </div>
+                                    <div class="${properties.kcSelectAuthListItemBodyClass!}">
+                                        <div id="kc-webauthn-authenticator-label-${authenticator?index}"
+                                             class="${properties.kcSelectAuthListItemHeadingClass!}">
+                                            ${authenticator.label}
+                                        </div>
+
+                                        <#if authenticator.transports?? && authenticator.transports.displayNameProperties?has_content>
+                                            <div id="kc-webauthn-authenticator-transport-${authenticator?index}"
+                                                 class="${properties.kcSelectAuthListItemDescriptionClass!}">
+                                                <#list authenticator.transports.displayNameProperties as nameProperty>
+                                                    <span>${msg(nameProperty)}</span>
+                                                    <#if nameProperty?has_next>
+                                                        <span>, </span>
+                                                    </#if>
+                                                </#list>
+                                            </div>
+                                        </#if>
+
+                                        <div class="${properties.kcSelectAuthListItemDescriptionClass!}">
+                                            <span id="kc-webauthn-authenticator-createdlabel-${authenticator?index}">
+                                                ${msg('webauthn-createdAt-label')}
+                                            </span>
+                                            <span id="kc-webauthn-authenticator-created-${authenticator?index}">
+                                                ${authenticator.createdAt}
+                                            </span>
+                                        </div>
+                                    </div>
+                                    <div class="${properties.kcSelectAuthListItemFillClass!}"></div>
+                                </div>
+                            </#list>
+                        </div>
+                    </#if>
                 </#if>
 
                 <div id="kc-form-buttons" class="${properties.kcFormButtonsClass!}">
@@ -39,8 +82,6 @@
         import { authenticateByWebAuthn } from "${url.resourcesPath}/js/webauthnAuthenticate.js";
         const authButton = document.getElementById('authenticateWebAuthnButton');
         authButton.addEventListener("click", function() {
-            authButton.disabled = true;
-            authButton.value = ${msg("tengriAuthenticatePending")?c};
             const input = {
                 isUserIdentified : ${isUserIdentified},
                 challenge : ${challenge?c},

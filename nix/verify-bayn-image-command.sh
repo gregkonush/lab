@@ -67,12 +67,10 @@ cost_wrapper="$(resolve_image_entry /bin/bayn-inference-cost)"
 cost_command="$(resolve_image_entry /app/services/bayn/dist/inference-cost-command.js)"
 research_wrapper="$(resolve_image_entry /bin/bayn-research)"
 research_command="$(resolve_image_entry /app/services/bayn/dist/research-command.js)"
-gepa_wrapper="$(resolve_image_entry /bin/bayn-gepa)"
-gepa_runner="$(resolve_image_entry /app/services/bayn/gepa/runner.py)"
-evaluation_wrapper="$(resolve_image_entry /bin/bayn-jev-evaluate)"
-evaluation_command="$(resolve_image_entry /app/services/bayn/dist/jev-evaluation-command.js)"
-gepa_native_wrapper="$(resolve_image_entry /bin/bayn-gepa-native)"
-gepa_native_runner="$(resolve_image_entry /app/services/bayn/gepa/native.py)"
+harness_wrapper="$(resolve_image_entry /bin/bayn-harness2)"
+harness_runner="$(resolve_image_entry /app/services/bayn/harness2/runner.py)"
+harness_probe_wrapper="$(resolve_image_entry /bin/bayn-harness2-probe)"
+harness_probe_command="$(resolve_image_entry /app/services/bayn/dist/harness2-command.js)"
 backtest_wrapper="$(resolve_image_entry /bin/bayn-backtest)"
 backtest_command="$(resolve_image_entry /app/services/bayn/dist/backtest-command.js)"
 research_server="$(resolve_image_entry /app/services/bayn/dist/restate-research-server.js)"
@@ -86,12 +84,10 @@ test -x "${cost_wrapper}"
 test -f "${cost_command}"
 test -x "${research_wrapper}"
 test -f "${research_command}"
-test -x "${gepa_wrapper}"
-test -f "${gepa_runner}"
-test -x "${gepa_native_wrapper}"
-test -f "${gepa_native_runner}"
-test -x "${evaluation_wrapper}"
-test -f "${evaluation_command}"
+test -x "${harness_wrapper}"
+test -f "${harness_runner}"
+test -x "${harness_probe_wrapper}"
+test -f "${harness_probe_command}"
 test -x "${backtest_wrapper}"
 test -f "${backtest_command}"
 test -f "${research_server}"
@@ -145,27 +141,19 @@ if [[ "${research_actual}" != "${expected_research}" ]]; then
   exit 1
 fi
 
-gepa_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+harness_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-gepa "${image_id}" --help)"
-if [[ "${gepa_actual}" != *'usage: bayn-gepa'* ]]; then
-  printf 'Unexpected Bayn GEPA help output: %s\n' "${gepa_actual}" >&2
+  --entrypoint /bin/bayn-harness2 "${image_id}" --help)"
+if [[ "${harness_actual}" != *'usage: bayn-harness2'* ]]; then
+  printf 'Unexpected Bayn Harness2 help output: %s\n' "${harness_actual}" >&2
   exit 1
 fi
 
-gepa_native_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
+harness_probe_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
   --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-gepa-native "${image_id}" --help)"
-if [[ "${gepa_native_actual}" != *'usage: bayn-gepa-native'* ]]; then
-  printf 'Unexpected Bayn GEPA native help output: %s\n' "${gepa_native_actual}" >&2
-  exit 1
-fi
-
-evaluation_actual="$(docker run --rm --network none --read-only --cap-drop ALL \
-  --security-opt no-new-privileges:true --pids-limit 64 --memory 512m --cpus 1 \
-  --entrypoint /bin/bayn-jev-evaluate "${image_id}" --help)"
-if [[ "${evaluation_actual}" != 'Usage: bayn-jev-evaluate '* ]]; then
-  printf 'Unexpected Bayn Jev probe help output: %s\n' "${evaluation_actual}" >&2
+  --entrypoint /bin/bayn-harness2-probe "${image_id}" --help)"
+if [[ "${harness_probe_actual}" != 'Usage: bayn-harness2-probe '* ]]; then
+  printf 'Unexpected Bayn Jev probe help output: %s\n' "${harness_probe_actual}" >&2
   exit 1
 fi
 

@@ -1,7 +1,5 @@
 import { isCodePath } from './code-editor-model'
 
-export type WorkspaceFileTarget = NonNullable<ReturnType<typeof parseWorkspaceFileLink>>
-
 export function parseWorkspaceFileLink(
   href: string,
   basePath?: string,

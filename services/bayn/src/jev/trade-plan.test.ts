@@ -89,7 +89,7 @@ test('abstention and an unknown complete plan cannot authorize entry', () => {
   ).toBe(true)
 })
 
-test('a supplied economic plan cannot authorize entry when the independent setup is adverse or unclear', () => {
+test('a conditional plan cannot authorize entry when the independent setup is adverse or unclear', () => {
   const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   const inference = nativeJevInference(prepared.request, fixture.snapshot.manifest.observedAt)
   const setup = (choice: string) => ({
@@ -126,7 +126,7 @@ test('a supplied economic plan cannot authorize entry when the independent setup
   )
 })
 
-test('entry selection rejects unsupported setups and ranks supported setups independently of plan confidence', () => {
+test('entry selection rejects unsupported setups and ranks supported setups independently of conditional plan confidence', () => {
   const evidence = nativeJevDecisionEvidence(fixture)
   const { observation, inferences } = Result.getOrThrow(reproduceDecisionEvidence(evidence))
   const requests = evidence.batchPlan.candidates.filter(
@@ -191,7 +191,7 @@ test('entry selection rejects unsupported setups and ranks supported setups inde
 
 test('the retired geometric protocol and exit caps are rejected rather than used as defaults', () => {
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v17' })),
+    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v14' })),
   ).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumCapitalRiskBps: 10 }))).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumStopBps: 500 }))).toBe(true)

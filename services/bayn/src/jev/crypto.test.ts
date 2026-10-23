@@ -13,7 +13,7 @@ import { adverseQuotePrices } from '../observe-composition/intraday-market-data'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test(`${symbol} retains native Sunday signals and a model-selected complete entry plan`, () => {
-    const { snapshot } = cryptoMarketFixture(symbol, { observedPriceChoices: true })
+    const { snapshot } = cryptoMarketFixture(symbol)
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol, observedAt } = observation
     const plan = Result.getOrThrow(

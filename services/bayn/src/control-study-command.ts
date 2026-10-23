@@ -1,4 +1,4 @@
-import { NodeRuntime, NodeServices } from '@effect/platform-node'
+import { NodeHttpClient, NodeRuntime, NodeServices } from '@effect/platform-node'
 import { Clock, Config, Context, Effect, FileSystem, Layer, Logger, Schema, Stdio, Stream } from 'effect'
 import { TestClock } from 'effect/testing'
 
@@ -14,8 +14,6 @@ import {
 } from './intraday-replay/control-study'
 import { prepareBacktest } from './intraday-replay/backtest'
 import { JevClient, JevClientLive } from './jev/client'
-import { JevHttpClientLive } from './jev/http'
-import { makeBoundedReplayJevProvider } from './intraday-replay/jev-timing'
 import { validateBacktestSourceReceipt } from './intraday-replay/source'
 
 const usage =
@@ -123,17 +121,14 @@ export const runControlStudyCommand = (rawArgs: readonly string[]) =>
       const providerClock = yield* Clock.clockWith(Effect.succeed)
       const providerContext = yield* Layer.build(
         JevClientLive(yield* Config.Redacted('BAYN_JEV_API_KEY'), prepared.protocol.inferenceValidityMs).pipe(
-          Layer.provide(JevHttpClientLive(yield* Config.NonEmptyString('BAYN_PUBLIC_INFORMATION_PROXY'))),
+          Layer.provide(NodeHttpClient.layerNodeHttp),
         ),
       )
       management = {
         mode: input.management,
         evidenceDirectory,
         providerClock,
-        provider: makeBoundedReplayJevProvider(
-          Context.get(providerContext, JevClient),
-          prepared.input.inference.maximumCalls,
-        ).provider,
+        provider: Context.get(providerContext, JevClient),
       }
     } else {
       if (evidenceDirectory !== undefined)

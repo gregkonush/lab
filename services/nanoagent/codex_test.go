@@ -83,60 +83,6 @@ func respondToCodexWireRequest(t *testing.T, supervisor *codexSupervisor, reques
 	supervisor.readMessagesWithLimit(nil, generation, strings.NewReader(string(message)+"\n"), codexProtocolLineMaxBytes)
 }
 
-func TestCodexThreadsDisableInheritedApps(t *testing.T) {
-	for _, method := range []string{"thread/start", "thread/resume"} {
-		for _, config := range []string{"null", `{"model_reasoning_effort":"high","features.apps":true,"features":{"apps":true,"shell_snapshot":true}}`} {
-			t.Run(method+"/"+config, func(t *testing.T) {
-				supervisor, writer := readyCodexSupervisor(t)
-				ctx, cancel := context.WithTimeout(context.Background(), time.Second)
-				defer cancel()
-				params := json.RawMessage(`{"threadId":"thread-1","cwd":"/workspace","model":"fixture","config":` + config + `}`)
-				done := make(chan error, 1)
-				go func() {
-					_, err := supervisor.call(ctx, method, params)
-					done <- err
-				}()
-				request := readCodexWireRequest(t, writer)
-				var actual struct {
-					Cwd    string         `json:"cwd"`
-					Model  string         `json:"model"`
-					Config map[string]any `json:"config"`
-				}
-				if json.Unmarshal(request.Params, &actual) != nil || actual.Config["features.apps"] != false {
-					t.Fatalf("%s retained inherited app tools: %s", method, request.Params)
-				}
-				if actual.Cwd != "/workspace" || actual.Model != "fixture" {
-					t.Fatalf("%s changed the native workspace or model: %s", method, request.Params)
-				}
-				if config != "null" {
-					features, ok := actual.Config["features"].(map[string]any)
-					if !ok || features["apps"] != false || features["shell_snapshot"] != true || actual.Config["model_reasoning_effort"] != "high" {
-						t.Fatalf("%s changed unrelated settings or retained a nested apps override: %s", method, request.Params)
-					}
-				}
-				respondToCodexWireRequest(t, supervisor, request, nil)
-				if err := <-done; err != nil {
-					t.Fatal(err)
-				}
-			})
-		}
-	}
-}
-
-func TestCodexRejectsInvalidThreadConfigBeforeDispatch(t *testing.T) {
-	for _, params := range []string{`null`, `{"config":[]}`, `{"config":{"features":true}}`} {
-		supervisor, writer := readyCodexSupervisor(t)
-		if _, err := supervisor.call(context.Background(), "thread/start", json.RawMessage(params)); err == nil {
-			t.Fatalf("invalid thread configuration was accepted: %s", params)
-		}
-		select {
-		case request := <-writer.messages:
-			t.Fatalf("invalid thread configuration reached Codex: %s", request)
-		default:
-		}
-	}
-}
-
 func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	t.Parallel()
 	supervisor, writer := readyCodexSupervisor(t)
@@ -149,10 +95,7 @@ func TestCodexSupervisorPreservesTypedRPCError(t *testing.T) {
 	}()
 
 	request := readCodexWireRequest(t, writer)
-	var wireParams struct {
-		ThreadID string `json:"threadId"`
-	}
-	if request.Method != "thread/resume" || json.Unmarshal(request.Params, &wireParams) != nil || wireParams.ThreadID != threadID {
+	if request.Method != "thread/resume" || string(request.Params) != string(params) {
 		t.Fatalf("Codex wire request = method %q params %s", request.Method, request.Params)
 	}
 	respondToCodexWireRequest(t, supervisor, request, json.RawMessage(`{"code":-32600,"message":"no rollout found for thread id 00000000-0000-4000-8000-000000000000"}`))
@@ -766,9 +709,6 @@ sleep 30
 			args, err := os.ReadFile(arguments)
 			if err != nil || !strings.HasPrefix(string(args), "--model\ngpt-6.1-sol\n") {
 				t.Fatalf("Codex default model arguments = %q, error = %v", args, err)
-			}
-			if !strings.Contains(string(args), "-c\nfeatures.apps=false\n") {
-				t.Fatalf("Codex inherited app tools are not disabled: %q", args)
 			}
 			for _, browserOption := range []string{`mcp_servers.tengri_browser.args=["browser-mcp"]`, "mcp_servers.tengri_browser.tool_timeout_sec=300", "mcp_servers.tengri_browser.required=true"} {
 				if !strings.Contains(string(args), browserOption+"\n") {

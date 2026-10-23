@@ -3,17 +3,7 @@ import { replayTestInstruments } from '../testing/replay-instruments'
 import { cryptoMarketProfile, equityMarketProfile } from '../jev/markets'
 import { ReconciliationStatus } from '../execution/contracts'
 import { expect, test } from 'bun:test'
-import { Effect, FileSystem, Layer, Result, Schema } from 'effect'
-import { NodeServices } from '@effect/platform-node'
-import { TestClock } from 'effect/testing'
-import { JevProtocolSchema } from '../jev/protocol'
-import { JevBatchPlanVersion } from '../jev/batch'
-import { strictParseOptions } from '../schemas'
-import { nativeJevFixture } from '../jev/native.test-support'
-import { makeJevTradingSignalBatch } from '../jev/trading-signals'
-import { makeControlEntryObservation } from './control-entry'
-import { createControlPortfolio } from './control-portfolio'
-import { makeControlJevJournal } from './control-jev-journal'
+import { Result } from 'effect'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import {
@@ -94,43 +84,11 @@ test('session preparation freezes the unchanged strategy and complete calendar i
   expect(first.runId).not.toBe(Result.getOrThrow(prepareBacktest({ ...input, replicate: 'separate-run' })).runId)
 })
 
-test('broker sessions retain regular hours when the provider includes wider data hours', () => {
-  const input = fixture()
-  const calendar = input.calendar.map((session) => ({ ...session, session_open: '0400', session_close: '2000' }))
-  const prepared = Result.getOrThrow(prepareBacktest({ ...input, calendar }))
-  expect(prepared.brokerSessions).toEqual([
-    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T20:00:00.000Z' },
-  ])
-  expect(Result.getOrThrow(canonicalHashV1Result(prepared.input.calendar))).toBe(
-    Result.getOrThrow(canonicalHashV1Result(calendar)),
-  )
-  expect(prepared.input.interval).toEqual(input.interval)
-})
-
-test('broker sessions retain an early regular close inside wider provider hours', () => {
-  const input = fixture()
-  const prepared = Result.getOrThrow(
-    prepareBacktest({
-      ...input,
-      interval: { ...input.interval, endAt: '2026-09-04T17:00:00.000Z' },
-      calendar: input.calendar.map((session) => ({
-        ...session,
-        ...(session.date === '2026-09-04' ? { close: '13:00' } : {}),
-        session_open: '0400',
-        session_close: '2000',
-      })),
-    }),
-  )
-  expect(prepared.brokerSessions).toEqual([
-    { date: '2026-09-04', openAt: '2026-09-04T13:30:00.000Z', closeAt: '2026-09-04T17:00:00.000Z' },
-  ])
-})
-
 test('native backtest binds Jev identity, provider cost assumptions and the unchanged financial grant', () => {
   const input = fixture()
   const prepared = Result.getOrThrow(prepareBacktest(input))
   expect(prepared.strategy.provenance.strategy.name).toBe('jev')
-  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v19')
+  expect(prepared.protocol.schemaVersion).toBe('bayn.jev.protocol.v17')
   expect(prepared.protocol.model).toBe(jevModel)
   expect(prepared.input.inference.inputDefinition).toBe(prepared.protocol.inputDefinition)
   expect(prepared.runtimeBuild).toMatchObject(input.build)
@@ -540,48 +498,3 @@ test('stale held-position marks do not qualify replay economics', () => {
   expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, staleForExecution: true }] })).toBe(false)
   expect(qualifiesReplayValuation({ ...valuation, marks: [{ ...mark, bidLiquidityAvailable: false }] })).toBe(false)
 })
-
-test('prepared replay preserves the strict native protocol independently of the equity source profile', () => {
-  const prepared = Result.getOrThrow(prepareBacktest(fixture()))
-  const decoded = Result.getOrThrow(
-    Schema.decodeUnknownResult(JevProtocolSchema, strictParseOptions)(prepared.protocol),
-  )
-  expect(decoded.universe).toContain('BTC/USD')
-  expect(prepared.input.source.marketSources.flatMap((source) => source.symbols)).toEqual([
-    ...equityMarketProfile.universe,
-  ])
-})
-
-test('prepared replay admits a native control batch before any provider dispatch', () =>
-  Effect.runPromise(
-    Effect.gen(function* () {
-      const prepared = Result.getOrThrow(prepareBacktest(fixture()))
-      const snapshot = nativeJevFixture().snapshot
-      const observation = Result.getOrThrow(
-        makeControlEntryObservation({
-          runId: prepared.runId,
-          protocol: prepared.protocol,
-          snapshot,
-          portfolio: Result.getOrThrow(createControlPortfolio(prepared.input.openingCashMicros)),
-        }),
-      )
-      const plan = Result.getOrThrow(
-        makeJevTradingSignalBatch({
-          observation: observation.payload,
-          planVersion: JevBatchPlanVersion.V6,
-          expiresAt: new Date(
-            Date.parse(observation.payload.observedAt) + prepared.protocol.inferenceValidityMs,
-          ).toISOString(),
-        }),
-      )
-      const fs = yield* FileSystem.FileSystem
-      const directory = `${yield* fs.makeTempDirectoryScoped()}/journal`
-      const journal = yield* makeControlJevJournal(directory, prepared.runId)
-      yield* TestClock.setTime(Date.parse(observation.payload.observedAt))
-      const admitted = yield* journal.batches.begin(plan, observation.payload)
-      expect(admitted.dispatches.length).toBeGreaterThan(0)
-      for (const dispatch of admitted.dispatches)
-        expect(yield* fs.exists(`${directory}/request-${dispatch.request.requestId}.json`)).toBeTrue()
-      expect(yield* journal.calls).toEqual([])
-    }).pipe(Effect.scoped, Effect.provide(Layer.mergeAll(NodeServices.layer, TestClock.layer()))),
-  ))

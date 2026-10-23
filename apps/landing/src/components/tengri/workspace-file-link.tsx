@@ -1,307 +1,186 @@
 'use client'
 
-import { createContext, memo, useCallback, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
+import { createContext, useContext, useEffect, useId, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
-import { FileText, Pin, PinOff, X } from 'lucide-react'
+import { X } from 'lucide-react'
 import { remarkWorkspaceImageBudget } from './markdown-image-budget'
 import { isWorkspaceImagePath } from '@/lib/tengri/codex-images'
 import { runTengriAction } from './client'
 import { finderCanPreviewText } from './finder-model'
-import { parseWorkspaceFileLink, type WorkspaceFileTarget as FileTarget } from './workspace-file-link-model'
-import {
-  emptyWorkspaceResources,
-  MAX_WORKSPACE_RESOURCES,
-  readWorkspacePins,
-  readWorkspaceResources,
-  workspacePinsKey,
-  writeWorkspacePins,
-  writeWorkspaceResources,
-} from './workspace-resource-storage'
+import { parseWorkspaceFileLink } from './workspace-file-link-model'
 
+type FileTarget = NonNullable<ReturnType<typeof parseWorkspaceFileLink>>
 const WorkspaceFileLinkContext = createContext<((file: FileTarget) => void) | null>(null)
 const WorkspaceAgentContext = createContext<string | null>(null)
-const WorkspaceResourcesContext = createContext<{
-  agentId: string
-  files: FileTarget[]
-  pins: FileTarget[]
-  activePath: string | null
-  storageAvailable: boolean
-  openFile: (file: FileTarget) => void
-  closeFile: (path: string) => void
-  showChat: () => void
-  togglePin: (file: FileTarget) => void
-} | null>(null)
 const MAX_PREVIEW_CHARACTERS = 200_000
 const MAX_PREVIEW_LINES = 5_000
 
-export function WorkspaceFileLinkProvider({ agentId, children }: { agentId: string; children?: ReactNode }) {
-  const [resources, setResources] = useState(emptyWorkspaceResources)
-  const [pins, setPins] = useState<FileTarget[]>([])
-  const [loaded, setLoaded] = useState(false)
-  const [storageAvailable, setStorageAvailable] = useState(true)
-  useEffect(() => {
-    setResources(readWorkspaceResources(agentId))
-    setPins(readWorkspacePins(agentId))
-    setLoaded(true)
-    const syncPins = (event: StorageEvent) => {
-      if (!event.key || event.key === workspacePinsKey(agentId)) setPins(readWorkspacePins(agentId))
-    }
-    window.addEventListener('storage', syncPins)
-    return () => window.removeEventListener('storage', syncPins)
-  }, [agentId])
-  useEffect(() => {
-    if (loaded && !writeWorkspaceResources(agentId, resources)) setStorageAvailable(false)
-  }, [agentId, resources, loaded])
-  const openFile = useCallback((file: FileTarget) => {
-    setResources((current) => ({
-      tabs: (current.tabs.some((item) => item.path === file.path)
-        ? current.tabs.map((item) => (item.path === file.path ? file : item))
-        : [...current.tabs, file]
-      ).slice(-MAX_WORKSPACE_RESOURCES),
-      activePath: file.path,
-    }))
-  }, [])
-  const showChat = useCallback(() => setResources((current) => ({ ...current, activePath: null })), [])
-  const closeFile = (path: string) =>
-    setResources((current) => ({
-      tabs: current.tabs.filter((file) => file.path !== path),
-      activePath: current.activePath === path ? null : current.activePath,
-    }))
-  const togglePin = (file: FileTarget) => {
-    const pinned = pins.some((item) => item.path === file.path)
-    if (!pinned && pins.length >= MAX_WORKSPACE_RESOURCES) return
-    const next = pinned ? pins.filter((item) => item.path !== file.path) : [...pins, file]
-    setPins(next)
-    if (!writeWorkspacePins(agentId, next)) setStorageAvailable(false)
-  }
-  return (
-    <WorkspaceResourcesContext.Provider
-      value={{
-        agentId,
-        files: resources.tabs,
-        pins,
-        activePath: resources.activePath,
-        storageAvailable,
-        openFile,
-        closeFile,
-        showChat,
-        togglePin,
-      }}
-    >
-      <WorkspaceFileLinkContext.Provider value={openFile}>
-        <WorkspaceAgentContext.Provider value={agentId}>{children}</WorkspaceAgentContext.Provider>
-      </WorkspaceFileLinkContext.Provider>
-    </WorkspaceResourcesContext.Provider>
-  )
-}
-
-export function useWorkspaceResources() {
-  const context = useContext(WorkspaceResourcesContext)
-  if (!context) throw new Error('Workspace resources require their provider')
-  return context
-}
-
-export function WorkspacePinnedResources({ onOpen }: { onOpen: () => void }) {
-  const { pins, openFile, togglePin, storageAvailable } = useWorkspaceResources()
-  return (
-    <>
-      {pins.length ? (
-        <nav aria-label="Pinned resources" className="shrink-0 border-b border-white/[0.06] px-1.5 pb-2">
-          <h2 className="px-2.5 py-2 text-label-12 text-zinc-400">Pinned</h2>
-          <ul>
-            {pins.map((file) => (
-              <li key={file.path} className="group flex min-w-0 items-center rounded-md hover:bg-white/[0.03]">
-                <button
-                  type="button"
-                  aria-label={`Open ${file.path}`}
-                  title={`${file.path}${file.line ? `:${file.line}${file.column ? `:${file.column}` : ''}` : ''}`}
-                  onClick={() => {
-                    openFile(file)
-                    onOpen()
-                  }}
-                  className="flex min-w-0 flex-1 items-center gap-2 rounded-md px-2.5 py-2 text-left text-label-12 text-zinc-400 outline-none hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400"
-                >
-                  <FileText className="size-3.5 shrink-0" aria-hidden="true" />
-                  <span className="truncate">{file.path.split('/').at(-1)}</span>
-                </button>
-                <button
-                  type="button"
-                  aria-label={`Unpin resource ${file.path}`}
-                  onClick={() => togglePin(file)}
-                  className="mr-1 grid size-7 shrink-0 place-items-center rounded text-zinc-500 outline-none hover:bg-white/[0.06] hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
-                >
-                  <PinOff className="size-3" aria-hidden="true" />
-                </button>
-              </li>
-            ))}
-          </ul>
-        </nav>
-      ) : null}
-      {!storageAvailable ? (
-        <p role="status" className="px-3 py-2 text-label-12 text-zinc-400">
-          Pins and tabs will last until you close this window.
-        </p>
-      ) : null}
-    </>
-  )
-}
-
-export function WorkspaceFileTabs({ children }: { children: ReactNode }) {
-  const { agentId, files, activePath, closeFile: removeFile, showChat, openFile } = useWorkspaceResources()
+export function WorkspaceFileLinkProvider({
+  agentId,
+  children,
+  conversationId,
+}: {
+  agentId: string
+  children?: ReactNode
+  conversationId?: string
+}) {
+  const [files, setFiles] = useState<FileTarget[]>([])
+  const [activePath, setActivePath] = useState<string | null>(null)
   const [hoveredPath, setHoveredPath] = useState<string | null>(null)
   const [focusedPath, setFocusedPath] = useState<string | null>(null)
   const id = useId()
   const activeFile = files.find((file) => file.path === activePath)
   useEffect(() => {
+    setActivePath(null)
+  }, [conversationId])
+  useEffect(() => {
     if (activePath)
       document.getElementById(`${id}-file-${files.findIndex((file) => file.path === activePath)}`)?.focus()
   }, [activePath, files, id])
+  const openFile = (file: FileTarget) => {
+    setFiles((current) =>
+      current.some((item) => item.path === file.path)
+        ? current.map((item) => (item.path === file.path ? file : item))
+        : [...current, file],
+    )
+    setActivePath(file.path)
+  }
   const closeFile = (path: string) => {
-    removeFile(path)
+    setFiles((current) => current.filter((file) => file.path !== path))
     setHoveredPath(null)
     setFocusedPath(null)
     if (!activePath || activePath === path) {
+      setActivePath(null)
       document.getElementById(`${id}-chat`)?.focus()
     }
   }
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      <div
-        className="grid shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
-        style={{
-          gridTemplateColumns: files.length ? `repeat(${files.length + 1}, minmax(7rem, 14rem))` : 'max-content',
-        }}
-      >
-        <div
-          role="tablist"
-          aria-label="Agent views"
-          className="col-span-full row-start-1 grid grid-cols-subgrid"
-          onKeyDown={(event) => {
-            const focusedTab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]')
-            const closePath = focusedTab?.dataset.filePath
-            if (event.key === 'Delete' && closePath) {
-              event.preventDefault()
-              closeFile(closePath)
-              return
-            }
-            if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
-            const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
-            const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
-            const next =
-              event.key === 'Home'
-                ? 0
-                : event.key === 'End'
-                  ? tabs.length - 1
-                  : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
-            event.preventDefault()
-            tabs[next]?.focus()
-            tabs[next]?.click()
-          }}
-        >
-          <button
-            role="tab"
-            id={`${id}-chat`}
-            aria-controls={`${id}-chat-panel`}
-            aria-selected={!activeFile}
-            tabIndex={activeFile ? -1 : 0}
-            type="button"
-            onClick={showChat}
-            className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+    <WorkspaceFileLinkContext.Provider value={openFile}>
+      <WorkspaceAgentContext.Provider value={agentId}>
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+          <div
+            className="grid shrink-0 overflow-x-auto border-b border-zinc-800 bg-zinc-950"
+            style={{
+              gridTemplateColumns: files.length ? `repeat(${files.length + 1}, minmax(7rem, 14rem))` : 'max-content',
+            }}
           >
-            Chat
-          </button>
-          {files.map((file, index) => (
-            <button
-              key={file.path}
-              role="tab"
-              id={`${id}-file-${index}`}
-              data-file-path={file.path}
-              aria-controls={`${id}-file-panel-${index}`}
-              aria-describedby={`${id}-close-hint`}
-              aria-selected={activePath === file.path}
-              tabIndex={activePath === file.path ? 0 : -1}
-              title={file.path}
-              type="button"
-              onClick={() => openFile(file)}
-              onPointerEnter={() => setHoveredPath(file.path)}
-              onPointerLeave={() => setHoveredPath(null)}
-              onFocus={() => setFocusedPath(file.path)}
-              onBlur={() => setFocusedPath(null)}
-              className={`flex min-w-0 items-center border-b-2 px-3 py-2 pr-8 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+            <div
+              role="tablist"
+              aria-label="Agent views"
+              className="col-span-full row-start-1 grid grid-cols-subgrid"
+              onKeyDown={(event) => {
+                const focusedTab = (event.target as HTMLElement).closest<HTMLButtonElement>('[role="tab"]')
+                const closePath = focusedTab?.dataset.filePath
+                if (event.key === 'Delete' && closePath) {
+                  event.preventDefault()
+                  closeFile(closePath)
+                  return
+                }
+                if (!['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+                const tabs = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="tab"]')]
+                const index = tabs.indexOf(document.activeElement as HTMLButtonElement)
+                const next =
+                  event.key === 'Home'
+                    ? 0
+                    : event.key === 'End'
+                      ? tabs.length - 1
+                      : (index + (event.key === 'ArrowRight' ? 1 : -1) + tabs.length) % tabs.length
+                event.preventDefault()
+                tabs[next]?.focus()
+                tabs[next]?.click()
+              }}
             >
-              <span className="min-w-0 flex-1 truncate">{file.path.split('/').at(-1)}</span>
-            </button>
+              <button
+                role="tab"
+                id={`${id}-chat`}
+                aria-controls={`${id}-chat-panel`}
+                aria-selected={!activeFile}
+                tabIndex={activeFile ? -1 : 0}
+                type="button"
+                onClick={() => setActivePath(null)}
+                className={`min-w-0 border-b-2 py-2 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${files.length ? 'px-3 pr-8' : 'px-4'} ${!activeFile ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+              >
+                Chat
+              </button>
+              {files.map((file, index) => (
+                <button
+                  key={file.path}
+                  role="tab"
+                  id={`${id}-file-${index}`}
+                  data-file-path={file.path}
+                  aria-controls={`${id}-file-panel-${index}`}
+                  aria-describedby={`${id}-close-hint`}
+                  aria-selected={activePath === file.path}
+                  tabIndex={activePath === file.path ? 0 : -1}
+                  title={file.path}
+                  type="button"
+                  onClick={() => setActivePath(file.path)}
+                  onPointerEnter={() => setHoveredPath(file.path)}
+                  onPointerLeave={() => setHoveredPath(null)}
+                  onFocus={() => setFocusedPath(file.path)}
+                  onBlur={() => setFocusedPath(null)}
+                  className={`flex min-w-0 items-center border-b-2 px-3 py-2 pr-8 text-left text-label-12 outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 ${activePath === file.path ? 'border-blue-400 text-zinc-100' : 'border-transparent text-zinc-400'}`}
+                >
+                  <span className="min-w-0 flex-1 truncate">{file.path.split('/').at(-1)}</span>
+                </button>
+              ))}
+            </div>
+            {/* Close buttons share the tab grid without being nested inside tabs or the tablist. */}
+            {files.map((file, index) => (
+              <div
+                key={file.path}
+                className="pointer-events-none relative row-start-1 min-w-0"
+                style={{ gridColumn: index + 2 }}
+              >
+                <button
+                  type="button"
+                  aria-label={`Close ${file.path}`}
+                  title={`Close ${file.path}`}
+                  tabIndex={activePath === file.path ? 0 : -1}
+                  onClick={() => closeFile(file.path)}
+                  onPointerEnter={() => setHoveredPath(file.path)}
+                  onPointerLeave={() => setHoveredPath(null)}
+                  onFocus={() => setFocusedPath(file.path)}
+                  onBlur={() => setFocusedPath(null)}
+                  className={`pointer-events-auto absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-zinc-400 outline-none transition-opacity hover:bg-white/[0.08] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none [@media(hover:none)]:opacity-100 ${hoveredPath === file.path || focusedPath === file.path ? 'opacity-100' : 'opacity-0'}`}
+                >
+                  <X className="size-3.5" aria-hidden="true" />
+                </button>
+              </div>
+            ))}
+          </div>
+          <span id={`${id}-close-hint`} className="sr-only">
+            Press Delete to close this tab.
+          </span>
+          <div
+            role="tabpanel"
+            id={`${id}-chat-panel`}
+            aria-labelledby={`${id}-chat`}
+            hidden={Boolean(activeFile)}
+            className={activeFile ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}
+          >
+            {children}
+          </div>
+          {files.map((file, index) => (
+            <div
+              key={file.path}
+              role="tabpanel"
+              id={`${id}-file-panel-${index}`}
+              aria-labelledby={`${id}-file-${index}`}
+              hidden={activePath !== file.path}
+              className={activePath === file.path ? 'min-h-0 flex-1' : 'hidden'}
+            >
+              <FilePreview key={`${agentId}:${file.path}:${file.line}:${file.column}`} agentId={agentId} file={file} />
+            </div>
           ))}
         </div>
-        {/* Close buttons share the tab grid without being nested inside tabs or the tablist. */}
-        {files.map((file, index) => (
-          <div
-            key={file.path}
-            className="pointer-events-none relative row-start-1 min-w-0"
-            style={{ gridColumn: index + 2 }}
-          >
-            <button
-              type="button"
-              aria-label={`Close ${file.path}`}
-              title={`Close ${file.path}`}
-              tabIndex={activePath === file.path ? 0 : -1}
-              onClick={() => closeFile(file.path)}
-              onPointerEnter={() => setHoveredPath(file.path)}
-              onPointerLeave={() => setHoveredPath(null)}
-              onFocus={() => setFocusedPath(file.path)}
-              onBlur={() => setFocusedPath(null)}
-              className={`pointer-events-auto absolute top-1/2 right-1 inline-flex size-6 -translate-y-1/2 items-center justify-center rounded text-zinc-400 outline-none transition-opacity hover:bg-white/[0.08] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 motion-reduce:transition-none [@media(hover:none)]:opacity-100 ${hoveredPath === file.path || focusedPath === file.path ? 'opacity-100' : 'opacity-0'}`}
-            >
-              <X className="size-3.5" aria-hidden="true" />
-            </button>
-          </div>
-        ))}
-      </div>
-      <span id={`${id}-close-hint`} className="sr-only">
-        Press Delete to close this tab.
-      </span>
-      <div
-        role="tabpanel"
-        id={`${id}-chat-panel`}
-        aria-labelledby={`${id}-chat`}
-        hidden={Boolean(activeFile)}
-        className={activeFile ? 'hidden' : 'flex min-h-0 flex-1 flex-col'}
-      >
-        {children}
-      </div>
-      {files.map((file, index) => (
-        <div
-          key={file.path}
-          role="tabpanel"
-          id={`${id}-file-panel-${index}`}
-          aria-labelledby={`${id}-file-${index}`}
-          hidden={activePath !== file.path}
-          className={activePath === file.path ? 'min-h-0 flex-1' : 'hidden'}
-        >
-          <FilePreview
-            key={`${agentId}:${file.path}:${file.line}:${file.column}`}
-            agentId={agentId}
-            file={file}
-            active={activePath === file.path}
-          />
-        </div>
-      ))}
-    </div>
+      </WorkspaceAgentContext.Provider>
+    </WorkspaceFileLinkContext.Provider>
   )
 }
 
-const FilePreview = memo(function FilePreview({
-  agentId,
-  file,
-  active,
-}: {
-  agentId: string
-  file: FileTarget
-  active: boolean
-}) {
-  const { pins, togglePin } = useWorkspaceResources()
-  const pinned = pins.some((item) => item.path === file.path)
+function FilePreview({ agentId, file }: { agentId: string; file: FileTarget }) {
   const [result, setResult] = useState<{ content: string; contentType: string } | null>(null)
   const [error, setError] = useState('')
   const [attempt, setAttempt] = useState(0)
@@ -310,7 +189,7 @@ const FilePreview = memo(function FilePreview({
   const markdown = /\.(md|markdown|mdown)$/i.test(file.path)
   const image = isWorkspaceImagePath(file.path)
   useEffect(() => {
-    if (image || !active || result || error) return
+    if (image) return
     const controller = new AbortController()
     setResult(null)
     setError('')
@@ -327,11 +206,10 @@ const FilePreview = memo(function FilePreview({
         if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not read this file.')
       })
     return () => controller.abort()
-  }, [agentId, file.path, attempt, image, active, result, error])
+  }, [agentId, file.path, attempt, image])
   useEffect(() => {
     selectedLine.current?.scrollIntoView({ block: 'nearest' })
-  }, [result, source, active])
-  if (!active) return null
+  }, [result, source])
   const content = result?.content.slice(0, MAX_PREVIEW_CHARACTERS) ?? ''
   const lines = content.split('\n')
   const truncated =
@@ -348,20 +226,6 @@ const FilePreview = memo(function FilePreview({
           {file.path}
           {file.line ? `:${file.line}${file.column ? `:${file.column}` : ''}` : ''}
         </h2>
-        <button
-          type="button"
-          aria-label={`${pinned ? 'Unpin' : 'Pin'} ${file.path}`}
-          title={
-            !pinned && pins.length >= MAX_WORKSPACE_RESOURCES
-              ? 'Unpin a resource to add another'
-              : `${pinned ? 'Unpin' : 'Pin'} this file`
-          }
-          disabled={!pinned && pins.length >= MAX_WORKSPACE_RESOURCES}
-          onClick={() => togglePin(file)}
-          className="grid size-7 shrink-0 place-items-center rounded text-zinc-400 outline-none hover:bg-white/[0.06] hover:text-zinc-100 focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-40"
-        >
-          <Pin className={`size-3.5 ${pinned ? 'fill-current text-zinc-200' : ''}`} aria-hidden="true" />
-        </button>
         {markdown ? (
           <div role="group" aria-label="Markdown view" className="inline-flex shrink-0 items-center gap-2">
             {[
@@ -382,19 +246,12 @@ const FilePreview = memo(function FilePreview({
         ) : null}
       </div>
       <div className="min-h-0 overflow-auto p-3">
-        {image && active ? <WorkspaceImage src={file.path} alt={file.path.split('/').at(-1)} /> : null}
+        {image ? <WorkspaceImage src={file.path} alt={file.path.split('/').at(-1)} /> : null}
         {!image && !result && !error ? <p role="status">Loading file…</p> : null}
         {error ? (
           <div role="alert">
             <p>{error}</p>
-            <button
-              type="button"
-              className="mt-2 text-blue-300"
-              onClick={() => {
-                setError('')
-                setAttempt((value) => value + 1)
-              }}
-            >
+            <button type="button" className="mt-2 text-blue-300" onClick={() => setAttempt((value) => value + 1)}>
               Retry file preview
             </button>
           </div>
@@ -447,7 +304,7 @@ const FilePreview = memo(function FilePreview({
       </div>
     </section>
   )
-})
+}
 
 export function WorkspaceFileLink({
   href,

@@ -85,7 +85,6 @@ pub struct ControlPlane {
     activity: ActivityTracker,
     terminal_creation_locks: TerminalCreationLockManager,
     provisional_terminal_leases: ProvisionalTerminalLeaseManager,
-    connectors_enabled: bool,
 }
 
 pub struct ControlPlaneConfig {
@@ -134,7 +133,6 @@ impl ControlPlane {
             activity,
             terminal_creation_locks: TerminalCreationLockManager::default(),
             provisional_terminal_leases,
-            connectors_enabled: std::env::var("TENGRI_CONNECTORS_ENABLED").as_deref() == Ok("true"),
         })
     }
 
@@ -812,39 +810,6 @@ impl MicroVmControlPlane for ControlPlane {
             .map_err(map_guest_error)?;
         Ok(Response::new(CodexModels {
             raw_json: value.to_string(),
-        }))
-    }
-
-    async fn connector_agent(
-        &self,
-        request: Request<proto::ConnectorAgentRequest>,
-    ) -> Result<Response<CodexModels>, Status> {
-        if !self.connectors_enabled {
-            return Err(Status::unimplemented("connectors are not enabled"));
-        }
-        let principal = self.authorize(&request, "ConnectorAgent").await?;
-        let request = request.into_inner();
-        let method = match request.action.as_str() {
-            "identity" => "relay/identity",
-            "configure" => "relay/configure",
-            "remove" => "relay/remove",
-            _ => return Err(Status::invalid_argument("unknown connector agent action")),
-        };
-        if request.raw_json.len() > 512 * 1024 {
-            return Err(Status::invalid_argument(
-                "connector configuration is too large",
-            ));
-        }
-        let params: Value = serde_json::from_str(&request.raw_json)
-            .map_err(|_| Status::invalid_argument("invalid connector configuration"))?;
-        let result = self
-            .guest(&principal, &request.agent_id, "")
-            .await?
-            .codex_call(method, params)
-            .await
-            .map_err(map_guest_error)?;
-        Ok(Response::new(CodexModels {
-            raw_json: result.to_string(),
         }))
     }
 
@@ -2730,23 +2695,6 @@ pub(crate) mod tests {
             ActivityTracker::new(client, namespace),
         )
         .unwrap()
-    }
-
-    #[tokio::test]
-    async fn dormant_connector_rpc_stops_before_authentication_and_workspace_access() {
-        let (service, _handle) =
-            tower_test::mock::pair::<http::Request<KubeBody>, HttpResponse<KubeBody>>();
-        let mut control = test_control_plane(Client::new(service, "tengri"));
-        control.connectors_enabled = false;
-        let denied = control
-            .connector_agent(Request::new(proto::ConnectorAgentRequest {
-                agent_id: "unavailable-workspace".into(),
-                action: "identity".into(),
-                raw_json: "{}".into(),
-            }))
-            .await
-            .unwrap_err();
-        assert_eq!(denied.code(), tonic::Code::Unimplemented);
     }
 
     #[tokio::test]

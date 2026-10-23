@@ -51,14 +51,11 @@ func main() {
 	case "bayn-backtest":
 		fmt.Println("Usage: bayn-backtest --help")
 		return
-	case "bayn-jev-evaluate":
-		fmt.Println("Usage: bayn-jev-evaluate --help")
+	case "bayn-harness2-probe":
+		fmt.Println("Usage: bayn-harness2-probe --help")
 		return
-	case "bayn-gepa-native":
-		fmt.Println("usage: bayn-gepa-native --request REQUEST --output OUTPUT")
-		return
-	case "bayn-gepa":
-		fmt.Println("usage: bayn-gepa --manifest MANIFEST --output OUTPUT")
+	case "bayn-harness2":
+		fmt.Println("usage: bayn-harness2 --manifest MANIFEST --output OUTPUT")
 		return
 	case "bayn-forward-performance":
 		if exists("/wrapper-fail") {
@@ -123,15 +120,14 @@ mkdir -p \
 
 install -m 0555 "${work}/runtime" "${root}/nix/store/test-node/bin/node"
 ln -s /nix/store/test-node/bin/node "${root}/bin/node"
-for command in forward-performance inference-cost research gepa gepa-native jev-evaluate backtest; do
+for command in forward-performance inference-cost research harness2 harness2-probe backtest; do
   mkdir -p "${root}/nix/store/test-bayn-${command}/bin"
   install -m 0555 "${work}/runtime" "${root}/nix/store/test-bayn-${command}/bin/bayn-${command}"
   ln -s "/nix/store/test-bayn-${command}/bin/bayn-${command}" "${root}/bin/bayn-${command}"
 done
-mkdir -p "${root}/app/services/bayn/gepa"
-: > "${root}/app/services/bayn/gepa/runner.py"
-: > "${root}/app/services/bayn/gepa/native.py"
-for command in forward-performance-command inference-cost-command restate-execution-server restate-research-server research-command jev-evaluation-command backtest-command streaming-diagnostics-command; do
+mkdir -p "${root}/app/services/bayn/harness2"
+: > "${root}/app/services/bayn/harness2/runner.py"
+for command in forward-performance-command inference-cost-command restate-execution-server restate-research-server research-command harness2-command backtest-command streaming-diagnostics-command; do
   : > "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   chmod 0444 "${root}/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js"
   ln -s "/nix/store/test-bayn-runtime/app/services/bayn/dist/${command}.js" \

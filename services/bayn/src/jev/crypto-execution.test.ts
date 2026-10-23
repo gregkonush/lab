@@ -38,7 +38,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
   test.each([false, true])(
     `${symbol} honors model abstention and retains exact reducing precision with first-minute history=%s`,
     async (firstMinute) => {
-      const { cut, query, snapshot } = cryptoMarketFixture(symbol, { firstMinute, observedPriceChoices: true })
+      const { cut, query, snapshot } = cryptoMarketFixture(symbol, { firstMinute })
       expect(snapshot.bars.filter((bar) => bar.symbol === symbol)).toHaveLength(firstMinute ? 1 : 30)
       const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
       const { protocol, portfolio, observedAt } = native

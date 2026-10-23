@@ -557,7 +557,7 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             'bayn.paper-authority-generation.v3', ${parentAuthorityGenerationHash}, ${Authority.Execution}, 2,
             ${'3'.repeat(40)}, 'registry.example.test/lab/bayn', ${`sha256:${'4'.repeat(64)}`},
             'jev', ${'5'.repeat(64)}, ${'6'.repeat(64)},
-            'bayn.jev.protocol.v19', ${'7'.repeat(64)}, ${accountId},
+            'bayn.jev.protocol.v17', ${'7'.repeat(64)}, ${accountId},
             'bayn.broker-identity.v2', ${'8'.repeat(64)}, 'alpaca', 'sandbox', ${policyHash},
             ${'9'.repeat(64)}, ${reconciliationId}, ${reconciliationHash}, ${'b'.repeat(64)},
             ${authorityUpdatedAt}
@@ -1075,30 +1075,12 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             expect(yield* completionMatches()).toBe(true)
             expect(yield* completionMatches('2026-09-08T17:02:00.000Z')).toBe(false)
 
-            // Observe the migrated function directly. This private one-row table has no indexes;
-            // transaction-local counters avoid cumulative statistics, plan text and timing assertions.
-            // PostgreSQL reports a NULL idx_scan for relations without indexes.
-            const decisionScans = sql`SELECT (seq_scan + COALESCE(idx_scan, 0))::integer AS scans
-              FROM pg_stat_xact_user_tables
-              WHERE relid = 'pg_temp.autonomous_cycle_shadow_decisions'::regclass
-            `.pipe(
-              Effect.flatMap(Schema.decodeUnknownEffect(Schema.Tuple([Schema.Struct({ scans: Schema.Number })]))),
-              Effect.map(([row]) => row.scans),
-            )
-
             // Exercise the currently installed predicate, not a historical function copy. Each
             // mutation must independently refuse completion and its restoration must admit it.
             for (const timeInForce of ['DAY', 'IOC']) {
               yield* sql`UPDATE intents SET time_in_force = ${timeInForce}`
               yield* sql`UPDATE orders SET time_in_force = ${timeInForce}`
-              // A second invocation must advance the counter again, not reuse a stale snapshot.
-              for (const calls of [1, 2]) {
-                const before = yield* decisionScans
-                for (let call = 0; call < calls; call++)
-                  expect(yield* completionMatches(), `${timeInForce}: valid evidence`).toBe(true)
-                const after = yield* decisionScans
-                expect(after - before, `${timeInForce}: one decision scan per call (${calls} calls)`).toBe(calls)
-              }
+              expect(yield* completionMatches(), `${timeInForce}: valid evidence`).toBe(true)
               for (const [column, original] of [
                 ['account_id', 'account'],
                 ['cycle_id', 'cycle'],
@@ -1125,17 +1107,6 @@ describePostgres('PostgreSQL intraday cycle store', () => {
             const replaceDecision = (patch: Record<string, unknown>) =>
               sql`UPDATE autonomous_cycle_shadow_decisions
                 SET document = ${sql.json({ ...originalDecision.document, ...patch })}`
-            yield* replaceDecision({ createdAt: 'not-a-time' })
-            yield* sql`DO $malformed_created_at$
-              BEGIN
-                PERFORM paper_cycle_completion_evidence_matches('cycle', 'document', '2026-09-08T17:04:00Z');
-                RAISE EXCEPTION 'Completion must reject malformed createdAt';
-              EXCEPTION WHEN SQLSTATE '22007' THEN NULL;
-              END
-            $malformed_created_at$`
-            yield* replaceDecision({})
-            expect(yield* completionMatches(), 'restored after malformed createdAt').toBe(true)
-
             for (const patch of [
               { orderedIntentIds: null },
               { orderedIntentIds: 'intent' },

@@ -249,7 +249,6 @@ const fixture = (
   premiums: Readonly<Record<string, number>> = {},
   simulation = false,
   account = accountId,
-  pricingStopOffsetMicros?: number,
 ): ObserveShadowDecisionInput => {
   const native = nativeJevFixture(undefined, observedAt, account, undefined, hash('1'), premiums, calendar)
   const simulatedFixture = (
@@ -355,18 +354,7 @@ const fixture = (
     symbols: planningSymbols,
     purpose: IntradaySnapshotPurpose.EntryPricing,
   }
-  const originalPricing = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
-  const rawPricing = {
-    ...originalPricing,
-    quotes: originalPricing.quotes.map((quote) => {
-      if (pricingStopOffsetMicros === undefined || compiledDecision.schemaVersion !== 'bayn.jev-entry-target.v6')
-        return quote
-      const plan = compiledDecision.exitPolicy.plans[quote.symbol]
-      if (plan === undefined) return quote
-      const bidPrice = (Number(plan.levels.stopPriceMicros) + pricingStopOffsetMicros) / 1_000_000
-      return { ...quote, bidPrice, askPrice: bidPrice + 0.01 }
-    }),
-  }
+  const rawPricing = makeIntradayMomentumTestSnapshot(native.protocol, pricingRequest, premiums)
   const pricing = !hasEntryTargets
     ? snapshot
     : simulation
@@ -579,37 +567,6 @@ const fixtureRiskContext = (
 }
 
 describe('intraday shadow decision', () => {
-  test.each([0, -10000])('durable Jev entry rejects a verified quote %s micros from its stop', async (offset) => {
-    const input = fixture({ AAPL: 0.02 }, false, accountId, offset)
-    expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
-    const result = await Effect.runPromise(
-      Effect.result(
-        buildExecutionDecision({
-          ...input,
-          authorityGenerationHash: hash('6'),
-          riskContext: fixtureRiskContext(input),
-          executionSession: executionSession(input),
-        }),
-      ),
-    )
-    expect(Result.isFailure(result)).toBe(true)
-    if (Result.isFailure(result)) expect(result.failure.failure).toBe('contract')
-  })
-
-  test('durable Jev entry accepts a verified quote one price tick above its stop', async () => {
-    const input = fixture({ AAPL: 0.02 }, false, accountId, 10000)
-    expect(input.targetPlan.intentTargets.length).toBeGreaterThan(0)
-    const document = await Effect.runPromise(
-      buildExecutionDecision({
-        ...input,
-        authorityGenerationHash: hash('6'),
-        riskContext: fixtureRiskContext(input),
-        executionSession: executionSession(input),
-      }),
-    )
-    expect(Result.isSuccess(decodeExecutionDecisionDocument(document))).toBe(true)
-  })
-
   test.each(['bayn.paper-target-planner-input.v1', 'bayn.paper-target-planner-input.v2'])(
     'retains historical %s decision identities in financial reads without making them executable',
     async (schemaVersion) => {
@@ -1070,7 +1027,7 @@ describe('intraday shadow decision', () => {
         ) VALUES (${hash('6')}, 'bayn.authority-generation-history.v1', 'bayn.paper-authority-generation.v3',
           ${hash('1')}, ${Authority.Execution}, 2, ${'3'.repeat(40)}, 'registry.example.test/lab/bayn',
           ${`sha256:${hash('4')}`}, 'jev', ${hash('5')}, ${hash('7')},
-          'bayn.jev.protocol.v19', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
+          'bayn.jev.protocol.v17', ${input.cycle.identity.strategyProtocolHash}, ${accountId},
           'bayn.broker-identity.v2', ${hash('8')}, 'alpaca', 'sandbox', ${document.bindings.policyHash},
           ${hash('9')}, ${reconciliation.reconciliationId}, ${reconciliation.contentHash}, ${hash('b')}, ${brokerObservedAt})`
             yield* sql`INSERT INTO authority_state (schema_version, generation_hash, maximum, effective, kill_state, version, updated_at)

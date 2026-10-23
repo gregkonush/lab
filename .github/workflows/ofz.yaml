@@ -135,10 +135,6 @@ jobs:
           bash test-policy.sh
       - name: Verify initial bootstrap and archive-gated activation
         run: bash services/ofz/test-control.sh bootstrap
-      - name: Verify opt-in connector authority in the isolated fixture
-        env:
-          TENGRI_CONNECTORS_ENABLED: 'true'
-        run: bash services/ofz/test-control.sh control
       - uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
           version: '0.9.15'

@@ -2,11 +2,18 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { HttpClient, HttpClientResponse } from 'effect/http'
 import { inferResearch, makeResearchStreamDecoder } from './client'
-import { hashResearch, maximumResearchStreamBytes, ResearchOutcome, researchServingIdentity } from './contract'
-import { fullTokenBudgetStreamFixture, editorFixture, streamFixture } from './test-support'
+import {
+  decodeResearchRun,
+  HarnessPurpose,
+  hashResearch,
+  maximumResearchStreamBytes,
+  ResearchOutcome,
+  researchServingIdentity,
+} from './contract'
+import { fullTokenBudgetStreamFixture, harnessEditorFixture, researchFixture, streamFixture } from './test-support'
 
-const fixture = editorFixture()
-const activeFixture = editorFixture()
+const fixture = researchFixture()
+const activeFixture = harnessEditorFixture()
 const activeId = Result.getOrThrow(hashResearch(activeFixture))
 const activeStream = () => streamFixture('{"entry":"Assess"}', activeFixture.policy.model)
 const encode = (text: string) => new TextEncoder().encode(text)
@@ -17,11 +24,76 @@ const finalUsageFrame = `data: ${JSON.stringify({
   usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
 })}\n\n`
 describe('bounded native inference stream', () => {
+  test.each([
+    fixture,
+    Result.getOrThrow(decodeResearchRun({ ...activeFixture, schemaVersion: 'bayn.jev-harness2-editor.v2' })),
+  ])('retired registrations cannot transmit even when invoked directly %#', async (retired) => {
+    let calls = 0
+    const http = HttpClient.make((request) => {
+      calls++
+      return Effect.succeed(HttpClientResponse.fromWeb(request, new Response(streamFixture())))
+    })
+    const result = await Effect.runPromise(
+      inferResearch(retired, Result.getOrThrow(hashResearch(retired)), 'http://fixture.invalid').pipe(
+        Effect.provideService(HttpClient.HttpClient, http),
+        Effect.result,
+      ),
+    )
+    expect(result._tag).toBe('Failure')
+    expect(calls).toBe(0)
+  })
+  test('treats quoted factor tags in a prompt proposal as text without selecting factors', () => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.PromptEdit,
+      }),
+    )
+    const text = '<harness>Return exact IDs within <alpha_list> tags.</harness><notes>Keep the output contract.</notes>'
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture(text)), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual([])
+    expect(decoder.snapshot().responseText).toBe(text)
+    const factor = makeResearchStreamDecoder(fixture)
+    Result.getOrThrow(factor.push(encode(streamFixture(text)), 10))
+    expect(Result.isFailure(factor.complete())).toBe(true)
+  })
+  test.each([
+    '',
+    '<harness></harness>',
+    '<harness>unfinished',
+    '<harness>a</harness><harness>b</harness>',
+    `<harness>${'a'.repeat(8001)}</harness>`,
+  ])('rejects malformed harness proposals %#', (text) => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.PromptEdit,
+      }),
+    )
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture(text)), 10))
+    expect(Result.isFailure(decoder.complete())).toBe(true)
+  })
+  test('retains a reflection with no factor-selection side effect', () => {
+    const run = Result.getOrThrow(
+      decodeResearchRun({
+        ...fixture,
+        schemaVersion: 'bayn.harness2-inference.v1',
+        purpose: HarnessPurpose.Reflection,
+      }),
+    )
+    const decoder = makeResearchStreamDecoder(run)
+    Result.getOrThrow(decoder.push(encode(streamFixture('NO_ENTRY')), 10))
+    expect(Result.getOrThrow(decoder.complete())).toEqual([])
+  })
   test('decodes pinned cumulative-usage SSE split at every byte with CRLF boundaries', () => {
     const decoder = makeResearchStreamDecoder(fixture)
     for (const byte of encode(streamFixture().replaceAll('\n', '\r\n')))
       Result.getOrThrow(decoder.push(new Uint8Array([byte]), 10))
-    expect(Result.getOrThrow(decoder.complete())).toEqual({ entry: 'Assess' })
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
     expect(decoder.snapshot().usage?.total_tokens).toBe(30)
     expect(decoder.snapshot().firstTokenAtMs).toBe(10)
   })
@@ -34,7 +106,7 @@ describe('bounded native inference stream', () => {
     }
     Result.getOrThrow(decoder.push(encode(`data: ${JSON.stringify(reasoning)}\n\n`), 1))
     Result.getOrThrow(decoder.push(encode(streamFixture()), 20))
-    expect(Result.getOrThrow(decoder.complete())).toEqual({ entry: 'Assess' })
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
     expect(decoder.snapshot().firstTokenAtMs).toBe(1)
   })
   test.each([
@@ -43,8 +115,8 @@ describe('bounded native inference stream', () => {
     streamFixture('<alpha_list>alpha001,alpha001</alpha_list>'),
     streamFixture('<alpha_list>alpha002</alpha_list>'),
     streamFixture().replace('"finish_reason":"stop"', '"finish_reason":"length"'),
-    streamFixture().replace('qwen36-flamingo', 'wrong-model'),
-    streamFixture().replaceAll('"model":"qwen36-flamingo",', ''),
+    streamFixture().replace('alpha-r1-82c2aa5fcdda', 'wrong-model'),
+    streamFixture().replaceAll('"model":"alpha-r1-82c2aa5fcdda",', ''),
     streamFixture()
       .replace('"completion_tokens":20', '"completion_tokens":4097')
       .replace('"total_tokens":30', '"total_tokens":4107'),
@@ -58,7 +130,7 @@ describe('bounded native inference stream', () => {
   test('accepts usage at the approved completion-token limit', () => {
     const decoder = makeResearchStreamDecoder({ ...fixture, policy: { ...fixture.policy, max_tokens: 20 } })
     Result.getOrThrow(decoder.push(encode(streamFixture()), 10))
-    expect(Result.getOrThrow(decoder.complete())).toEqual({ entry: 'Assess' })
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
   })
   test('retains all 4096 cumulative-usage frames within the approved token budget', () => {
     const decoder = makeResearchStreamDecoder(fixture)
@@ -66,7 +138,7 @@ describe('bounded native inference stream', () => {
     expect(bytes.length).toBeGreaterThan(262144)
     for (let offset = 0; offset < bytes.length; offset += 8192)
       Result.getOrThrow(decoder.push(bytes.subarray(offset, offset + 8192), 10))
-    expect(Result.getOrThrow(decoder.complete())).toEqual({ entry: 'Assess' })
+    expect(Result.getOrThrow(decoder.complete())).toEqual(['alpha001'])
     expect(decoder.snapshot().usage?.completion_tokens).toBe(4096)
     expect(Buffer.from(decoder.snapshot().responseBase64, 'base64')).toEqual(Buffer.from(bytes))
   })
@@ -109,7 +181,7 @@ describe('bounded native inference stream', () => {
           HttpClientResponse.fromWeb(
             request,
             new Response(activeStream(), {
-              headers: changed === null ? {} : { 'x-model-serving-identity': JSON.stringify(identity) },
+              headers: changed === null ? {} : { 'x-bayn-serving-identity': JSON.stringify(identity) },
             }),
           ),
         ),
@@ -132,7 +204,7 @@ describe('bounded native inference stream', () => {
         HttpClientResponse.fromWeb(
           request,
           new Response(activeStream(), {
-            headers: { 'x-model-serving-identity': header },
+            headers: { 'x-bayn-serving-identity': header },
           }),
         ),
       ),
@@ -204,7 +276,7 @@ test.each(['deadline', 'interruption'] as const)(
           request,
           new Response(body, {
             headers: {
-              'x-model-serving-identity': JSON.stringify({
+              'x-bayn-serving-identity': JSON.stringify({
                 model: activeFixture.policy.model,
                 checkpoint: activeFixture.policy.checkpoint,
                 servingImage: activeFixture.policy.servingImage,

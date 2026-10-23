@@ -105,11 +105,7 @@ export function createDesktopCoordinationChannel(
 }
 
 export function clearDeletedDesktopState(agentId: string) {
-  const exactSessionKeys = new Set([
-    `tengri:desktop:${agentId}`,
-    `tengri:terminal-cleanup:${agentId}`,
-    `tengri-resources:${agentId}`,
-  ])
+  const exactSessionKeys = new Set([`tengri:desktop:${agentId}`, `tengri:terminal-cleanup:${agentId}`])
   const sessionPrefixes = [`tengri:windows:${agentId}:`, `tengri:terminal:${agentId}:`]
 
   try {
@@ -128,7 +124,6 @@ export function clearDeletedDesktopState(agentId: string) {
       `tengri-thread:${agentId}`,
       `tengri-approval-mode:${agentId}`,
       `tengri-conversations:${agentId}`,
-      `tengri-resource-pins:${agentId}`,
       `tengri:spotlight:${agentId}:recents`,
     ]) {
       localStorage.removeItem(key)
