@@ -6693,6 +6693,14 @@ test.each(['preflight', 'cycle'] as const)(
 test.each([
   { phase: 'CLOSE' as const, marked: true, kind: BrokerReadErrorKind.Timeout, closeMs: 60_000, fast: true },
   { phase: 'CLOSE' as const, marked: true, kind: BrokerReadErrorKind.Timeout, closeMs: 2_500, fast: true },
+  {
+    phase: 'CLOSE' as const,
+    marked: true,
+    kind: BrokerReadErrorKind.Timeout,
+    closeMs: 60_000,
+    fast: true,
+    clearOnError: true,
+  },
   { phase: 'ENTRY' as const, marked: true, kind: BrokerReadErrorKind.Timeout, closeMs: 60_000, fast: false },
   { phase: 'CLOSE' as const, marked: false, kind: BrokerReadErrorKind.Timeout, closeMs: 60_000, fast: false },
   { phase: 'CLOSE' as const, marked: true, kind: BrokerReadErrorKind.Authentication, closeMs: 60_000, fast: false },
@@ -6706,6 +6714,8 @@ test.each([
     window: { ...cycle.window, executionCloseAt: new Date(Date.parse(evaluatedAt) + scenario.closeMs).toISOString() },
   }
   let unavailable = false
+  let errorKind = scenario.kind
+  let errorMarked = scenario.marked
   let reads = 0
   let cyclePasses = 0
   const pass = spyOn(executionCycleModule, 'runRecoveryFirstCyclePass').mockImplementation(() =>
@@ -6778,6 +6788,20 @@ test.each([
           // A new driver cannot inherit the previous driver's exit continuation hint.
           const restarted = yield* makeDriver
           expect((yield* restarted.advance).nextDelayMs).toBeUndefined()
+          if ('clearOnError' in scenario) {
+            errorKind = BrokerReadErrorKind.Authentication
+            errorMarked = false
+            yield* TestClock.adjust(1_000)
+            expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+            errorKind = BrokerReadErrorKind.Timeout
+            errorMarked = true
+            yield* TestClock.adjust(30_000)
+            const previousReads = reads
+            expect((yield* driver.advance).nextDelayMs).toBeUndefined()
+            expect(reads).toBe(previousReads + 1)
+            expect(cyclePasses).toBe(1)
+            return
+          }
           if (scenario.closeMs < 30_000) {
             yield* TestClock.adjust(1_000)
             expect((yield* driver.advance).nextDelayMs).toBeUndefined()
@@ -6802,10 +6826,10 @@ test.each([
               ? Effect.fail(
                   new BrokerReadError({
                     operation: 'preflight',
-                    kind: scenario.kind,
+                    kind: errorKind,
                     retryable: true,
                     message: 'synthetic missing cut',
-                    ...(scenario.marked ? { observationFailure: 'NO_ADMISSIBLE_CUT' as const } : {}),
+                    ...(errorMarked ? { observationFailure: 'NO_ADMISSIBLE_CUT' as const } : {}),
                   }),
                 )
               : services.brokerRead.account
