@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -60,7 +61,7 @@ func testPinnedCodexRecoversAcceptance(t *testing.T, process bool) {
 		_, _ = io.Copy(io.Discard, request.Body)
 		response.Header().Set("Content-Type", "text/event-stream")
 		response.WriteHeader(http.StatusOK)
-		if process && requests.Add(1) == 1 {
+		if requestNumber := requests.Add(1); process && requestNumber == 1 {
 			command := fmt.Sprintf(`exec python3 -c 'import os,socket,time; s=socket.create_connection(("127.0.0.1",%d)); s.sendall(str(os.getpid()).encode()+bytes([10])); time.sleep(30)'`, listener.Addr().(*net.TCPAddr).Port)
 			arguments, _ := json.Marshal(map[string]any{"cmd": command, "yield_time_ms": 1_000, "max_output_tokens": 100})
 			item := map[string]any{"id": "command-stop", "type": "function_call", "call_id": "call_stop", "name": "exec_command", "arguments": string(arguments)}
@@ -196,8 +197,8 @@ stream_max_retries = 0
 		t.Fatal("native interrupt failed", err)
 	}
 	for {
-		params, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID, "limit": 100, "sortDirection": "desc", "itemsView": "notLoaded"})
-		page, err := supervisor.call(ctx, "thread/turns/list", params)
+		pageParams, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID, "limit": 100, "sortDirection": "desc", "itemsView": "notLoaded"})
+		page, err := supervisor.call(ctx, "thread/turns/list", pageParams)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -225,6 +226,51 @@ stream_max_retries = 0
 						if _, err := connection.Read(make([]byte, 1)); err != io.EOF {
 							t.Fatalf("cancelled native turn left its command running: %v", err)
 						}
+					}
+					requestsBeforeRestart := requests.Load()
+					supervisor.mu.Lock()
+					command, generation := supervisor.command, supervisor.generation
+					supervisor.mu.Unlock()
+					if err := command.Process.Signal(syscall.SIGTERM); err != nil {
+						t.Fatal("terminate native app-server", err)
+					}
+					for {
+						supervisor.mu.Lock()
+						changed := supervisor.generation != generation
+						supervisor.mu.Unlock()
+						if changed && supervisor.isReady() {
+							break
+						}
+						if ctx.Err() != nil {
+							t.Fatal("native app-server never restarted")
+						}
+						time.Sleep(10 * time.Millisecond)
+					}
+					nextParams := json.RawMessage(strings.Replace(params, "11111111-1111-4111-8111-111111111111", "44444444-4444-4444-8444-444444444444", 1))
+					next, err := supervisor.call(ctx, "turn/start", nextParams)
+					if err != nil {
+						t.Fatal("new turn after native restart", err)
+					}
+					var nextTurn struct {
+						Turn struct {
+							ID string `json:"id"`
+						} `json:"turn"`
+					}
+					if json.Unmarshal(next.result, &nextTurn) != nil || nextTurn.Turn.ID == "" || nextTurn.Turn.ID == turn.Turn.ID {
+						t.Fatalf("restart did not create a fresh native turn: %s", next.result)
+					}
+					select {
+					case <-started:
+					case <-ctx.Done():
+						t.Fatal("restarted native turn never reached the provider")
+					}
+					replayed, err := supervisor.call(ctx, "turn/start", nextParams)
+					if err != nil || string(replayed.result) != string(next.result) || requests.Load() != requestsBeforeRestart+1 {
+						t.Fatalf("restart replay duplicated the native turn: requests=%d error=%v", requests.Load(), err)
+					}
+					nextInterrupt, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID, "turnId": nextTurn.Turn.ID, "clientUserMessageId": "55555555-5555-4555-8555-555555555555"})
+					if _, err := supervisor.call(ctx, "turn/interrupt", nextInterrupt); err != nil {
+						t.Fatal("interrupt restarted native turn", err)
 					}
 					return
 				case <-ctx.Done():
