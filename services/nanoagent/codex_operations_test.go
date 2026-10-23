@@ -14,7 +14,7 @@ import (
 
 const operationParams = `{"threadId":"thread-1","clientUserMessageId":"11111111-1111-4111-8111-111111111111","input":[{"type":"text","text":"Create the requested file"}]}`
 
-func TestCodexOperationDoesNotResumeForOtherRejections(t *testing.T) {
+func TestCodexDispatchDoesNotResumeForOtherRejections(t *testing.T) {
 	for _, test := range []struct {
 		method  string
 		code    int
@@ -31,14 +31,15 @@ func TestCodexOperationDoesNotResumeForOtherRejections(t *testing.T) {
 			defer cancel()
 			done := make(chan error, 1)
 			go func() {
-				_, err := supervisor.call(ctx, test.method, json.RawMessage(operationParams))
+				_, err := supervisor.dispatchOperation(ctx, test.method, json.RawMessage(operationParams))
 				done <- err
 			}()
 			request := readCodexWireRequest(t, writer)
 			response, _ := json.Marshal(map[string]any{"id": request.ID, "error": map[string]any{"code": test.code, "message": test.message}})
 			supervisor.readMessagesWithLimit(nil, supervisor.generation, strings.NewReader(string(response)+"\n"), codexProtocolLineMaxBytes)
-			if err := <-done; !errors.Is(err, errCodexOperationRejected) {
-				t.Fatalf("unrelated rejection was retried: %v", err)
+			var rpcError *codexRPCError
+			if err := <-done; !errors.As(err, &rpcError) || rpcError.code != test.code || rpcError.message != test.message {
+				t.Fatalf("unrelated native rejection changed: %v", err)
 			}
 			select {
 			case request := <-writer.messages:

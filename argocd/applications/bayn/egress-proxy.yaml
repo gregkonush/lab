@@ -58,6 +58,9 @@ spec:
             - name: proxy
               containerPort: 3128
               protocol: TCP
+            - name: opencode
+              containerPort: 3129
+              protocol: TCP
           resources:
             requests:
               cpu: 25m
@@ -141,6 +144,10 @@ spec:
     - name: proxy
       port: 3128
       targetPort: proxy
+      protocol: TCP
+    - name: opencode
+      port: 3129
+      targetPort: opencode
       protocol: TCP
 ---
 apiVersion: policy/v1

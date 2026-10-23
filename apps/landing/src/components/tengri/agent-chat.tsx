@@ -130,8 +130,6 @@ function runRecoveryError(cause: unknown, fallback: string): Error {
 
 function codexRunActivity(state: TengriCodexRun['state']): string | null {
   switch (state.phase) {
-    case 'accepted':
-      return 'Starting'
     case 'waiting_for_guest':
       return 'Connecting'
     case 'recovering':
@@ -140,6 +138,7 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
       return 'Stopping'
     case 'needs_reconciliation':
       return "The agent's last action could not be confirmed. Check the conversation before continuing."
+    case 'accepted':
     case 'running':
     case 'waiting_for_approval':
     case 'succeeded':
@@ -255,7 +254,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const accountChecked = account !== null
   const showStopAction =
     Boolean(activeTurnId || (run && !codexRunIsTerminal(run))) && !prompt.trim() && images.length === 0
-  const runActivity = (run && codexRunActivity(run.state)) || (submittingHere && !activeTurnId ? 'Starting' : null)
+  const runActivity = run && codexRunActivity(run.state)
+  const responsePending = Boolean(activeTurnId || submittingHere || (run && !codexRunIsTerminal(run)))
   const readingImages = images.some((image) => image.input === null)
   const canChangeConversation = !readingImages
 
@@ -1515,7 +1515,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         ? 'Input requested'
         : approvalPending
           ? 'Approval needed'
-          : activeTurnId || submittingHere
+          : responsePending
             ? 'Working'
             : eventStreamState !== 'connected'
               ? 'Connecting'
@@ -1661,7 +1661,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
               }}
             >
               {conversationLoading ? <ConversationSkeleton /> : null}
-              {(!threadId || threadReady) && transcriptCards.length === 0 && !activeTurnId && !submittingHere ? (
+              {(!threadId || threadReady) && transcriptCards.length === 0 && !responsePending ? (
                 <EmptyConversation
                   onSelectPrompt={(text) => {
                     setPrompt(text)
@@ -1709,7 +1709,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     {runActivity}
                   </p>
                 ) : null}
-                {activeTurnId && !approvalPending && !runActivity ? (
+                {responsePending && !approvalPending && !runActivity ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>

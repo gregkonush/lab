@@ -27,6 +27,9 @@ export const runDualSignalCommand = (args: readonly string[]) =>
     )
       return yield* new DualSignalError({ message: 'Distinct input and output paths required', category: 'INPUT' })
     const fs = yield* FileSystem.FileSystem
+    // Refuse an already occupied destination before any provider work; the final wx write still prevents races.
+    if (yield* fs.exists(outputPath))
+      return yield* new DualSignalError({ message: 'Output path already exists', category: 'INPUT' })
     if ((yield* fs.stat(requestPath)).size > 128n * 1024n)
       return yield* new DualSignalError({ message: 'Sealed Jev request exceeds 128 KiB', category: 'INPUT' })
     const json = yield* fs.readFileString(requestPath)
@@ -60,9 +63,9 @@ export const runDualSignalCommand = (args: readonly string[]) =>
       coverage: report.costs.coverage,
       tradingAuthority: report.tradingAuthority,
     })
-    if (report.costs.coverage !== 'PROVIDER_METERED')
+    if (report.costs.coverage !== 'PROVIDER_METERED' || report.comparison.status === 'INCOMPLETE')
       return yield* new DualSignalError({
-        message: 'Incomplete metered comparison; partial report retained',
+        message: 'Incomplete provider comparison; partial report retained',
         category: 'PROVIDER',
       })
   }).pipe(Effect.scoped)
