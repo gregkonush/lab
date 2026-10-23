@@ -100,7 +100,7 @@ export const makeNativeArrivalJournal = (
         const batch: NativeArrivalChunk[] = []
         let bytes = 0
         for (const chunk of pending) {
-          if (batch.length > 0 && (batch.length >= 16 || bytes + chunk.compressed.byteLength > 1024 * 1024)) break
+          if (batch.length > 0 && (batch.length >= 256 || bytes + chunk.compressed.byteLength > 8 * 1024 * 1024)) break
           batch.push(chunk)
           bytes += chunk.compressed.byteLength
         }

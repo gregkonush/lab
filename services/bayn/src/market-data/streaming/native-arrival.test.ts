@@ -207,13 +207,13 @@ test('a full compressed queue backpressures deliveries and resumes the exact pre
 })
 
 test.each([
-  { name: 'many short chunks', count: 96, value: sha256('bootstrap-batch') },
+  { name: 'many short chunks', count: 600, value: sha256('bootstrap-batch') },
   {
     name: 'large compressed chunks',
-    count: 12,
+    count: 24,
     value: Array.from({ length: 8_192 }, (_, index) => sha256(String(index))).join(''),
   },
-])('a bootstrap backlog preserves every delivery with bounded writes for $name', async ({ count, value }) => {
+])('a bootstrap backlog preserves every delivery with bounded atomic appends for $name', async ({ count, value }) => {
   const { chunks, ends, store } = memoryStore()
   const inputs = Array.from({ length: count }, (_, index) => observation(index + 1, value))
   const capture = await Effect.runPromise(
@@ -230,11 +230,11 @@ test.each([
                 Effect.andThen(Deferred.await(resume)),
                 Effect.andThen(
                   Effect.suspend(() =>
-                    batch.length > 16 ||
-                    batch.reduce((bytes, chunk) => bytes + chunk.compressed.byteLength, 0) > 1_024 * 1_024
+                    batch.length > 256 ||
+                    batch.reduce((bytes, chunk) => bytes + chunk.compressed.byteLength, 0) > 8 * 1_024 * 1_024
                       ? Effect.fail(
                           new NativeArrivalCaptureError({
-                            message: 'synthetic persistence statement exceeded its budget',
+                            message: 'synthetic atomic append exceeded its budget',
                           }),
                         )
                       : store.append(batch),
@@ -268,7 +268,7 @@ test.each([
   )
 })
 
-test('a valid individual chunk above the append byte target still persists whole', async () => {
+test('a valid large individual chunk still persists whole', async () => {
   const { chunks, ends, store } = memoryStore()
   const input = observation(1, Array.from({ length: 10_000 }, (_, index) => sha256(String(index))).join(''))
   const expected = Result.getOrThrow(makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, input)]))

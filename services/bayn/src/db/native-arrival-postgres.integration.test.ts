@@ -1,9 +1,9 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
-import { PgClient } from '@effect/sql-pg'
+import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Deferred, Effect, Exit, Fiber, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 
-import { canonicalJsonV1Result, canonicalHashV1Result } from '../hash'
+import { canonicalJsonV1Result, canonicalHashV1Result, sha256 } from '../hash'
 import {
   decodeNativeArrivalChunk,
   makeNativeArrivalChunk,
@@ -18,6 +18,7 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { makeNativeArrivalJournal } from '../market-data/streaming/native-arrival-journal'
 import { makeNativeArrivalStore, readNativeArrivalChunks, readNativeArrivalEpoch } from './native-arrival-postgres'
 import { PostgresClientLive } from './postgres-client'
+import { migrationLoader } from './migrations'
 import { postgresMigrations } from './postgres-migrations'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn@127.0.0.1:55436/bayn_native_arrival_test'
@@ -56,6 +57,72 @@ describePostgres('PostgreSQL native arrival retention', () => {
     await runtime?.dispose()
   })
 
+  test('an append-locality upgrade preserves retained bytes and still rejects invalid prefix extensions', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DROP SCHEMA public CASCADE`
+        yield* sql`CREATE SCHEMA public`
+        yield* PgMigrator.run({
+          loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < 142))),
+          table: 'schema_migrations',
+        })
+        const store = makeNativeArrivalStore(sql)
+        const first = chunk(0, null)
+        const second = chunk(1, first.contentHash)
+        yield* store.begin(epoch)
+        yield* store.append([first, second])
+        const retained = sql`SELECT capture_id,ordinal,content_hash,header,compressed
+          FROM native_arrival_chunks ORDER BY capture_id,ordinal`
+        const before = yield* retained
+        yield* postgresMigrations
+        yield* postgresMigrations
+        expect(yield* retained).toEqual(before)
+        expect(yield* readNativeArrivalEpoch(sql, epoch.captureId)).toEqual(epoch)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, second])
+        expect(yield* sql`SELECT migration_id FROM schema_migrations WHERE migration_id=142`).toEqual([
+          { migration_id: 142 },
+        ])
+        const third = chunk(2, second.contentHash)
+        const duplicate = Result.getOrThrow(
+          makeNativeArrivalChunk(epoch, 0, null, [nativeArrival(epoch, observation(1, 'changed'))]),
+        )
+        const wrongLink = chunk(2, first.contentHash)
+        for (const invalid of [
+          duplicate,
+          wrongLink,
+          { ...third, contentHash: 'a'.repeat(64) },
+          { ...third, compressed: Uint8Array.of(0, 1, 2) },
+        ]) {
+          const header = Result.getOrThrow(canonicalJsonV1Result(invalid.header))
+          expect(
+            Exit.isFailure(
+              yield* Effect.exit(
+                sql`INSERT INTO native_arrival_chunks (capture_id,ordinal,content_hash,header,compressed)
+                  VALUES (${epoch.captureId},${invalid.header.ordinal},${invalid.contentHash},${header},${Buffer.from(invalid.compressed)})`,
+              ),
+            ),
+          ).toBe(true)
+        }
+        expect(yield* retained).toEqual(before)
+        yield* store.append([third])
+        const end = {
+          captureId: epoch.captureId,
+          status: 'STOPPED',
+          observedConsumerSequence: 3,
+          durableConsumerSequence: 3,
+          lastChunkHash: third.contentHash,
+          reason: null,
+          consumerScopeCompleted: true,
+        } as const
+        expect(Exit.isFailure(yield* Effect.exit(store.end({ ...end, durableConsumerSequence: 2 })))).toBe(true)
+        yield* store.end(end)
+        expect(Exit.isFailure(yield* Effect.exit(store.append([chunk(3, third.contentHash)])))).toBe(true)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, second, third])
+      }),
+    )
+  })
+
   test('persists exact bytes, immutable epoch metadata and idempotent concurrent chunk acknowledgements', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -79,6 +146,15 @@ describePostgres('PostgreSQL native arrival retention', () => {
         const store = makeNativeArrivalStore(sql)
         const first = chunk(0, null)
         yield* store.begin(epoch)
+        const prefix: NativeArrivalChunk[] = []
+        let previous: string | null = null
+        for (let ordinal = 0; ordinal < 32; ordinal++) {
+          const next = chunk(ordinal, previous)
+          prefix.push(next)
+          previous = next.contentHash
+        }
+        expect(Exit.isFailure(yield* Effect.exit(store.append([...prefix, chunk(33, previous)])))).toBe(true)
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([])
         expect(Exit.isFailure(yield* Effect.exit(store.append([first, chunk(2, first.contentHash)])))).toBe(true)
         expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([])
         yield* store.append([first])
@@ -87,6 +163,25 @@ describePostgres('PostgreSQL native arrival retention', () => {
         )
         expect(Exit.isFailure(yield* Effect.exit(store.append([changed])))).toBe(true)
         expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first])
+      }),
+    )
+  })
+
+  test('a whole valid chunk above the SQL byte target preserves its neighbouring prefix', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const store = makeNativeArrivalStore(sql)
+        const first = chunk(0, null)
+        const input = observation(2, Array.from({ length: 10_000 }, (_, index) => sha256(String(index))).join(''))
+        const large = Result.getOrThrow(
+          makeNativeArrivalChunk(epoch, 1, first.contentHash, [nativeArrival(epoch, input)]),
+        )
+        expect(large.compressed.byteLength).toBeGreaterThan(1024 * 1024)
+        const last = chunk(2, large.contentHash)
+        yield* store.begin(epoch)
+        yield* store.append([first, large, last])
+        expect(yield* readNativeArrivalChunks(sql, epoch.captureId, -1)).toEqual([first, large, last])
       }),
     )
   })
@@ -153,8 +248,10 @@ describePostgres('PostgreSQL native arrival retention', () => {
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
+        yield* sql`CREATE TABLE native_arrival_test_transactions (transaction_id xid8 PRIMARY KEY)`
         yield* sql`CREATE FUNCTION native_arrival_test_insert_delay() RETURNS trigger LANGUAGE plpgsql AS $delay$
           BEGIN
+            INSERT INTO native_arrival_test_transactions VALUES (pg_current_xact_id()) ON CONFLICT DO NOTHING;
             PERFORM pg_sleep(0.02);
             RETURN NEW;
           END $delay$`
@@ -213,6 +310,9 @@ describePostgres('PostgreSQL native arrival retention', () => {
           )
           expect(yield* sql`SELECT count(*)::int AS count FROM native_arrival_chunks`).toEqual([
             { count: inputs.length },
+          ])
+          expect(yield* sql`SELECT count(*)::int AS count FROM native_arrival_test_transactions`).toEqual([
+            { count: 2 },
           ])
           expect(yield* sql`SELECT payload->>'status' AS status FROM native_arrival_ends`).toEqual([
             { status: 'STOPPED' },
