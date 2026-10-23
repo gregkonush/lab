@@ -50,9 +50,9 @@ export const jevTradePlanQuestion = (input: {
       string,
       Extract<JevRequest['questions'][string], { readonly type: 'choice' }>['criteria'][string]
     > = {
-      wait: 'None of the supplied plans currently fits the observed structure and movement scale; wait for a coherent stop and target.',
+      wait: 'No supplied complete plan has sufficient current observational support for a cost-covering long trade within the holding horizon.',
       avoid:
-        'The supplied plans have unsuitable stop placement, target distance or net reward versus loss for this observation.',
+        'The current setup, stop placement, target distance or net reward versus loss argues against entering any supplied complete long plan now.',
     }
     if (economics !== null) {
       const quote = snapshot.latestQuotes[symbol]
@@ -87,7 +87,7 @@ export const jevTradePlanQuestion = (input: {
           .filter((price) => price > 0n && price < bid),
       )
       const profits = representativePrices(
-        [...values.filter((price) => price > breakEven), ...moves.map((multiple) => breakEven + step * multiple)]
+        [...values.filter((price) => price > breakEven), ...moves.map((multiple) => bid + step * multiple)]
           .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'UP'))
           .filter((price) => price > breakEven),
       )
@@ -116,7 +116,7 @@ export const jevTradePlanQuestion = (input: {
           criteria[`plan_${Object.keys(criteria).length - 2}`] = {
             priceBasis: 'HYPOTHETICAL_ORDER_PRICES',
             meaning:
-              'A supplied complete long plan; conditional on a supported long continuation setup, evaluate whether these hypothetical terms fit the observed structure, movement scale and net reward versus risk.',
+              'A supplied complete long entry, stop and target plan. Its payoff numbers are conditional on execution at the proposed prices; assess whether entering this trade now is supported by the observations and holding horizon.',
             plan: funded.exitPlan,
             stopPriceUsd: Number(stop) / 1_000_000,
             targetPriceUsd: Number(profit) / 1_000_000,

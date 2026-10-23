@@ -28,7 +28,9 @@ import {
 
 const joinFixture = (crypto = false) => {
   const observation = crypto
-    ? Result.getOrThrow(jevObservationForSnapshot(cryptoMarketFixture('SOL/USD').snapshot))
+    ? Result.getOrThrow(
+        jevObservationForSnapshot(cryptoMarketFixture('SOL/USD', { observedPriceChoices: true }).snapshot),
+      )
     : null
   const evidence =
     observation === null
@@ -549,7 +551,7 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v17',
+    protocol: 'bayn.jev.protocol.v18',
     inputDefinition: 'bayn.jev-trading-signal-state.v16',
     selectedSymbols: [],
     profitableEdgeProven: false,
@@ -605,7 +607,7 @@ test('fragmented categorical plan mass is not a profit probability or permission
 })
 
 test('crypto economics and coverage are measured from sealed source rather than choice mass', () => {
-  const { snapshot } = cryptoMarketFixture('SOL/USD')
+  const { snapshot } = cryptoMarketFixture('SOL/USD', { observedPriceChoices: true })
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot))
   const evidence = nativeJevDecisionEvidence({ observation, protocol: observation.payload.protocol }, 'wait')
   const strategyDecision = Result.getOrThrow(decideJevEntry(evidence))
@@ -619,6 +621,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ estimatedFeeBpsPerSide: 25, estimatedRoundTripFeesBps: 50 })
   expect(candidate.entryEconomics?.requiredBidRiseBps).toBeGreaterThan(80)
+  expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({
     minimum: Math.min(...candidate.plans.map((plan) => plan.netRewardRisk)),
     maximum: Math.max(...candidate.plans.map((plan) => plan.netRewardRisk)),

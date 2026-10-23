@@ -79,7 +79,7 @@ export const selectJevEntryCandidates = (
       const setup = inference.response.answers['setup']
       const quote = observation.snapshot.latestQuotes[symbol]
       if (answer?.type !== 'choice' || setup?.type !== 'choice' || quote === undefined)
-        return yield* unavailable('Jev entry has no typed setup, conditional plan or verified quote')
+        return yield* unavailable('Jev entry has no typed setup, economic plan or verified quote')
       const probability = setup.probabilities[setup.choice]
       if (probability === undefined) return yield* unavailable('Jev setup answer is missing its chosen probability')
       const quoteEligible = (yield* jevEntryQuoteExclusion(quote)) === null

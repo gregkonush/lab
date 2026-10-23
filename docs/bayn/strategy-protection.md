@@ -1,20 +1,21 @@
 # Jev-selected trade plans and broker protection
 
-Jev judges the current setup and conditionally selects a complete entry, stop loss and take profit before execution.
-Protocol v17 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
+Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
+Protocol v18 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
 
 Jev returns two typed judgments over the same supplied state in one request. The `setup` Choice classifies the current
-observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice assumes a supported long setup and
-selects the complete funded plan that fits the observed structure, movement scale and net reward versus risk, or abstains.
+observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice judges whether any supplied complete
+funded trade has observational support for a cost-covering exit within the holding deadline, or abstains. It assesses
+entry, stop, target and time-limit liquidation together. Upward structure alone cannot establish an economic trade.
 A plan option contains its stop, stop-limit, take-profit, immutable funded quantity ceiling and estimated net loss/profit.
-Code admits an entry only when the actual setup answer is `upward` and the conditional answer selects a supplied plan.
-An adverse or unclear setup rejects even a selected conditional plan. A supported setup cannot override `wait` or `avoid`.
+Code admits an entry only when the setup answer is `upward` and the actual-entry answer selects a supplied plan.
+An adverse or unclear setup rejects even a selected plan. A supported setup cannot override `wait` or `avoid`.
 Missing or malformed answers fail closed. No `enter` option exists without a complete funded plan.
 Candidates are ranked by the upward setup probability, whose three alternatives are the same for every candidate;
-conditional plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
+plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
 Management still asks whether to hold or exit.
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 [System One programming model](https://docs.typesafe.ai/concepts/system-one).
@@ -22,8 +23,10 @@ See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 Code builds at most sixteen plans from four representative stop levels and four target levels. The candidate menu combines
 observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed OHLC range,
 with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid. Target scenarios
-lie those steps above the modeled break-even exit bid. Deduplication, conservative instrument rounding and four evenly spaced
-representatives bound each set. The model selects the actual plan; these construction rules never select a default exit.
+lie those steps above the observed bid. The cost break-even price only filters targets; it cannot push them farther
+away to manufacture a funded option in a flat or small-range window. Deduplication, conservative instrument rounding
+and four evenly spaced representatives bound each set. The model selects the actual plan; these construction rules
+never select a default exit.
 
 Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
 nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
@@ -91,8 +94,8 @@ make its remaining children disappear. Unknown submissions are recovered by thei
 
 ## Hard cutover
 
-Migration 137 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v17, and accepts only current batch and
+Migration 140 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v18, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects
