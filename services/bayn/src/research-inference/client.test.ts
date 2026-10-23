@@ -43,8 +43,8 @@ describe('bounded native inference stream', () => {
     streamFixture('<alpha_list>alpha001,alpha001</alpha_list>'),
     streamFixture('<alpha_list>alpha002</alpha_list>'),
     streamFixture().replace('"finish_reason":"stop"', '"finish_reason":"length"'),
-    streamFixture().replace('qwen3-jev-editor-b968826d9c46', 'wrong-model'),
-    streamFixture().replaceAll('"model":"qwen3-jev-editor-b968826d9c46",', ''),
+    streamFixture().replace('qwen36-flamingo', 'wrong-model'),
+    streamFixture().replaceAll('"model":"qwen36-flamingo",', ''),
     streamFixture()
       .replace('"completion_tokens":20', '"completion_tokens":4097')
       .replace('"total_tokens":30', '"total_tokens":4107'),
@@ -109,7 +109,7 @@ describe('bounded native inference stream', () => {
           HttpClientResponse.fromWeb(
             request,
             new Response(activeStream(), {
-              headers: changed === null ? {} : { 'x-bayn-serving-identity': JSON.stringify(identity) },
+              headers: changed === null ? {} : { 'x-model-serving-identity': JSON.stringify(identity) },
             }),
           ),
         ),
@@ -132,7 +132,7 @@ describe('bounded native inference stream', () => {
         HttpClientResponse.fromWeb(
           request,
           new Response(activeStream(), {
-            headers: { 'x-bayn-serving-identity': header },
+            headers: { 'x-model-serving-identity': header },
           }),
         ),
       ),
@@ -204,7 +204,7 @@ test.each(['deadline', 'interruption'] as const)(
           request,
           new Response(body, {
             headers: {
-              'x-bayn-serving-identity': JSON.stringify({
+              'x-model-serving-identity': JSON.stringify({
                 model: activeFixture.policy.model,
                 checkpoint: activeFixture.policy.checkpoint,
                 servingImage: activeFixture.policy.servingImage,

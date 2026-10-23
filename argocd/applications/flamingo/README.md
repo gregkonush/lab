@@ -470,3 +470,16 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 - [Unsloth Qwen3.6-35B-A3B-NVFP4](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
+
+## Serving identity and availability
+
+Model and tokenizer revisions are pinned to `739af1e7aac320af1682ed1e0cce369af4c5265d`.
+The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
+tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
+research clients to verify the shared model before accepting generated instructions.
+
+The central Alloy scrapes the shared `/metrics` endpoint every fifteen seconds. `FlamingoModelUnavailable` warns
+when the model is unavailable for fifteen minutes while its deployment remains enabled. Model failure has no
+trading authority effect. Check readiness and shared GPU pressure before submitting a research request.
+
+Run `python3 -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v` to validate the middleware.

@@ -12,7 +12,13 @@ import migration from '../../migrations/0093_research_inference'
 import harnessMigration from '../../migrations/0129_harness2_research'
 import { baynTestPostgresUrl, baynTestTigerBeetleAddress } from '../test-environment.test-support'
 import { decodeResearchRun, hashResearch, ResearchOutcome, researchServingIdentity } from './contract'
-import { fullTokenBudgetStreamFixture, editorFixture, streamFixture } from './test-support'
+import {
+  fullTokenBudgetStreamFixture,
+  editorFixture,
+  retainedEditorFixture,
+  retainedReceiptFixture,
+  streamFixture,
+} from './test-support'
 import { makeResearchStore, projectResearchExpenses, researchExpensePlan, verifyResearchReceipt } from './store'
 import { makeResearchRunner } from './runner'
 import { makeTigerBeetleRequestClient } from '../tigerbeetle-client'
@@ -252,7 +258,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         return new Response(streamFixture(text, editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -312,7 +318,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         return new Response(fullTokenBudgetStreamFixture(editorFixture().policy.model, '{"entry":"Assess"}'), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -354,6 +360,46 @@ integration('research attempt durability with real PostgreSQL', () => {
     }
   })
   const ledgerTest = baynTestTigerBeetleAddress === undefined ? test.skip : test
+  ledgerTest(
+    'posts and acknowledges a retained old-policy expense without rewriting its evidence or dispatching inference',
+    async () => {
+      await runtime.runPromise(
+        Effect.scoped(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const store = makeResearchStore(sql)
+            const run = { ...retainedEditorFixture(), studyHash: crypto.randomUUID().replaceAll('-', '').repeat(2) }
+            const receipt = retainedReceiptFixture(run)
+            expect(Result.isFailure(decodeResearchRun(run))).toBe(true)
+            yield* sql`INSERT INTO research_inference_runs (run_id, payload) VALUES (${receipt.runId}, ${sql.json(run)})`
+            yield* sql`INSERT INTO research_inference_receipts (run_id, receipt_hash, payload) VALUES (${receipt.runId}, ${receipt.receiptHash}, ${sql.json(receipt)})`
+            const before =
+              yield* sql`SELECT payload::text AS payload FROM research_inference_receipts WHERE run_id = ${receipt.runId}`
+            const client = yield* makeTigerBeetleRequestClient({
+              operationTimeoutMs: 5000,
+              tigerBeetle: {
+                clusterId: 20912n,
+                replicaAddresses: [baynTestTigerBeetleAddress ?? '127.0.0.1:3000'],
+                ledger: 7001,
+              },
+            })
+            yield* projectResearchExpenses(store, client)
+            yield* projectResearchExpenses(store, client)
+            const plan = yield* Effect.fromResult(researchExpensePlan(run, receipt))
+            const transfers = yield* client.request('research-retained-expense', (active) =>
+              active.lookupTransfers(plan.transfers.map((transfer) => transfer.id)),
+            )
+            expect(transfers.map(({ id, amount }) => ({ id, amount }))).toEqual(
+              plan.transfers.map(({ id, amount }) => ({ id, amount })),
+            )
+            const after =
+              yield* sql`SELECT payload::text AS payload FROM research_inference_receipts WHERE run_id = ${receipt.runId} AND verified_at IS NOT NULL`
+            expect(after).toEqual(before)
+          }),
+        ),
+      )
+    },
+  )
   ledgerTest('recovers post-before-ack with exact native ledger transfers and balances', async () => {
     const model = Bun.serve({
       port: 0,
@@ -361,7 +407,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         new Response(streamFixture('{"entry":"Assess"}', editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         }),
     })

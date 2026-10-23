@@ -9,6 +9,7 @@ import { strictParseOptions } from '../schemas'
 import type { TigerBeetleRequestClient } from '../tigerbeetle-client'
 import {
   decodeResearchRun,
+  decodeRetainedResearchRun,
   hashResearch,
   parseResearchOutput,
   ResearchError,
@@ -19,9 +20,10 @@ import {
   sealResearchReceipt,
   type ResearchReceipt,
   type ResearchRun,
+  type RetainedResearchRun,
 } from './contract'
 
-export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
+export const verifyResearchReceipt = (run: RetainedResearchRun, input: unknown) =>
   Result.gen(function* () {
     const receipt = yield* Schema.decodeUnknownResult(
       ResearchReceiptSchema,
@@ -87,7 +89,7 @@ export const verifyResearchReceipt = (run: ResearchRun, input: unknown) =>
     return receipt
   })
 
-export const researchExpensePlan = (run: ResearchRun, input: unknown) =>
+export const researchExpensePlan = (run: RetainedResearchRun, input: unknown) =>
   Result.gen(function* () {
     const receipt = yield* verifyResearchReceipt(run, input)
     if (receipt.costPicoUsd === null) return { accounts: [], transfers: [] }
@@ -168,7 +170,7 @@ export const projectResearchExpenses = Effect.fn('bayn.research.expense-projecti
 ) {
   const rows = yield* store.pending
   for (const row of rows) {
-    const run = yield* Effect.fromResult(decodeResearchRun(row.run))
+    const run = yield* Effect.fromResult(decodeRetainedResearchRun(row.run))
     const receipt = yield* Effect.fromResult(verifyResearchReceipt(run, row.receipt))
     if (receipt.costPicoUsd === null) continue
     yield* postInferenceExpenses(client, yield* Effect.fromResult(researchExpensePlan(run, receipt)))
