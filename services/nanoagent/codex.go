@@ -228,6 +228,7 @@ func (supervisor *codexSupervisor) runProcess() error {
 		"--model", "gpt-6.1-sol",
 		"--sandbox", "danger-full-access",
 		"--ask-for-approval", "on-request",
+		"-c", "features.apps=false",
 	}
 	if supervisor.browserMCP {
 		binary, err := os.Executable()
@@ -497,6 +498,10 @@ func (supervisor *codexSupervisor) request(
 	waitReady bool,
 	generation *codexProcessGeneration,
 ) (codexCallResult, error) {
+	params, err := codexGuestThreadParams(method, params)
+	if err != nil {
+		return codexCallResult{}, err
+	}
 	if waitReady {
 		if generation == nil {
 			supervisor.mu.Lock()
