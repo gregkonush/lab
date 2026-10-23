@@ -36,7 +36,9 @@ complete original prefix.
 
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
-Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Compression batches yield to Node I/O; the writer groups up to 1 MiB or 16 chunks into one atomic database append.
+Smaller appends bound database work during bootstrap replay. An individual valid chunk above the append byte target
+is written whole under the existing chunk and queue bounds.
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
