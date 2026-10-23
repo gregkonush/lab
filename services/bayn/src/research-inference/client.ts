@@ -216,7 +216,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
-      const attestation = incoming.headers['x-bayn-serving-identity']
+      const attestation = incoming.headers['x-model-serving-identity']
       if (attestation === undefined || attestation.length > 1024)
         return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
       servingIdentity = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ResearchServingIdentitySchema))(

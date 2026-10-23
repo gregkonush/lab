@@ -141,7 +141,7 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 Expected:
 
 - `nvidia.com/gpu` allocatable is non-zero.
-- `flamingo`, `bayn-model`, and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
+- `flamingo` and the approved Plex transcode workload share the Blackwell. Bayn GEPA uses Flamingo directly. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
@@ -470,3 +470,14 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 - [Unsloth Qwen3.6-35B-A3B-NVFP4](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
+
+## Bayn GEPA editor
+
+Bayn GEPA uses the shared `qwen36-flamingo` model through the internal chat-completions endpoint. It has no separate
+model server. Model and tokenizer revisions are pinned to `739af1e7aac320af1682ed1e0cce369af4c5265d`.
+The ASGI middleware emits `x-model-serving-identity` from the loaded vLLM model configuration. It rejects unpinned
+or mismatched model/tokenizer revisions and chat-template overrides. Bayn checks every identity field against its
+registered policy before accepting a proposal. The middleware streams response bodies without buffering them.
+
+Validate the middleware with `python3 -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v`.
+The protected former `bayn-model-cache` PVC is retained without a running model deployment.

@@ -37,6 +37,7 @@ jobs:
               - 'packages/scripts/src/bayn/**'
               - 'packages/scripts/src/shared/__tests__/bayn-cnpg-contract.test.ts'
               - 'argocd/applications/bayn/**'
+              - 'argocd/applications/flamingo/**'
               - 'argocd/applications/torghut/clickhouse/**'
               - 'argocd/applicationsets/product.yaml'
               - 'nix/images/bayn.nix'
@@ -135,6 +136,7 @@ jobs:
           python-version: '3.12'
       - run: python -m pip install -r services/bayn/gepa/requirements.txt
       - run: python -m unittest discover -s services/bayn/gepa -p 'test_*.py' -v
+      - run: python -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v
 
   unit-tests:
     needs: changes

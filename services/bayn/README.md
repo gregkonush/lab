@@ -1885,7 +1885,7 @@ failures with observation age, without recording account identifiers or payloads
 
 The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
 consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
-runner and active factor/editor contracts are removed. Jev remains the typed System One model; the pinned Qwen3-8B
+runner and active factor/editor contracts are removed. Jev remains the typed System One model; the shared Flamingo
 endpoint only edits the question document through the signed research workflow.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.

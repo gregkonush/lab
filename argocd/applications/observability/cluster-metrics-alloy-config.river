@@ -233,16 +233,6 @@ prometheus.scrape "bayn" {
 	forward_to      = [prometheus.relabel.bayn_metrics.receiver]
 }
 
-prometheus.relabel "bayn_model_metrics" {
-	forward_to = [prometheus.remote_write.mimir.receiver]
-
-	rule {
-		action        = "keep"
-		source_labels = ["__name__"]
-		regex         = "up|vllm:.*|bayn_model_.*|process_.*"
-	}
-}
-
 discovery.kubernetes "bayn_valkey_pods" {
 	role = "pod"
 	namespaces {
@@ -290,31 +280,6 @@ prometheus.scrape "bayn_valkey" {
 	scrape_interval = "15s"
 	scrape_timeout  = "5s"
 	forward_to      = [prometheus.relabel.bayn_valkey_metrics.receiver]
-}
-
-prometheus.scrape "bayn_model" {
-	job_name = "bayn-model"
-	targets  = [{
-		"__address__" = "bayn-model.bayn-model.svc.cluster.local:8080",
-		"namespace"   = "bayn-model",
-		"service"     = "bayn-model",
-	}]
-	scrape_interval = "15s"
-	scrape_timeout  = "5s"
-	forward_to      = [prometheus.relabel.bayn_model_metrics.receiver]
-}
-
-prometheus.scrape "bayn_model_admission" {
-	job_name     = "bayn-model-admission"
-	metrics_path = "/admission/metrics"
-	targets      = [{
-		"__address__" = "bayn-model.bayn-model.svc.cluster.local:8080",
-		"namespace"   = "bayn-model",
-		"service"     = "bayn-model",
-	}]
-	scrape_interval = "15s"
-	scrape_timeout  = "5s"
-	forward_to      = [prometheus.relabel.bayn_model_metrics.receiver]
 }
 
 prometheus.relabel "tengri_metrics" {
@@ -437,7 +402,7 @@ discovery.kubernetes "bayn_log_pods" {
 	role = "pod"
 
 	namespaces {
-		names = ["bayn", "bayn-model"]
+		names = ["bayn"]
 	}
 }
 

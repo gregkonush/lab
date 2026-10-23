@@ -7,7 +7,7 @@ contracts are removed. Historical registrations and receipts remain immutable re
 
 ## Model and execution ownership
 
-Jev is the native typed System One decision model. GEPA's separate Qwen3-8B editor proposes a complete JSON
+Jev is the native typed System One decision model. GEPA's shared Flamingo editor proposes a complete JSON
 instruction document containing only one `entry` string, bounded to 2,000 characters. The editor cannot alter
 state, the independent setup question, plan construction, arithmetic, quantities, risk, protection or authority.
 Question editing does not train Jev's weights.
@@ -122,3 +122,16 @@ Both losing less than baseline and matching a numerical control are valid measur
 positive alpha. Preserve every trial and failed screen, source limitations, timing assumptions and missing costs.
 A successful search does not automatically edit `jev/instructions.ts`; any adoption is a reviewed source change
 through the existing identity, authority and Kargo delivery contracts.
+
+## Shared proposal model
+
+The editor uses Flamingo's `qwen36-flamingo`, backed by `unsloth/Qwen3.6-35B-A3B-NVFP4`, through
+`http://flamingo.flamingo.svc.cluster.local/v1/chat/completions`. The model and tokenizer revisions are pinned to
+`739af1e7aac320af1682ed1e0cce369af4c5265d`. Every accepted response must contain Flamingo's loaded serving identity
+and the matching model name in the stream. The registered policy enables thinking with a 4,096-token output cap,
+temperature 0.6, top-p 0.95 and top-k 20. The complete wire response and actual usage remain in the immutable receipt.
+
+There is no dedicated Bayn model service or fallback. Shared GPU contention can affect proposal latency. Existing
+worker deadlines, single-attempt reservations and cost-coverage limits still apply. A failed or truncated proposal
+is retained and cannot trigger an automatic paid retry. Jev inference and trading execution do not call Flamingo.
+The protected cache PVC of the removed dedicated service remains retained; it consumes no GPU allocation.

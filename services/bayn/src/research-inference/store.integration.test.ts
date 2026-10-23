@@ -252,7 +252,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         return new Response(streamFixture(text, editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -312,7 +312,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         return new Response(fullTokenBudgetStreamFixture(editorFixture().policy.model, '{"entry":"Assess"}'), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         })
       },
@@ -361,7 +361,7 @@ integration('research attempt durability with real PostgreSQL', () => {
         new Response(streamFixture('{"entry":"Assess"}', editorFixture().policy.model), {
           headers: {
             'content-type': 'text/event-stream',
-            'x-bayn-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
+            'x-model-serving-identity': JSON.stringify(researchServingIdentity(editorFixture().policy)),
           },
         }),
     })

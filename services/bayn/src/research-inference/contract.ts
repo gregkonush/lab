@@ -17,8 +17,8 @@ export class ResearchError extends Data.TaggedError('ResearchError')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
-export const editorModel = 'qwen3-jev-editor-b968826d9c46'
-export const editorCheckpoint = 'b968826d9c46dd6066d109eabc6255188de91218'
+export const editorModel = 'qwen36-flamingo'
+export const editorCheckpoint = '739af1e7aac320af1682ed1e0cce369af4c5265d'
 export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
