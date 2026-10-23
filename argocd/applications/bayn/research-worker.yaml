@@ -82,8 +82,8 @@ spec:
                   key: run-approval-key
             - name: RESTATE_REQUEST_IDENTITY_KEYS
               value: publickeyv1_6PArFXa3x8V1xx69kZVRyB7uP1fUoZ44wes6vAHYF6NL
-            - name: BAYN_RESEARCH_INFERENCE_POLICY
-              value: '{"model":"qwen36-flamingo","checkpoint":"739af1e7aac320af1682ed1e0cce369af4c5265d","servingImage":"sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2","tokenizerRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","chatTemplateRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0,"seed":1,"presence_penalty":0,"frequency_penalty":0,"repetition_penalty":1,"enable_thinking":true,"max_tokens":4096,"stop":[]}'
+            - name: BAYN_RESEARCH_INFERENCE_POLICIES
+              value: '[{"model":"qwen36-flamingo","checkpoint":"739af1e7aac320af1682ed1e0cce369af4c5265d","servingImage":"sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2","tokenizerRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","chatTemplateRevision":"739af1e7aac320af1682ed1e0cce369af4c5265d","temperature":0.6,"top_p":0.95,"top_k":20,"min_p":0,"seed":1,"presence_penalty":0,"frequency_penalty":0,"repetition_penalty":1,"enable_thinking":true,"max_tokens":4096,"stop":[]},{"harness":"opencode","harnessVersion":"2.1.3","model":"glm-5.3-flash-free","configurationHash":"7b60b4afd7a75441dd8a6320450f6a696fcb3147a74609e8560916b96dc02297","maximumModelCalls":1,"maximumInputBytes":32768,"temperature":0.6,"max_tokens":4096}]'
             - name: BAYN_POSTGRES_URL
               valueFrom:
                 secretKeyRef:

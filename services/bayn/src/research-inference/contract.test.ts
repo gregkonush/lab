@@ -143,8 +143,8 @@ describe('frozen research contract and existing expense ledger', () => {
       { ...run, captureManifestHash: '6'.repeat(64) },
     ])
       expect(Result.getOrThrow(hashResearch(changed))).not.toBe(id)
-    expect(researchRequest(run).stream_options.include_usage).toBe(true)
-    expect(researchRequest(run).messages[0]?.content).toContain(run.context.memory.text)
+    expect(researchRequest(run).stream_options?.include_usage).toBe(true)
+    expect(researchRequest(run).messages?.[0]?.content).toContain(run.context.memory.text)
   })
   test('rejects unfrozen overrides, future context, changed bytes and unsupported free rates', () => {
     for (const changed of [

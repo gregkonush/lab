@@ -23,7 +23,7 @@ export const maximumResearchStreamBytes = 2 * 1024 * 1024
 export const maximumResearchReceiptBytes = 5 * 1024 * 1024
 const Text = StrictNonEmptyStringSchema.check(Schema.isMaxLength(100_000))
 const Unit = Schema.Finite.check(Schema.isBetween({ minimum: 0, maximum: 1 }))
-export const ResearchPolicySchema = Schema.Struct({
+export const FlamingoResearchPolicySchema = Schema.Struct({
   model: Schema.Literal(editorModel),
   checkpoint: Schema.Literal(editorCheckpoint),
   servingImage: Schema.Literal('sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2'),
@@ -41,6 +41,17 @@ export const ResearchPolicySchema = Schema.Struct({
   max_tokens: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(4096)),
   stop: Schema.Array(Text).check(Schema.isMaxLength(8)),
 })
+export const OpenCodeResearchPolicySchema = Schema.Struct({
+  harness: Schema.Literal('opencode'),
+  harnessVersion: Schema.Literal('2.1.3'),
+  model: Schema.Literal('glm-5.3-flash-free'),
+  configurationHash: Sha256Schema,
+  maximumModelCalls: Schema.Literal(1),
+  maximumInputBytes: Schema.Literal(32768),
+  temperature: Schema.Literal(0.6),
+  max_tokens: Schema.Literal(4096),
+})
+export const ResearchPolicySchema = Schema.Union([FlamingoResearchPolicySchema, OpenCodeResearchPolicySchema])
 export const ResearchRunSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.jev-editor.v1'),
   purpose: Schema.Literal('prompt-edit'),
@@ -73,7 +84,7 @@ const RetainedResearchRunSchema = Schema.Struct({
   policy: Schema.Union([
     ResearchPolicySchema,
     Schema.Struct({
-      ...ResearchPolicySchema.fields,
+      ...FlamingoResearchPolicySchema.fields,
       model: Schema.Literal('qwen3-jev-editor-b968826d9c46'),
       checkpoint: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
       tokenizerRevision: Schema.Literal('b968826d9c46dd6066d109eabc6255188de91218'),
@@ -82,20 +93,37 @@ const RetainedResearchRunSchema = Schema.Struct({
   ]),
 })
 export type RetainedResearchRun = typeof RetainedResearchRunSchema.Type
-export const ResearchServingIdentitySchema = Schema.Struct({
+const FlamingoServingIdentitySchema = Schema.Struct({
   model: StrictNonEmptyStringSchema.check(Schema.isMaxLength(160)),
   checkpoint: GitSourceRevisionSchema,
   servingImage: Schema.String.check(Schema.isPattern(/^sha256:[0-9a-f]{64}$/)),
   tokenizerRevision: GitSourceRevisionSchema,
   chatTemplateRevision: GitSourceRevisionSchema,
 })
-export const researchServingIdentity = (policy: typeof ResearchServingIdentitySchema.Type) => ({
-  model: policy.model,
-  checkpoint: policy.checkpoint,
-  servingImage: policy.servingImage,
-  tokenizerRevision: policy.tokenizerRevision,
-  chatTemplateRevision: policy.chatTemplateRevision,
-})
+export const ResearchServingIdentitySchema = Schema.Union([
+  FlamingoServingIdentitySchema,
+  Schema.Struct({
+    harness: Schema.Literal('opencode'),
+    harnessVersion: Schema.Literal('2.1.3'),
+    model: Schema.Literal('glm-5.3-flash-free'),
+    configurationHash: Sha256Schema,
+  }),
+])
+export const researchServingIdentity = (policy: RetainedResearchRun['policy']) =>
+  'harness' in policy
+    ? {
+        harness: policy.harness,
+        harnessVersion: policy.harnessVersion,
+        model: policy.model,
+        configurationHash: policy.configurationHash,
+      }
+    : {
+        model: policy.model,
+        checkpoint: policy.checkpoint,
+        servingImage: policy.servingImage,
+        tokenizerRevision: policy.tokenizerRevision,
+        chatTemplateRevision: policy.chatTemplateRevision,
+      }
 
 export const hashResearch = (input: unknown) =>
   canonicalHashV1Result(input).pipe(
@@ -156,6 +184,8 @@ export const decodeRetainedResearchRun = (input: unknown) =>
   )
 
 export const researchRequest = (run: RetainedResearchRun) => {
+  if ('harness' in run.policy) return { schemaVersion: 'bayn.opencode-proposal.v1', registration: run }
+
   const {
     model,
     temperature,
@@ -210,6 +240,23 @@ export enum ResearchOutcome {
   Ambiguous = 'AMBIGUOUS',
   Unavailable = 'UNAVAILABLE',
 }
+const Base64Schema = Schema.String.check(
+  Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
+)
+export const OpenCodeEvidenceSchema = Schema.Struct({
+  serverSourceRevision: GitSourceRevisionSchema,
+  sessionId: StrictNonEmptyStringSchema.check(Schema.isMaxLength(128)),
+  configurationHash: Sha256Schema,
+  modelCalls: Schema.Literal(1),
+  providerCostUsd: Schema.Literal(0),
+  providerRequestHash: Sha256Schema,
+  providerRequestBase64: Base64Schema.check(Schema.isMaxLength(4 * Math.ceil(32768 / 3))),
+})
+export const OpenCodeResponseSchema = Schema.Struct({
+  schemaVersion: Schema.Literal('bayn.opencode-response.v1'),
+  harnessEvidence: OpenCodeEvidenceSchema,
+  providerResponseBase64: Base64Schema.check(Schema.isMaxLength(4 * Math.ceil(maximumResearchStreamBytes / 3))),
+})
 export const ResearchReceiptSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.research-receipt.v2'),
   workerSourceRevision: Schema.NullOr(GitSourceRevisionSchema),
@@ -221,6 +268,7 @@ export const ResearchReceiptSchema = Schema.Struct({
   outcome: Schema.Enum(ResearchOutcome),
   httpStatus: Schema.NullOr(NonNegativeIntegerSchema),
   servingIdentity: Schema.NullOr(ResearchServingIdentitySchema),
+  harnessEvidence: Schema.optionalKey(OpenCodeEvidenceSchema),
   serverRequestId: Schema.NullOr(Schema.String.check(Schema.isMaxLength(160))),
   responseHash: Schema.NullOr(Sha256Schema),
   responseText: Schema.String.check(Schema.isMaxLength(262144)),

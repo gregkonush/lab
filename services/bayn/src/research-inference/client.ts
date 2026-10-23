@@ -1,13 +1,16 @@
-import { Clock, Effect, Result, Schema, Stream } from 'effect'
-import { HttpClient, HttpClientRequest } from 'effect/http'
+import { ByteSize, Clock, Effect, Result, Schema, Stream } from 'effect'
+import { HttpClient, HttpClientRequest, HttpIncomingMessage } from 'effect/http'
 
 import { canonicalHashV1Result, sha256 } from '../hash'
+import { admitOpenCodeCall } from '../opencode/gateway'
+import { strictParseOptions } from '../schemas'
 import {
   parseResearchOutput,
   ResearchError,
   ResearchOutcome,
   hashResearch,
   ResearchServingIdentitySchema,
+  OpenCodeResponseSchema,
   researchServingIdentity,
   researchRequest,
   sealResearchReceipt,
@@ -199,6 +202,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
     outcome: startedAtMs < cutoff ? ResearchOutcome.Rejected : ResearchOutcome.Expired,
   }
   let instructions: ResearchReceipt['instructions'] = null
+  let harnessEvidence: ResearchReceipt['harnessEvidence']
   if (startedAtMs >= cutoff && startedAtMs < deadline) {
     const response = yield* Effect.gen(function* () {
       const http = yield* HttpClient.HttpClient
@@ -217,6 +221,8 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         return
       }
       state.outcome = ResearchOutcome.Rejected
+      if ('harness' in run.policy && incoming.headers['x-bayn-source-revision'] !== workerSourceRevision)
+        return yield* new ResearchError({ message: 'OpenCode server source differs from the research worker' })
       const attestation = incoming.headers['x-model-serving-identity']
       if (attestation === undefined || attestation.length > 1024)
         return yield* new ResearchError({ message: 'Research response lacks bounded serving attestation' })
@@ -228,13 +234,27 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
         (yield* Effect.fromResult(hashResearch(researchServingIdentity(run.policy))))
       )
         return yield* new ResearchError({ message: 'Research serving artifacts differ from the frozen policy' })
-      yield* incoming.stream.pipe(
-        Stream.runForEach((bytes) =>
-          Effect.gen(function* () {
-            yield* Effect.fromResult(stream.push(bytes, yield* Clock.currentTimeMillis))
-          }),
-        ),
-      )
+      if ('harness' in run.policy) {
+        const envelope = yield* Schema.decodeUnknownEffect(
+          OpenCodeResponseSchema,
+          strictParseOptions,
+        )(yield* incoming.json.pipe(Effect.provideService(HttpIncomingMessage.MaxBodySize, ByteSize.mebibytes(3))))
+        harnessEvidence = envelope.harnessEvidence
+        if (harnessEvidence.serverSourceRevision !== workerSourceRevision)
+          return yield* new ResearchError({ message: 'OpenCode response and research worker source identities differ' })
+        yield* Effect.fromResult(verifyOpenCodeEvidence(run, harnessEvidence, startedAtMs))
+        yield* Effect.fromResult(
+          stream.push(Buffer.from(envelope.providerResponseBase64, 'base64'), yield* Clock.currentTimeMillis),
+        )
+      } else {
+        yield* incoming.stream.pipe(
+          Stream.runForEach((bytes) =>
+            Effect.gen(function* () {
+              yield* Effect.fromResult(stream.push(bytes, yield* Clock.currentTimeMillis))
+            }),
+          ),
+        )
+      }
       instructions = yield* Effect.fromResult(stream.complete())
       state.outcome = ResearchOutcome.Complete
     }).pipe(Effect.timeout(`${deadline - startedAtMs} millis`), Effect.result)
@@ -257,8 +277,56 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
       outcome: state.outcome,
       httpStatus,
       servingIdentity,
+      ...(harnessEvidence === undefined ? {} : { harnessEvidence }),
       ...stream.snapshot(),
       instructions,
     }),
   )
 }, Effect.scoped)
+
+export const verifyOpenCodeEvidence = (
+  run: RetainedResearchRun,
+  evidence: ResearchReceipt['harnessEvidence'],
+  nowMs: number,
+) =>
+  Result.gen(function* () {
+    if (!('harness' in run.policy)) {
+      if (evidence !== undefined)
+        return yield* Result.fail(
+          new ResearchError({ message: 'Unexpected hosted-harness evidence for a self-hosted run' }),
+        )
+      return
+    }
+    if (
+      evidence === undefined ||
+      evidence.configurationHash !== run.policy.configurationHash ||
+      evidence.sessionId !== `ses_bayn_${run.studyHash}`
+    )
+      return yield* Result.fail(
+        new ResearchError({ message: 'OpenCode evidence differs from the registered study or configuration' }),
+      )
+    const bytes = Buffer.from(evidence.providerRequestBase64, 'base64')
+    if (sha256(bytes) !== evidence.providerRequestHash)
+      return yield* Result.fail(
+        new ResearchError({ message: 'OpenCode provider request bytes differ from retained evidence' }),
+      )
+    const request = yield* admitOpenCodeCall(
+      { sessionId: evidence.sessionId, deadlineAtMs: Date.parse(run.deadlineAt), calls: 0 },
+      { body: bytes.toString('utf8'), sessionId: evidence.sessionId },
+      nowMs,
+    )
+    const latest = request.messages.at(-1)
+    const contains = (text: string) =>
+      typeof latest?.content === 'string' &&
+      (latest.content.includes(text) || latest.content.includes(JSON.stringify(text).slice(1, -1)))
+    if (
+      latest?.role !== 'user' ||
+      typeof latest.content !== 'string' ||
+      !contains(`Bayn research attempt ${yield* hashResearch(run)}`) ||
+      !contains(run.promptTemplate) ||
+      !contains(run.context.memory.text)
+    )
+      return yield* Result.fail(
+        new ResearchError({ message: 'OpenCode provider input does not contain this attempt and its frozen feedback' }),
+      )
+  })
