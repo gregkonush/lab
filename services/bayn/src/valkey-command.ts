@@ -4,7 +4,7 @@ import { NodeServices, NodeRuntime } from '@effect/platform-node'
 import { Clock, Effect, Layer, Option, Schedule } from 'effect'
 
 import { PgClient } from '@effect/sql-pg'
-import { loadConfig } from './config'
+import { loadConfig } from './config/load'
 import { makeBrokerObservationStore } from './db/broker-observations'
 import { PostgresClientLive } from './db/postgres-client'
 import { brokerSnapshotCacheConfig } from './broker/alpaca/snapshot-cache'

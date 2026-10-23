@@ -23,6 +23,51 @@ class MarketFeatureArchiveTest {
       .parse("2026-09-11T14:00:03Z")
       .toEpochMilli()
 
+  @Test fun `archive rejects correctly hashed windows outside one executable segment`() {
+    val original = json.decodeFromString(RollingMarketFeature.serializer(), fixture())
+    for ((startAt, accepted) in listOf(
+      "2026-09-11T11:50:00Z" to false,
+      "2026-09-11T12:00:00Z" to true,
+      "2026-09-11T13:00:00Z" to true,
+      "2026-09-11T13:20:00Z" to false,
+      "2026-09-11T13:30:00Z" to true,
+      "2026-09-11T19:30:00Z" to true,
+      "2026-09-11T19:50:00Z" to false,
+      "2026-09-11T20:00:00Z" to true,
+      "2026-09-11T20:50:00Z" to false,
+    )) {
+      val shift =
+        java.time.Instant
+          .parse(startAt)
+          .toEpochMilli() - original.material.windowStartMs
+      val nanos = shift.toBigInteger() * 1_000_000L.toBigInteger()
+      val material =
+        original.material.copy(
+          windowStartMs = original.material.windowStartMs + shift,
+          windowEndMs = original.material.windowEndMs + shift,
+          inputs =
+            original.material.inputs.map {
+              it.copy(
+                eventTimeNanos = (it.eventTimeNanos.toBigInteger() + nanos).toString(),
+                ingestionTimeNanos = (it.ingestionTimeNanos.toBigInteger() + nanos).toString(),
+              )
+            },
+        )
+      val changed =
+        original.copy(
+          material = material,
+          computedAtMs = original.computedAtMs + shift,
+          featureId = featureHash(json.encodeToJsonElement(RollingMarketFeatureMaterial.serializer(), material)),
+        )
+      val record = record().copy(value = json.encodeToString(RollingMarketFeature.serializer(), changed))
+      if (accepted) {
+        assertEquals(changed.computedAtMs, decodeArchivedMarketFeature(record, routes(), changed.computedAtMs).computedAtMs)
+      } else {
+        assertFailsWith<IllegalArgumentException> { decodeArchivedMarketFeature(record, routes(), changed.computedAtMs) }
+      }
+    }
+  }
+
   @Test fun `archive retains exact feature message and transport coordinates`() {
     val decoded = decodeArchivedMarketFeature(record(), routes(), archivedAt)
     assertEquals(2, decoded.sourcePartition)

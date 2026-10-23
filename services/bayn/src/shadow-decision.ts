@@ -1,59 +1,46 @@
+import { entryBracketProtection } from './execution/position-protection'
+import { intentPlanSchemaVersion } from './execution/contracts'
 import { canonicalHashV1Result } from './hash'
-import { instrumentMarket, MarketKind } from './instruments'
+import { instrumentMarket } from './instruments'
+import { cashSpotLimitTimeInForce } from './execution/order-terms'
 
 import { makeBoundExecutionCalendar } from './cycle/construction'
 import { jevEntryQuoteMaximumAgeMs, jevPlanningTargetWeights } from './jev/decision'
-import { isSnapshotExecutionMarketDataBinding } from './shadow-decision-contract'
+import {
+  executionCycleDecisionSchemaVersion,
+  observeShadowDecisionSchemaVersion,
+  isSnapshotExecutionMarketDataBinding,
+} from './shadow-decision-contract'
 import { Data, Effect, Result, Schema } from 'effect'
 
+import { AutonomousCycleSchema, CycleState, type AutonomousCycle } from './cycle/model'
 import {
-  AutonomousCycleSchema,
-  CycleState,
-  cycleAuthoritySessionDate,
-  isIntradayAutonomousCycle,
-  isLegacyAutonomousCycle,
-  type AutonomousCycle,
-} from './cycle'
-import {
-  intentIdForPlan,
-  clientOrderIdForIntentId,
-  executionIntentIdForDecodedPlan,
   IntentPlanSchema,
+  makeReferenceIntentResult,
+  makeExecutionIntentFromDecodedPlan,
   type IntentPlan,
 } from './execution/intents/domain'
 import type { ExecutionSessionBinding } from './execution-session'
 import { withObservedStage } from './telemetry'
-import type { PersistedIntradaySnapshotRows } from './market-data'
+import type { PersistedIntradaySnapshotRows } from './market-data/intraday/verification'
 import { IntradaySnapshotPurpose } from './market-data/intraday/model'
 import {
   Authority,
-  IntentSchema,
-  IntentState,
   OrderSide,
   OrderType,
-  ReferenceIntentSchema,
   RiskOutcome,
-  TimeInForce,
   type Intent,
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import {
-  legacyCycleDecisionSchemaVersion,
-  legacyExecutionAuthorityToken,
-  legacyExecutionIntentSchemaVersion,
-  legacyIntentPlanSchemaVersion,
-  legacyPositionSchemaVersion,
-  legacyReferenceIntentSchemaVersion,
-} from './execution/legacy-wire'
-import { reconciledStateHash } from './reconciliation'
+import { legacyExecutionAuthorityToken } from './execution/legacy-wire'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { evaluate, isAuthorityNotGrantedReason, PolicySchema, StateSchema, type Policy, type State } from './risk'
 import {
   ExecutionMarketDataBindingSchema,
   makeExecutionDecisionDocument,
   makeObserveShadowDecisionDocument,
   reconciledPositionLiquidationBindingSchemaVersion,
-  type CycleDecisionDocument,
   type DeltaRiskEvaluation,
   type ExecutionMarketDataBinding,
   type ObserveShadowDecisionDocument,
@@ -65,7 +52,6 @@ import {
   runtimeDecisionMatchesStrategy,
   type RuntimeStrategyDecision,
 } from './strategy/runtime-decision'
-import { intradayMomentumPlanningTargetWeights } from './strategy/intraday-momentum/model'
 import {
   TargetPlannerInputSchema,
   TargetPlanResultSchema,
@@ -74,7 +60,7 @@ import {
   type PlannedTargetQuantity,
   type TargetPlannerInput,
   type TargetPlanResult,
-} from './target-planner'
+} from './target-planner/index'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -92,6 +78,7 @@ export interface ShadowSnapshotBinding {
 export interface ShadowDeltaRiskInput {
   readonly symbol: string
   readonly notionalLimitMicros: string
+  readonly limitPriceMicros: string
   readonly state: State
 }
 
@@ -141,6 +128,7 @@ const ShadowSnapshotBindingSchema = Schema.Struct({
 const ShadowDeltaRiskInputSchema = Schema.Struct({
   symbol: StrictNonEmptyStringSchema,
   notionalLimitMicros: PositiveMicrosSchema,
+  limitPriceMicros: PositiveMicrosSchema,
   state: StateSchema,
 })
 
@@ -214,7 +202,8 @@ const projectTargetPosition = (
   const referencePrice = BigInt(target.referencePriceMicros)
   const averageEntryPrice = BigInt(previous?.averageEntryPriceMicros ?? target.referencePriceMicros)
   const projected: Position = {
-    schemaVersion: legacyPositionSchemaVersion,
+    schemaVersion: 'bayn.position.v2',
+    costBasisMicros: divideAwayFromZero(quantity * averageEntryPrice).toString(),
     accountId: previous?.accountId ?? accountId,
     symbol: target.symbol,
     quantityAtoms: target.targetQuantityAtoms,
@@ -294,12 +283,7 @@ const validateBindings = (
   if (cycle.state !== CycleState.Active) {
     return Result.fail(error('binding', 'shadow planning requires an active autonomous cycle'))
   }
-  if (
-    (isLegacyAutonomousCycle(cycle) && cycle.bindings.snapshotId !== snapshot.snapshotId) ||
-    (isIntradayAutonomousCycle(cycle) &&
-      cycle.bindings.snapshotId !== undefined &&
-      cycle.bindings.snapshotId !== snapshot.snapshotId)
-  ) {
+  if (cycle.bindings.snapshotId !== undefined && cycle.bindings.snapshotId !== snapshot.snapshotId) {
     return Result.fail(error('binding', 'shadow snapshot must match the immutable cycle snapshot binding'))
   }
   const submissionCutoffAt = input.submissionCutoffAt ?? cycle.window.submissionCutoffAt
@@ -307,7 +291,7 @@ const validateBindings = (
     plannerInput.cycleId !== cycle.identity.cycleId ||
     plannerInput.strategyName !== cycle.identity.strategyName ||
     plannerInput.accountId !== cycle.identity.accountId ||
-    plannerInput.signalDate !== cycleAuthoritySessionDate(cycle.identity) ||
+    plannerInput.signalDate !== cycle.identity.executionSessionDate ||
     plannerInput.submissionCutoffAt !== submissionCutoffAt
   ) {
     return Result.fail(error('binding', 'target planner identity must match the active autonomous cycle'))
@@ -336,10 +320,8 @@ const validateBindings = (
   ) {
     return Result.fail(error('binding', 'flat execution targets require the explicit bounded close-only lease'))
   }
-  const intradayEntry =
-    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' ||
-    decision.schemaVersion === 'bayn.jev-entry-target.v1'
-  const intradayClose = isFlatExecutionTarget(decision) && ['intraday-momentum', 'jev'].includes(decision.strategyName)
+  const intradayEntry = decision.schemaVersion === 'bayn.jev-entry-target.v6'
+  const intradayClose = isFlatExecutionTarget(decision)
   const intradayDecision = intradayEntry || intradayClose
   const decisionMarketData = input.decisionMarketData ?? input.executionMarketData
   const executionMarketData = input.executionMarketData
@@ -351,7 +333,7 @@ const validateBindings = (
       : makeBoundExecutionCalendar(executionMarketData.calendar, cycle.window)
   if (intradayEntry) {
     const expected =
-      decision.schemaVersion === 'bayn.jev-entry-target.v1' && decisionMarketData !== undefined
+      decision.schemaVersion === 'bayn.jev-entry-target.v6' && decisionMarketData !== undefined
         ? canonicalHashV1Result(decisionMarketData.calendar)
         : Result.succeed(cycle.window.executionCalendarHash)
     if (Result.isFailure(expected) || decision.calendarHash !== expected.success)
@@ -361,28 +343,7 @@ const validateBindings = (
     return Result.fail(error('binding', 'intraday entry decision requires bar-and-trade market-data evidence'))
   }
   if (intradayEntry && !isSnapshotExecutionMarketDataBinding(executionMarketData)) {
-    return Result.fail(
-      error('binding', 'intraday-momentum entry requires a verified execution market-data snapshot binding'),
-    )
-  }
-  if (
-    decision.schemaVersion === 'bayn.intraday-momentum.target.v3' &&
-    isSnapshotExecutionMarketDataBinding(decisionMarketData)
-  ) {
-    const excludedSymbols = decision.excludedCandidates.map(({ symbol }) => symbol)
-    const decisionSymbols = [
-      ...decision.signals.map(({ symbol }) => symbol),
-      ...excludedSymbols,
-      decision.benchmark.symbol,
-    ].toSorted()
-    const bindsDecisionSignals =
-      decisionMarketData.symbols.length === decisionSymbols.length &&
-      decisionMarketData.symbols.every((symbol, index) => symbol === decisionSymbols[index])
-    if (!bindsDecisionSignals) {
-      return Result.fail(
-        error('binding', 'intraday entry requires complete market-data evidence for the decision universe'),
-      )
-    }
+    return Result.fail(error('binding', 'Jev entry requires a verified execution market-data snapshot binding'))
   }
   if (intradayClose && executionMarketData?.purpose !== IntradaySnapshotPurpose.Liquidation) {
     return Result.fail(error('binding', 'intraday close requires explicit liquidation market-data evidence'))
@@ -420,11 +381,9 @@ const validateBindings = (
     const narrowCloseTerms =
       plannerInput.schemaVersion === quoteBoundTargetPlannerInputSchemaVersion &&
       plannerInput.executionTerms.executionPurpose === 'forced-close' &&
-      plannerInput.executionTerms.orderType === OrderType.Market &&
+      plannerInput.executionTerms.orderType === OrderType.Limit &&
       executionMarketData.symbols.every(
-        (symbol) =>
-          plannerInput.executionTerms.timeInForce ===
-          (instrumentMarket(symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day),
+        (symbol) => plannerInput.executionTerms.timeInForce === cashSpotLimitTimeInForce(instrumentMarket(symbol)),
       ) &&
       plannerInput.executionTerms.priceReference === 'reconciled-broker-position-mark'
     if (!intradayClose || !bindingMatchesReconciliation || !narrowCloseTerms) {
@@ -448,7 +407,6 @@ const validateBindings = (
         executionCalendar.success.executionCalendarHash !== cycle.window.executionCalendarHash)) ||
     (intradayEntry && decisionMarketData?.snapshotId !== decision.snapshotId) ||
     (intradayEntry &&
-      isIntradayAutonomousCycle(cycle) &&
       (snapshot.snapshotId !== decisionMarketData?.snapshotId ||
         snapshot.contentHash !== decisionMarketData.contentHash ||
         snapshot.finalizedAt !== decisionMarketData.observedAt))
@@ -456,21 +414,9 @@ const validateBindings = (
     return Result.fail(error('binding', 'execution market data must match the intraday strategy decision and cycle'))
   }
   const expectedPlanningWeights =
-    input.compiledDecision.schemaVersion === 'bayn.intraday-momentum.target.v3'
-      ? intradayMomentumPlanningTargetWeights(
-          input.compiledDecision,
-          plannerInput.brokerState.positions
-            .filter(
-              (position) =>
-                BigInt(position.quantityAtoms) !== 0n &&
-                isSnapshotExecutionMarketDataBinding(executionMarketData) &&
-                executionMarketData.universe.includes(position.symbol),
-            )
-            .map((position) => position.symbol),
-        )
-      : input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
-        ? jevPlanningTargetWeights(input.compiledDecision)
-        : input.compiledDecision.targetWeights
+    input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+      ? jevPlanningTargetWeights(input.compiledDecision)
+      : input.compiledDecision.targetWeights
   const compiledWeightsHash = hashValue(
     expectedPlanningWeights,
     'contract',
@@ -523,7 +469,7 @@ const validateRiskState = (
     (input.executionMarketData === undefined ||
       !('maximumQuoteAgeMs' in input.executionMarketData) ||
       state.entryQuote.maximumAgeMs !==
-        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v1'
+        (input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
           ? jevEntryQuoteMaximumAgeMs(
               input.compiledDecision,
               state.entryQuote.eventAt,
@@ -539,7 +485,7 @@ const validateRiskState = (
   ) {
     return Result.fail(error('binding', 'shadow risk data must match the bound decision market data'))
   }
-  if (!isIntradayAutonomousCycle(cycle) || input.executionMarketData === undefined)
+  if (input.executionMarketData === undefined)
     return Result.fail(error('binding', 'execution binding requires the verified current market snapshot'))
   if (
     state.executionSession.executionSession.date !== cycle.identity.executionSessionDate ||
@@ -587,52 +533,11 @@ const makeRiskIntent = (
     error('contract', 'shadow target delta could not form a valid risk intent', cause),
   )
   if (Result.isFailure(decodedPlan)) return Result.fail(decodedPlan.failure)
-  const identityResult: Result.Result<string, ShadowDecisionError> =
-    authorityGenerationHash === undefined
-      ? Result.mapError(intentIdForPlan(decodedPlan.success), (cause) =>
-          error('contract', 'shadow target delta identity is not canonicalizable', cause),
-        )
-      : Result.mapError(executionIntentIdForDecodedPlan(decodedPlan.success, authorityGenerationHash), (cause) =>
-          error('contract', 'execution target delta identity is not canonicalizable', cause),
-        )
-  const identity = Result.mapError(
-    Result.map(identityResult, (intentId) => ({
-      intentId,
-      clientOrderId: clientOrderIdForIntentId(intentId),
-    })),
-    (cause) => cause,
-  )
-  if (Result.isFailure(identity)) return Result.fail(identity.failure)
-  const decoded = decodedPlan.success
-  return Result.mapError(
-    Schema.decodeUnknownResult(
-      authorityGenerationHash === undefined ? ReferenceIntentSchema : IntentSchema,
-      strictParseOptions,
-    )({
-      schemaVersion:
-        authorityGenerationHash === undefined ? legacyReferenceIntentSchemaVersion : legacyExecutionIntentSchemaVersion,
-      ...(authorityGenerationHash === undefined ? {} : { authorityGenerationHash }),
-      intentId: identity.success.intentId,
-      strategyName: decoded.strategyName,
-      cycleId: decoded.cycleId,
-      decisionHash: decoded.decisionHash,
-      policyHash: decoded.policyHash,
-      accountId: decoded.accountId,
-      clientOrderId: identity.success.clientOrderId,
-      symbol: decoded.symbol,
-      side: decoded.side,
-      orderType: decoded.orderType,
-      timeInForce: decoded.timeInForce,
-      quantityAtoms: decoded.quantityAtoms,
-      notionalLimitMicros: decoded.notionalLimitMicros,
-      ...(authorityGenerationHash === undefined || decoded.replanGenerationHash === undefined
-        ? {}
-        : { replanGenerationHash: decoded.replanGenerationHash }),
-      state: IntentState.Planned,
-      createdAt: decoded.createdAt,
-    }),
-    (cause) => error('contract', 'shadow target delta could not form a valid risk intent', cause),
-  )
+  const invalidIntent = (cause: unknown) =>
+    error('contract', 'shadow target delta could not form a valid risk intent', cause)
+  return authorityGenerationHash === undefined
+    ? Result.mapError(makeReferenceIntentResult(decodedPlan.success), invalidIntent)
+    : Result.mapError(makeExecutionIntentFromDecodedPlan(decodedPlan.success, authorityGenerationHash), invalidIntent)
 }
 
 interface ShadowReduction {
@@ -662,11 +567,21 @@ const reduceShadowDelta = (
   if (provided === undefined) {
     return Result.fail(error('binding', 'planned target delta is missing its risk input'))
   }
+  const protection = entryBracketProtection(
+    targetIntent.symbol,
+    targetIntent.quantityAtoms,
+    targetIntent.createdAt,
+    context.input.compiledDecision.schemaVersion === 'bayn.jev-entry-target.v6'
+      ? context.input.compiledDecision.exitPolicy.plans[targetIntent.symbol]
+      : undefined,
+  )
   const intent = makeRiskIntent(
     {
-      schemaVersion: legacyIntentPlanSchemaVersion,
+      schemaVersion: intentPlanSchemaVersion,
       ...targetIntent,
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.replanGenerationHash === undefined ? {} : { replanGenerationHash: context.replanGenerationHash }),
     },
     context.authorityGenerationHash,
@@ -708,6 +623,8 @@ const reduceShadowDelta = (
     ...accumulator.deltaRisk,
     {
       notionalLimitMicros: provided.notionalLimitMicros,
+      limitPriceMicros: provided.limitPriceMicros,
+      ...(protection === undefined ? {} : { protection }),
       ...(context.authority === Authority.Execution
         ? {
             facts: {
@@ -933,7 +850,7 @@ const assembleShadowDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   const document = Result.mapError(
     makeObserveShadowDecisionDocument({
-      schemaVersion: 'bayn.observe-shadow-decision.v1',
+      schemaVersion: observeShadowDecisionSchemaVersion,
       mode: 'OBSERVE',
       dispatchable: false,
       bindings: {
@@ -1009,7 +926,7 @@ const assembleExecutionDecisionDocument = (
   if (Result.isFailure(planningBrokerStateHash)) return Result.fail(planningBrokerStateHash.failure)
   return Result.mapError(
     makeExecutionDecisionDocument({
-      schemaVersion: legacyCycleDecisionSchemaVersion,
+      schemaVersion: executionCycleDecisionSchemaVersion,
       mode: legacyExecutionAuthorityToken,
       dispatchable: reduction.riskBlock === undefined,
       bindings: {
@@ -1106,5 +1023,3 @@ export const buildExecutionDecision = (
       ),
     ),
   ).pipe(withObservedStage('bayn.execution.decision-build', { operation: Authority.Execution }))
-
-export type DurableCycleDecisionDocument = CycleDecisionDocument

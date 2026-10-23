@@ -1,3 +1,32 @@
+import fundedPlanCoverage from '../../migrations/0141_funded_plan_coverage'
+import economicTradePlans from '../../migrations/0140_economic_trade_plans'
+import jevGepaEditor from '../../migrations/0139_jev_gepa_editor'
+import jevEditorStructuredOutput from '../../migrations/0138_jev_editor_structured_output'
+import setupAndPlan from '../../migrations/0137_setup_and_plan'
+import currentAuthorityWrites from '../../migrations/0136_current_authority_writes'
+import jevEditorIdentity from '../../migrations/0135_jev_editor_identity'
+import completePlanChoice from '../../migrations/0133_complete_plan_choice'
+import removeUnusedSchema from '../../migrations/0134_remove_unused_schema'
+import jevHarness2 from '../../migrations/0132_jev_harness2'
+import modelSelectedTradePlan from '../../migrations/0131_model_selected_trade_plan'
+import feeSourceCreatedAt from '../../migrations/0130_fee_source_created_at'
+import harness2Research from '../../migrations/0129_harness2_research'
+import strategyNativeProtection from '../../migrations/0128_strategy_native_protection'
+import currentJevCycles from '../../migrations/0127_current_jev_cycles'
+import entryBoundExits from '../../migrations/0126_entry_bound_exits'
+import marketManagementJudgment from '../../migrations/0125_market_management_judgment'
+import focusedJevJudgments from '../../migrations/0124_focused_jev_judgments'
+import setupActionProtocol from '../../migrations/0123_setup_action_protocol'
+import explicitLimitDecisions from '../../migrations/0122_explicit_limit_decisions'
+import explicitLimitIntents from '../../migrations/0121_explicit_limit_intents'
+import mixedMarketReplay from '../../migrations/0120_mixed_market_replay'
+import nativeArrivalRetention from '../../migrations/0119_native_arrival_retention'
+import completedBarBenchmarks from '../../migrations/0118_completed_bar_benchmarks'
+import riskValuationIndexes from '../../migrations/0117_risk_valuation_indexes'
+import costSupportedEntry from '../../migrations/0116_cost_supported_entry'
+import requiredPositionCost from '../../migrations/0115_required_position_cost'
+import limitOrderCompletion from '../../migrations/0114_limit_order_completion'
+import extendedEquityHours from '../../migrations/0113_extended_equity_hours'
 import shadowDecisionGenerationIndex from '../../migrations/0104_shadow_decision_generation_index'
 import reclassifyExpiredNativeEntry from '../../migrations/0101_reclassify_expired_native_entry'
 import unusedEntryAdmission from '../../migrations/0100_unused_entry_admission'
@@ -109,9 +138,42 @@ import feePostingAcknowledgements from '../../migrations/0107_fee_posting_acknow
 import availableHistoryProtocol from '../../migrations/0108_available_history_protocol'
 import capitalSizingProtocol from '../../migrations/0109_capital_sizing_protocol'
 import capitalSizingRecovery from '../../migrations/0110_capital_sizing_recovery'
+import modelActionProtocol from '../../migrations/0111_model_action_protocol'
+import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements'
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '140_economic_trade_plans': economicTradePlans,
+  '141_funded_plan_coverage': fundedPlanCoverage,
+  '137_setup_and_plan': setupAndPlan,
+  '138_jev_editor_structured_output': jevEditorStructuredOutput,
+  '139_jev_gepa_editor': jevGepaEditor,
+  '136_current_authority_writes': currentAuthorityWrites,
+  '134_remove_unused_schema': removeUnusedSchema,
+  '127_current_jev_cycles': currentJevCycles,
+  '126_entry_bound_exits': entryBoundExits,
+  '128_strategy_native_protection': strategyNativeProtection,
+  '135_jev_editor_identity': jevEditorIdentity,
+  '132_jev_harness2': jevHarness2,
+  '131_model_selected_trade_plan': modelSelectedTradePlan,
+  '133_complete_plan_choice': completePlanChoice,
+  '129_harness2_research': harness2Research,
+  '130_fee_source_created_at': feeSourceCreatedAt,
+  '123_setup_action_protocol': setupActionProtocol,
+  '124_focused_jev_judgments': focusedJevJudgments,
+  '125_market_management_judgment': marketManagementJudgment,
+  '122_explicit_limit_decisions': explicitLimitDecisions,
+  '121_explicit_limit_intents': explicitLimitIntents,
+  '120_mixed_market_replay': mixedMarketReplay,
+  '119_native_arrival_retention': nativeArrivalRetention,
+  '118_completed_bar_benchmarks': completedBarBenchmarks,
+  '117_risk_valuation_indexes': riskValuationIndexes,
+  '116_cost_supported_entry': costSupportedEntry,
+  '115_required_position_cost': requiredPositionCost,
+  '114_limit_order_completion': limitOrderCompletion,
+  '113_extended_equity_hours': extendedEquityHours,
+  '112_broker_cash_settlements': brokerCashSettlements,
+  '111_model_action_protocol': modelActionProtocol,
   '109_capital_sizing_protocol': capitalSizingProtocol,
   '110_capital_sizing_recovery': capitalSizingRecovery,
   '107_fee_posting_acknowledgements': feePostingAcknowledgements,

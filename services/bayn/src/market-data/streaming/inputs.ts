@@ -178,6 +178,14 @@ export const selectStreamingInputs = (state: StreamingProjection, query: Intrada
         }
         break
       }
+      if (
+        request.benchmarkSymbols?.includes(symbol) === true &&
+        (selected === undefined ||
+          !bars.some((bar) => intradayInstantNanos(bar.value.eventAt) === end - 60_000_000_000n))
+      )
+        return yield* Result.fail(
+          failure('not-ready', `Required completed-bar benchmark is unavailable for ${symbol}`, { symbol }),
+        )
       if (selected !== undefined) featureReceipts.push(selected)
       else if (candidates.has(symbol)) {
         let message = 'matching complete rolling feature is unavailable'

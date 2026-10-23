@@ -50,6 +50,23 @@ uses the repo-owned `kargo-sha-<40>` contract, and operators do not retag or man
 
 ## Normal production path
 
+`product-nix-images.yml` builds and publishes App, Docs, Proompteng, and Synthesis images only from `main`.
+Pull requests retain the owning application build and validation jobs, plus App's native dependency-closure checks.
+They do not create unused product image archives or PR registry caches.
+
+Ofz, Tengri, Nanoagent and Proompteng form one release cohort in the `ofz` Warehouse. All four immutable images
+must name the same source commit and publish the same `ai.proompteng.tengri-schema` fingerprint. Ofz retains its
+successful run-qualified build receipt; Tengri and Nanoagent retain their paired native qualification gate. The three
+production workflows watch the same cohort inputs so a component change cannot strand a partially built release.
+
+The `ofz` Stage promotes first. Its Argo sync must finish the checksum-bound `migrate-runtime` hook and the healthy
+Ofz rollout before Freight is verified. The `tengri` Stage accepts only that verified upstream Freight, and
+`proompteng` accepts the same Freight only after Tengri is verified. Both consumers use `MatchUpstream` and cannot
+promote directly from the Warehouse. A failed migration therefore prevents either consumer from rolling out.
+The BFF, controller and supervisor independently verify the installed migration checksums before serving.
+The retired per-consumer Warehouses are removed; existing Freight has no Warehouse owner reference and remains
+subject to the existing retention policy.
+
 Every application image follows this transaction:
 
 1. Merge the reviewed source pull request to `main`.
@@ -74,11 +91,9 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn model provisioning also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
-a nonempty revision, and a successful build receipt whose run-qualified tag matches both the revision and run ID.
-The Stage checks out that verified image revision. Only Bayn model source, workflow, and deployment paths trigger its
-image build; shared Kargo and platform ApplicationSet changes do not rebuild its provisioning image. There is no independent Git
-subscription to select an earlier commit when an atomic push ends beyond the last Bayn model path change.
+Bayn's GEPA worker uses the shared Flamingo deployment for instruction proposals. Its worker image follows Bayn's
+normal receipt-bearing Kargo path. There is no separate Bayn model image, Warehouse, or Stage; Flamingo's reviewed
+manifests pin its serving image and model revision.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the

@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { makeJevEntryQuery } from '../jev/observation-query'
@@ -10,16 +11,15 @@ import { TestClock } from 'effect/testing'
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { OrderSide } from '../execution/contracts'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1 as hash, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { config } from '../testing/runtime-fixtures'
 import { utcInstantFromEpochMillis as iso } from '../time'
 import {
   prepareBoundRidge,
-  RidgeControlPolicy,
   ridgeExecutionLabelDefinition,
   scorePinnedRidgeCandidates,
   selectBoundRidge,
@@ -48,10 +48,10 @@ const assumptions = {
   feeMultiplierPpm: 1_000_000,
 }
 const fullCalendar = [
-  { date: '2026-09-01', open: '09:30', close: '10:10' },
-  { date: '2026-09-04', open: '09:30', close: '10:10' },
-  { date: '2026-09-08', open: '09:30', close: '10:10' },
-  { date: '2026-09-09', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-01', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-04', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-08', open: '09:30', close: '10:10' },
+  { session_open: '0930', session_close: '1010', date: '2026-09-09', open: '09:30', close: '10:10' },
 ] as const
 const calendar = Result.getOrThrow(
   normalizeMarketCalendarResult(fullCalendar, { start: '2026-09-01', end: '2026-09-09' }),
@@ -74,7 +74,7 @@ const fixture = (
   } = {},
 ) =>
   Effect.gen(function* () {
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
+    const risk = yield* loadExecutionRiskPolicy('ridge-control-test', equityMarketProfile.universe)
     const pollIntervalMs = options.pollIntervalMs ?? 30_000
     const firstDecisionMs = sixBarOpenMs + Math.ceil(1_802_000 / pollIntervalMs) * pollIntervalMs
     const baseInputs: SixBarFixtureInput[] = sixBarFixtureInputs()
@@ -146,7 +146,7 @@ const fixture = (
       .sort()
       .map((topic) => ({ topic, partition: 0 }))
     const source: BacktestSourceManifest = {
-      schemaVersion: 'bayn.backtest-source.v1',
+      schemaVersion: 'bayn.backtest-source.v2',
       encoding: 'ndjson-gzip',
       transport: 'original-capture',
       dataSha256: sha256(body),
@@ -163,7 +163,7 @@ const fixture = (
         startOffset: '0',
         endOffsetExclusive: String(captured.events.filter((event) => event.record.topic === topic).length),
       })),
-      universe: captured.universe,
+      marketSources: [captured.universe] as const,
       deliveryModel: captured.source.deliveryModel,
     }
     const context = {
@@ -182,15 +182,17 @@ const fixture = (
       schemaVersion: 'bayn.six-bar-ridge-artifact.v2',
       qualification: 'UNQUALIFIED',
       controllerCoverage: 'UNKNOWN',
-      recipeHash: hash(sixBarRidgeRecipe),
-      featureDefinitionHash: hash(sixBarResearchDefinition),
+      recipeHash: Result.getOrThrow(canonicalHashV1Result(sixBarRidgeRecipe)),
+      featureDefinitionHash: Result.getOrThrow(canonicalHashV1Result(sixBarResearchDefinition)),
       featureOrder: sixBarResearchDefinition.features,
       solver: sixBarRidgeRecipe.solver,
       provenance: {
         sourceRevision: '1'.repeat(40),
         sourceManifestHash: sha256('SYNTHETIC training source'),
         calendarHash: calendar.normalizedResponseHash,
-        labelDefinitionHash: hash(ridgeExecutionLabelDefinition(context, allocationBudgetMicros)),
+        labelDefinitionHash: Result.getOrThrow(
+          canonicalHashV1Result(ridgeExecutionLabelDefinition(context, allocationBudgetMicros)),
+        ),
       },
       allocationBudgetMicros,
       manifestHash: sha256('SYNTHETIC frozen training manifest'),
@@ -213,7 +215,7 @@ const fixture = (
       intercept: options.intercept ?? 5,
       trainingTargetMeanBps: options.mean ?? 5,
     }
-    const artifact = { ...payload, artifactHash: hash(payload) }
+    const artifact = { ...payload, artifactHash: Result.getOrThrow(canonicalHashV1Result(payload)) }
     const input = {
       artifact,
       expectedArtifact: {
@@ -223,11 +225,14 @@ const fixture = (
       },
       calendar: fullCalendar,
       expectedCalendarHash: calendar.normalizedResponseHash,
-      evaluationSourceManifestHash: hash(source),
+      evaluationSourceManifestHash: Result.getOrThrow(canonicalHashV1Result(source)),
       partition: SixBarRidgePartition.Validation,
     }
     const bound = yield* Effect.fromResult(prepareBoundRidge(input, context))
-    const actualCapture = { ...captured, source: { ...captured.source, sourceManifestHash: hash(source) } }
+    const actualCapture = {
+      ...captured,
+      source: { ...captured.source, sourceManifestHash: Result.getOrThrow(canonicalHashV1Result(source)) },
+    }
     const query = makeJevEntryQuery({
       protocol,
       calendar: executionCalendar,
@@ -248,7 +253,7 @@ test('both six-bar controls record first-minute cash while their mathematical hi
     observedAtMs,
     candidates: equityMarketProfile.candidateSymbols,
   })
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const result = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, observedAtMs), query, data.bound, policy),
     )
@@ -270,8 +275,8 @@ test('both six-bar controls record first-minute cash while their mathematical hi
 test('the pair extracts the same causal features and uses the actual training mean', async () => {
   const data = await Effect.runPromise(fixture({ mean: 0, intercept: 5 }))
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
-  const ridge = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, RidgeControlPolicy.Ridge))
-  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, RidgeControlPolicy.TrainingMean))
+  const ridge = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, ControlPolicy.Ridge))
+  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, ControlPolicy.TrainingMean))
   expect(ridge.status).toBe('AVAILABLE')
   expect(baseline.status).toBe('AVAILABLE')
   if (ridge.status !== 'AVAILABLE' || baseline.status !== 'AVAILABLE')
@@ -297,7 +302,7 @@ test.each([0, -5])('a %d-bps constant preserves candidate-local gaps as exclusio
       replaySixBarFixture(data.captured, firstDecisionMs),
       data.query,
       data.bound,
-      RidgeControlPolicy.TrainingMean,
+      ControlPolicy.TrainingMean,
     ),
   )
   expect(decision.status).toBe('AVAILABLE')
@@ -336,7 +341,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'late-bar', 'stale-q
             }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const select = () =>
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy)
       const decision = Result.getOrThrow(select())
@@ -382,7 +387,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
             }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
       const decision = Result.getOrThrow(
         selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
       )
@@ -397,7 +402,7 @@ test.each(['missing-bar', 'missing-quote', 'missing-trade', 'spread', 'displayed
 
 test('evidenced exclusions retain an available cash decision with empty admissible candidates', async () => {
   const data = await Effect.runPromise(fixture({ exclude: true }))
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const decision = Result.getOrThrow(
       selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
     )
@@ -417,7 +422,7 @@ test('candidate gaps can produce evidenced cash only while the benchmark remains
       transformInputs: (inputs) => inputs.filter((input) => input.symbol === 'SPY' || input.channel !== 'quotes'),
     }),
   )
-  for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean]) {
+  for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const) {
     const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
     const decision = Result.getOrThrow(selectBoundRidge(cursor, data.query, data.bound, policy))
     expect(decision.status).toBe('AVAILABLE')
@@ -450,7 +455,7 @@ test.each(['crossed-quote', 'premature-bar', 'nonfinal-bar'] as const)(
           }),
       }),
     )
-    for (const policy of [RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean])
+    for (const policy of [ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)
       expect(
         Result.isFailure(
           selectBoundRidge(replaySixBarFixture(data.captured, firstDecisionMs), data.query, data.bound, policy),
@@ -463,7 +468,7 @@ test('artifact, source, calendar, partition, label and actual successor mismatch
   const data = await Effect.runPromise(fixture())
   const rehash = (artifact: typeof data.input.artifact) => {
     const { artifactHash: _, ...payload } = artifact
-    return { ...payload, artifactHash: hash(payload) }
+    return { ...payload, artifactHash: Result.getOrThrow(canonicalHashV1Result(payload)) }
   }
   for (const input of [
     { ...data.input, expectedArtifact: { ...data.input.expectedArtifact, artifactHash: 'f'.repeat(64) } },
@@ -506,13 +511,11 @@ test('artifact, source, calendar, partition, label and actual successor mismatch
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
   for (const observedAt of ['2026-09-04T14:00:00.000Z', session.closeAt])
     expect(
-      Result.isFailure(
-        selectBoundRidge(cursor, { ...data.query, observedAt }, data.bound, RidgeControlPolicy.TrainingMean),
-      ),
+      Result.isFailure(selectBoundRidge(cursor, { ...data.query, observedAt }, data.bound, ControlPolicy.TrainingMean)),
     ).toBeTrue()
   expect(
     Result.isFailure(
-      selectBoundRidge(cursor, { ...data.query, candidateSymbols: [] }, data.bound, RidgeControlPolicy.Ridge),
+      selectBoundRidge(cursor, { ...data.query, candidateSymbols: [] }, data.bound, ControlPolicy.Ridge),
     ),
   ).toBeTrue()
 })
@@ -529,12 +532,12 @@ test.each(['cash', 'filled'] as const)(
         yield* fs.writeFile(arrivals, data.body)
         const { verification: _verification, ...build } = config.build
         const receiptText = JSON.stringify({
-          schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+          schemaVersion: 'bayn.original-capture-replay-receipt.v2',
           recordedAt: iso(data.source.coverageEndMs + 1),
           origin: data.source.origin,
           coverageStartMs: data.source.coverageStartMs,
           coverageEndMs: data.source.coverageEndMs,
-          universe: data.source.universe,
+          marketSources: data.source.marketSources,
           positions: data.source.positions,
           nativeVisiblePartitions: data.source.nativeVisiblePartitions,
           deliveryModel: data.source.deliveryModel,
@@ -542,7 +545,8 @@ test.each(['cash', 'filled'] as const)(
         })
         const receipt = yield* Effect.fromResult(validateBacktestSourceReceipt(receiptText, sha256(receiptText)))
         const input = {
-          schemaVersion: 'bayn.control-study-input.v7',
+          schemaVersion: 'bayn.control-study-input.v9',
+          costObjective: 'ALL_COSTS',
           entry: 'DETERMINISTIC',
           repeatedTargetWeightPpm: 100000,
           management: ControlManagementMode.Mechanical,
@@ -550,19 +554,24 @@ test.each(['cash', 'filled'] as const)(
           turnoverPolicy: data.context.turnoverPolicy,
           ridge: data.input,
           backtest: {
-            schemaVersion: 'bayn.backtest.v3',
+            schemaVersion: 'bayn.backtest.v5',
+            jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
             source: data.source,
             openingCashMicros: '100000000000',
             fractionalTrading: false,
             inference: {
               mode: 'measured-provider',
+              maximumCalls: 1000,
               model: jevModel,
-              inputDefinition: 'bayn.jev-trading-signal-state.v5',
+              inputDefinition: 'bayn.jev-trading-signal-state.v16',
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             },
             allocatedDataCostPerSessionMicros: '1000000',
             replicate: 'SYNTHETIC ridge pair',
-            sessionDates: ['2026-09-04'],
+            interval: {
+              startAt: new Date(data.source.coverageStartMs).toISOString(),
+              endAt: new Date(data.source.coverageEndMs).toISOString(),
+            },
             calendar: fullCalendar.slice(1, 3),
             build,
             assumptions,
@@ -586,7 +595,7 @@ test.each(['cash', 'filled'] as const)(
           },
         }
         const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-        expect(report.schemaVersion).toBe('bayn.control-study-report.v6')
+        expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
         expect(report.sessions.map((result) => result.policy)).toEqual([
           ControlPolicy.Ridge,
           ControlPolicy.TrainingMean,
@@ -670,7 +679,12 @@ const simulate = (
             askSize: options.canceled === true ? 0 : 100,
             bidSize: 25,
           }
-          return { value, availableAtMs: atMs, sequence: 1, recordHash: hash(value) }
+          return {
+            value,
+            availableAtMs: atMs,
+            sequence: 1,
+            recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          }
         }),
     }
     const result = yield* runControlSession({
@@ -707,7 +721,7 @@ const simulate = (
               replaySixBarFixture(data.captured, cutAt),
               query,
               data.bound,
-              options.policy === ControlPolicy.Ridge ? RidgeControlPolicy.Ridge : RidgeControlPolicy.TrainingMean,
+              options.policy === ControlPolicy.Ridge ? ControlPolicy.Ridge : ControlPolicy.TrainingMean,
             ),
           ).pipe(Effect.mapError((cause) => new ControlStudyFailure({ message: 'Synthetic selection failed', cause })))
         },
@@ -716,7 +730,7 @@ const simulate = (
     return { result, selectedAt, data }
   })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s uses one real position and persistent partial exits with finite quote liquidity',
   async (policy) => {
     const { result } = await Effect.runPromise(simulate({ policy }))
@@ -753,7 +767,7 @@ test.each([
   if (scenario === 'canceled') expect(result.orders).toHaveLength(1)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s keeps a candidate-local gap out of allocations and records it without invalidating the session',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, missingCandidate: true }))
@@ -790,7 +804,7 @@ test('missing input leaves the same minute window available for a later causal p
   expect(result.simulatedOpportunityAccounting?.accountedPollCount).toBe(2400)
 })
 
-test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s reports evidenced exclusions in decisions and opportunity counters',
   async (policy) => {
     const { result, data } = await Effect.runPromise(simulate({ policy, exclude: true }))
@@ -811,7 +825,7 @@ test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean])(
   },
 )
 
-test.each([RidgeControlPolicy.Ridge, RidgeControlPolicy.TrainingMean])(
+test.each([ControlPolicy.Ridge, ControlPolicy.TrainingMean] as const)(
   '%s requires the original complete extraction pins after row projection',
   async (policy) => {
     const data = await Effect.runPromise(fixture())
@@ -865,7 +879,7 @@ test('the constant validates source and content without depending on Ridge norma
   const data = await Effect.runPromise(fixture())
   const { artifactHash: _, ...payload } = data.input.artifact
   const changed = { ...payload, scales: [Number.MIN_VALUE, 0, 0, 0, 0, 0, 0], coefficients: [1, 0, 0, 0, 0, 0, 0] }
-  const artifact = { ...changed, artifactHash: hash(changed) }
+  const artifact = { ...changed, artifactHash: Result.getOrThrow(canonicalHashV1Result(changed)) }
   const bound = Result.getOrThrow(
     prepareBoundRidge(
       {
@@ -877,8 +891,8 @@ test('the constant validates source and content without depending on Ridge norma
     ),
   )
   const cursor = replaySixBarFixture(data.captured, firstDecisionMs)
-  expect(Result.isFailure(selectBoundRidge(cursor, data.query, bound, RidgeControlPolicy.Ridge))).toBeTrue()
-  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, bound, RidgeControlPolicy.TrainingMean))
+  expect(Result.isFailure(selectBoundRidge(cursor, data.query, bound, ControlPolicy.Ridge))).toBeTrue()
+  const baseline = Result.getOrThrow(selectBoundRidge(cursor, data.query, bound, ControlPolicy.TrainingMean))
   expect(baseline.status).toBe('AVAILABLE')
   if (baseline.status !== 'AVAILABLE') throw new Error('Expected available constant scores')
   expect(baseline.evidence.scores).toEqual(

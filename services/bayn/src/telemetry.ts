@@ -3,6 +3,7 @@ import { Cause, Clock, Config, Context, Effect, Exit, Layer, Logger, Metric, Opt
 import { OtlpMetrics, OtlpSerialization, OtlpTracer } from 'effect/observability'
 import { HttpClient, type HttpClientError } from 'effect/http'
 import { operationCurrentTimeMillis } from './operation-timeout'
+import { embeddedBuildMetadata } from './build'
 
 export type OtlpTraceEndpoint =
   | { readonly _tag: 'Disabled' }
@@ -211,7 +212,10 @@ const optionalText = (name: string) =>
   )
 
 const telemetryEnvironment = Config.all({
-  sourceRevision: optionalText('BAYN_CODE_REVISION'),
+  sourceRevision:
+    embeddedBuildMetadata === undefined
+      ? optionalText('BAYN_CODE_REVISION')
+      : Config.succeed(embeddedBuildMetadata.sourceRevision),
   endpoint: optionalText('OTEL_EXPORTER_OTLP_TRACES_ENDPOINT'),
   metricsEndpoint: optionalText('OTEL_EXPORTER_OTLP_METRICS_ENDPOINT'),
   environment: optionalText('NODE_ENV'),

@@ -215,6 +215,8 @@ export interface ForwardPerformancePostgresEvidence {
   readonly ledgerTransactions: readonly AccountingTransaction[]
   readonly cashReportingPrecisionKnown: boolean
   readonly brokerFeeAccrualRecords: readonly (typeof import('../../db/fee-accruals').StoredAccrual.Type)[]
+  readonly cashSettlementRecords: readonly import('../../accounting/cash-settlement').StoredCashSettlement[]
+  readonly unaccountedCashSettlementCount: number
   readonly brokerFeeRecords?: readonly import('../../accounting/broker-fees').StoredBrokerFee[]
   readonly generationBrokerFeeIds?: readonly string[]
   readonly ambiguousBrokerFeeCount?: number

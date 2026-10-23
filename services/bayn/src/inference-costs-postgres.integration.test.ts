@@ -86,6 +86,33 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     expect(JSON.stringify(result)).not.toContain('fixture-account')
   })
 
+  test('retains and orders a wide claimed session without spilling its evidence payloads to disk', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        yield* sql`INSERT INTO jev_evaluation_requests
+          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash},
+            jsonb_build_object('retained',repeat(md5(n::text),32))
+          FROM generate_series(512,1,-1) AS n`
+        yield* sql`SET work_mem='64kB'`
+        yield* sql`SET temp_file_limit='0'`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01').pipe(
+          Effect.ensuring(sql`RESET work_mem`.pipe(Effect.andThen(sql`RESET temp_file_limit`), Effect.orDie)),
+        )
+      }),
+    )
+    expect(result.evidence.requests).toHaveLength(512)
+    expect(result.evidence.requests.map((row) => row.requestId)).toEqual(
+      result.evidence.requests.map((row) => row.requestId).toSorted(),
+    )
+    expect(new Set(result.evidence.requests.map((row) => row.requestId)).size).toBe(512)
+    expect(result.evidence.requests.every((row) => row.receipt === null && row.resolution === null)).toBe(true)
+    for (const row of result.evidence.requests) {
+      expect(row.request).toEqual({ retained: row.requestId.slice(0, 32).repeat(32) })
+    }
+  })
+
   test('an unreceipted claim yields incomplete costs, not free inference', async () => {
     const result = await runtime.runPromise(
       Effect.gen(function* () {
@@ -99,6 +126,50 @@ describePostgres('read-only inference cost PostgreSQL scope', () => {
     )
     expect(report.unknownUsageCount).toBe(1)
     expect(report.estimatedTotalCostMicros).toBeNull()
+  })
+
+  test('retains a session larger than one PostgreSQL protocol message', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        yield* sql`INSERT INTO jev_evaluation_requests
+          SELECT md5(n::text) || md5(n::text), ${request.cycleId}, ${request.authorityGenerationHash},
+            jsonb_build_object('retained',repeat(md5(n::text),512))
+          FROM generate_series(512,1,-1) AS n`
+        yield* sql`INSERT INTO jev_evaluation_receipts
+          SELECT request_id, jsonb_build_object('retainedReceipt',repeat(left(request_id,32),256))
+          FROM jev_evaluation_requests`
+        yield* sql`INSERT INTO jev_evaluation_resolutions
+          SELECT request_id, jsonb_build_object('retainedResolution',repeat(left(request_id,32),384))
+          FROM jev_evaluation_requests`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+      }),
+    )
+    expect(result.evidence.requests).toHaveLength(512)
+    expect(result.evidence.requests.map((row) => row.requestId)).toEqual(
+      result.evidence.requests.map((row) => row.requestId).toSorted(),
+    )
+    expect(new TextEncoder().encode(JSON.stringify(result.evidence)).byteLength).toBeGreaterThan(16_777_216)
+    for (const row of result.evidence.requests) {
+      const value = row.requestId.slice(0, 32)
+      expect(row.request).toEqual({ retained: value.repeat(512) })
+      expect(row.receipt).toEqual({ retainedReceipt: value.repeat(256) })
+      expect(row.resolution).toEqual({ retainedResolution: value.repeat(384) })
+    }
+  }, 30_000)
+
+  test('retains the snapshot time when the account session has no requests or quotes', async () => {
+    const result = await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* sql`DELETE FROM jev_evaluation_requests`
+        return yield* readInferenceExpenseSnapshot(sql, 'fixture-account', '1970-01-01')
+      }),
+    )
+    expect(result.evidence.requests).toEqual([])
+    expect(result.quotes).toEqual([])
+    expect(Number.isFinite(Date.parse(result.evidence.asOf))).toBe(true)
   })
 
   test('inherits the report snapshot while a separate connection commits a request deletion', async () => {

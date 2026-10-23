@@ -84,11 +84,11 @@ statistical registration or economic qualification. The following offline comman
 
 ## Causal execution training command
 
-`bayn-ridge-training` is bundled in the Bayn image and is also callable from
-`services/bayn/src/ridge-training-command.ts`. It does not construct a model provider, broker client or live journal.
+`bayn-ridge-training` is an offline command built by `bun run --filter @proompteng/bayn build:research`.
+Run it with `bun run --filter @proompteng/bayn ridge:training`. It does not construct a model provider, broker client or live journal.
 
 ```sh
-bayn-ridge-training \
+node services/bayn/dist/research/ridge-training-command.js \
   --input training-input.json --input-sha256 <raw-input-byte-sha256> \
   --arrivals original-arrivals.ndjson.gz \
   --source-receipt original-replay-receipt.json --source-receipt-sha256 <raw-receipt-byte-sha256> \
@@ -96,7 +96,7 @@ bayn-ridge-training \
 ```
 
 The strict `bayn.ridge-training-input.v1` input contains `sampling: INDEPENDENT_SERIAL_FIXED_CANDIDATES`,
-the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v3` `backtest`, full raw research `calendar`,
+the exact full protocol `candidateSymbols`, an existing `bayn.backtest.v5` `backtest`, full raw research `calendar`,
 `expectedCalendarHash`, chronological `sessions`, `fitCutoffAt`, fixed `allocationBudgetMicros`,
 `decisionLatencyMs`, and `turnoverPolicy`. Each session contains its date, UTC open/close and first decision,
 and a `TRAINING`, `VALIDATION` or `HOLDOUT` partition. Declared sessions must be a contiguous slice of the

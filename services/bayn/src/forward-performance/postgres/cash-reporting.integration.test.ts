@@ -7,12 +7,102 @@ import { verifyFeeAccrualRecord } from '../../db/fee-accruals'
 import { PostgresClientLive } from '../../db/postgres-client'
 import { hashLedgerPlanResult } from '../../ledger-plan'
 import { baynTestPostgresUrl } from '../../test-environment.test-support'
-import { readCashReportingOffsets } from './cash-reporting'
+import { readCashReportingOffsets, readUnaccountedCashSettlementCount } from './cash-reporting'
 
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
 const hash = (char: string) => char.repeat(64)
 
 describePostgres('cash reporting residuals at historical cuts', () => {
+  test('reads one account precision cut once while retaining every missing settlement', async () => {
+    if (baynTestPostgresUrl === undefined) throw new Error('Missing local PostgreSQL test endpoint')
+    const parsed = new URL(baynTestPostgresUrl)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
+      throw new Error('Cash reporting integration requires an isolated local _test database')
+    const runtime = ManagedRuntime.make(
+      PostgresClientLive(
+        {
+          operationTimeoutMs: 5000,
+          postgres: { url: Redacted.make(baynTestPostgresUrl), tls: false, caPath: '/unused' },
+        },
+        { maxConnections: 1, applicationName: 'bayn-cash-count-test' },
+      ).pipe(Layer.provideMerge(NodeServices.layer)),
+    )
+    try {
+      const result = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE accounting_transactions (
+                transaction_id text,account_id text,occurred_at timestamptz,cash_delta_micros numeric
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE broker_cash_settlements (
+                transaction_id text,posted_at timestamptz
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE account_cash_reporting (
+                account_event_id text PRIMARY KEY,quantum_micros numeric
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE account_snapshots (event_id text PRIMARY KEY,account_id text) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE broker_events (
+                event_id text PRIMARY KEY,account_id text,event_kind text,
+                observed_at timestamptz,source_sequence numeric
+              ) ON COMMIT DROP`
+              yield* sql`CREATE INDEX cash_count_account_clock ON broker_events
+                (account_id,observed_at DESC,source_sequence DESC,event_id DESC) WHERE event_kind='ACCOUNT'`
+              yield* sql`INSERT INTO broker_events
+                SELECT 'event-' || n,'account','ACCOUNT',
+                  '2026-10-18T13:00:00Z'::timestamptz+n*interval '1 second',n
+                FROM generate_series(1,512) n`
+              yield* sql`INSERT INTO account_snapshots SELECT event_id,'account' FROM broker_events`
+              yield* sql`INSERT INTO account_cash_reporting SELECT event_id,10000 FROM broker_events`
+              yield* sql`INSERT INTO broker_events VALUES
+                ('foreign','foreign','ACCOUNT','2026-10-18T13:59:59Z',1),
+                ('future','account','ACCOUNT','2026-10-18T14:01:00Z',1)`
+              yield* sql`INSERT INTO account_snapshots VALUES ('foreign','foreign'),('future','account')`
+              yield* sql`INSERT INTO account_cash_reporting VALUES ('foreign',1),('future',1)`
+              yield* sql`UPDATE broker_events SET observed_at='2026-10-18T13:08:32Z' WHERE event_id='event-511'`
+              yield* sql`UPDATE account_cash_reporting SET quantum_micros=1 WHERE account_event_id='event-511'`
+              yield* sql`INSERT INTO broker_events
+                SELECT 'order-' || n,'account','ORDER','2026-10-18T13:59:59Z',1000+n
+                FROM generate_series(1,8192) n`
+              yield* sql`INSERT INTO accounting_transactions
+                SELECT 'tx-' || n,'account','2026-10-18T13:20:00Z',10001
+                FROM generate_series(1,512) n`
+              yield* sql`UPDATE accounting_transactions SET cash_delta_micros=20000 WHERE transaction_id='tx-512'`
+              yield* sql`INSERT INTO accounting_transactions VALUES
+                ('future-tx','account','2026-10-18T14:01:00Z',10001),
+                ('foreign-tx','foreign','2026-10-18T13:20:00Z',10001)`
+              yield* sql`INSERT INTO broker_cash_settlements VALUES
+                ('tx-1','2026-10-18T13:59:00Z'),('tx-2','2026-10-18T14:00:01Z'),('tx-3',NULL)`
+              yield* sql`ANALYZE accounting_transactions`
+              yield* sql`ANALYZE account_cash_reporting`
+              yield* sql`ANALYZE account_snapshots`
+              yield* sql`ANALYZE broker_events`
+              const readCount = sql<{ count: string }>`SELECT (
+                pg_stat_get_xact_tuples_returned('account_cash_reporting'::regclass) +
+                pg_stat_get_xact_tuples_fetched('account_cash_reporting'::regclass)
+              )::text AS count`
+              const before = yield* readCount
+              const count = yield* readUnaccountedCashSettlementCount(sql, 'account', new Date('2026-10-18T14:00:00Z'))
+              const after = yield* readCount
+              const foreign = yield* readUnaccountedCashSettlementCount(
+                sql,
+                'foreign',
+                new Date('2026-10-18T14:00:00Z'),
+              )
+              return { count, foreign, reportingRowsVisited: Number(after[0]?.count) - Number(before[0]?.count) }
+            }),
+          )
+        }),
+      )
+      expect(result.count).toBe(510)
+      expect(result.foreign).toBe(0)
+      expect(result.reportingRowsVisited).toBeLessThan(16)
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
   test('uses only settlements and corrections posted by each cut and preserves the native cohort calculation', async () => {
     if (baynTestPostgresUrl === undefined) throw new Error('Missing local PostgreSQL test endpoint')
     const parsed = new URL(baynTestPostgresUrl)

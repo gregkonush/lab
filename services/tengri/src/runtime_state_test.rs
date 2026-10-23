@@ -5,13 +5,40 @@ use sha2::{Digest, Sha256};
 use tonic::Code;
 use uuid::Uuid;
 
-use crate::{
-    auth::{Authenticator, Principal, signed_fixture_request},
-    control::Database,
-    grpc::proto::GetAgentRequest,
-    ofz::proto::Action,
-    tickets::TicketStore,
-};
+use crate::{auth::Principal, control::Database, ofz::proto::Action, tickets::TicketStore};
+
+impl Database {
+    async fn consume_nonce(&self, key: &[u8], expires_at_ms: i64) -> Result<(), tonic::Status> {
+        let mut client = self.connection().await?;
+        let tx = client
+            .transaction()
+            .await
+            .map_err(crate::control::sql_error)?;
+        let consumed: bool = tx
+            .query_one(
+                "SELECT tengri.consume_nonce($1,$2)",
+                &[&key, &expires_at_ms],
+            )
+            .await
+            .map_err(crate::control::sql_error)?
+            .get(0);
+        if !consumed {
+            return Err(tonic::Status::unauthenticated("request nonce already used"));
+        }
+        tx.commit().await.map_err(crate::control::sql_error)?;
+        let now: i64 = client
+            .query_one("SELECT tengri.now_ms()", &[])
+            .await
+            .map_err(crate::control::sql_error)?
+            .get(0);
+        if expires_at_ms <= now {
+            return Err(tonic::Status::unauthenticated(
+                "request nonce deadline expired",
+            ));
+        }
+        Ok(())
+    }
+}
 
 async fn fixture() -> (Arc<Database>, TicketStore, TicketStore) {
     let first = Arc::new(Database::shared_fixture().await);
@@ -30,6 +57,91 @@ async fn fixture() -> (Arc<Database>, TicketStore, TicketStore) {
 
 fn principal(action: Action) -> Principal {
     Principal::fixture(&"a".repeat(64), &Uuid::new_v4().to_string(), action)
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_independent_capabilities_do_not_wait_for_another_commit() {
+    let (database, a, _) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    let mut held = database.connection().await.unwrap();
+    let tx = held.transaction().await.unwrap();
+    // Reproduce the lock retained by an in-flight ticket transaction in the failing release.
+    tx.batch_execute("SELECT pg_advisory_xact_lock(726635522922)")
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(500),
+        a.issue_terminal(&owner, "agent", "terminal"),
+    )
+    .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "an independent Terminal launch must not wait for another capability commit: {outcome:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_expiry_cleanup_skips_uncommitted_capabilities() {
+    let (database, a, b) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    a.issue_terminal(&owner, "agent", "old").await.unwrap();
+    let mut held = database.connection().await.unwrap();
+    held.batch_execute("UPDATE tengri.tickets SET expires_at_ms=tengri.now_ms()-1")
+        .await
+        .unwrap();
+    let tx = held.transaction().await.unwrap();
+    tx.batch_execute("DELETE FROM tengri.tickets")
+        .await
+        .unwrap();
+    let outcome = tokio::time::timeout(
+        Duration::from_millis(500),
+        b.issue_terminal(&owner, "agent", "new"),
+    )
+    .await;
+    tx.rollback().await.unwrap();
+    assert!(
+        matches!(outcome, Ok(Ok(_))),
+        "expiry cleanup must skip a row waiting for another transaction's commit: {outcome:?}"
+    );
+}
+
+#[tokio::test]
+#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
+async fn runtime_shared_state_parallel_workspace_issuance_cannot_exceed_its_quota() {
+    let (_, a, b) = fixture().await;
+    let owner = principal(Action::TerminalControl);
+    let issue_batch = || {
+        join_all((0..16).map(|index| {
+            let owner = &owner;
+            let store = if index % 2 == 0 { &a } else { &b };
+            async move {
+                store
+                    .issue_terminal(owner, "agent", &index.to_string())
+                    .await
+            }
+        }))
+    };
+    let admitted = issue_batch().await;
+    assert!(
+        admitted.iter().all(Result::is_ok),
+        "initial concurrent launches failed: {:?}",
+        admitted
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .collect::<Vec<_>>()
+    );
+    let results = issue_batch().await;
+    assert!(results.iter().all(Result::is_err));
+    assert!(
+        results
+            .iter()
+            .filter_map(|result| result.as_ref().err())
+            .all(|error| error.code() == Code::ResourceExhausted)
+    );
+    assert_eq!(a.stats().await.unwrap().pending, 16);
 }
 
 #[tokio::test]
@@ -81,8 +193,10 @@ async fn runtime_shared_state_independent_nonces_do_not_share_a_transaction_lock
     let (database, _, _) = fixture().await;
     let mut held = database.connection().await.unwrap();
     let tx = held.transaction().await.unwrap();
-    let first = vec![0_u8; 32];
-    let second = vec![1_u8; 32];
+    let mut first = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    let mut second = Sha256::digest(Uuid::new_v4().as_bytes()).to_vec();
+    first[0] = 0;
+    second[0] = 64;
     assert!(
         tx.query_one(
             "SELECT tengri.consume_nonce($1,tengri.now_ms()+5000)",
@@ -240,7 +354,7 @@ async fn runtime_shared_state_one_use_redemption_is_atomic_across_replicas() {
         .await
         .unwrap();
     let mut connections = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..database.pool.status().max_size {
         connections.push(database.connection().await.unwrap());
     }
     let started = tokio::time::Instant::now();
@@ -543,61 +657,6 @@ async fn runtime_shared_state_capacity_expiry_and_workspace_cleanup_are_global()
 
 #[tokio::test]
 #[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
-async fn runtime_shared_state_signed_nonce_is_shared_and_payload_bound() {
-    let first = Arc::new(Database::shared_fixture().await);
-    let second = Arc::new(Database::shared_fixture().await);
-    let a = Authenticator::fixture(first, "https://proompteng.ai".into());
-    let b = Authenticator::fixture(second, "https://proompteng.ai".into());
-    let owner = principal(Action::WorkspaceMetadataRead);
-    let path = "/proompteng.runtime.v1.MicroVMControlPlane/GetAgent";
-    let request = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    let mut changed = tonic::Request::new(GetAgentRequest {
-        id: "another".into(),
-    });
-    *changed.metadata_mut() = request.metadata().clone();
-    assert_eq!(
-        a.authorize(&changed, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-    assert_eq!(
-        a.authorize(&request, path)
-            .await
-            .unwrap()
-            .context
-            .session_id,
-        owner.context.session_id
-    );
-    assert_eq!(
-        b.authorize(&request, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-    let fresh = signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    assert!(b.authorize(&fresh, path).await.is_ok());
-    for deadline in [
-        crate::ofz::now_ms().unwrap() - 1,
-        crate::ofz::now_ms().unwrap() + 5500,
-    ] {
-        let mut invalid = owner.clone();
-        invalid.context.deadline_unix_ms = deadline;
-        let request =
-            signed_fixture_request(GetAgentRequest { id: "agent".into() }, &invalid, path);
-        assert_eq!(
-            a.authorize(&request, path).await.unwrap_err().code(),
-            Code::Unauthenticated
-        );
-    }
-    let mut duplicated =
-        signed_fixture_request(GetAgentRequest { id: "agent".into() }, &owner, path);
-    let nonce = duplicated.metadata().get("x-tengri-nonce").unwrap().clone();
-    duplicated.metadata_mut().append("x-tengri-nonce", nonce);
-    assert_eq!(
-        a.authorize(&duplicated, path).await.unwrap_err().code(),
-        Code::Unauthenticated
-    );
-}
-
-#[tokio::test]
-#[ignore = "requires disposable shared TLS PostgreSQL from test-runtime.sh"]
 async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions() {
     let a = Database::shared_fixture().await;
     let b = Database::shared_fixture().await;
@@ -612,6 +671,18 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     );
     let first = left.or(right).unwrap();
     assert!(a.require_fence(first).await.is_ok());
+    let remaining: i64 = a
+        .connection()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT expires_at_ms-tengri.now_ms() FROM tengri.runtime_leader WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!((55_000..=60_000).contains(&remaining));
     let wrong = crate::control::Fence {
         owner: Uuid::new_v4(),
         ..first
@@ -629,6 +700,19 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
     assert!(!a.renew(first).await.unwrap());
     a.release(first).await.unwrap();
     assert!(b.require_fence(second).await.is_ok());
+    assert!(b.renew(second).await.unwrap());
+    let remaining: i64 = b
+        .connection()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT expires_at_ms-tengri.now_ms() FROM tengri.runtime_leader WHERE singleton",
+            &[],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert!((55_000..=60_000).contains(&remaining));
     let dsn = std::env::var("TENGRI_DATABASE_DSN")
         .unwrap()
         .replace("user=tengri_controller", "user=tengri_supervisor");
@@ -672,7 +756,7 @@ async fn runtime_shared_state_leadership_cas_expiry_and_supervisor_permissions()
             "42501"
         );
     }
-    tokio::time::sleep(Duration::from_millis(15_100)).await;
+    tokio::time::sleep(crate::leadership::LEASE_DURATION + Duration::from_millis(100)).await;
     assert_eq!(
         supervisor.require_fence(second).await.unwrap_err().code(),
         Code::PermissionDenied

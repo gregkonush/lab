@@ -1,6 +1,6 @@
 import { expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { streamingFixture, streamingFixtureFromRaw } from '../../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../../strategy/intraday-momentum/test-support'
 import { featureBarContentHash } from '../features/contract'
@@ -76,7 +76,7 @@ test('identical late republications preserve timeliness and exact feature lineag
   const replacement = {
     ...feature.value,
     material,
-    featureId: canonicalHashV1(material),
+    featureId: Result.getOrThrow(canonicalHashV1Result(material)),
     computedAtMs: Date.parse(query.observedAt) + 7,
   }
   projection = incorporateMarketRecord(
@@ -205,7 +205,7 @@ test('identical late republications preserve timeliness and exact feature lineag
       value: JSON.stringify({
         ...replacement,
         material: changedMaterial,
-        featureId: canonicalHashV1(changedMaterial),
+        featureId: Result.getOrThrow(canonicalHashV1Result(changedMaterial)),
         computedAtMs: changedAt,
       }),
     },

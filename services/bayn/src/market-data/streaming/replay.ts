@@ -139,6 +139,10 @@ export const reproduceStreamingSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
     const reproduced = yield* constructStreamingSnapshot(
       { projection, bootstrap: evidence.bootstrap, positions: evidence.positions },
@@ -263,18 +267,9 @@ export const reproduceSimulatedSnapshot = (
       sequence: _sequence,
       ...source
     } = evidence
-    if (evidence.technicalFeatureTopic !== evidence.technical?.topic)
+    const universe = evidence.marketSources.find((source) => source.universeId === manifest.universeId)
+    if (universe === undefined || universe.topics.technicalFeatures !== evidence.technical?.topic)
       return yield* Result.fail(fail('Technical source differs from the simulated input cut'))
-    const universe: StreamingUniverse = {
-      universeId: manifest.universeId,
-      universeSymbolHash: manifest.universeSymbolHash,
-      symbols: manifest.universe,
-      topics: {
-        ...manifest.sourceTopics,
-        features: evidence.featureTopic,
-        ...(evidence.technicalFeatureTopic === undefined ? {} : { technicalFeatures: evidence.technicalFeatureTopic }),
-      },
-    }
     const bounds = new Map(
       evidence.positions.map((position) => [
         topicPartitionKey(position.topic, position.partition),
@@ -327,13 +322,17 @@ export const reproduceSimulatedSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
     }
 
     const reproduced = yield* constructSimulatedSnapshot(
       {
         runId: evidence.runId,
         source,
-        universe,
+        marketSources: evidence.marketSources,
         projection: {
           ...projection,
           offsets: new Map(

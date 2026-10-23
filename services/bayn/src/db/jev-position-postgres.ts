@@ -1,3 +1,4 @@
+import { JevPositionExitPolicySchema } from '../jev/exit-policy'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
 
@@ -40,7 +41,8 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
       WHERE decision.cycle_id = ${cycleId} AND decision.decision_hash = ${portfolio.entryDecisionHash}
         AND cycle.strategy_name = 'jev' AND cycle.account_id = ${state.account.accountId}
         AND decision.document #>> '{bindings,accountId}' = cycle.account_id
-        AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v1'
+        AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
+        AND decision.document #> '{strategyDecision,exitPolicy}' = ${JSON.stringify(portfolio.exitPolicy)}::jsonb
         AND NOT EXISTS (
           SELECT 1 FROM intents AS intent WHERE intent.cycle_id = ${cycleId} AND intent.side = ${OrderSide.Buy}
             AND (intent.account_id <> cycle.account_id OR intent.strategy_name <> 'jev'
@@ -55,6 +57,17 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     ) = ARRAY(SELECT jsonb_array_elements_text(${JSON.stringify([...portfolio.entryIntentIds].sort())}::jsonb)) AS matches
   `,
     )
+    const protection = yield* readProtectionEvidence(sql, cycleId, portfolio.entryDecisionHash)
+    if (
+      JSON.stringify(protection.protectionIntentIds) !== JSON.stringify(portfolio.protectionIntentIds) ||
+      protection.exitRequestedAt !== portfolio.exitRequestedAt ||
+      JSON.stringify(protection.protectionDisposals) !== JSON.stringify(portfolio.protectionDisposals)
+    )
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-position',
+        message: 'Protection evidence differs from its durable entry binding',
+      })
     const debit = yield* readEntryInventoryDebit(
       sql,
       portfolio.brokerState.account.accountId,
@@ -116,6 +129,53 @@ const readEntryInventoryDebit = (
     return debit
   })
 
+const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDecisionHash: string) =>
+  Effect.gen(function* () {
+    const rows = yield* Schema.decodeUnknownEffect(
+      Schema.Array(Schema.Struct({ intentId: Sha256Schema })),
+      strictParseOptions,
+    )(
+      yield* sql`
+    SELECT intent_id AS "intentId" FROM intents WHERE cycle_id = ${cycleId} AND protection IS NOT NULL
+      AND (protection ->> '_tag' = 'Bracket' OR protection ->> 'entryDecisionHash' = ${entryDecisionHash})
+    ORDER BY intent_id COLLATE "C"
+  `,
+    )
+    const [latch] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([Schema.Struct({ exitRequestedAt: Schema.NullOr(Schema.String) })]),
+      strictParseOptions,
+    )(
+      yield* sql`
+    SELECT to_char(min(at) AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "exitRequestedAt" FROM (
+      SELECT c.requested_at AS at FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+        WHERE i.cycle_id = ${cycleId}
+      UNION ALL
+      SELECT i.updated_at FROM intents i WHERE i.cycle_id = ${cycleId} AND i.protection ->> '_tag' IN ('Oco','StopLimit')
+        AND i.state = 'TERMINAL' AND i.terminal_outcome = 'REJECTED'
+      UNION ALL
+      SELECT t.occurred_at FROM accounting_transactions t JOIN intents i USING (intent_id)
+        JOIN accounting_receipts r USING (broker_event_id)
+        WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL AND t.side = 'SELL'
+    ) requests
+  `,
+    )
+    const [disposals] = yield* Schema.decodeUnknownEffect(
+      Schema.Tuple([JevInventoryDebitSchema]),
+      strictParseOptions,
+    )(
+      yield* sql`
+    SELECT COALESCE(sum(-t.quantity_delta_atoms),0)::text AS "quantityAtoms", COALESCE(sum(-t.cost_basis_delta_micros),0)::text AS "costBasisMicros"
+    FROM accounting_transactions t JOIN accounting_receipts receipt ON receipt.broker_event_id = t.broker_event_id AND receipt.intent_id = t.intent_id JOIN intents i ON i.intent_id = t.intent_id
+    WHERE i.cycle_id = ${cycleId} AND i.protection IS NOT NULL AND t.side = 'SELL'
+  `,
+    )
+    return {
+      protectionIntentIds: rows.map((row) => row.intentId),
+      exitRequestedAt: latch.exitRequestedAt,
+      protectionDisposals: disposals,
+    }
+  })
+
 export const makeJevPositionStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
   return {
@@ -149,11 +209,23 @@ export const makeJevPositionStore = Effect.gen(function* () {
         ORDER BY event.occurred_at, fill.fill_id COLLATE "C"
       `,
         )
+        const [entry] = yield* Schema.decodeUnknownEffect(
+          Schema.Tuple([Schema.Struct({ exitPolicy: JevPositionExitPolicySchema })]),
+          strictParseOptions,
+        )(
+          yield* sql`
+          SELECT document #> '{strategyDecision,exitPolicy}' AS "exitPolicy"
+          FROM autonomous_cycle_shadow_decisions
+          WHERE cycle_id = ${cycleId} AND decision_hash = ${entryDecisionHash}
+        `,
+        )
         const portfolio = yield* Effect.fromResult(
           decodeJevPortfolio({
             purpose: JevPurpose.Manage,
             brokerState,
             entryDecisionHash,
+            ...(yield* readProtectionEvidence(sql, cycleId, entryDecisionHash)),
+            exitPolicy: entry.exitPolicy,
             entryIntentIds: intents.map(({ intent_id }) => intent_id),
             entryFills: rows.map(({ fill }) => fill),
             entryInventoryDebit: yield* readEntryInventoryDebit(

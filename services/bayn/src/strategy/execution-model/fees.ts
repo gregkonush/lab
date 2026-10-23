@@ -5,7 +5,6 @@ import type { ExecutionModel } from '../../execution-model-contract'
 import { ceilDiv, ensureUnsigned, fail, scaledNumber, type ExecutionResult } from './fixed-point'
 import { quantityScale } from '../../quantity'
 import { BPS, MICROS } from './model'
-import { Pipeable } from '../../pipeable'
 
 export interface FeeInput {
   readonly symbol: string
@@ -63,7 +62,7 @@ export const receivedCryptoFee = (fill: FeeInput, multiplier: bigint) => {
   return { quantityAtoms, valueMicros, cashMicros: 0n }
 }
 
-const calculateSessionFeesDataFirst = (
+export const calculateSessionFees = (
   fills: readonly FeeInput[],
   model: ExecutionModel,
   costMultiplierMicros: bigint,
@@ -125,5 +124,3 @@ const calculateSessionFeesDataFirst = (
     }),
   )
 }
-
-export const calculateSessionFees = Pipeable.dual(3, calculateSessionFeesDataFirst)

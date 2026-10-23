@@ -1,3 +1,7 @@
+import { JevEntrySetup } from '../jev/trade-plan-choices'
+import { momentumControlCandidates } from './momentum-control'
+import { instrumentMarket } from '../instruments'
+import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { priceNumberToMicros } from '../strategy/execution-model/fixed-point'
 import { quantityFromNumber } from '../quantity'
@@ -6,7 +10,7 @@ import { jevMarketForSymbol, jevMarketForFeed, jevBenchmarkSymbol } from '../jev
 import { observationSession, isContinuousMarket } from '../market-hours'
 import { Data, Effect, Result, Schema } from 'effect'
 
-import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { OrderSide, OrderType } from '../execution/contracts'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { canonicalHashV1Result } from '../hash'
 import { decideJevEntry } from '../jev/decision'
@@ -21,16 +25,12 @@ import {
 import { JevOutcome } from '../jev/evidence'
 import { JevObservationSchema } from '../jev/observation-contract'
 import { JevPurpose } from '../jev/portfolio'
-import {
-  jevMomentumEntryCandidates,
-  jevSignalFor,
-  reproduceJevTradingSignalBatchEvidence,
-} from '../jev/trading-signals'
+import { jevBenchmarkSignalFor, jevSignalFor, reproduceJevTradingSignalBatchEvidence } from '../jev/trading-signals'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { observedQuoteAt, type ObservedMarketValue } from '../market-data/streaming/projection'
 import { constructSimulatedSnapshot } from '../market-data/streaming/snapshot'
 import { NonNegativeIntegerSchema, PositiveIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
-import { calculateSessionFees } from '../execution-model'
+import { calculateSessionFees } from '../strategy/execution-model/fees'
 import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
 import { defaultIntradayMomentumProtocolDocument } from '../strategy/intraday-momentum/protocol'
 import { utcInstantFromEpochMillis } from '../time'
@@ -46,7 +46,7 @@ export enum SignalScreenRule {
 }
 
 export const signalStudyDefinition = {
-  schemaVersion: 'bayn.jev-signal-study-definition.v3',
+  schemaVersion: 'bayn.jev-signal-study-definition.v4',
   cryptoFees: cryptoTakerFeeSchedule,
   factorBins: { probabilityEdges: [0, 0.25, 0.5, 0.65, 0.8, 1], setupQuality: 'floor of native score' },
   horizonMs: 15 * 60_000,
@@ -126,14 +126,14 @@ export const prepareSignalStudyBatch = (input: unknown) =>
     for (const candidate of plan.candidates) {
       if (candidate.status === 'EXCLUDED') continue
       const { prices: values } = yield* jevSignalFor(snapshot, candidate.symbol)
-      const { prices: benchmark } = yield* jevSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
+      const { prices: benchmark } = yield* jevBenchmarkSignalFor(snapshot, jevBenchmarkSymbol(candidate.symbol))
       const quote = snapshot.latestQuotes[candidate.symbol]
       if (quote === undefined) return yield* Result.fail(new SignalStudyFailure({ message: 'Missing candidate quote' }))
       const { metrics, excessReturn } = yield* deriveIntradayMomentumSignalMetrics(values, candidate.symbol, benchmark)
       const t = signalStudyDefinition.breakoutThresholds
       const liquid = quote.bidSize > 0 && quote.askSize > 0 && metrics.spreadBps <= t.spreadBps
       const inference = inferences.find((entry) => entry.symbol === candidate.symbol)?.inference
-      const answer = inference?.response.answers['action']
+      const answer = inference?.response.answers['setup']
       const retained = batchResult?.candidates.find((entry) => entry.symbol === candidate.symbol)
       const factors =
         retained?.status === JevCandidateResultStatus.Resolved &&
@@ -153,7 +153,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
                 responseHash: factors.responseHash,
                 answers: factors.response.answers,
               },
-        enterProbability: answer?.type === 'choice' ? (answer.probabilities['enter'] ?? null) : null,
+        setupProbability: answer?.type === 'choice' ? (answer.probabilities[JevEntrySetup.Upward] ?? null) : null,
         breakout:
           liquid &&
           metrics.lookbackReturnBps >= t.lookbackReturnBps &&
@@ -178,7 +178,7 @@ export const prepareSignalStudyBatch = (input: unknown) =>
         [SignalScreenRule.Jev]:
           native !== null && Result.isSuccess(native) ? (native.success.selectedSymbols[0] ?? null) : null,
         [SignalScreenRule.Breakout]: signals.find((entry) => entry.breakout)?.symbol ?? null,
-        [SignalScreenRule.RelativeMomentum]: (yield* jevMomentumEntryCandidates(snapshot))[0]?.symbol ?? null,
+        [SignalScreenRule.RelativeMomentum]: (yield* momentumControlCandidates(snapshot))[0]?.symbol ?? null,
       },
       signals: signals.map(({ excessReturn: _exact, ...signal }) => signal),
     }
@@ -222,8 +222,8 @@ export const summarizeSignalFactorOutcomes = (
         else if (answer.type === 'score') factors.push([name, String(Math.floor(answer.score))])
         else {
           factors.push([name, answer.choice])
-          if (name === 'action' && answer.probabilities['enter'] !== undefined)
-            factors.push(['enterProbability', bin(answer.probabilities['enter'])])
+          if (name === 'setup' && answer.probabilities[JevEntrySetup.Upward] !== undefined)
+            factors.push(['setupProbability', bin(answer.probabilities[JevEntrySetup.Upward])])
         }
       }
     for (const [dimension, value] of [
@@ -265,7 +265,7 @@ export const summarizeSignalFactorOutcomes = (
 }
 
 export const studyOrder = (input: {
-  readonly orderType: OrderType.Limit | OrderType.Market
+  readonly orderType: OrderType.Limit
   readonly symbol: string
   readonly side: OrderSide
   readonly quantityAtoms: bigint
@@ -304,15 +304,9 @@ export const studyOrder = (input: {
       symbol: input.symbol,
       side: input.side,
       orderType: input.orderType,
-      timeInForce:
-        input.orderType === OrderType.Limit
-          ? TimeInForce.ImmediateOrCancel
-          : jevMarketForSymbol(input.symbol).market === 'CRYPTO'
-            ? TimeInForce.GoodUntilCanceled
-            : TimeInForce.Day,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: price,
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
@@ -321,7 +315,7 @@ export const studyOrder = (input: {
       order: {
         side: input.side,
         quantityAtoms: input.quantityAtoms,
-        limitPriceMicros: input.orderType === OrderType.Market ? null : terms.expectedExecutionPriceMicros,
+        limitPriceMicros: terms.expectedExecutionPriceMicros,
       },
       quote: {
         priceMicros: yield* priceNumberToMicros(
@@ -336,10 +330,8 @@ export const studyOrder = (input: {
       executionModel: input.protocol.executionModel,
       assumptions: input.assumptions,
     })
-    if (Result.isFailure(simulated) && simulated.failure.reason === 'insufficient-market-close-liquidity')
-      return { status: 'UNRESOLVED' as const, reason: simulated.failure.reason }
     const outcome = yield* simulated
-    if (outcome.status === 'canceled') return { status: 'CANCELED' as const, reason: outcome.reason }
+    if (outcome.status === 'unfilled') return { status: 'CANCELED' as const, reason: outcome.reason }
     return {
       status: 'FILLED' as const,
       fill: {
@@ -369,10 +361,9 @@ export const studyEntryQuantity = (input: {
       symbol: input.symbol,
       side: OrderSide.Buy,
       orderType: OrderType.Limit,
-      timeInForce: TimeInForce.ImmediateOrCancel,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
       quantityAtoms: 1_000_000_000n,
       referencePriceMicros: yield* priceNumberToMicros(input.referencePrice, 'study.reference', 'UP'),
-      executionModel: input.protocol.executionModel,
       limitSlippageBps: BigInt(signalStudyDefinition.limitSlippageBps),
     })
     const instrument = yield* replayInstrument(input.symbol, input.assumptions.instruments)
@@ -496,7 +487,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       if (ids.has(batch.plan.batchId)) return yield* new SignalStudyFailure({ message: 'Duplicate retained batch' })
       ids.add(batch.plan.batchId)
       if (
-        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v1' ||
+        manifest.schemaVersion !== 'bayn.simulated-market-snapshot.v2' ||
         manifest.streaming.runId !== input.runId ||
         manifest.streaming.sourceManifestHash !== sourceHash
       )
@@ -510,7 +501,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       readonly decidedAt: string
       readonly symbol: string
       readonly selectedBy: readonly SignalScreenRule[]
-      readonly enterProbability: number | null
+      readonly setupProbability: number | null
       readonly factors: FactorEvidence
       readonly outcome: HypothesisOutcome
       readonly fills: readonly EconomicReplayFill[]
@@ -555,7 +546,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
           decidedAt: batch.decidedAt,
           symbol: signal.symbol,
           selectedBy: Object.values(SignalScreenRule).filter((rule) => batch.selected[rule] === signal.symbol),
-          enterProbability: signal.enterProbability,
+          setupProbability: signal.setupProbability,
           factors: signal.factors,
         }
         if (
@@ -624,7 +615,7 @@ export const runSignalStudy = (raw: unknown, arrivalsPath: string, receipt: Back
       }
     })
     const report = {
-      schemaVersion: 'bayn.jev-signal-study.v3',
+      schemaVersion: 'bayn.jev-signal-study.v4',
       definition: signalStudyDefinition,
       definitionHash: yield* Effect.fromResult(canonicalHashV1Result(signalStudyDefinition)),
       inputHash: yield* Effect.fromResult(canonicalHashV1Result(input)),

@@ -9,6 +9,7 @@ import { strictParseOptions } from '../schemas'
 import { reproduceStrategySnapshot } from '../market-data/streaming/replay'
 
 import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { IntradayBenchmarkEvidencePolicy } from '../market-data/intraday/model'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { JevContractError } from './contract'
 import { JevObservationSchema } from './observation-contract'
@@ -75,7 +76,9 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         manifest.feed !== market.feed ||
         manifest.delayClass !== market.delayClass ||
         manifest.maximumQuoteAgeMs !== protocol.maximumQuoteAgeMs ||
-        manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy
+        manifest.candidateEvidencePolicy !== protocol.candidateEvidencePolicy ||
+        manifest.benchmarkEvidencePolicy !==
+          ('benchmarkEvidencePolicy' in market ? market.benchmarkEvidencePolicy : undefined)
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Feed))
       if (
@@ -120,6 +123,20 @@ export const reproduceJevCandidateObservation = (input: unknown) =>
         )
       )
         return yield* Result.fail(invalidObservation(JevObservationCheck.Features))
+      if (manifest.benchmarkEvidencePolicy === IntradayBenchmarkEvidencePolicy.CompletedBars) {
+        if (
+          manifest.benchmarkSymbols?.join('|') !==
+          [...new Set(requestedCandidates.map(jevBenchmarkSymbol))].sort().join('|')
+        )
+          return yield* Result.fail(invalidObservation(JevObservationCheck.Candidates))
+        for (const symbol of new Set(requestedCandidates.map(jevBenchmarkSymbol))) {
+          if (
+            !manifest.streaming.features.some((feature) => feature.value.material.symbol === symbol) ||
+            !snapshot.bars.some((bar) => bar.symbol === symbol && Date.parse(bar.eventAt) === end - 60_000)
+          )
+            return yield* Result.fail(invalidObservation(JevObservationCheck.Features, { requiredBenchmark: symbol }))
+        }
+      }
     }
     return { ...observation, snapshot, contentHash: yield* canonicalHashV1Result(observation) }
   }).pipe(
@@ -152,3 +169,5 @@ export const makeJevObservation = (input: {
     const reproduced = yield* reproduceJevCandidateObservation(payload)
     return { contentHash: reproduced.contentHash, payload }
   })
+
+export type JevObservation = Result.Result.Success<ReturnType<typeof makeJevObservation>>['payload']

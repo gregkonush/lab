@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { JevFailure } from './jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './jev/evidence'
 import { JevResolutionStatus, makeJevResolution } from './jev/resolution'
@@ -65,14 +65,14 @@ export const expenseSourceFixture = (
                   status: JevOutcome.Failed,
                   failure: JevFailure.Response,
                   httpStatus: 429,
-                  responseHash: canonicalHashV1(response),
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                   rejectedResponse: response,
                 }
               : {
                   status: JevOutcome.Received,
                   inference: {
                     requestHash: request.requestHash,
-                    responseHash: canonicalHashV1(response),
+                    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                     startedAt: request.observedAt,
                     completedAt: request.observedAt,
                     response,

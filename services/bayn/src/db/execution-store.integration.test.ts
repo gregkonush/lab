@@ -2,7 +2,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from 'bun:tes
 
 import { NodeServices } from '@effect/platform-node'
 import { PgClient, PgMigrator } from '@effect/sql-pg'
-import { Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
+import { Cause, Effect, Exit, Layer, ManagedRuntime, Redacted, Result, Schema, Tracer } from 'effect'
 import type { Statement } from 'effect/sql/Statement'
 
 import {
@@ -13,7 +13,7 @@ import {
   type PositionSnapshotInput,
 } from '../broker/observations'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
-import type { RuntimeConfig } from '../config'
+import type { RuntimeConfig } from '../config/model'
 import { operationalError, type OperationalError } from '../errors'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import {
@@ -29,7 +29,7 @@ import {
 } from '../execution/contracts'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { executionMandateFailureRestrictionPrefix } from '../execution/mandate'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { Journal, type JournalService } from '../ledger'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { config as fixtureConfig } from '../testing/runtime-fixtures'
@@ -45,18 +45,23 @@ import {
 } from './execution-store'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import cashSettlementMigration from '../../migrations/0112_broker_cash_settlements'
 import { migrationLoader } from './migrations'
 import { prepareFeeAccrual } from '../accounting/fee-accrual'
 import { brokerFeeLedgerPlan } from '../accounting/domain'
 import { hashLedgerPlanResult } from '../ledger-plan'
+import type { LedgerPlan } from '../ledger-plan'
 import { reportedCashMicros } from '../broker/alpaca/cash-reporting'
-import type { FeeActivity } from '../broker/alpaca'
+import { makeAccountingInterpreter } from './execution-store/accounting'
+import { makeBrokerEventInterpreter } from './execution-store/broker-events'
+import type { FeeActivity } from '../broker/alpaca/model'
 import type { Observed } from '../simulation-reconciliation/broker-reconciler-model'
 import { persistStableSnapshot } from '../simulation-reconciliation/broker-persistence'
-import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca'
+import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
 import { verifyBrokerStateVersion, type BrokerSnapshot } from './reconciliation'
 import { retainAccountCashReporting, readOpeningCash } from './account-baseline'
 import { prepareFeeActivities, postBrokerFeePlans } from './broker-fees'
+import { postCashSettlements, prepareCashSettlements, readCashSettlements } from './cash-settlements'
 import { readForwardPerformancePostgres } from '../forward-performance/postgres/read'
 import { makeCycleStore } from '../cycle/store/postgres'
 import { makeCycleExecutionPolicyFromModel } from '../cycle/construction'
@@ -75,7 +80,7 @@ const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : des
 const accountId = 'paper-account-execution-store'
 const observedAt = '2026-08-28T14:31:00.000Z'
 const occurredAt = '2026-08-28T14:30:59.000Z'
-const hash = (value: string): string => canonicalHashV1({ value })
+const hash = (value: string): string => Result.getOrThrow(canonicalHashV1Result({ value }))
 const reconcileSnapshot = (store: ReconciliationStoreShape, snapshot: BrokerSnapshot) =>
   store.reconcile(snapshot.account.accountId, Effect.succeed(snapshot)).pipe(Effect.map((result) => result.persisted))
 const brokerIdentity = Result.getOrThrow(
@@ -156,7 +161,7 @@ const accountEvent = (
     broker: Broker.Alpaca,
     accountId,
     sourceEventId,
-    contentHash: canonicalHashV1({ sourceEventId, account }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceEventId, account })),
     occurredAt,
     observedAt,
     account,
@@ -166,7 +171,11 @@ const accountEvent = (
 const flatAccountEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Account' }> => {
   const event = accountEvent('flat-account-response')
   const account = { ...event.account, equityMicros: event.account.cashMicros }
-  return { ...event, contentHash: canonicalHashV1({ sourceEventId: event.sourceEventId, account }), account }
+  return {
+    ...event,
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceEventId: event.sourceEventId, account })),
+    account,
+  }
 }
 
 const order = () => ({
@@ -191,7 +200,7 @@ const orderEvent = (): Extract<BrokerEventInput, { readonly _tag: 'Order' }> => 
     broker: Broker.Alpaca,
     accountId,
     sourceEventId: 'order-observation-1',
-    contentHash: canonicalHashV1(observedOrder),
+    contentHash: Result.getOrThrow(canonicalHashV1Result(observedOrder)),
     occurredAt,
     observedAt,
     order: observedOrder,
@@ -205,7 +214,8 @@ const positionEvent = (
   marketValueMicros: string,
 ): PositionEventInput => {
   const position = {
-    schemaVersion: 'bayn.paper-position.v1' as const,
+    schemaVersion: 'bayn.position.v2' as const,
+    costBasisMicros: ((BigInt(quantityAtoms) * BigInt('100000000')) / 1_000_000_000n).toString(),
     accountId,
     symbol,
     quantityAtoms,
@@ -220,7 +230,7 @@ const positionEvent = (
     broker: Broker.Alpaca,
     accountId,
     sourceEventId: `position:${sourceHash}:${observedAt}:${symbol}`,
-    contentHash: canonicalHashV1({ sourceHash, position }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash, position })),
     occurredAt: observedAt,
     observedAt,
     position,
@@ -255,7 +265,7 @@ const fillEvent = (id: string, side: OrderSide, quantityAtoms: string, priceMicr
     accountId,
     sourceEventId: id,
     sourceTimestamp: timestamp,
-    contentHash: canonicalHashV1({ fill, timestamp }),
+    contentHash: Result.getOrThrow(canonicalHashV1Result({ fill, timestamp })),
     occurredAt,
     observedAt,
     fill,
@@ -549,7 +559,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             const accountReceipt = yield* events.ingest({
               ...raw,
               sourceEventId: `fee-cut:${at}`,
-              contentHash: canonicalHashV1(account),
+              contentHash: Result.getOrThrow(canonicalHashV1Result(account)),
               occurredAt: at,
               observedAt: at,
               account,
@@ -674,7 +684,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         yield* events.ingest({
           ...opening,
           account: openingAccount,
-          contentHash: canonicalHashV1(openingAccount),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(openingAccount)),
           observedAt: openingAt,
           occurredAt: openingAt,
         })
@@ -789,7 +799,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     })
   }
 
-  test('persists exact broker cost basis beside legacy position history', async () => {
+  test('persists exact broker cost basis and rejects new cost-less position writes', async () => {
     const sourceHash = hash('position-cost-basis-v2')
     const legacy = positionEvent(sourceHash, 'NVDA', '3000000000', '303000000')
     const position = {
@@ -798,7 +808,11 @@ describePostgres('PostgreSQL execution persistence', () => {
       averageEntryPriceMicros: '100333333',
       costBasisMicros: '301000000',
     }
-    const current: PositionEventInput = { ...legacy, position, contentHash: canonicalHashV1({ sourceHash, position }) }
+    const current: PositionEventInput = {
+      ...legacy,
+      position,
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash, position })),
+    }
     const result = await runtime.runPromise(
       Effect.gen(function* () {
         const events = yield* BrokerEventStore
@@ -810,6 +824,19 @@ describePostgres('PostgreSQL execution persistence', () => {
         FROM positions p JOIN broker_events e ON e.event_id = p.event_id
         WHERE p.snapshot_id = ${receipt.snapshotId}
       `
+        for (const schema of ['bayn.paper-position.v1', 'bayn.position.v2']) {
+          const rejected = yield* sql`
+            INSERT INTO positions (event_id, account_id, schema_version, symbol, quantity_atoms,
+              average_entry_price_micros, market_price_micros, market_value_micros,
+              unrealized_pnl_micros, snapshot_id, cost_basis_micros)
+            SELECT ${hash(schema)}, account_id, ${schema}, symbol, quantity_atoms,
+              average_entry_price_micros, market_price_micros, market_value_micros,
+              unrealized_pnl_micros, snapshot_id, NULL
+            FROM positions WHERE snapshot_id = ${receipt.snapshotId}
+          `.pipe(Effect.exit)
+          expect(Exit.isFailure(rejected)).toBe(true)
+          if (Exit.isFailure(rejected)) expect(Cause.pretty(rejected.cause)).toContain('positions_schema_version_check')
+        }
         return { receipt, replay, rows }
       }),
     )
@@ -850,6 +877,125 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.replay).toEqual(result.recovered)
     expect(result.counts).toEqual({ events: 1, transactions: 1, receipts: 1 })
     expect(journalControl.postCount).toBe(3)
+  })
+
+  test.each([
+    { priceMicros: '100004900', rounding: '4900' },
+    { priceMicros: '100005100', rounding: '-4900' },
+  ])(
+    'cash settlement recovers its $rounding posting without rewriting the precise fill',
+    async ({ priceMicros, rounding }) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          const events = yield* BrokerEventStore
+          const accounting = yield* FillAccountingStore
+          const base = fillEvent('rounded-crypto-buy', OrderSide.Buy, '1000000000', priceMicros)
+          const fill = { ...base.fill, symbol: 'BTC/USD', feeMicros: '0' }
+          yield* accounting.account({ ...base, fill, contentHash: Result.getOrThrow(canonicalHashV1Result(fill)) })
+          const original =
+            yield* sql`SELECT transaction_id,content_hash,cash_delta_micros::text AS cash_delta_micros,ledger_plan_hash
+        FROM accounting_transactions`
+          expect(original[0]?.['cash_delta_micros']).toBe((-BigInt(priceMicros)).toString())
+          const account = flatAccountEvent()
+          const receipt = yield* events.ingest(account)
+          const positions = yield* events.ingestPositions(positionSnapshot(hash('rounded-crypto-flat'), []))
+          const valuation = yield* (yield* ValuationStore).value({
+            accountEventId: receipt.eventId,
+            positionSnapshotId: positions.snapshotId,
+          })
+          const snapshot: BrokerSnapshot = {
+            account: account.account,
+            accountEventId: receipt.eventId,
+            cashReportingQuantumMicros: '10000',
+            positions: [],
+            positionsObservedAt: observedAt,
+            positionSnapshotId: positions.snapshotId,
+            orders: [],
+            ordersObservedAt: observedAt,
+            fills: [fill],
+            fees: [],
+            valuation,
+            reconciledAt: observedAt,
+          }
+          yield* retainAccountCashReporting(sql, snapshot)
+          yield* sql.withTransaction(prepareCashSettlements(sql, snapshot, config.tigerBeetle))
+          yield* sql.withTransaction(prepareCashSettlements(sql, snapshot, config.tigerBeetle))
+          const prepared = yield* readCashSettlements(sql, accountId)
+          expect(prepared).toHaveLength(1)
+          expect(prepared[0]).toMatchObject({ rounding_delta_micros: rounding, posted: false })
+          journalControl.failPosts = true
+          const failed = yield* postCashSettlements(sql, journal(journalControl), accountId, config.tigerBeetle).pipe(
+            Effect.flip,
+          )
+          expect(failed).toMatchObject({ failure: 'ledger', cause: { message: 'injected TigerBeetle failure' } })
+          expect(yield* readCashSettlements(sql, accountId)).toEqual(prepared)
+          journalControl.failPosts = false
+          const completedPlans: LedgerPlan[] = []
+          const controlledJournal = {
+            ...journal(journalControl),
+            post: (plan: LedgerPlan) =>
+              journal(journalControl)
+                .post(plan)
+                .pipe(
+                  Effect.tap(() =>
+                    Effect.sync(() => {
+                      completedPlans.push(plan)
+                    }),
+                  ),
+                ),
+          }
+          const interrupted = yield* sql
+            .withTransaction(
+              Effect.gen(function* () {
+                yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+                return yield* Effect.fail('database acknowledgement rolled back after ledger posting')
+              }),
+            )
+            .pipe(Effect.result)
+          expect(Result.isFailure(interrupted)).toBe(true)
+          expect(yield* readCashSettlements(sql, accountId)).toEqual(prepared)
+          const recovered = yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+          const replay = yield* postCashSettlements(sql, controlledJournal, accountId, config.tigerBeetle)
+          expect(replay).toEqual(recovered)
+          expect(recovered.cashDeltaMicros).toBe(rounding)
+          expect(journalControl.postCount).toBe(4)
+          expect(completedPlans).toHaveLength(2)
+          expect(completedPlans[1]).toEqual(completedPlans[0])
+          expect(
+            yield* sql`SELECT transaction_id,content_hash,cash_delta_micros::text AS cash_delta_micros,ledger_plan_hash
+        FROM accounting_transactions`,
+          ).toEqual(original)
+          const immutable = yield* sql
+            .withTransaction(sql`UPDATE broker_cash_settlements SET rounding_delta_micros=1`)
+            .pipe(Effect.result)
+          expect(Result.isFailure(immutable)).toBe(true)
+          const deleted = yield* sql.withTransaction(sql`DELETE FROM broker_cash_settlements`).pipe(Effect.result)
+          expect(Result.isFailure(deleted)).toBe(true)
+          const reposted = yield* sql
+            .withTransaction(sql`UPDATE broker_cash_settlements SET posted_at=clock_timestamp()`)
+            .pipe(Effect.result)
+          expect(Result.isFailure(reposted)).toBe(true)
+        }),
+      )
+    },
+  )
+
+  test('cash settlement keeps a database failure in the query error channel', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const result = yield* sql
+          .withTransaction(
+            Effect.gen(function* () {
+              yield* sql`DROP TABLE broker_cash_settlements`
+              yield* readCashSettlements(sql, accountId)
+            }),
+          )
+          .pipe(Effect.flip)
+        expect(result).toMatchObject({ failure: 'query', cause: { _tag: 'SqlError' } })
+      }),
+    )
   })
 
   test('batches completed broker history while retaining conflicts and incomplete fill recovery', async () => {
@@ -897,6 +1043,65 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(result.conflict).toMatchObject({ operation: 'ingest', failure: 'conflict' })
   })
 
+  test('completed fill verification reads the inventory fee sources once per history', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        const fence = yield* WriterFence
+        const accounting = yield* FillAccountingStore
+        yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
+        const inputs = Array.from({ length: 8 }, (_, index) => {
+          const event = fillEvent(`completed-history-${index}`, OrderSide.Buy, '1000000000', '100000000')
+          const fill = { ...event.fill, symbol: 'SOL/USD', feeMicros: '0' }
+          return { ...event, fill, contentHash: Result.getOrThrow(canonicalHashV1Result(fill)) }
+        })
+        for (const input of inputs) yield* accounting.account(input)
+        const lookups: Statement<Record<string, unknown>>[] = []
+        const monitored = new Proxy(sql, {
+          apply(target, receiver, argumentsList) {
+            const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+            if (statement.compile()[0].includes('AS prior_quantity_atoms')) lookups.push(statement)
+            return statement
+          },
+        })
+        const verifier = makeAccountingInterpreter(
+          monitored,
+          journal(journalControl),
+          config,
+          makeBrokerEventInterpreter(monitored, fence),
+          fence,
+        )
+        yield* verifier.verifyCompleted(inputs)
+        expect(lookups).toHaveLength(1)
+        const lookup = lookups[0]
+        if (lookup === undefined) throw new Error('Completed accounting verification did not issue a query')
+        const [query, parameters] = lookup.compile()
+        const explanation = yield* sql.unsafe(`EXPLAIN (ANALYZE, BUFFERS, FORMAT JSON) ${query}`, parameters)
+        const plans = yield* Schema.decodeUnknownEffect(
+          Schema.Array(Schema.Struct({ 'QUERY PLAN': Schema.Array(Schema.Struct({ Plan: Schema.Unknown })) })),
+        )(explanation)
+        const feeSourceReads = (node: unknown): number => {
+          if (node === null || typeof node !== 'object') return 0
+          const reads =
+            'Relation Name' in node &&
+            node['Relation Name'] === 'broker_fee_accounting' &&
+            'Actual Loops' in node &&
+            typeof node['Actual Loops'] === 'number'
+              ? node['Actual Loops']
+              : 0
+          return (
+            reads +
+            ('Plans' in node && Array.isArray(node.Plans)
+              ? node.Plans.reduce((sum: number, child: unknown) => sum + feeSourceReads(child), 0)
+              : 0)
+          )
+        }
+        expect(feeSourceReads(plans[0]?.['QUERY PLAN'][0]?.Plan)).toBe(1)
+        expect(journalControl.postCount).toBe(inputs.length)
+      }),
+    )
+  })
+
   test('opening cash and fee baselines avoid scanning account history', async () => {
     await runtime.runPromise(
       Effect.gen(function* () {
@@ -927,7 +1132,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               (event_id, schema_version, content_hash, event_kind, broker, account_id, source_event_id,
                 source_sequence, occurred_at, observed_at)
               SELECT md5(n::text) || md5('event-' || n::text), 'bayn.paper-broker-event.v1',
-                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ERROR' ELSE 'ACCOUNT' END,
+                md5(n::text) || md5('content-' || n::text), CASE WHEN n = 0 THEN 'ORDER' ELSE 'ACCOUNT' END,
                 'ALPACA', CASE WHEN n < 8192 THEN ${accountId} ELSE 'foreign-account' END,
                 'history-' || n, n, '2026-08-27T14:30:59.000Z'::timestamptz,
                 CASE WHEN n < 2 OR n >= 8192 THEN '2026-08-29T14:31:00.000Z'::timestamptz
@@ -1012,7 +1217,7 @@ describePostgres('PostgreSQL execution persistence', () => {
   test('coin fees survive a ledger retry and a fractional close without changing cash or replaying inventory', async () => {
     const buyBase = fillEvent('crypto-buy', OrderSide.Buy, '1000000000', '100000000')
     const buyFill = { ...buyBase.fill, symbol: 'SOL/USD', feeMicros: '0' }
-    const buy = { ...buyBase, fill: buyFill, contentHash: canonicalHashV1(buyFill) }
+    const buy = { ...buyBase, fill: buyFill, contentHash: Result.getOrThrow(canonicalHashV1Result(buyFill)) }
     await runtime.runPromise(
       Effect.gen(function* () {
         yield* (yield* BrokerEventStore).ingest(flatAccountEvent())
@@ -1053,7 +1258,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     const secondBuy = {
       ...secondBase,
       fill: secondFill,
-      contentHash: canonicalHashV1(secondFill),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(secondFill)),
       occurredAt: secondBuyAt,
       observedAt: secondBuyAt,
       sourceTimestamp: Result.getOrThrow(sourceTimestamp(secondBuyAt)),
@@ -1064,7 +1269,7 @@ describePostgres('PostgreSQL execution persistence', () => {
     const sell = {
       ...sellBase,
       fill: sellFill,
-      contentHash: canonicalHashV1(sellFill),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(sellFill)),
       occurredAt: sellAt,
       observedAt: sellAt,
       sourceTimestamp: Result.getOrThrow(sourceTimestamp(sellAt)),
@@ -1088,11 +1293,11 @@ describePostgres('PostgreSQL execution persistence', () => {
     expect(await runtime.runPromise(post([]).pipe(Effect.flip))).toMatchObject({ failure: 'invariant' })
   })
 
-  const settlementScenarios = ['crypto', 'regulatory', 'retained', 'partial', 'overreleased'] as const
+  const settlementScenarios = ['crypto', 'cross-date', 'regulatory', 'retained', 'partial', 'overreleased'] as const
   test.each([...settlementScenarios])('crypto fee settlement: %s', async (scenario) => {
     const historical = scenario === 'retained'
     const overreleased = scenario === 'overreleased'
-    const hasRegulatory = scenario !== 'crypto'
+    const hasRegulatory = scenario !== 'crypto' && scenario !== 'cross-date'
     await runtime.runPromise(
       Effect.gen(function* () {
         const sql = yield* PgClient.PgClient
@@ -1103,6 +1308,8 @@ describePostgres('PostgreSQL execution persistence', () => {
             loader: migrationLoader.pipe(Effect.map((rows) => rows.filter(([id]) => id < (overreleased ? 106 : 105)))),
             table: 'schema_migrations',
           }).pipe(Effect.provide(NodeServices.layer))
+          // Keep the historical fee migration under test while satisfying the current cash store contract.
+          yield* sql.withTransaction(cashSettlementMigration)
         }
         const fence = yield* WriterFence
         const postRetainedAccrual = (kind: 'COIN' | 'CASH') =>
@@ -1164,7 +1371,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           return {
             ...base,
             fill,
-            contentHash: canonicalHashV1(fill),
+            contentHash: Result.getOrThrow(canonicalHashV1Result(fill)),
             occurredAt: at,
             observedAt: at,
             sourceTimestamp: Result.getOrThrow(sourceTimestamp(at)),
@@ -1173,8 +1380,18 @@ describePostgres('PostgreSQL execution persistence', () => {
         const retain = (fill: FillEventInput) =>
           Effect.gen(function* () {
             const intentId = hash(fill.fill.fillId)
-            yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+            if (historical || overreleased) {
+              // Preserve the actual pre-cutover format when testing immutable fee migrations.
+              yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
           VALUES(${intentId},'bayn.paper-intent.v3',${accountId},${fill.fill.clientOrderId},'ETH/USD',${fill.fill.side},'LIMIT','IOC',${fill.fill.quantityAtoms},'100000000','PLANNED',${fill.occurredAt},${fill.occurredAt},${cycleId},'jev',${hash(fill.fill.fillId + 'decision')},${hash('settlement-policy')},${generationHash})`
+            } else {
+              const price = BigInt(fill.fill.priceAtoms) / 1000n
+              const notional =
+                (BigInt(fill.fill.quantityAtoms) * price + (fill.fill.side === OrderSide.Buy ? 999999999n : 0n)) /
+                1000000000n
+              yield* sql`INSERT INTO intents(intent_id,schema_version,account_id,client_order_id,symbol,side,order_type,time_in_force,quantity_atoms,notional_limit_micros,limit_price_micros,state,created_at,updated_at,cycle_id,strategy_name,decision_hash,policy_hash,authority_generation_hash)
+          VALUES(${intentId},'bayn.execution-intent.v5',${accountId},${fill.fill.clientOrderId},'ETH/USD',${fill.fill.side},'LIMIT','IOC',${fill.fill.quantityAtoms},${notional.toString()},${price.toString()},'PLANNED',${fill.occurredAt},${fill.occurredAt},${cycleId},'jev',${hash(fill.fill.fillId + 'decision')},${hash('settlement-policy')},${generationHash})`
+            }
             yield* accounting.account(fill)
             return {
               ...order(),
@@ -1208,7 +1425,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           broker: Broker.Alpaca,
           accountId,
           sourceEventId: `position:${hash('settlement-net-eth')}:${observedAt}:ETH/USD`,
-          contentHash: canonicalHashV1({ sourceHash: hash('settlement-net-eth'), position }),
+          contentHash: Result.getOrThrow(canonicalHashV1Result({ sourceHash: hash('settlement-net-eth'), position })),
           occurredAt: observedAt,
           observedAt,
           position,
@@ -1220,7 +1437,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const acctReceipt = yield* events.ingest({
           ...opening,
           sourceEventId: 'settlement-bought-account',
-          contentHash: canonicalHashV1(acct),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(acct)),
           occurredAt: observedAt,
           observedAt,
           account: acct,
@@ -1277,7 +1494,7 @@ describePostgres('PostgreSQL execution persistence', () => {
         const cashReceipt = yield* events.ingest({
           ...opening,
           sourceEventId: 'settlement-sold-account',
-          contentHash: canonicalHashV1(cashAccount),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(cashAccount)),
           occurredAt: sellAt,
           observedAt: sellAt,
           account: cashAccount,
@@ -1299,7 +1516,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                 yield* events.ingest({
                   ...opening,
                   sourceEventId: 'settlement-opening-without-reporting',
-                  contentHash: canonicalHashV1(unknownOpening),
+                  contentHash: Result.getOrThrow(canonicalHashV1Result(unknownOpening)),
                   occurredAt: unknownOpening.observedAt,
                   observedAt: unknownOpening.observedAt,
                   account: unknownOpening,
@@ -1383,7 +1600,7 @@ describePostgres('PostgreSQL execution persistence', () => {
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
               VALUES(${accountId},${regulatory.activityId},${regulatory.date},${regulatory.netAmountMicros},${sql.json(regulatory)},${sql.json(readEvidence)},
-                ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...regulatory })},${Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan))},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...regulatory }))},${Result.getOrThrow(hashLedgerPlanResult(regulatoryPlan))},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
               yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
               VALUES(${accrual.accrual_id},${accountId},${regulatory.activityId},200000,200000)`
             }),
@@ -1453,7 +1670,7 @@ describePostgres('PostgreSQL execution persistence', () => {
               Effect.gen(function* () {
                 yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
                 VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
-                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                  ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value }))},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
                 yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
                 VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
               }),
@@ -1471,7 +1688,7 @@ describePostgres('PostgreSQL execution persistence', () => {
                   Effect.gen(function* () {
                     yield* sql`INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
                 VALUES(${accountId},${partial.value.activityId},${partial.value.date},${partial.value.netAmountMicros},${sql.json(partial.value)},${sql.json(partial.evidence)},
-                  ${canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value })},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
+                  ${Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...partial.value }))},${originalPlanHash},${config.tigerBeetle.clusterId.toString()},${config.tigerBeetle.ledger},${sellAt})`
                     yield* sql`INSERT INTO broker_fee_accrual_matches(accrual_id,account_id,activity_id,activity_cash_micros,accrual_cash_micros)
                 VALUES(${cashAccrual.accrualId},${accountId},${partial.value.activityId},190000,200000)`
                   }),
@@ -1581,6 +1798,38 @@ describePostgres('PostgreSQL execution persistence', () => {
               observedAt: sellAt,
             },
           })
+        if (scenario === 'cross-date') {
+          for (const fee of fees) {
+            Object.assign(fee.value, {
+              sourceCreatedAt: `${sellAt.slice(0, 19)}.123456000Z`,
+              date: '2026-08-31',
+            })
+            Object.assign(fee.evidence, { observedAt: '2026-08-31T08:00:00.000Z' })
+          }
+          const first = fees[0]
+          if (first === undefined || first.value.coinDebit === undefined) throw new Error('Missing coin fee')
+          const { sourceCreatedAt: _sourceCreatedAt, ...withoutSource } = first.value
+          for (const invalid of [
+            withoutSource,
+            { ...first.value, sourceCreatedAt: '2026-08-29T14:31:01.123456000Z' },
+            { ...first.value, sourceCreatedAt: '2026-08-31T08:00:00.000000001Z' },
+            { ...first.value, accountId: 'other-account' },
+            { ...first.value, coinDebit: { ...first.value.coinDebit, quantityAtoms: '82626' } },
+          ]) {
+            expect(
+              yield* fence
+                .transaction(
+                  prepareFeeActivities(
+                    sql,
+                    accountId,
+                    [{ ...first, value: invalid }, ...fees.slice(1)],
+                    config.tigerBeetle,
+                  ),
+                )
+                .pipe(Effect.flip),
+            ).toMatchObject({ _tag: 'ReconciliationStoreError' })
+          }
+        }
         const post = Effect.gen(function* () {
           yield* fence.transaction(prepareFeeActivities(sql, accountId, fees, config.tigerBeetle))
           return yield* fence.transaction(
@@ -1604,9 +1853,57 @@ describePostgres('PostgreSQL execution persistence', () => {
           journalControl.failPosts = false
         }
         const result = yield* post
+        if (scenario === 'cross-date') {
+          expect(
+            yield* sql`SELECT fee_date::text,data ? 'sourceCreatedAt' AS provenance_in_content,
+              read_evidence->>'sourceCreatedAt' AS source_created_at FROM broker_fee_accounting ORDER BY activity_id`,
+          ).toEqual([
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+            {
+              fee_date: '2026-08-31',
+              provenance_in_content: false,
+              source_created_at: '2026-08-28T14:31:01.123456000Z',
+            },
+          ])
+        }
         const posts = journalControl.postCount
         expect(yield* post).toEqual(result)
         expect(journalControl.postCount).toBe(posts)
+        if (scenario === 'cross-date') {
+          const first = fees[0]
+          if (first === undefined) throw new Error('Missing source fee')
+          expect(
+            yield* fence
+              .transaction(
+                prepareFeeActivities(
+                  sql,
+                  accountId,
+                  [
+                    { ...first, value: { ...first.value, sourceCreatedAt: '2026-08-28T14:31:01.123456001Z' } },
+                    ...fees.slice(1),
+                  ],
+                  config.tigerBeetle,
+                ),
+              )
+              .pipe(Effect.flip),
+          ).toMatchObject({ failure: 'invariant', message: 'broker fee source timestamp changed' })
+          const future = yield* fence
+            .transaction(sql`
+            INSERT INTO broker_fee_accounting(account_id,activity_id,fee_date,net_amount_micros,coin_cost_basis_micros,
+              data,read_evidence,content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at)
+            SELECT account_id,activity_id||':future',fee_date,net_amount_micros,coin_cost_basis_micros,
+              data||jsonb_build_object('activityId',activity_id||':future'),
+              read_evidence||jsonb_build_object('sourceCreatedAt','2026-08-31T08:00:00.000000001Z'),
+              content_hash,ledger_plan_hash,tigerbeetle_cluster_id,tigerbeetle_ledger,first_observed_at
+            FROM broker_fee_accounting WHERE activity_id=${first.value.activityId}
+          `)
+            .pipe(Effect.flip)
+          expect(JSON.stringify(future)).toContain('broker_fee_source_created_at_check')
+        }
         expect(result.cashDeltaMicros).toBe(hasRegulatory ? '-1146046' : '-6046')
         expect(cashAccrualReportingOffsetMicros(yield* readFeeAccruals(sql, accountId, config.tigerBeetle))).toBe('0')
         expect(result.plans.flatMap((plan) => plan.transfers).map((transfer) => transfer.amount)).toEqual(
@@ -1655,7 +1952,7 @@ describePostgres('PostgreSQL execution persistence', () => {
           const settledReceipt = yield* events.ingest({
             ...opening,
             sourceEventId: 'after-regulatory-settlement',
-            contentHash: canonicalHashV1(settledAccount),
+            contentHash: Result.getOrThrow(canonicalHashV1Result(settledAccount)),
             occurredAt: reportAt,
             observedAt: reportAt,
             account: settledAccount,

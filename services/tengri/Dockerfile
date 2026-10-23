@@ -5,7 +5,7 @@ ARG RUST_BASE_IMAGE=mirror.gcr.io/rust
 ARG RUST_VERSION=1.90.0
 ARG FIRECRACKER_RUST_VERSION=1.95.0
 
-FROM --platform=$BUILDPLATFORM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS build
+FROM --platform=$BUILDPLATFORM ${RUST_BASE_IMAGE}:${RUST_VERSION}-bookworm AS chef
 
 ARG TARGETARCH
 
@@ -14,6 +14,20 @@ RUN apt-get update -o Acquire::Retries=3 && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /src
+RUN CARGO_BUILD_JOBS=2 cargo install --locked cargo-chef --version 0.1.74
+
+FROM chef AS planner
+COPY Cargo.toml Cargo.lock build.rs ./
+COPY src ./src
+RUN cargo chef prepare --recipe-path recipe.json
+
+FROM chef AS build
+ARG TARGETARCH
+COPY --from=planner /src/recipe.json recipe.json
+RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
+    CARGO_BUILD_JOBS=2 cargo chef cook --locked --release --bin tengri --recipe-path recipe.json && \
+    CARGO_BUILD_JOBS=2 cargo chef cook --locked --release --bin tengri --tests --recipe-path recipe.json
+
 COPY Cargo.toml Cargo.lock build.rs ./
 COPY proto ./proto
 COPY migrations ./migrations
@@ -22,9 +36,8 @@ COPY --from=ofz-proto / /ofz/proto/
 COPY --from=ofz-catalog /operations.json /ofz/operations.json
 ENV OFZ_PROTO_ROOT=/ofz/proto OFZ_CATALOG_PATH=/ofz/operations.json
 COPY src ./src
-COPY tests ./tests
 RUN test "$(dpkg --print-architecture)" = "$TARGETARCH" && \
-    (CARGO_BUILD_JOBS=2 cargo test --locked --release --all-targets > /tmp/tengri-build.log 2>&1 || \
+    (CARGO_BUILD_JOBS=2 cargo test --locked --release --bin tengri > /tmp/tengri-build.log 2>&1 || \
       { cat /tmp/tengri-build.log; exit 1; }) && \
     cat /tmp/tengri-build.log && \
     kvm_test="$(sed -nE 's/^ *Running unittests src\/main.rs \((.*)\)$/\1/p' /tmp/tengri-build.log)" && \
@@ -67,6 +80,7 @@ RUN curl -fsSL --retry 3 -o /tmp/firecracker-source.tgz \
 COPY firecracker-memory-direct-io.patch /tmp/firecracker-memory-direct-io.patch
 COPY firecracker-async-workers.patch /tmp/firecracker-async-workers.patch
 COPY firecracker-memory-sparse.patch /tmp/firecracker-memory-sparse.patch
+COPY firecracker-snapshot-read.patch /tmp/firecracker-snapshot-read.patch
 RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-registry \
     --mount=type=cache,target=/firecracker/target,id=tengri-firecracker-target-${TARGETARCH} \
     set -eu; \
@@ -74,6 +88,7 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     patch --fuzz=0 -p1 < /tmp/firecracker-memory-direct-io.patch; \
     patch --fuzz=0 -p1 < /tmp/firecracker-async-workers.patch; \
     patch --fuzz=0 -p1 < /tmp/firecracker-memory-sparse.patch; \
+    patch --fuzz=0 -p1 < /tmp/firecracker-snapshot-read.patch; \
     case "$TARGETARCH" in \
       amd64) fc_target=x86_64-unknown-linux-musl ;; \
       arm64) fc_target=aarch64-unknown-linux-musl ;; \
@@ -81,6 +96,8 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     esac; \
     test -s "resources/seccomp/${fc_target}.json"; \
     rustup target add "$fc_target"; \
+    cargo test --locked --release --target "$fc_target" -p vmm --lib \
+      vstate::memory::tests::test_snapshot_read_hint_transitions_preserve_bytes -- --exact; \
     cargo test --locked --release --target "$fc_target" -p vmm --lib \
       vstate::memory::tests::test_sparse_full_snapshot_bytes_and_existing_zero_overwrite -- --exact; \
     cargo test --locked --release --target "$fc_target" -p vmm --lib vstate::memory::tests::test_dump; \
@@ -90,6 +107,9 @@ RUN --mount=type=cache,target=/usr/local/cargo/registry,id=tengri-firecracker-re
     /out-firecracker --version
 
 FROM ${DEBIAN_BASE_IMAGE}:bookworm-slim AS runtime
+
+ARG SOURCE_REVISION=development
+ENV APP_SOURCE_REVISION=${SOURCE_REVISION}
 
 RUN apt-get update -o Acquire::Retries=3 && \
     DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates e2fsprogs iproute2 nftables && \

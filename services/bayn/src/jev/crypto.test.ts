@@ -6,29 +6,25 @@ import { Result } from 'effect'
 
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { jevObservationForSnapshot, nativeJevBatchResult } from './native.test-support'
-import { makeJevTradingSignalBatch, reproduceJevRequestFromObservation } from './trading-signals'
+import { makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 import { JevBatchPlanVersion, JevCandidatePlanStatus } from './batch'
 import { decideJevEntry } from './decision'
 import { adverseQuotePrices } from '../observe-composition/intraday-market-data'
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} uses the shared Jev decision path with native signals and fractional precision on Sunday`, () => {
-    const { snapshot } = cryptoMarketFixture(symbol)
+  test(`${symbol} retains native Sunday signals and a model-selected complete entry plan`, () => {
+    const { snapshot } = cryptoMarketFixture(symbol, { observedPriceChoices: true })
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol, observedAt } = observation
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
-    const requested = plan.candidates.find((candidate) => candidate.status === JevCandidatePlanStatus.Requested)
-    expect(requested?.symbol).toBe(symbol)
-    if (requested?.status !== JevCandidatePlanStatus.Requested) throw new Error('Expected an eligible crypto candidate')
-    const signals = JSON.parse(
-      Result.getOrThrow(reproduceJevRequestFromObservation(requested.request, observation)).body,
-    ).state
+    expect(plan.candidates).toMatchObject([{ symbol, status: JevCandidatePlanStatus.Requested }])
+    const signals = JSON.parse(Result.getOrThrow(makeJevTradingSignalRequest(observation, symbol)).body).state
     expect(signals.benchmark.symbol).toBe(symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD')
     expect(signals.session.schedule).toBe('CONTINUOUS')
     expect(signals.session.minutesUntilClose).toBeNull()
@@ -67,23 +63,22 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
     const symbols = ['BTC/USD', 'ETH/USD', 'SOL/USD']
     const features = new Map(fixture.cut.projection.features)
     if (missing !== null) features.delete(missing)
-    const snapshot = Result.getOrThrow(
-      constructStreamingSnapshot(
-        { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
-        {
-          ...fixture.query,
-          symbols,
-          candidateSymbols: symbols,
-        },
-      ),
+    const snapshotResult = constructStreamingSnapshot(
+      { ...fixture.cut, projection: { ...fixture.cut.projection, features } },
+      { ...fixture.query, symbols, candidateSymbols: symbols, benchmarkSymbols: ['BTC/USD', 'ETH/USD'] },
     )
+    if (missing === 'BTC/USD') {
+      expect(snapshotResult).toMatchObject({ _tag: 'Failure', failure: { reason: 'not-ready' } })
+      return
+    }
+    const snapshot = Result.getOrThrow(snapshotResult)
     const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
     const { protocol } = observation
     const plan = Result.getOrThrow(
       makeJevTradingSignalBatch({
         observation,
         expiresAt: new Date(Date.parse(observation.observedAt) + protocol.inferenceValidityMs).toISOString(),
-        planVersion: JevBatchPlanVersion.V4,
+        planVersion: JevBatchPlanVersion.V6,
       }),
     )
     expect(plan.candidates.map((candidate) => candidate.symbol)).toEqual(symbols)
@@ -98,13 +93,8 @@ for (const missing of [null, 'SOL/USD', 'BTC/USD'] as const) {
         status: 'EXCLUDED',
         reason: 'not-ready',
       })
-      expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({ status: 'REQUESTED' })
-    }
-    if (missing === 'BTC/USD') {
-      expect(plan.candidates.every((candidate) => candidate.status === 'EXCLUDED')).toBe(true)
       expect(plan.candidates.find((candidate) => candidate.symbol === 'ETH/USD')).toMatchObject({
-        reason: 'not-ready',
-        message: expect.stringContaining('Required benchmark BTC/USD'),
+        status: 'REQUESTED',
       })
     }
   })

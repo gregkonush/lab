@@ -1,3 +1,4 @@
+import { JevPurpose } from './portfolio'
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 import fc from 'fast-check'
@@ -5,11 +6,13 @@ import fc from 'fast-check'
 import { reproduceStreamingSnapshot } from '../market-data/streaming/replay'
 import { checkProperty } from '../testing/property-test-support'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { jevObservationForSnapshot } from './native.test-support'
+import { jevObservationForSnapshot, nativeJevBatchResult, nativeJevFixture } from './native.test-support'
+import { decideJevEntry } from './decision'
+import { JevBatchPlanVersion } from './batch'
 import { makeJevObservation } from './observation'
 import { makeJevEntryQuery } from './observation-query'
 import { defaultJevProtocolDocument } from './protocol'
-import { jevSignalFor, makeJevTradingSignalRequest } from './trading-signals'
+import { jevSignalFor, makeJevTradingSignalBatch, makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { constructStreamingSnapshot } from '../market-data/streaming/snapshot'
 
@@ -21,6 +24,39 @@ const requestFor = (snapshot: VerifiedStrategyMarketSnapshot, symbol: string) =>
   )
 const endMs = Date.parse(base.query.rangeEndAt)
 const iso = (ms: number) => new Date(ms).toISOString()
+
+test('property: a valid chosen model action controls entry without an additional probability floor', () => {
+  const fixture = nativeJevFixture(undefined, undefined, 'jev-native-test', {
+    ...defaultJevProtocolDocument,
+    candidateSymbols: ['AAPL'],
+  })
+  const observation = fixture.observation.payload
+  const decidedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
+  const batchPlan = Result.getOrThrow(
+    makeJevTradingSignalBatch({
+      observation,
+      expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
+      planVersion: JevBatchPlanVersion.V6,
+    }),
+  )
+  checkProperty(
+    'jev-chosen-entry-action',
+    fc.property(fc.constantFrom('enter', 'wait', 'avoid'), fc.integer({ min: 334, max: 649 }), (action, score) => {
+      const target = Result.getOrThrow(
+        decideJevEntry({
+          observation,
+          batchPlan,
+          batchResult: nativeJevBatchResult(batchPlan, decidedAt, () => action, score / 1000),
+          decidedAt,
+        }),
+      )
+      expect(target.selectedSymbols).toEqual(action === 'enter' ? ['AAPL'] : [])
+      const weight = Object.values(target.targetWeights).reduce((sum, value) => sum + value, 0)
+      expect(weight).toBeLessThanOrEqual(0.2)
+      expect(action === 'enter' ? weight > 0 : weight === 0).toBe(true)
+    }),
+  )
+}, 150_000)
 interface History {
   readonly minutes: number
   readonly candidateMinutes: readonly boolean[]
@@ -156,3 +192,30 @@ test('property: exchange queries admit the first completed minute and clamp cont
     }),
   )
 })
+
+test('property: settled entry cash fees cannot alter a future management judgment', () => {
+  const fixture = nativeJevFixture(JevPurpose.Manage)
+  const portfolio = fixture.portfolio
+  if (portfolio.purpose !== JevPurpose.Manage) throw new Error('Expected a held position')
+  const baseline = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  checkProperty(
+    'jev-management-sunk-cost-independence',
+    fc.property(fc.integer({ min: 0, max: 100_000_000 }), (feeMicros) => {
+      const observation = Result.getOrThrow(
+        makeJevObservation({
+          ...fixture.input,
+          portfolio: {
+            ...portfolio,
+            entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: String(feeMicros) })),
+          },
+        }),
+      )
+      const actual = Result.getOrThrow(makeJevTradingSignalRequest(observation.payload, 'AAPL'))
+      expect(actual.requestHash).toBe(baseline.requestHash)
+      expect(actual.body).toBe(baseline.body)
+      expect(observation.payload.portfolio).toMatchObject({
+        entryFills: portfolio.entryFills.map((fill) => ({ ...fill, feeMicros: String(feeMicros) })),
+      })
+    }),
+  )
+}, 150_000)

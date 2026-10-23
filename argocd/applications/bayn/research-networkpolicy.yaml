@@ -80,12 +80,12 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
-              kubernetes.io/metadata.name: bayn-model
+              kubernetes.io/metadata.name: flamingo
           podSelector:
             matchLabels:
-              app.kubernetes.io/name: bayn-model
+              app.kubernetes.io/name: flamingo
       ports:
-        - port: 8080
+        - port: 8000
           protocol: TCP
     - to:
         - namespaceSelector:

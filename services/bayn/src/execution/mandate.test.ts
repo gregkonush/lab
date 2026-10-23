@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { defaultExecutionModel, desiredQuantityAtoms, notionalMicros } from '../execution-model'
+import { intradayExecutionModel } from '../strategy/intraday-market'
+import { desiredQuantityAtoms, notionalMicros } from '../strategy/execution-model/fixed-point'
 import { reconciliationIncompleteRestrictionReason } from './authority'
 import {
   decideExecutionMandateAuthority,
@@ -18,6 +19,7 @@ import {
   legacyV1CompletedRestrictionReason,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
+  strategyProtocolCutoverRestrictionReason,
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
@@ -153,7 +155,7 @@ describe('executionMandateAllocationCapitalMicros', () => {
     )
     const quantity = Result.getOrThrow(
       desiredQuantityAtoms(capital, weight, 1_000_000n, {
-        precision: { ...defaultExecutionModel.precision, quantityIncrementAtoms: '1000' },
+        precision: { ...intradayExecutionModel.precision, quantityIncrementAtoms: '1000' },
       }),
     )
     expect(Result.getOrThrow(notionalMicros(quantity, 1_000_000n))).toBeLessThanOrEqual(20_000_000_000n)
@@ -401,6 +403,29 @@ describe('execution mandate decisions', () => {
         kill: 'CLEAR',
       }),
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
+  })
+
+  test('rearms only the exact retired-generation protocol cutover clamp', () => {
+    const cutover = {
+      generationHash: 'b'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'PAPER' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: false,
+      reason: strategyProtocolCutoverRestrictionReason,
+    }
+    expect(decideExecutionMandateAuthority(cutover)).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    for (const rejected of [
+      { ...cutover, reason: 'operator kill' },
+      { ...cutover, reason: `${strategyProtocolCutoverRestrictionReason} extra` },
+      { ...cutover, currentGenerationMatchesRequest: true },
+      { ...cutover, sourceGenerationHash: cutover.generationHash },
+      { ...cutover, maximum: 'OBSERVE' as const },
+      { ...cutover, kill: 'CLEAR' as const },
+    ]) {
+      expect(decideExecutionMandateAuthority(rejected)).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    }
   })
 
   test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {

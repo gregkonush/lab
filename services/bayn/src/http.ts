@@ -5,19 +5,20 @@ import { Clock, Effect, Metric, Ref, Scope } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
 import { HttpRouter, HttpServer, HttpServerRequest, HttpServerResponse } from 'effect/http'
 
-import type { RuntimeBuildMetadata, RuntimeConfig } from './config'
+import type { RuntimeBuildMetadata, RuntimeConfig } from './config/model'
 import type { RuntimeProvenance } from './contracts'
 import { CycleOperationsCondition, CycleOperationsReason } from './cycle/observability'
-import { CycleState, CycleTerminalReason } from './cycle'
+import { CycleState, CycleTerminalReason } from './cycle/model'
 import { DecisionReadinessReason } from './cycle/runner/readiness'
 import { BrokerAccess, CapitalAuthorityKind } from './execution/authority'
 import type { ExecutionPolicy } from './execution/configuration'
 import { executionControllerStatusHasCompletion } from './execution/controller-status'
 import { Authority, KillState, ReconciliationStatus } from './execution/contracts'
 import { isReady, type AutonomousCyclePassObservation, type DependencyHealth, type RuntimeState } from './runtime-state'
-import { Pipeable } from './pipeable'
+
 import { defaultJevProtocolDocument } from './jev/protocol'
 import { telemetryHeartbeat } from './telemetry'
+import { accountTradingDate } from './time'
 
 export type HttpResponseDecision =
   | {
@@ -144,11 +145,15 @@ const publicCyclePass = (pass: AutonomousCyclePassObservation | null | undefined
     outcome: pass.outcome,
     ...(pass.recoveryAction === undefined ? {} : { recoveryAction: pass.recoveryAction }),
     ...(pass.waitReason === undefined ? {} : { waitReason: pass.waitReason }),
+    ...(pass.admissionProtection === undefined ? {} : { admissionProtection: pass.admissionProtection }),
     ...(pass.readiness === undefined
       ? {}
       : {
           readiness: {
             reason: pass.readiness.reason,
+            ...(pass.readiness.accountProtectionReasons === undefined
+              ? {}
+              : { accountProtectionReasons: pass.readiness.accountProtectionReasons }),
             ...(pass.readiness.availableAt === undefined ? {} : { availableAt: pass.readiness.availableAt }),
             ...(pass.readiness.symbol === undefined ? {} : { symbol: pass.readiness.symbol }),
             ...(pass.readiness.eventAt === undefined ? {} : { eventAt: pass.readiness.eventAt }),
@@ -335,7 +340,7 @@ const publicCycleState = (state: RuntimeState) =>
         error: cyclePresentationReason(state.cycle.error),
       }
 
-const statusFactsDataFirst = (
+export const statusFacts = (
   state: RuntimeState,
   execution: ExecutionPolicy,
   provenance: RuntimeProvenance,
@@ -408,17 +413,6 @@ const statusFactsDataFirst = (
     error: publicRuntimeError(state, broker, dependencies),
   } as const
 }
-
-export const statusFacts = Pipeable.dual(4, statusFactsDataFirst)
-
-const statusResponseDecisionDataFirst = (
-  state: RuntimeState,
-  execution: ExecutionPolicy,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-): HttpResponseDecision => jsonDecision(statusFacts(state, execution, provenance, provenanceVerification))
-
-export const statusResponseDecision = Pipeable.dual(4, statusResponseDecisionDataFirst)
 
 const appendFailure = (failures: readonly string[], name: string, failed: boolean): readonly string[] =>
   failed && !failures.includes(name) ? [...failures, name] : failures
@@ -604,6 +598,29 @@ const readySessionConditions = new Set([
   ExecutionSessionCondition.Rearming,
 ])
 
+const hasCurrentAdmissionProtection = (state: RuntimeState, checkedAtMs: number): boolean => {
+  const pass = state.autonomousCycleLoop.lastPass
+  if (
+    pass?.result !== 'SUCCESS' ||
+    pass.outcome !== 'ADMISSION_WAITING' ||
+    pass.readiness?.reason !== DecisionReadinessReason.AccountProtection ||
+    pass.admissionProtection === undefined ||
+    state.cycle.current !== null ||
+    state.cycle.unfinishedCycleCount !== 0 ||
+    !Number.isSafeInteger(checkedAtMs)
+  )
+    return false
+  const proof = pass.admissionProtection
+  return (
+    proof.authorityGenerationHash === state.cycle.authority?.generationHash &&
+    proof.authorityUpdatedAt === state.cycle.authority.updatedAt &&
+    proof.reconciliationId === state.cycle.reconciliation?.reconciliationId &&
+    proof.tradingDate === accountTradingDate(new Date(checkedAtMs).toISOString()) &&
+    Date.parse(pass.observedAt) <= checkedAtMs &&
+    checkedAtMs < Date.parse(proof.validUntil)
+  )
+}
+
 const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) => {
   const session = state.cycle.current ?? state.cycle.last
   const checkedAtMs = Date.parse(state.health.checkedAt ?? '')
@@ -640,9 +657,11 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   ) {
     return result(ExecutionSessionCondition.Blocked)
   }
-  if (session === null || !Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
+  if (!Number.isFinite(checkedAtMs) || !executionPrerequisitesReady(state, runtimeReady)) {
     return result(ExecutionSessionCondition.Unavailable)
   }
+  if (hasCurrentAdmissionProtection(state, checkedAtMs)) return result(ExecutionSessionCondition.Blocked)
+  if (session === null) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs >= Date.parse(session.executionCloseAt)) return result(ExecutionSessionCondition.Closed)
   if (state.cycle.current?.decisionHash !== null && state.cycle.current?.decisionHash !== undefined) {
     return result(
@@ -663,20 +682,24 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   }
   if (state.cycle.current.phase !== CycleState.Active) return result(ExecutionSessionCondition.Unavailable)
   if (checkedAtMs < Date.parse(session.submissionOpenAt)) return result(ExecutionSessionCondition.Preopen)
-  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
   const pass = state.autonomousCycleLoop.lastPass
-  if (
+  const readiness =
     pass?.result === 'SUCCESS' &&
+    pass.outcome !== 'ADMISSION_WAITING' &&
     pass.readiness !== undefined &&
     Date.parse(pass.observedAt) >= Date.parse(session.updatedAt)
-  ) {
-    if (pass.readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
+      ? pass.readiness
+      : undefined
+  if (readiness?.reason === DecisionReadinessReason.AccountProtection) return result(ExecutionSessionCondition.Blocked)
+  if (checkedAtMs < firstObservationMs) return result(ExecutionSessionCondition.Warmup)
+  if (readiness !== undefined) {
+    if (readiness.reason === DecisionReadinessReason.NoEligibleCandidate)
       return result(ExecutionSessionCondition.Abstaining)
-    if (pass.readiness.reason === DecisionReadinessReason.InferenceUnavailable)
+    if (readiness.reason === DecisionReadinessReason.InferenceUnavailable)
       return result(ExecutionSessionCondition.EvaluationUnavailable)
     if (
-      pass.readiness.reason !== DecisionReadinessReason.DecisionPending &&
-      pass.readiness.reason !== DecisionReadinessReason.SignalWindowObserved
+      readiness.reason !== DecisionReadinessReason.DecisionPending &&
+      readiness.reason !== DecisionReadinessReason.SignalWindowObserved
     ) {
       return result(ExecutionSessionCondition.InputUnavailable)
     }
@@ -686,7 +709,7 @@ const executionSessionReadiness = (state: RuntimeState, runtimeReady: boolean) =
   )
 }
 
-const renderPrometheusMetricsDataFirst = (
+export const renderPrometheusMetrics = (
   state: RuntimeState,
   config: Pick<
     RuntimeConfig,
@@ -1319,8 +1342,6 @@ const renderPrometheusMetricsDataFirst = (
   return `${lines.join('\n')}\n`
 }
 
-export const renderPrometheusMetrics = Pipeable.dual(4, renderPrometheusMetricsDataFirst)
-
 const interpretResponseDecision = (
   decision: HttpResponseDecision,
 ): Effect.Effect<HttpServerResponse.HttpServerResponse> =>
@@ -1373,7 +1394,7 @@ const registerHttpRoutes = (
   const status = currentStateAndTime.pipe(
     Effect.map(({ current, nowMs }) =>
       jsonDecision(
-        statusFactsDataFirst(
+        statusFacts(
           current,
           config.execution,
           provenance,
@@ -1399,7 +1420,7 @@ const registerHttpRoutes = (
         )
         const native = yield* PrometheusMetrics.format()
         return textDecision(
-          renderPrometheusMetricsDataFirst(
+          renderPrometheusMetrics(
             current,
             config,
             provenance,
@@ -1427,7 +1448,7 @@ const registerHttpRoutes = (
   })
 }
 
-const serveHttpDataFirst = (
+export const serveHttp = (
   config: HttpConfig,
   state: Ref.Ref<RuntimeState>,
   provenance: RuntimeProvenance,
@@ -1442,14 +1463,3 @@ const serveHttpDataFirst = (
     const handler = router.asHttpEffect().pipe(Effect.orDie)
     yield* HttpServer.serveEffect(handler)
   })
-
-export const serveHttp = Pipeable.dual(4, serveHttpDataFirst)
-
-export const serveHttpWithCurrentTime = (
-  config: HttpConfig,
-  state: Ref.Ref<RuntimeState>,
-  provenance: RuntimeProvenance,
-  provenanceVerification: RuntimeBuildMetadata['verification'],
-  currentTimeMillis: Effect.Effect<number>,
-): Effect.Effect<void, never, HttpServer.HttpServer | Scope.Scope> =>
-  serveHttpDataFirst(config, state, provenance, provenanceVerification, currentTimeMillis)

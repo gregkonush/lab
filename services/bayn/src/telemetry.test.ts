@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { createServer } from 'node:http'
+import { mkdtemp, rm } from 'node:fs/promises'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 
 import { ConfigProvider, Console, Deferred, Effect, Exit, Fiber, Layer, Logger, Metric, References } from 'effect'
 import { PrometheusMetrics } from 'effect/observability'
@@ -18,6 +21,35 @@ import {
 } from './telemetry'
 
 describe('Bayn telemetry', () => {
+  test('published research telemetry uses its embedded source without a deployment revision variable', async () => {
+    const directory = await mkdtemp(join(import.meta.dir, '.telemetry-build-'))
+    const sourceRevision = 'a'.repeat(40)
+    try {
+      const built = await Bun.build({
+        entrypoints: [join(import.meta.dir, 'telemetry.ts')],
+        outdir: directory,
+        target: 'bun',
+        packages: 'external',
+        define: { __BAYN_BUILD_SOURCE_REVISION__: JSON.stringify(sourceRevision) },
+      })
+      expect(built.success).toBe(true)
+      const published: typeof import('./telemetry') = await import(pathToFileURL(join(directory, 'telemetry.js')).href)
+      const config = await Effect.runPromise(
+        published
+          .telemetryRuntimeConfig('bayn-research')
+          .pipe(
+            Effect.provideService(
+              ConfigProvider.ConfigProvider,
+              ConfigProvider.fromUnknown({ NODE_ENV: 'production' }),
+            ),
+          ),
+      )
+      expect(config.serviceVersion).toBe(sourceRevision)
+    } finally {
+      await rm(directory, { recursive: true, force: true })
+    }
+  })
+
   test('retains a backend PID on slow and failed stage logs without copying other span data or logging fast calls', async () => {
     const annotations: Readonly<Record<string, unknown>>[] = []
     const logger = Logger.make(({ fiber }) => {

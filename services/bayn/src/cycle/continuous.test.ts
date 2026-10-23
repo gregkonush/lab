@@ -1,4 +1,5 @@
-import { canonicalHashV1 } from '../hash'
+import { withProviderSessions } from '../testing/market-calendar-fixture'
+import { canonicalHashV1Result } from '../hash'
 import { CycleState, CycleTerminalReason } from './model'
 import {
   canRearmUnusedCycle,
@@ -147,14 +148,17 @@ test('an unused expired continuous lease rearms under the same approved contract
   if (next === null) throw new Error('Expected successor lease')
   expect(canRearmUnusedCycle(cycle, candidate, continuousMarketHours, next, nextAt)).toBe(true)
   const equitySession = { date: '2026-10-12', openAt: '2026-10-12T13:30:00.000Z', closeAt: '2026-10-12T20:00:00.000Z' }
-  const calendarMaterial = {
-    schemaVersion: 'bayn.alpaca-market-calendar-observation.v1' as const,
+  const calendarMaterial = withProviderSessions({
+    schemaVersion: 'bayn.alpaca-market-calendar-observation.v2' as const,
     source: 'alpaca-v2-calendar' as const,
     requestedRange: { start: equitySession.date, end: equitySession.date },
     timeZone: 'UTC' as const,
     sessions: [equitySession],
+  })
+  const calendar = {
+    ...calendarMaterial,
+    normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
   }
-  const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
   expect(canRearmUnusedCycle(cycle, candidate, calendar, equitySession, nextAt)).toBe(true)
   expect(nextIntradayEntryAttemptOrdinal(cycle, nextAt, next.entryCutoffAt, true)).toBe(2)
   expect(nextIntradayEntryAttemptOrdinal(cycle, '2026-10-12T14:31:59.999Z', next.entryCutoffAt, true)).toBeUndefined()

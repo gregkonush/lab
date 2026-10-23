@@ -266,11 +266,8 @@ if (import.meta.main) {
   NodeRuntime.runMain(
     runFiniteLayer(
       Layer.effectDiscard(
-        restateExecutionActivationProgram.pipe(
-          reportTerminalFailure('bayn-execution-activate'),
-          Effect.annotateLogs({ service: 'bayn-execution-activate' }),
-        ),
+        restateExecutionActivationProgram.pipe(Effect.annotateLogs({ service: 'bayn-execution-activate' })),
       ).pipe(Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-execution-activate'))),
-    ),
+    ).pipe(reportTerminalFailure('bayn-execution-activate')),
   )
 }

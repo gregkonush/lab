@@ -19,12 +19,13 @@ import {
 } from 'effect'
 import { HttpClient } from 'effect/http'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import { layer as brokerSessionLayer, BrokerSession } from '../broker/alpaca/session'
 import { alpacaHttpLayer } from '../broker/alpaca/http'
 import { brokerObservationQuotaWindowMs, makeBrokerObservationBudget } from '../broker/alpaca/poll-budget'
 import { brokerSnapshotCacheConfig, captureBrokerObservation } from '../broker/alpaca/snapshot-cache'
-import { observedBrokerSnapshotHash, observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import { observationUnavailable } from '../broker/alpaca/observed-snapshot'
+import { canonicalHashV1Result } from '../hash'
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { BrokerObservationClaimStatus, makeBrokerObservationStore } from '../db/broker-observations'
 import { PostgresClientLive } from '../db/postgres-client'
@@ -85,7 +86,7 @@ export const settleCompletedBrokerObservationPoll = <R>(
   )
 
 export const acquireBrokerObservationRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Effect.Effect<
   {
     readonly runtime: BrokerObservationRuntime
@@ -243,6 +244,9 @@ export const acquireBrokerObservationRuntime = (
                   )
                   return { _tag: 'Unavailable', nextPollNotBeforeMs: yield* budget.nextPollNotBeforeMs } as const
                 }
+                const snapshotHash = yield* Effect.fromResult(canonicalHashV1Result(result.success)).pipe(
+                  Effect.mapError((cause) => observationUnavailable('Broker snapshot cannot be canonicalized', cause)),
+                )
                 const nextPollNotBeforeMs = yield* budget.nextPollNotBeforeMs
                 const publication = yield* persistence
                   .publish(ticket, result.success, nextPollNotBeforeMs)
@@ -263,7 +267,7 @@ export const acquireBrokerObservationRuntime = (
                 }
                 yield* Effect.logInfo('Broker observation published').pipe(
                   Effect.annotateLogs({
-                    'broker.snapshot_hash': observedBrokerSnapshotHash(result.success),
+                    'broker.snapshot_hash': snapshotHash,
                     'broker.observed_at': result.success.observedAt,
                     'broker.source_revision': plan.config.build.sourceRevision,
                     'broker.next_poll_not_before_ms': nextPollNotBeforeMs,
@@ -271,14 +275,16 @@ export const acquireBrokerObservationRuntime = (
                 )
                 return {
                   _tag: 'Published',
-                  snapshotHash: observedBrokerSnapshotHash(result.success),
+                  snapshotHash,
                   nextPollNotBeforeMs,
                 } as const
               }),
               budget.nextPollNotBeforeMs,
             )
           }).pipe(
-            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.invalidate)),
+            // A canceled predecessor must not invalidate a newer capture or a published result. Retain the
+            // interrupted capture's quota debt; only its still-owned unfinished projection is fenced.
+            Effect.onInterrupt(() => Effect.flatMap(store, (value) => value.interrupt(reservation.captureId))),
             withObservedStage('bayn.broker.observation.poll', {
               attributes: { 'bayn.source.revision': plan.config.build.sourceRevision },
             }),

@@ -1,3 +1,4 @@
+import { canonicalHashV1Result } from '../hash'
 import { ValkeyCacheError } from '../valkey-cache'
 import { valkeyFixture } from '../testing/valkey-fixture'
 import { randomUUID } from 'node:crypto'
@@ -8,11 +9,7 @@ import { Effect, Layer, ManagedRuntime, Redacted, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { observedBrokerSnapshotFixture } from '../broker/alpaca/observed-snapshot.fixture'
-import {
-  observedBrokerSnapshotHash,
-  observedBrokerState,
-  type BrokerObservationTicket,
-} from '../broker/alpaca/observed-snapshot'
+import { observedBrokerState, type BrokerObservationTicket } from '../broker/alpaca/observed-snapshot'
 import { BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { utcInstantFromEpochMillis } from '../time'
@@ -51,9 +48,9 @@ const reserve = (sql: PgClient.PgClient, id: string, at: string) =>
     yield* sql`INSERT INTO authority_generations (generation_hash, schema_version, maximum, authority_version, activated_at)
     VALUES (${generationHash}, 'bayn.authority-generation-history.v1', 'OBSERVE', 1, ${at}) ON CONFLICT DO NOTHING`
     yield* sql`INSERT INTO intents (intent_id, schema_version, authority_generation_hash, strategy_name, cycle_id, decision_hash, policy_hash,
-    account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_atoms, notional_limit_micros, state, created_at, updated_at)
-    VALUES (${id}, 'bayn.paper-intent.v3', ${generationHash}, 'intraday-momentum', ${'c'.repeat(64)}, ${id}, ${'e'.repeat(64)},
-      ${accountId}, ${id.slice(0, 32)}, 'AAPL', 'BUY', 'LIMIT', 'IOC', 1000000, 1000000000, 'PLANNED', ${at}, ${at})`
+    account_id, client_order_id, symbol, side, order_type, time_in_force, quantity_atoms, notional_limit_micros, limit_price_micros, state, created_at, updated_at)
+    VALUES (${id}, 'bayn.execution-intent.v5', ${generationHash}, 'intraday-momentum', ${'c'.repeat(64)}, ${id}, ${'e'.repeat(64)},
+      ${accountId}, ${id.slice(0, 32)}, 'AAPL', 'BUY', 'LIMIT', 'DAY', 1000000, 1000000000, 1000000000000, 'PLANNED', ${at}, ${at})`
     yield* sql.withTransaction(
       Effect.gen(function* () {
         yield* sql`INSERT INTO risk_decisions (decision_id, schema_version, input_hash, intent_id, policy_hash, outcome, reason_codes, decided_at, expires_at)
@@ -279,7 +276,9 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.publish(ticket, snapshot(ticket), 0)).toBe(true)
         const restarted = makeBrokerObservationStore(sql, accountId, revision, 60_000, cacheFixture.cache)
         expect(yield* restarted.read).toEqual(snapshot(ticket))
-        expect(observedBrokerSnapshotHash(yield* restarted.read)).toBe(observedBrokerSnapshotHash(snapshot(ticket)))
+        expect(Result.getOrThrow(canonicalHashV1Result(yield* restarted.read))).toBe(
+          Result.getOrThrow(canonicalHashV1Result(snapshot(ticket))),
+        )
         yield* advanceToTicket(ticket, 60_000)
         expect(Result.isFailure(yield* restarted.read.pipe(Effect.result))).toBe(true)
       }),
@@ -297,7 +296,7 @@ describePostgres('Durable per-account broker observations', () => {
         expect(read).toEqual(value)
         expect(read.snapshot.history.orders.rows[0]?.value.createdAt).toBe('2026-09-29T17:15:20.123456Z')
         expect(read.recentFills.value.items[0]?.transactionTime).toBe('2026-09-29T17:15:20.123456Z')
-        expect(observedBrokerSnapshotHash(read)).toBe(observedBrokerSnapshotHash(value))
+        expect(Result.getOrThrow(canonicalHashV1Result(read))).toBe(Result.getOrThrow(canonicalHashV1Result(value)))
       }),
     ))
   test('rejects an undecodable cut before publishing availability or payload', async () =>
@@ -371,6 +370,58 @@ describePostgres('Durable per-account broker observations', () => {
         expect(yield* store.read).toEqual(snapshot(current))
       }),
     ))
+
+  test('interrupting the owned unfinished capture fences its old cut without releasing unknown HTTP debt', async () =>
+    run((sql, store) =>
+      Effect.gen(function* () {
+        yield* store.activate(0)
+        const previous = yield* claim(store)
+        yield* advanceToTicket(previous)
+        expect(yield* store.publish(previous, snapshot(previous), 0)).toBe(true)
+        const [{ deadline }] = yield* sql<{
+          deadline: number
+        }>`SELECT (EXTRACT(EPOCH FROM clock_timestamp()) * 1000)::double precision + 180000 AS deadline`
+        if (deadline === undefined) throw new Error('Missing database clock')
+        const reservedUntil = Math.ceil(deadline)
+        const captureId = randomUUID()
+        const captured = yield* store.begin(captureId, reservedUntil)
+        if (captured.status !== BrokerObservationClaimStatus.Reserved) throw new Error('Missing capture')
+        yield* advanceToTicket(captured.ticket)
+        expect(yield* store.read).toEqual(snapshot(previous))
+        yield* store.interrupt(captureId)
+        expect(Result.isFailure(yield* store.read.pipe(Effect.result))).toBe(true)
+        expect(yield* store.publish(captured.ticket, snapshot(captured.ticket), 0)).toBe(false)
+        expect(yield* store.begin(randomUUID(), reservedUntil)).toEqual({
+          status: BrokerObservationClaimStatus.QuotaWait,
+          nextPollNotBeforeMs: reservedUntil,
+        })
+      }),
+    ))
+
+  test.each(['newer-capture', 'newer-revision', 'published', 'unclaimed'] as const)(
+    'an interrupted poll preserves the successful %s observation',
+    async (change) =>
+      run((sql, store) =>
+        Effect.gen(function* () {
+          yield* store.activate(0)
+          const captureId = randomUUID()
+          const predecessor = yield* claim(store, captureId)
+          let currentStore = store
+          let current = predecessor
+          if (change === 'newer-revision') {
+            currentStore = makeBrokerObservationStore(sql, accountId, 'f'.repeat(40), 60_000, cacheFixture.cache)
+            yield* currentStore.activate(0)
+          }
+          if (change === 'newer-capture' || change === 'newer-revision') current = yield* claim(currentStore)
+          yield* advanceToTicket(current)
+          expect(yield* currentStore.publish(current, snapshot(current), 0)).toBe(true)
+          yield* store.interrupt(change === 'unclaimed' ? randomUUID() : captureId)
+          expect(yield* currentStore.read).toEqual(snapshot(current))
+          expect(yield* currentStore.readState).toEqual(observedBrokerState(snapshot(current)))
+        }),
+      ),
+  )
+
   test('latest poll failure closes a previously fresh projection and cannot overwrite a newer poll', async () =>
     run((_sql, store) =>
       Effect.gen(function* () {
@@ -401,7 +452,9 @@ describePostgres('Durable per-account broker observations', () => {
         yield* store.invalidate
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.ObservationPending)
         yield* advanceToTicket(first, 60_000)
-        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
+        const expired = yield* Effect.flip(store.read)
+        expect(expired.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(expired.observationFailure).toBe('NO_ADMISSIBLE_CUT')
       }),
     ))
   test('does not classify a failed poll, foreign revision or corrupt invalidated cut as an expected wait', async () =>
@@ -416,8 +469,10 @@ describePostgres('Durable per-account broker observations', () => {
         const foreign = makeBrokerObservationStore(sql, accountId, 'b'.repeat(40), 60_000, cacheFixture.cache)
         expect((yield* Effect.flip(foreign.read)).kind).toBe(BrokerReadErrorKind.Timeout)
         yield* sql`UPDATE broker_observations SET snapshot_hash = ${'0'.repeat(64)} WHERE account_id = ${accountId}`
-        expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)
-        yield* sql`UPDATE broker_observations SET snapshot_hash = ${observedBrokerSnapshotHash(snapshot(first))} WHERE account_id = ${accountId}`
+        const corrupt = yield* Effect.flip(store.read)
+        expect(corrupt.kind).toBe(BrokerReadErrorKind.Timeout)
+        expect(corrupt.observationFailure).toBeUndefined()
+        yield* sql`UPDATE broker_observations SET snapshot_hash = ${Result.getOrThrow(canonicalHashV1Result(snapshot(first)))} WHERE account_id = ${accountId}`
         const second = yield* claim(store)
         yield* store.failed(second, 0)
         expect((yield* Effect.flip(store.read)).kind).toBe(BrokerReadErrorKind.Timeout)

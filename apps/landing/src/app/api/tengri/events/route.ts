@@ -1,3 +1,4 @@
+import { observeRequest } from '@/lib/observability/server'
 import { normalizeCodexEvent, watchCodexEvents } from '@/lib/tengri/grpc'
 import { noStoreHeaders, requireSameOriginGet, requireTengriIdentity, tengriRouteError } from '@/lib/tengri/http'
 import { acquireTengriEventStreamSlot, createTengriEventStream, tengriEventStreamHeaders } from '@/lib/tengri/sse'
@@ -5,6 +6,10 @@ import { acquireTengriEventStreamSlot, createTengriEventStream, tengriEventStrea
 export const dynamic = 'force-dynamic'
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri/events.get', () => handleGET(request))
+}
+
+async function handleGET(request: Request) {
   try {
     requireSameOriginGet(request)
     const identity = await requireTengriIdentity(request)

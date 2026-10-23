@@ -1,5 +1,6 @@
 """Check the rendered coordinated-cutover targets, including rejected regressions."""
 
+import base64
 import copy
 import json
 import subprocess
@@ -73,7 +74,7 @@ def validate(targets):
         ]["max_connections"]
     )
     require(
-        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 12 + 8) + 6 * 2
+        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 14 + 8) + 6 * 4
         <= maximum_connections - 30,
         "ofz: simultaneous rolling surges exhaust the SQL connection budget",
     )
@@ -88,9 +89,9 @@ def validate(targets):
         "ofz_api": 42,
         "ofz_archiver": 4,
         "tengri_migrator": 2,
-        "tengri_controller": 36,
+        "tengri_controller": 42,
         "tengri_bff": 24,
-        "tengri_supervisor": 12,
+        "tengri_supervisor": 24,
     }
     require(
         roles.keys() == limits.keys(),
@@ -524,27 +525,49 @@ def validate(targets):
     theme = next(
         volume for volume in keycloak_pod["volumes"] if volume["name"] == "login-theme"
     )["configMap"]
+    theme_files = {
+        "theme.properties": "theme.properties",
+        "webauthnRegister.js": "resources/js/webauthnRegister.js",
+        "webauthnAuthenticate.js": "resources/js/webauthnAuthenticate.js",
+        "webauthn-authenticate.ftl": "webauthn-authenticate.ftl",
+        "template.ftl": "template.ftl",
+        "tengri.css": "resources/css/tengri.css",
+        "messages_en.properties": "messages/messages_en.properties",
+        "fruit-pear.svg": "resources/img/fruit-pear.svg",
+        "wallpaper.webp": "resources/img/wallpaper.webp",
+        "GeistSans.woff2": "resources/fonts/GeistSans.woff2",
+        "OFL.txt": "resources/fonts/OFL.txt",
+        "pictogrammers-LICENSE.txt": "resources/img/pictogrammers-LICENSE.txt",
+    }
     require(
         theme["items"]
-        == [
-            {"key": "theme.properties", "path": "theme.properties"},
-            {
-                "key": "webauthnRegister.js",
-                "path": "resources/js/webauthnRegister.js",
-            },
-        ],
-        "keycloak: registration assets must use the paths imported by the built-in template",
+        == [{"key": key, "path": path} for key, path in theme_files.items()],
+        "keycloak: branded assets must use the paths imported by the login templates",
     )
     theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
+    theme_config = resource(targets, "keycloak", "ConfigMap", theme["name"])
+    binary_assets = {"wallpaper.webp", "GeistSans.woff2"}
     require(
-        resource(targets, "keycloak", "ConfigMap", theme["name"])["data"]
+        theme_config["data"]
         == {
-            "theme.properties": (theme_root / "theme.properties").read_text(),
-            "webauthnRegister.js": (
-                theme_root / "resources/js/webauthnRegister.js"
-            ).read_text(),
+            key: (theme_root / path).read_text()
+            for key, path in theme_files.items()
+            if key not in binary_assets
+        }
+        and {
+            key: base64.b64decode(value)
+            for key, value in theme_config["binaryData"].items()
+        }
+        == {
+            key: (theme_root / path).read_bytes()
+            for key, path in theme_files.items()
+            if key in binary_assets
         },
-        "keycloak: the deployed theme must contain the browser-qualified registration module",
+        "keycloak: the deployed theme must contain the browser-qualified templates, modules and brand assets",
+    )
+    require(
+        len(json.dumps(theme_config).encode()) < 1024 * 1024,
+        "keycloak: the complete login theme must fit within the ConfigMap size limit",
     )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
@@ -771,6 +794,23 @@ def main():
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["postgresql"][
+            "parameters"
+        ].update(max_connections="200"),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_controller"
+        ).update(connectionLimit=36),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_supervisor"
+        ).update(connectionLimit=12),
         lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
             "spec"
         ].update(method="volumeSnapshot"),

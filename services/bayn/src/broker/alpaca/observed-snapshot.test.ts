@@ -1,8 +1,9 @@
+import { canonicalHashV1Result } from '../../hash'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { observedBrokerSnapshotFixture } from './observed-snapshot.fixture'
-import { decodeObservedBrokerSnapshot, observedBrokerSnapshotHash } from './observed-snapshot'
+import { decodeObservedBrokerSnapshot } from './observed-snapshot'
 
 const observedAt = '2026-09-30T20:00:00.000Z'
 const fixture = (timestamp: string) => observedBrokerSnapshotFixture('test-account', observedAt, timestamp)
@@ -43,7 +44,7 @@ describe('persisted broker timestamp evidence', () => {
       const source = fixture(`2026-09-29T17:15:20${fraction}Z`)
       const decoded = Result.getOrThrow(decodeObservedBrokerSnapshot(JSON.parse(JSON.stringify(source))))
       expect<unknown>(decoded).toEqual(source)
-      expect(observedBrokerSnapshotHash(decoded)).toBe(observedBrokerSnapshotHash(source))
+      expect(Result.getOrThrow(canonicalHashV1Result(decoded))).toBe(Result.getOrThrow(canonicalHashV1Result(source)))
       expect(decoded.recentOrders.value[0]?.createdAt).toBe(`2026-09-29T17:15:20${fraction}Z`)
       expect(decoded.recentFills.value.items[0]?.transactionTime).toBe(`2026-09-29T17:15:20${fraction}Z`)
     },
@@ -91,7 +92,7 @@ test('persisted broker observations retain USD crypto fee identity without admit
   }
   const decoded = Result.getOrThrow(decodeObservedBrokerSnapshot(JSON.parse(JSON.stringify(value))))
   expect(decoded.snapshot.history.fees[0]?.value).toEqual(fee)
-  expect(observedBrokerSnapshotHash(decoded)).toBe(observedBrokerSnapshotHash(value))
+  expect(Result.getOrThrow(canonicalHashV1Result(decoded))).toBe(Result.getOrThrow(canonicalHashV1Result(value)))
   expect(
     Result.isFailure(
       decodeObservedBrokerSnapshot({

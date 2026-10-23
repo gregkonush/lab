@@ -1,0 +1,137 @@
+import { expect, test } from 'bun:test'
+import { Result } from 'effect'
+import fc from 'fast-check'
+
+import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
+import { decideJevEntry } from './decision'
+import { jevObservationForSnapshot, nativeJevDecisionEvidence, nativeJevFixture } from './native.test-support'
+import { JevPurpose } from './portfolio'
+import { makeJevTradingSignalRequest } from './trading-signals'
+import { checkProperty } from '../testing/property-test-support'
+import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
+import { jevEntryEconomics } from './entry-economics'
+import { defaultJevProtocolDocument } from './protocol'
+
+test('typed entry and protection choices support an entry without a confidence gate', () => {
+  const fixture = nativeJevFixture()
+  const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  expect(
+    Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
+  ).toEqual({ action: 'choice', setup: 'choice' })
+  const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
+  expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
+})
+
+test('an unfunded whole-equity target abstains even when the model chooses enter', () => {
+  const fixture = nativeJevFixture(JevPurpose.Entry, undefined, undefined, {
+    ...defaultJevProtocolDocument,
+    maximumGrossWeight: 0.000001,
+    maximumSymbolWeight: 0.000001,
+  })
+  const evidence = nativeJevDecisionEvidence(fixture)
+  expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual([])
+})
+
+test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'] as const)(
+  '%s passes fee context to Jev without precomputing a geometric exit plan',
+  (symbol) => {
+    const { snapshot } = cryptoMarketFixture(symbol)
+    const native = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
+    const request = Result.getOrThrow(makeJevTradingSignalRequest(native, symbol))
+    const state = JSON.parse(request.body).state
+    expect(state.entryEconomics).not.toBeNull()
+    expect(request.request.questions['action']).toBeDefined()
+    expect(request.request.questions['net_economics']).toBeUndefined()
+  },
+)
+
+test('property: crypto break-even bid covers both adverse limits, the coin debit and cent-rounded exit fee', () => {
+  checkProperty(
+    'crypto-entry-break-even',
+    fc.property(
+      fc.bigInt({ min: 1_000_000n, max: 200_000_000_000n }),
+      fc.bigInt({ min: 1_000_000_000n, max: 1_000_000_000_000n }),
+      (ask, capital) => {
+        const protocol = defaultJevProtocolDocument
+        const economics = Result.getOrThrow(
+          jevEntryEconomics({
+            protocol,
+            symbol: 'BTC/USD',
+            askMicros: ask,
+            bidMicros: ask,
+            capitalMicros: String(capital),
+          }),
+        )
+        if (economics === null) throw new Error('Funded crypto fixture requires a positive allocation')
+        const entryPrice = BigInt(Math.round(economics.maximumEntryPriceUsd * 1_000_000))
+        const quantity = BigInt(economics.maximumQuantityAtoms)
+        const received = quantity - (quantity * 25n + 9999n) / 10_000n
+        const acquired = (entryPrice * quantity + 999_999_999n) / 1_000_000_000n
+        const net = (bid: bigint) => {
+          const boundary = (bid * 9990n + 9999n) / 10000n
+          const proceeds = (boundary * received) / 1_000_000_000n
+          const fee = ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
+          return proceeds - fee
+        }
+        const bid = BigInt(Math.round(economics.breakEvenExitBidUsd * 1_000_000))
+        expect(net(bid)).toBeGreaterThanOrEqual(acquired)
+        expect(net(bid - 1n)).toBeLessThan(acquired + 10_000n)
+        const centInPrice = (10_000n * 1_000_000_000n + received - 1n) / received
+        for (const step of [1n, 5n, 10n, 20n])
+          expect(net(bid + (centInPrice * step + 19n) / 20n)).toBeGreaterThanOrEqual(acquired)
+        expect(economics.estimatedEntryFeesUsd).toBeGreaterThan(0)
+        expect(economics.operatingCostCoverage).toBe('UNKNOWN')
+      },
+    ),
+  )
+})
+
+test('a cheaper refreshed crypto ask preserves the funded cap used by durable reproduction', () => {
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      protocol: defaultJevProtocolDocument,
+      symbol: 'BTC/USD',
+      bidMicros: 99990000n,
+      askMicros: 100000000n,
+      capitalMicros: '100000000000',
+    }),
+  )
+  if (economics === null) throw new Error('Expected a funded synthetic setup')
+  const input = {
+    askPriceMicros: { 'BTC/USD': '99990000' },
+    targetWeights: { 'BTC/USD': economics.maximumTargetWeight },
+    capitalMicros: '100000000000',
+    precision: defaultJevProtocolDocument.executionModel.precision,
+  }
+  const allocated = Result.getOrThrow(maximumAllocatedBuyQuantities(input))
+  expect(BigInt(allocated['BTC/USD'] ?? '0')).toBeGreaterThan(BigInt(economics.maximumQuantityAtoms))
+  expect(
+    Result.getOrThrow(
+      maximumFundedBuyQuantities({
+        ...input,
+        plans: {
+          'BTC/USD': {
+            schemaVersion: 'bayn.jev-funded-exit-plan.v3',
+            maximumQuantityAtoms: economics.maximumQuantityAtoms,
+            acquisitionCostMicros: economics.acquisitionCostMicros,
+            estimatedStopNetMicros: '1',
+            estimatedTargetNetMicros: String(BigInt(economics.acquisitionCostMicros) + 1n),
+            levels: {
+              schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
+              rule: 'model-selected-complete-plan',
+              symbol: 'BTC/USD',
+              sourceStartAt: '2026-10-19T14:59:00.000Z',
+              sourceEndAt: '2026-10-19T15:00:00.000Z',
+              maximumHoldingMinutes: 15,
+              maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+              stopPriceMicros: '99000000',
+              stopLimitPriceMicros: '98900000',
+              profitLimitPriceMicros: '110000000',
+            },
+          },
+        },
+      }),
+    )['BTC/USD'],
+  ).toBe(economics.maximumQuantityAtoms)
+  expect(Result.isFailure(maximumFundedBuyQuantities({ ...input, plans: {} }))).toBe(true)
+})

@@ -1,3 +1,4 @@
+import { jevInstructions } from '../jev/instructions'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import { equityMarketProfile } from '../jev/markets'
 import { gzipSync } from 'node:zlib'
@@ -5,7 +6,7 @@ import { Result } from 'effect'
 
 import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { jevModel } from '../jev/contract'
 import { defaultJevProtocolDocument, decodeJevProtocol } from '../jev/protocol'
 import { config } from '../testing/runtime-fixtures'
@@ -17,6 +18,8 @@ import { validateBacktestSourceReceipt, type BacktestSourceManifest } from './so
 export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded' = 'resolved') => {
   const protocol = Result.getOrThrow(decodeJevProtocol(defaultJevProtocolDocument))
   const rawCalendar = (['2026-09-01', '2026-09-02', '2026-09-03', '2026-09-04'] as const).map((date) => ({
+    session_open: '0930',
+    session_close: '1010',
     date,
     open: '09:30',
     close: '10:10',
@@ -65,7 +68,7 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     .sort()
     .map((topic) => ({ topic, partition: 0 }))
   const source: BacktestSourceManifest = {
-    schemaVersion: 'bayn.backtest-source.v1',
+    schemaVersion: 'bayn.backtest-source.v2',
     encoding: 'ndjson-gzip',
     transport: 'original-capture',
     dataSha256: sha256(body),
@@ -82,16 +85,16 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       startOffset: '0',
       endOffsetExclusive: String(captured.events.filter((event) => event.record.topic === topic).length),
     })),
-    universe: captured.universe,
+    marketSources: [captured.universe] as const,
     deliveryModel: captured.source.deliveryModel,
   }
   const receiptText = JSON.stringify({
-    schemaVersion: 'bayn.original-capture-replay-receipt.v1',
+    schemaVersion: 'bayn.original-capture-replay-receipt.v2',
     recordedAt: iso(endMs + 1),
     origin: source.origin,
     coverageStartMs: source.coverageStartMs,
     coverageEndMs: source.coverageEndMs,
-    universe: source.universe,
+    marketSources: source.marketSources,
     positions: source.positions,
     nativeVisiblePartitions,
     deliveryModel: source.deliveryModel,
@@ -120,19 +123,21 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
     decisionLatencyMs: 1000,
     turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
     backtest: {
-      schemaVersion: 'bayn.backtest.v3',
+      schemaVersion: 'bayn.backtest.v5',
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
       inference: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v5',
+        inputDefinition: 'bayn.jev-trading-signal-state.v16',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'SYNTHETIC fixed-candidate training',
-      sessionDates: trainingSessions.map((session) => session.date),
+      interval: { startAt: trainingSessions[0]!.openAt, endAt: trainingSessions.at(-1)!.closeAt },
       calendar: rawCalendar.slice(0, 3),
       build,
       assumptions: {
@@ -161,5 +166,14 @@ export const ridgeTrainingFixture = (mode: 'resolved' | 'unresolved' | 'excluded
       },
     },
   }
-  return { input, body, receipt, receiptText, source, calendar, protocol, inputHash: canonicalHashV1(input) }
+  return {
+    input,
+    body,
+    receipt,
+    receiptText,
+    source,
+    calendar,
+    protocol,
+    inputHash: Result.getOrThrow(canonicalHashV1Result(input)),
+  }
 }

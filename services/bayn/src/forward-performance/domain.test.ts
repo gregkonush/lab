@@ -6,7 +6,7 @@ import assert from 'node:assert/strict'
 import { describe, expect, test } from 'bun:test'
 import { Result, Schema } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { decodeIntradayBarRows } from '../market-data/intraday/rows'
 import { MarketVolumeBindingRow } from './postgres/model'
@@ -119,6 +119,7 @@ const input = (overrides: Partial<ForwardPerformanceEvidenceInput> = {}): Forwar
   transactions: [transaction('e', '100', '20')],
   ledgerTotals: {
     realizedGainMicros: '100',
+    cashSettlementRoundingMicros: '0',
     realizedLossMicros: '0',
     brokerExecutionFeesMicros: '20',
     otherChargedCostsMicros: '0',
@@ -239,7 +240,7 @@ const exactMarketVolumeEvidence = (): readonly ForwardPerformanceMarketVolumeEvi
     sourceFeed: 'sip' as const,
     adjustment: 'all' as const,
   }
-  return [{ ...material, contentHash: canonicalHashV1(material) }]
+  return [{ ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }]
 }
 
 const terminalReferencePriceFor = (
@@ -254,7 +255,7 @@ const terminalReferencePriceFor = (
     observedAt: volume.finalizedAt,
     sourceEvidenceHash: volume.contentHash,
   }
-  return { ...material, contentHash: canonicalHashV1(material) }
+  return { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
 }
 
 const exactTransactions = () => [
@@ -295,7 +296,7 @@ test('keeps accounting totals while any unverified decision withholds execution 
       status: 'UNDETERMINED',
       reasonCodes: ['PLANNED_DECISION_EVIDENCE_GAP'],
       unverifiedDecisionHashes: [hash('9')],
-      evidenceHash: canonicalHashV1({ unverifiedDecisionHashes: [hash('9')] }),
+      evidenceHash: Result.getOrThrow(canonicalHashV1Result({ unverifiedDecisionHashes: [hash('9')] })),
       implementationShortfall: null,
     })
     expect(receipt.observedCapacity.status).toBe('UNDETERMINED')
@@ -318,6 +319,7 @@ describe('forward performance domain', () => {
     expect(receipt.totals).toMatchObject({
       startingCapitalMicros: '1000',
       realizedGainsMicros: '100',
+      cashSettlementRoundingMicros: '0',
       realizedLossesMicros: '0',
       grossRealizedPnlMicros: '100',
       brokerExecutionFeesMicros: '20',
@@ -360,6 +362,28 @@ describe('forward performance domain', () => {
     expect(receipt.totals.netRealizedPnlAfterCostsMicros).toBe('-10')
     expect(receipt.profitability).toBe('NOT_PROFITABLE')
   })
+
+  test.each(['4900', '-4900'])(
+    'separates broker cash rounding %s from trade profit, fees and cash yield',
+    (rounding) => {
+      const evidence = input()
+      assert(evidence.ledgerTotals !== undefined)
+      const receipt = success(
+        makeForwardPerformanceReceipt({
+          ...evidence,
+          ledgerTotals: { ...evidence.ledgerTotals, cashSettlementRoundingMicros: rounding },
+        }),
+      )
+      expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
+      expect(receipt.totals).toMatchObject({
+        grossRealizedPnlMicros: '100',
+        brokerExecutionFeesMicros: '20',
+        cashYieldMicros: '0',
+        cashSettlementRoundingMicros: rounding,
+        netRealizedPnlAfterCostsMicros: (80n + BigInt(rounding)).toString(),
+      })
+    },
+  )
 
   test('reports positive net realized returns after charged costs', () => {
     const receipt = success(makeForwardPerformanceReceipt(input()))
@@ -540,6 +564,7 @@ describe('forward performance domain', () => {
           marketVolumeEvidence: exactMarketVolumeEvidence(),
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '20',
             otherChargedCostsMicros: '0',
@@ -762,6 +787,7 @@ describe('forward performance domain', () => {
           marketVolumeEvidence: [marketVolume],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '10',
             otherChargedCostsMicros: '0',
@@ -918,6 +944,7 @@ describe('forward performance domain', () => {
           marketVolumeEvidence: [marketVolume],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1006,6 +1033,7 @@ describe('forward performance domain', () => {
           marketVolumeEvidence: [marketVolume],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1067,6 +1095,7 @@ describe('forward performance domain', () => {
           ],
           ledgerTotals: {
             realizedGainMicros: '40',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '10',
             otherChargedCostsMicros: '0',
@@ -1091,7 +1120,9 @@ describe('forward performance domain', () => {
         input({
           transactions: exactTransactions(),
           executionEvidence: exactExecutionEvidence(),
-          marketVolumeEvidence: [{ ...driftedMaterial, contentHash: canonicalHashV1(driftedMaterial) }],
+          marketVolumeEvidence: [
+            { ...driftedMaterial, contentHash: Result.getOrThrow(canonicalHashV1Result(driftedMaterial)) },
+          ],
         }),
       ),
     )
@@ -1128,6 +1159,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '-50', '10')],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '50',
             brokerExecutionFeesMicros: '10',
             otherChargedCostsMicros: '0',
@@ -1155,6 +1187,7 @@ describe('forward performance domain', () => {
             ],
             ledgerTotals: {
               realizedGainMicros: '100',
+              cashSettlementRoundingMicros: '0',
               realizedLossMicros: '0',
               brokerExecutionFeesMicros: '160',
               otherChargedCostsMicros: '0',
@@ -1183,6 +1216,7 @@ describe('forward performance domain', () => {
           ],
           ledgerTotals: {
             realizedGainMicros: '100',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '160',
             otherChargedCostsMicros: '0',
@@ -1206,6 +1240,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '100', '150')],
           ledgerTotals: {
             realizedGainMicros: '100',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '150',
             otherChargedCostsMicros: '0',
@@ -1235,6 +1270,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '-100', '0')],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '100',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1275,6 +1311,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '-200', '0')],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '200',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1319,6 +1356,7 @@ describe('forward performance domain', () => {
           transactions: [],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1358,6 +1396,47 @@ describe('forward performance domain', () => {
     expect(receipt.profitability).toBe('UNDETERMINED')
   })
 
+  test('reports missing capital and operating costs independently without inventing totals', () => {
+    const original = input()
+    assert(original.ledgerTotals !== undefined)
+    const evidence = input({ ledgerTotals: { ...original.ledgerTotals, otherChargedCostsMicros: null } })
+    Reflect.deleteProperty(evidence, 'startingCapitalMicros')
+
+    const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+    expect(receipt.evidence.reasonCodes).toEqual(['OPERATING_COST_EVIDENCE_GAP', 'STARTING_CAPITAL_GAP'])
+    expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test('reports missing capital and ledger independently without treating absent amounts as malformed', () => {
+    const evidence = input()
+    Reflect.deleteProperty(evidence, 'startingCapitalMicros')
+    Reflect.deleteProperty(evidence, 'ledgerTotals')
+
+    const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+    expect(receipt.evidence.reasonCodes).toEqual(['MISSING_LEDGER_ACCOUNT', 'STARTING_CAPITAL_GAP'])
+    expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+    expect(receipt.profitability).toBe('UNDETERMINED')
+  })
+
+  test.each(['startingCapitalMicros', 'ledgerTotals'] as const)(
+    'retains an explicitly unsettled fee accrual when %s is unavailable',
+    (missing) => {
+      const evidence = input({
+        brokerFeeAccruals: [{ accrualId: hash('f'), accountId: 'paper-account-1', expenseMicros: '5', settled: false }],
+      })
+      Reflect.deleteProperty(evidence, missing)
+
+      const receipt = success(makeForwardPerformanceReceipt(evidence))
+
+      expect(receipt.evidence.reasonCodes).toContain('BROKER_FEE_SETTLEMENT_PENDING')
+      expect(Object.values(receipt.totals).every((total) => total === null)).toBe(true)
+      expect(receipt.profitability).toBe('UNDETERMINED')
+    },
+  )
+
   test('invalid or overflowing integer-micro arithmetic fails closed', () => {
     const max = ((1n << 127n) - 1n).toString()
     const receipt = success(
@@ -1366,6 +1445,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', `-${max}`, max)],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: max,
             brokerExecutionFeesMicros: max,
             otherChargedCostsMicros: '0',
@@ -1388,6 +1468,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', max, '0')],
           ledgerTotals: {
             realizedGainMicros: max,
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1401,6 +1482,7 @@ describe('forward performance domain', () => {
         input({
           ledgerTotals: {
             realizedGainMicros: '100',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '0',
             brokerExecutionFeesMicros: '20',
             otherChargedCostsMicros: '0',
@@ -1426,6 +1508,7 @@ describe('forward performance domain', () => {
       transactions: [transaction('e', '-100', '0')],
       ledgerTotals: {
         realizedGainMicros: '0',
+        cashSettlementRoundingMicros: '0',
         realizedLossMicros: '100',
         brokerExecutionFeesMicros: '0',
         otherChargedCostsMicros: '0',
@@ -1446,8 +1529,8 @@ describe('forward performance domain', () => {
     const second = success(makeForwardPerformanceReceipt(input({ ...evidence, cycles: [cycle('a'), secondCycle] })))
 
     expect(first).toEqual(second)
-    expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v3')
-    expect(first.receiptHash).toBe('62d38bc64113308d3aba90c29c877cceb9c3c7d390ca382dd26ff1207ab1a6e4')
+    expect(first.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
+    expect(first.receiptHash).toBe('1c64ff1ca5fdf26b22a2de7ebc7a5a8488241db93a97caddc09dd82c4a843453')
     expect(first.evidence).toEqual({
       status: 'SUFFICIENT',
       reasonCodes: [],
@@ -1465,6 +1548,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '-100', '0')],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '100',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1496,6 +1580,7 @@ describe('forward performance domain', () => {
           transactions: [transaction('e', '-100', '0')],
           ledgerTotals: {
             realizedGainMicros: '0',
+            cashSettlementRoundingMicros: '0',
             realizedLossMicros: '100',
             brokerExecutionFeesMicros: '0',
             otherChargedCostsMicros: '0',
@@ -1552,7 +1637,7 @@ test('retains measured native execution quality when missing minutes prevent com
     if (evidence === undefined) throw new Error('expected terminal mark')
     const { contentHash: _hash, ...source } = evidence
     const material = { ...source, cycleId: hash('a') }
-    const volume = { ...material, contentHash: canonicalHashV1(material) }
+    const volume = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
     // Move the existing synthetic accounting fixture into the native session's window.
     const accounting = JSON.parse(
       JSON.stringify(input({ transactions: exactTransactions(), executionEvidence: exactExecutionEvidence() }))

@@ -271,6 +271,7 @@ impl Native {
         Ok(bytes)
     }
 
+    #[tracing::instrument(name = "spicedb.check", skip_all)]
     pub async fn check(&self, checks: &[Check]) -> Result<(bool, String), Status> {
         if checks.is_empty() || checks.len() > 64 {
             return Err(Status::invalid_argument("invalid permission check batch"));
@@ -316,6 +317,7 @@ impl Native {
         Ok((allowed, revision.into()))
     }
 
+    #[tracing::instrument(name = "spicedb.applied", skip_all)]
     pub async fn applied(&self, operation: &str) -> Result<(bool, String), Status> {
         self.check(&[Check::new(
             "applied_command",
@@ -337,6 +339,7 @@ impl Native {
             .map(|_| ())
     }
 
+    #[tracing::instrument(name = "spicedb.apply", skip_all)]
     pub async fn apply(
         &self,
         operation: &str,

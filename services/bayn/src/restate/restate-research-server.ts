@@ -48,7 +48,7 @@ export const researchServerConfig = Config.all({
   tls: Config.Boolean('BAYN_POSTGRES_TLS').pipe(Config.withDefault(true)),
   caPath: Config.String('BAYN_POSTGRES_CA_PATH').pipe(Config.withDefault('/var/run/secrets/bayn/postgres/ca.crt')),
 })
-export const researchModelEndpoint = 'http://bayn-model.bayn-model.svc.cluster.local:8080/v1/chat/completions'
+export const researchModelEndpoint = 'http://flamingo.flamingo.svc.cluster.local/v1/chat/completions'
 
 export const researchServerProgram = Effect.gen(function* () {
   const config = yield* researchServerConfig
@@ -83,21 +83,23 @@ export const researchServerProgram = Effect.gen(function* () {
         yield* Effect.sleep('30 seconds')
       }
     }).pipe(Effect.forkScoped)
-    const runner = yield* makeResearchRunner(store, researchModelEndpoint, () => ({
-      ...telemetry.traceHeaders(),
-    }))
+    const runner = yield* makeResearchRunner(
+      store,
+      researchModelEndpoint,
+      () => ({
+        ...telemetry.traceHeaders(),
+      }),
+      config.sourceRevision,
+    )
     const context = yield* Effect.context<HttpClient.HttpClient>()
     const workflow = makeBaynResearchRun(
       {
         run: (run, signal) => {
           const parent = currentOpenTelemetryParentSpan()
           const attempt = Effect.gen(function* () {
-            if (
-              run.sourceRevision !== config.sourceRevision ||
-              (yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash
-            )
+            if ((yield* Effect.fromResult(hashResearch(run.policy))) !== servingPolicyHash)
               return yield* new ResearchError({
-                message: 'Research run differs from the deployed source or frozen serving policy',
+                message: 'Research run differs from the frozen serving policy',
               })
             return yield* runner.run(run)
           })
@@ -195,9 +197,10 @@ export const researchServerProgram = Effect.gen(function* () {
 if (import.meta.main) {
   initializeErrorTracking('bayn-research')
   NodeRuntime.runMain(
-    Layer.effectDiscard(researchServerProgram.pipe(reportTerminalFailure('bayn-research'))).pipe(
+    Layer.effectDiscard(researchServerProgram).pipe(
       Layer.provide(makeConfiguredTelemetryRuntimeLayer('bayn-research')),
       Layer.launch,
+      reportTerminalFailure('bayn-research'),
     ),
   )
 }

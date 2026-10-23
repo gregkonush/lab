@@ -1,8 +1,7 @@
-import { FeeActivitySchema } from '../fee-activity'
+import { ObservedFeeActivitySchema } from '../fee-activity'
 import { Context, Effect, Schema } from 'effect'
 
 import { Sha256Schema, UtcInstantSchema, UtcSourceTimestampSchema, strictParseOptions } from '../../schemas'
-import { canonicalHashV1 } from '../../hash'
 import { BrokerReadError, BrokerReadErrorKind } from './failures'
 import { CashReportingQuantumSchema } from './cash-reporting'
 import {
@@ -68,15 +67,16 @@ const position = Schema.Struct({
   side: Schema.Enum(PositionSide),
   quantityAtoms: micros,
   averageEntryPriceMicros: micros,
-  costBasisMicros: Schema.optionalKey(micros),
+  costBasisMicros: micros,
   marketPriceMicros: micros,
   marketValueMicros: micros,
   unrealizedPnlMicros: micros,
   observedAt: UtcInstantSchema,
 })
-const order = Schema.Struct({
+const orderLeaf = Schema.Struct({
   accountId: Schema.String,
   brokerOrderId: Schema.String,
+  parentBrokerOrderId: Schema.optionalKey(Schema.String),
   clientOrderId: Schema.String,
   createdAt: UtcSourceTimestampSchema,
   updatedAt: Schema.optionalKey(UtcSourceTimestampSchema),
@@ -107,6 +107,10 @@ const order = Schema.Struct({
   trailPriceMicros: Schema.optionalKey(micros),
   highWaterMarkMicros: Schema.optionalKey(micros),
   observedAt: UtcInstantSchema,
+})
+const order = Schema.Struct({
+  ...orderLeaf.fields,
+  legs: Schema.optionalKey(Schema.Array(orderLeaf).check(Schema.isMaxLength(2))),
 })
 const fill = Schema.Struct({
   accountId: Schema.String,
@@ -149,7 +153,7 @@ export const ObservedBrokerSnapshotSchema = Schema.Struct({
     history: Schema.Struct({
       orders: Schema.Struct({ rows: Schema.Array(observed(order)), observedAt: UtcInstantSchema }),
       fills: Schema.Array(observed(fill)),
-      fees: Schema.Array(observed(FeeActivitySchema)),
+      fees: Schema.Array(observed(ObservedFeeActivitySchema)),
     }),
   }),
   configuration: observed(configuration),
@@ -293,5 +297,3 @@ export interface BrokerObservationsShape {
 export class BrokerObservations extends Context.Service<BrokerObservations, BrokerObservationsShape>()(
   '@proompteng/bayn/broker/alpaca/BrokerObservations',
 ) {}
-
-export const observedBrokerSnapshotHash = (value: ObservedBrokerSnapshot): string => canonicalHashV1(value)

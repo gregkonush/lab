@@ -18,6 +18,8 @@ import { TestClock } from 'effect/testing'
 import { provideTestLayer } from '../../effect-test-support'
 import { historicalRawArrivals } from '../../testing/historical-streaming-fixture'
 import { streamingFixture } from '../../testing/streaming-market-fixture'
+import { CaptureDisposition } from './transport-evidence'
+import type { NativeArrivalObservation } from './native-arrival'
 import { persistIntradayRecordRows } from '../intraday/verification'
 import { reproduceStreamingSnapshot } from './replay'
 import { constructStreamingSnapshot } from './snapshot'
@@ -102,7 +104,68 @@ class FakeTransport implements KafkaProjectionTransport {
   }
 }
 const program = <A, E>(effect: Effect.Effect<A, E, import('effect').Scope.Scope>) =>
-  Effect.runPromise(Effect.scoped(effect).pipe(provideTestLayer(TestClock.layer())))
+  Effect.runPromise(Effect.scoped(effect).pipe((self) => provideTestLayer(self, TestClock.layer())))
+
+test('native retention observes the trading consumer cut, including rejected records and repeated deliveries', async () => {
+  await program(
+    Effect.gen(function* () {
+      const transport = new FakeTransport()
+      const captured: NativeArrivalObservation[] = []
+      let captureEpoch: string | undefined
+      const market = yield* makeKafkaMarketProjection(
+        config,
+        [universe],
+        (_config, _epoch, identity, bytes) => {
+          expect(identity).toBe(true)
+          expect(bytes).toBe(true)
+          return transport
+        },
+        undefined,
+        (bootstrap, sources) =>
+          Effect.sync(() => {
+            captureEpoch = bootstrap.epoch
+            expect(sources).toEqual([universe])
+            return {
+              observe: (record) =>
+                Effect.sync(() => {
+                  captured.push(record)
+                }),
+              status: () => ({
+                captureId: '0'.repeat(64),
+                status: 'RECORDING',
+                observedConsumerSequence: captured.length,
+                durableConsumerSequence: 0,
+                queuedCompressedBytes: 0,
+                failure: null,
+              }),
+            }
+          }),
+      )
+      yield* TestClock.adjust(1_000)
+      const record = {
+        topic: 'quotes',
+        partition: 0,
+        offset: '0',
+        timestampMs: 900,
+        leaderEpoch: 1,
+        ...decodeKafkaTransportValue(Buffer.from('{'), true, true),
+      }
+      transport.send(record)
+      transport.send(record)
+      yield* TestClock.adjust(1_000)
+      expect(captured).toHaveLength(2)
+      expect(captured.map((record) => record.consumerSequence)).toEqual([1, 2])
+      expect(captured.map((record) => record.disposition)).toEqual([
+        CaptureDisposition.Rejected,
+        CaptureDisposition.Ignored,
+      ])
+      expect(captured.map((record) => record.record.rawValue)).toEqual([Buffer.from('{'), Buffer.from('{')])
+      expect(captured[0]?.availableAtMs).toBe(captured[1]?.availableAtMs)
+      if (captureEpoch === undefined) throw new Error('Missing native capture epoch')
+      expect((yield* market.status).epoch).toBe(captureEpoch)
+    }),
+  )
+})
 
 test('projection cuts preserve current offsets and fresh advancing outputs', async () => {
   await program(
@@ -859,6 +922,46 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
+  test('reports a local bootstrap deadline distinctly while preserving fail-closed retry and cleanup', async () => {
+    const transports: FakeTransport[] = []
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
+          const transport = new FakeTransport()
+          if (transports.length === 0)
+            transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '1' : '0')
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('5 seconds')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        expect(transports).toHaveLength(1)
+        yield* TestClock.adjust('2 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection cycle failed',
+          expect.objectContaining({
+            operation: 'bootstrap',
+            reason: 'BOOTSTRAP_DEADLINE_EXCEEDED',
+            failureCodes: [],
+            retryableBySupervisor: true,
+          }),
+        ])
+        expect(transports[0]?.closeCount).toBe(1)
+        yield* TestClock.adjust('3 seconds')
+        expect((yield* projection.status).failure).toBeUndefined()
+        yield* projection.read
+        expect(logs).toContainEqual([
+          'Kafka market projection recovered',
+          expect.objectContaining({ reason: 'BOOTSTRAP_DEADLINE_EXCEEDED' }),
+        ])
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transports).toHaveLength(2)
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
   test('retains the first invalidation cause and reports recovery without private transport details', async () => {
     const transports: FakeTransport[] = []
     const logs: unknown[] = []
@@ -884,7 +987,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect((yield* projection.read).projection.epoch).not.toBe(prior.projection.epoch)
         expect(logs).toContainEqual([
           'Kafka market projection cycle failed',
-          expect.objectContaining({ failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
+          expect.objectContaining({ reason: 'TRANSPORT_FAILURE', failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
         ])
         expect(logs).toContainEqual([
           'Kafka market projection recovered',

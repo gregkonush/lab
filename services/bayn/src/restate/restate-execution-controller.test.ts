@@ -23,16 +23,24 @@ import {
   executionControllerCommandRetryPolicy,
   executionControllerHandlerTimeouts,
   executionControllerInitialTickDelayMs,
-  executionControllerRecoveryDelayMs,
-  executionControllerRecoveryMaximumDelayMs,
   executionControllerRecoveryTickDelayMs,
   executionControllerRecoveryTickIdempotencyKey,
   executionControllerSourceCatchUpTickIdempotencyKey,
   executionControllerTickIdempotencyKey,
   executionControllerTickRetryPolicy,
   executionActivationAuthorizationHash,
-  makeBaynExecutionController,
+  makeBaynExecutionController as makeController,
 } from './restate-execution-controller'
+
+const fixtureTransportClock = {
+  currentTimeMillisUnsafe: () => Date.parse('2026-08-13T18:00:00.000Z'),
+}
+const makeBaynExecutionController: typeof makeController = (
+  configuration,
+  runtime,
+  hooks,
+  transportClock = fixtureTransportClock,
+) => makeController(configuration, runtime, hooks, transportClock)
 
 const controllerKey = 'a'.repeat(64)
 const planHash = 'b'.repeat(64)
@@ -80,12 +88,18 @@ const handlers = (controller: ReturnType<typeof makeBaynExecutionController>) =>
 type TestContext = ObjectContext<{ readonly controller: ExecutionControllerState }>
 
 test.each([
-  { replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
-  { replayed: true, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
-  { replayed: true, liveAt: '2026-08-13T18:01:00.000Z', delay: 1 },
+  { absoluteWake: true, replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { absoluteWake: true, replayed: true, liveAt: '2026-08-13T18:00:05.000Z', delay: 2_000 },
+  { absoluteWake: true, replayed: true, liveAt: '2026-08-13T18:01:00.000Z', delay: 1 },
+  { absoluteWake: false, replayed: false, liveAt: '2026-08-13T18:00:03.000Z', delay: 1_000 },
+  { absoluteWake: false, replayed: false, liveAt: '2026-08-13T18:00:03.750Z', delay: 250 },
+  { absoluteWake: false, replayed: true, liveAt: '2026-08-13T18:00:03.750Z', delay: 250 },
+  { absoluteWake: false, replayed: false, liveAt: '2026-08-13T18:00:05.000Z', delay: 1 },
+  { absoluteWake: false, replayed: true, liveAt: '2026-08-13T18:01:00.000Z', delay: 1 },
+  { absoluteWake: false, replayed: false, liveAt: '2026-08-13T18:00:02.000Z', delay: 1_000 },
 ])(
-  'absolute wake uses live transport time after worker replay or a pre-send crash (%j)',
-  async ({ replayed, liveAt, delay }) => {
+  'successor wait uses its persisted due time after worker replay or a pre-send crash (%j)',
+  async ({ absoluteWake, replayed, liveAt, delay }) => {
     let state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -102,8 +116,8 @@ test.each([
       outcome: {
         _tag: ExecutionControllerOutcome.Waiting,
         receiptHash: 'd'.repeat(64),
-        nextDelayMs: 4_000,
-        nextWakeAt: '2026-08-13T18:00:07.000Z',
+        nextDelayMs: absoluteWake ? 4_000 : 1_000,
+        ...(absoluteWake ? { nextWakeAt: '2026-08-13T18:00:07.000Z' } : {}),
       },
     }
     const controller = handlers(
@@ -144,7 +158,7 @@ test.each([
           return '2026-08-13T18:00:05.000Z'
         },
       },
-      request: () => ({ id: 'absolute-wake-fixture', attemptCompletedSignal: new AbortController().signal }),
+      request: () => ({ id: 'successor-wait-fixture', attemptCompletedSignal: new AbortController().signal }),
     } as unknown as TestContext
     await controller.tick(context, {
       schemaVersion: 'bayn.execution-controller-tick.v1',
@@ -152,9 +166,13 @@ test.each([
       sequence: 4,
       issuedAt: '2026-08-13T18:00:00.000Z',
     })
-    expect(state.nextDueAt).toBe('2026-08-13T18:00:07.000Z')
+    expect(state.nextDueAt).toBe(absoluteWake ? '2026-08-13T18:00:07.000Z' : '2026-08-13T18:00:04.000Z')
     expect(deliveries).toHaveLength(1)
-    expect(deliveries[0]).toMatchObject({ delay, parameter: { sequence: 5 } })
+    expect(deliveries[0]).toMatchObject({
+      delay,
+      idempotencyKey: executionControllerTickIdempotencyKey(1, 5, 0),
+      parameter: { epoch: 1, sequence: 5, attempt: 0 },
+    })
     expect(events).toEqual(
       replayed ? ['set', 'transport-clock', 'send'] : ['advance', 'set', 'transport-clock', 'send'],
     )
@@ -165,11 +183,6 @@ describe('native Restate execution controller', () => {
   test('uses bounded pause-on-exhaustion policies and a complete command timeout', () => {
     expect(executionControllerInitialTickDelayMs).toBe(0)
     expect(executionControllerRecoveryTickDelayMs).toBe(30_000)
-    expect(executionControllerRecoveryDelayMs(1)).toBe(30_000)
-    expect(executionControllerRecoveryDelayMs(2)).toBe(120_000)
-    expect(executionControllerRecoveryDelayMs(executionControllerMaximumRecoveryWindow)).toBe(
-      executionControllerRecoveryMaximumDelayMs,
-    )
     expect(executionControllerAdvanceRunOptions).toEqual({ maxRetryAttempts: 0 })
     expect(executionControllerAdvanceMaximumAttempts(false)).toBe(3)
     expect(executionControllerAdvanceMaximumAttempts(true)).toBe(7)
@@ -1672,7 +1685,7 @@ describe('native Restate execution controller', () => {
     },
   )
 
-  test('backs off recovery windows and terminates after the durable recovery budget', async () => {
+  test('retries recovery windows at the controller cadence and terminates after the durable recovery budget', async () => {
     const state: ExecutionControllerState = {
       schemaVersion: 1,
       active: true,
@@ -1725,7 +1738,7 @@ describe('native Restate execution controller', () => {
       await object.tick(context, tick)
       const recovery = deliveries.shift()
       if (recovery === undefined) throw new Error(`recovery window ${recoveryWindow} was not scheduled`)
-      expect(recovery.delay).toBe(executionControllerRecoveryDelayMs(recoveryWindow))
+      expect(recovery.delay).toBe(executionControllerRecoveryTickDelayMs)
       expect(recovery.parameter).toMatchObject({ recoveryWindow })
       tick = {
         ...(recovery.parameter as object),

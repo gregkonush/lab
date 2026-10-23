@@ -100,6 +100,7 @@ impl Service {
         context: proto::RequestContext,
         workspace_uid: &str,
         maintenance: Option<(Action, &str)>,
+        stream_receipt_id: &str,
     ) -> Result<(proto::GetWorkspaceStateResponse, String), Status> {
         if peer != policy::CONTROLLER_ID {
             return Err(Status::permission_denied(
@@ -171,7 +172,11 @@ impl Service {
         );
         receipt.revision = revision.clone();
         receipt.recovery_generation = after.recovery_generation;
-        let audit_receipt_id = self.database.audit(&receipt, target).await?;
+        let audited = self
+            .database
+            .observation_audit(&receipt, target, stream_receipt_id)
+            .await?;
+        let audit_receipt_id = audited.id;
         let recheck = self.database.state().await?;
         let window = decision::decision_deadline(context.deadline_unix_ms, &recheck);
         let revalidated = match &window {
@@ -247,7 +252,7 @@ impl Service {
                 audit_receipt_id,
                 policy_version: finished.version,
             },
-            revision,
+            audited.revision,
         ))
     }
 
@@ -404,6 +409,7 @@ impl AuthorizationService for Service {
                 context(request.context)?,
                 &request.workspace_uid,
                 None,
+                &request.stream_receipt_id,
             )
             .await?;
         Ok(Response::new(state))
@@ -423,12 +429,20 @@ impl AuthorizationService for Service {
             ));
         }
         let (action, target) = maintenance_target(request.purpose, &request.terminal_id)?;
+        if request.purpose != proto::GuestMaintenancePurpose::Probe as i32
+            && !request.stream_receipt_id.is_empty()
+        {
+            return Err(Status::invalid_argument(
+                "maintenance control requires a new audit receipt",
+            ));
+        }
         let (state, revision) = self
             .workspace_runtime_state(
                 &peer,
                 context,
                 &request.workspace_uid,
                 Some((action, target)),
+                &request.stream_receipt_id,
             )
             .await?;
         if !state.runtime_allowed {
@@ -534,6 +548,16 @@ impl AuthorizationService for Service {
         let _capacity = self.acquire()?;
         let peer = transport::peer(&request)?;
         decision::check(&self.database, &self.native, &peer, request.into_inner())
+            .await
+            .map(Response::new)
+    }
+    async fn check_connector_agent(
+        &self,
+        request: Request<proto::CheckConnectorAgentRequest>,
+    ) -> Result<Response<proto::CheckConnectorAgentResponse>, Status> {
+        let _capacity = self.acquire()?;
+        let peer = transport::peer(&request)?;
+        crate::connector_agent::check(&self.database, &self.native, &peer, request.into_inner())
             .await
             .map(Response::new)
     }

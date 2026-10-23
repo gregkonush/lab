@@ -5,7 +5,7 @@ import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
 import { OrderSide, OrderType } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { JevCandidateResultStatus, makeJevBatchResult } from '../jev/batch'
 import { nativeJevDecisionEvidence, nativeJevFixture } from '../jev/native.test-support'
 import { makeJevObservation } from '../jev/observation'
@@ -47,7 +47,7 @@ const quote = (atMs: number, overrides: Partial<IntradayQuote> = {}) => {
     askSize: 100,
     ...overrides,
   }
-  return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+  return { value, sequence: 1, availableAtMs: atMs, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const roundTrip = () => ({
   symbol: 'AAPL',
@@ -114,20 +114,14 @@ test('screen reproduces actual Jev selection and fixes deterministic selections 
   expect(result.modelStatus).toBe('AVAILABLE')
   expect(result.selected[SignalScreenRule.Jev]).toBe('AAPL')
   expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.enterProbability).toBe(0.8)
+  expect(result.signals.find((signal) => signal.symbol === 'AAPL')?.setupProbability).toBeCloseTo(0.8)
   const wait = Result.getOrThrow(prepareSignalStudyBatch(batch('wait')))
   expect(wait.selected[SignalScreenRule.Jev]).toBeNull()
   expect(wait.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
   const factors = wait.signals.find((signal) => signal.symbol === 'AAPL')?.factors
   expect(factors?.status).toBe('AVAILABLE')
   if (factors?.status !== 'AVAILABLE') throw new Error('Missing native factors')
-  expect(Object.keys(factors.answers).sort()).toEqual([
-    'action',
-    'continuation',
-    'exhaustion',
-    'regime',
-    'setup_quality',
-  ])
+  expect(Object.keys(factors.answers)).toEqual(['action', 'setup'])
   expect(factors.answers['action']).toMatchObject({ type: 'choice', choice: 'wait' })
 })
 
@@ -170,7 +164,7 @@ test('missing model batch remains unavailable while deterministic rules retain t
   expect(prepared.modelStatus).toBe('UNAVAILABLE')
   expect(prepared.selected[SignalScreenRule.Jev]).toBeNull()
   expect(prepared.selected[SignalScreenRule.RelativeMomentum]).toBe('AAPL')
-  expect(prepared.signals.every((signal) => signal.enterProbability === null)).toBeTrue()
+  expect(prepared.signals.every((signal) => signal.setupProbability === null)).toBeTrue()
 })
 
 test.each(['partial', 'expired'] as const)('retains received factors from an unusable %s batch', (status) => {
@@ -202,7 +196,7 @@ test.each(['partial', 'expired'] as const)('retains received factors from an unu
   )
   expect(prepared.modelStatus).toBe('UNAVAILABLE')
   expect(prepared.selected[SignalScreenRule.Jev]).toBeNull()
-  expect(prepared.signals.every((signal) => signal.enterProbability === null)).toBeTrue()
+  expect(prepared.signals.every((signal) => signal.setupProbability === null)).toBeTrue()
   expect(prepared.signals.find((signal) => signal.symbol === 'AAPL')?.factors.status).toBe('AVAILABLE')
   expect(prepared.signals.find((signal) => signal.symbol === missing.symbol)?.factors.status).toBe(
     status === 'partial' ? 'UNAVAILABLE' : 'AVAILABLE',
@@ -240,7 +234,7 @@ test.each<{ premium: number; selected: string | null }>([
       snapshot,
     }),
   )
-  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, snapshot, observation })
+  const { decidedAt: _at, ...evidence } = nativeJevDecisionEvidence({ ...fixture, observation })
   const result = Result.getOrThrow(prepareSignalStudyBatch(evidence))
   if (selected === null) expect(result.selected[SignalScreenRule.RelativeMomentum]).toBeNull()
   else expect(result.selected[SignalScreenRule.RelativeMomentum]).toBe(selected)

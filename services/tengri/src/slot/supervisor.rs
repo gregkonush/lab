@@ -216,6 +216,7 @@ pub async fn run() -> anyhow::Result<()> {
             "TENGRI_GUEST_RECOVERY_GENERATION_FILE",
         )?))?,
     )?;
+    let readiness_admission = admission.clone();
     let health = Router::new()
         .route(
             "/metrics",
@@ -234,13 +235,18 @@ pub async fn run() -> anyhow::Result<()> {
             "/readyz",
             get(move || {
                 let database = readiness_database.clone();
+                let admission = readiness_admission.clone();
                 async move {
+                    if !admission.is_ready() {
+                        return StatusCode::SERVICE_UNAVAILABLE;
+                    }
                     readiness(&database, &runner::sockets_directory().join("control.sock")).await
                 }
             }),
         );
     let health_listener = TcpListener::bind("0.0.0.0:8080").await?;
     let health_task = tokio::spawn(async move { axum::serve(health_listener, health).await });
+    admission.wait_ready().await;
     let listener = TcpListener::bind("0.0.0.0:8443").await?;
     tokio::select! {
         result = serve(listener, tls, database, admission) => result,
@@ -295,7 +301,15 @@ pub(super) async fn serve(
         .route("/slot/sleep", post(sleep))
         .route("/slot/stop", post(stop))
         .fallback(forward)
-        .with_state(supervisor);
+        .with_state(supervisor)
+        .layer(axum::middleware::from_fn(
+            crate::telemetry::response_trace_id,
+        ))
+        .layer(
+            tower_http::trace::TraceLayer::new_for_http()
+                .make_span_with(crate::telemetry::RequestSpan)
+                .on_failure(crate::telemetry::http_failure),
+        );
     let incoming = crate::identity::tls_incoming(listener, tls);
     tokio::pin!(incoming);
     while let Some(connection) = incoming.next().await {
@@ -530,6 +544,12 @@ async fn forward(
     State(supervisor): State<Supervisor>,
     mut request: Request<Body>,
 ) -> Result<Response, (StatusCode, String)> {
+    let _request = supervisor.admission.reserve_request().map_err(|_| {
+        (
+            StatusCode::SERVICE_UNAVAILABLE,
+            "guest admission request capacity exhausted".into(),
+        )
+    })?;
     let admission =
         crate::metrics::global().latency_timer(crate::metrics::Latency::SupervisorAdmission);
     #[cfg(test)]
@@ -554,12 +574,26 @@ async fn forward(
         ));
     }
     supervisor.state.send_replace(status.state);
-    let (opening, forwarded) = supervisor.admission.opening(request).await.map_err(|_| {
-        (
-            StatusCode::FORBIDDEN,
-            "invalid signed guest RPC opening".into(),
-        )
-    })?;
+    let (opening, forwarded) = supervisor
+        .admission
+        .opening(request)
+        .await
+        .map_err(|error| {
+            if error
+                .downcast_ref::<tonic::Status>()
+                .is_some_and(|status| status.code() == tonic::Code::ResourceExhausted)
+            {
+                (
+                    StatusCode::SERVICE_UNAVAILABLE,
+                    "guest admission buffer capacity exhausted".into(),
+                )
+            } else {
+                (
+                    StatusCode::FORBIDDEN,
+                    "invalid signed guest RPC opening".into(),
+                )
+            }
+        })?;
     supervisor
         .admission
         .consume(&opening, &claim, leadership, &supervisor.database)
@@ -575,6 +609,7 @@ async fn forward(
         })?;
     supervisor.require_leadership(Some(leadership)).await?;
     request = forwarded;
+    request.headers_mut().extend(crate::telemetry::headers());
     drop(opening);
     #[cfg(test)]
     eprintln!(
@@ -1245,7 +1280,7 @@ mod tests {
             readiness(&readiness_database, &supervisor.runner_socket).await,
             StatusCode::OK
         );
-        readiness_database.pool.close();
+        readiness_database.close_fixture();
         let started = tokio::time::Instant::now();
         assert_eq!(
             readiness(&readiness_database, &supervisor.runner_socket).await,

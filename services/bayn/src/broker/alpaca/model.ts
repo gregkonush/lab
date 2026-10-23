@@ -6,11 +6,13 @@ import {
   IsoDateSchema as IsoDate,
   StrictNonEmptyStringSchema as NonEmptyString,
   SymbolSchema as SymbolName,
+  UtcInstantSchema,
 } from '../../schemas'
+import type { EquityProviderSession } from '../../equity-hours'
 import type { BrokerProvider } from '../connection'
 import { BrokerReadError } from './failures'
 import type { ObservedBrokerState } from './observed-snapshot'
-import { Pipeable } from '../../pipeable'
+
 import type { CashReportingQuantum } from './cash-reporting'
 
 export const defaultFillActivitiesPageSize = 100
@@ -20,7 +22,7 @@ export const accountConfigurationObservationSchemaVersion = 'bayn.alpaca-account
 export const accountConfigurationObservationSource = 'alpaca-v2-account-configurations' as const
 export const assetObservationSchemaVersion = 'bayn.alpaca-asset-observation.v1' as const
 export const assetObservationSource = 'alpaca-v2-asset' as const
-export const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v1' as const
+export const marketCalendarSchemaVersion = 'bayn.alpaca-market-calendar-observation.v2' as const
 export const marketCalendarSource = 'alpaca-v2-calendar' as const
 export const marketCalendarTimeZone = 'America/New_York' as const
 export const readPreflightTimeoutMs = 45_000
@@ -276,8 +278,7 @@ export interface Position {
   readonly side: PositionSide
   readonly quantityAtoms: string
   readonly averageEntryPriceMicros: string
-  /** Present on current broker responses; omitted only by legacy observations. */
-  readonly costBasisMicros?: string
+  readonly costBasisMicros: string
   readonly marketPriceMicros: string
   readonly marketValueMicros: string
   readonly unrealizedPnlMicros: string
@@ -305,6 +306,8 @@ export interface Order {
   readonly notionalMicros?: string
   readonly filledQuantityAtoms: string
   readonly filledAveragePriceMicros?: string
+  readonly parentBrokerOrderId?: string
+  readonly legs?: readonly Order[]
   readonly orderClass: OrderClass
   readonly orderType: OrderType
   readonly side: OrderSide
@@ -320,6 +323,7 @@ export interface Order {
 }
 
 export interface FeeActivity {
+  readonly sourceCreatedAt?: string
   readonly cryptoCashFee?: true
   readonly coinDebit?: { readonly symbol: string; readonly quantityAtoms: string; readonly priceAtoms: string }
   readonly accountId: string
@@ -393,8 +397,17 @@ export interface MarketCalendarObservation {
   }
   readonly timeZone: 'UTC'
   readonly sessions: readonly MarketCalendarSession[]
+  readonly providerSessions: readonly EquityProviderSession[]
   readonly normalizedResponseHash: string
 }
+
+export const MarketCalendarProviderSessionSchema = Schema.Struct({
+  date: IsoDate,
+  regularOpenAt: UtcInstantSchema,
+  regularCloseAt: UtcInstantSchema,
+  sessionOpenAt: UtcInstantSchema,
+  sessionCloseAt: UtcInstantSchema,
+})
 
 export interface OrdersQuery {
   readonly status?: OrderCollection
@@ -561,7 +574,7 @@ export const AssetResponseSchema = Schema.Struct({
   attributes: Schema.optionalKey(Schema.NullOr(Schema.Array(NonEmptyString))),
 })
 
-export const OrderResponseSchema = Schema.Struct({
+const OrderLeafResponseSchema = Schema.Struct({
   id: Uuid,
   client_order_id: ExternalClientOrderId,
   created_at: Timestamp,
@@ -596,6 +609,11 @@ export const OrderResponseSchema = Schema.Struct({
   hwm: Schema.NullOr(Decimal),
 })
 
+export const OrderResponseSchema = Schema.Struct({
+  ...OrderLeafResponseSchema.fields,
+  legs: Schema.NullOr(Schema.Array(OrderLeafResponseSchema).check(Schema.isMinLength(1), Schema.isMaxLength(2))),
+})
+
 const FeeActivityResponseBase = {
   id: ActivityId,
   account_id: Schema.optionalKey(Uuid),
@@ -607,6 +625,7 @@ export const FeeActivityResponseSchema = Schema.Union([
   Schema.Struct({
     ...FeeActivityResponseBase,
     activity_type: Schema.Literal('CFEE'),
+    created_at: Timestamp,
     symbol: ResponseSymbol,
     qty: Decimal,
     price: Decimal,
@@ -614,6 +633,7 @@ export const FeeActivityResponseSchema = Schema.Union([
   Schema.Struct({
     ...FeeActivityResponseBase,
     activity_type: Schema.Literal('CFEE'),
+    created_at: Timestamp,
     symbol: Schema.optionalKey(Schema.Literal('USD')),
     qty: Schema.optionalKey(Schema.Never),
     price: Schema.optionalKey(Schema.Never),
@@ -641,11 +661,14 @@ export const FillActivityResponseSchema = Schema.Struct({
 })
 
 const MarketTimeSchema = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3]):[0-5]\d$/))
+const FullSessionTimeSchema = Schema.String.check(Schema.isPattern(/^(?:[01]\d|2[0-3])[0-5]\d$/))
 export const MarketCalendarResponseSchema = Schema.Array(
   Schema.Struct({
     date: IsoDate,
     open: MarketTimeSchema,
     close: MarketTimeSchema,
+    session_open: FullSessionTimeSchema,
+    session_close: FullSessionTimeSchema,
   }),
 )
 
@@ -715,59 +738,39 @@ const MarketCalendarQuerySchema = MarketCalendarQueryBase.check(
 
 export type Decoder<A> = (input: unknown) => Result.Result<A, Schema.SchemaError>
 
-const decodeAccountDataFirst = Schema.decodeUnknownResult(AccountResponseSchema, responseParseOptions)
+export const decodeAccount = Schema.decodeUnknownResult(AccountResponseSchema, responseParseOptions)
 
-export const decodeAccount = Pipeable.dual(1, (input: unknown) => decodeAccountDataFirst(input))
-const decodeAccountConfigurationDataFirst = Schema.decodeUnknownResult(
+export const decodeAccountConfiguration = Schema.decodeUnknownResult(
   AccountConfigurationResponseSchema,
   responseParseOptions,
 )
 
-export const decodeAccountConfiguration = Pipeable.dual(1, (input: unknown) =>
-  decodeAccountConfigurationDataFirst(input),
-)
-const decodeAssetDataFirst = Schema.decodeUnknownResult(AssetResponseSchema, responseParseOptions)
+export const decodeAsset = Schema.decodeUnknownResult(AssetResponseSchema, responseParseOptions)
 
-export const decodeAsset = Pipeable.dual(1, (input: unknown) => decodeAssetDataFirst(input))
-const decodePositionsDataFirst = Schema.decodeUnknownResult(Schema.Array(PositionResponseSchema), responseParseOptions)
+export const decodePositions = Schema.decodeUnknownResult(Schema.Array(PositionResponseSchema), responseParseOptions)
 
-export const decodePositions = Pipeable.dual(1, (input: unknown) => decodePositionsDataFirst(input))
-const decodeOrdersDataFirst = Schema.decodeUnknownResult(Schema.Array(OrderResponseSchema), responseParseOptions)
+export const decodeOrders = Schema.decodeUnknownResult(Schema.Array(OrderResponseSchema), responseParseOptions)
 
-export const decodeOrders = Pipeable.dual(1, (input: unknown) => decodeOrdersDataFirst(input))
-const decodeOrderDataFirst = Schema.decodeUnknownResult(OrderResponseSchema, responseParseOptions)
+export const decodeOrder = Schema.decodeUnknownResult(OrderResponseSchema, responseParseOptions)
 
-export const decodeOrder = Pipeable.dual(1, (input: unknown) => decodeOrderDataFirst(input))
-const decodeFillActivitiesDataFirst = Schema.decodeUnknownResult(
+export const decodeFillActivities = Schema.decodeUnknownResult(
   Schema.Array(FillActivityResponseSchema),
   responseParseOptions,
 )
 
-export const decodeFillActivities = Pipeable.dual(1, (input: unknown) => decodeFillActivitiesDataFirst(input))
-const decodeMarketCalendarDataFirst = Schema.decodeUnknownResult(MarketCalendarResponseSchema, responseParseOptions)
+export const decodeMarketCalendar = Schema.decodeUnknownResult(MarketCalendarResponseSchema, responseParseOptions)
 
-export const decodeMarketCalendar = Pipeable.dual(1, (input: unknown) => decodeMarketCalendarDataFirst(input))
-const decodeErrorResponseDataFirst = Schema.decodeUnknownResult(ErrorResponseSchema, responseParseOptions)
+export const decodeErrorResponse = Schema.decodeUnknownResult(ErrorResponseSchema, responseParseOptions)
 
-export const decodeErrorResponse = Pipeable.dual(1, (input: unknown) => decodeErrorResponseDataFirst(input))
-const decodeOrdersQueryDataFirst = Schema.decodeUnknownResult(OrdersQuerySchema, inputParseOptions)
+export const decodeOrdersQuery = Schema.decodeUnknownResult(OrdersQuerySchema, inputParseOptions)
 
-export const decodeOrdersQuery = Pipeable.dual(1, (input: unknown) => decodeOrdersQueryDataFirst(input))
-const decodeFillActivitiesQueryDataFirst = Schema.decodeUnknownResult(FillActivitiesQuerySchema, inputParseOptions)
-
-export const decodeFillActivitiesQuery = Pipeable.dual(1, (input: unknown) => decodeFillActivitiesQueryDataFirst(input))
+export const decodeFillActivitiesQuery = Schema.decodeUnknownResult(FillActivitiesQuerySchema, inputParseOptions)
 export const decodeFeeActivitiesQuery = Schema.decodeUnknownResult(FeeActivitiesQuerySchema, inputParseOptions)
-const decodeMarketCalendarQueryDataFirst = Schema.decodeUnknownResult(MarketCalendarQuerySchema, inputParseOptions)
 
-export const decodeMarketCalendarQuery = Pipeable.dual(1, (input: unknown) => decodeMarketCalendarQueryDataFirst(input))
-const decodeAssetSymbolDataFirst = Schema.decodeUnknownResult(SymbolName)
+export const decodeMarketCalendarQuery = Schema.decodeUnknownResult(MarketCalendarQuerySchema, inputParseOptions)
 
-export const decodeAssetSymbol = Pipeable.dual(1, (input: unknown) => decodeAssetSymbolDataFirst(input))
-const decodeOrderIdDataFirst = Schema.decodeUnknownResult(Uuid)
+export const decodeAssetSymbol = Schema.decodeUnknownResult(SymbolName)
 
-export const decodeOrderId = Pipeable.dual(1, (input: unknown) => decodeOrderIdDataFirst(input))
-const decodeExternalClientOrderIdDataFirst = Schema.decodeUnknownResult(ExternalClientOrderId)
+export const decodeOrderId = Schema.decodeUnknownResult(Uuid)
 
-export const decodeExternalClientOrderId = Pipeable.dual(1, (input: unknown) =>
-  decodeExternalClientOrderIdDataFirst(input),
-)
+export const decodeExternalClientOrderId = Schema.decodeUnknownResult(ExternalClientOrderId)

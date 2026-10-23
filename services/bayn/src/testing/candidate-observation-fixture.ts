@@ -23,7 +23,7 @@ export const candidateObservationFixture = () => {
     makeIntradayCycleDraft(
       {
         cycleBindingId: 'a'.repeat(64),
-        strategyName: 'intraday-momentum',
+        strategyName: 'jev',
         strategyProtocolHash: Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
         accountId: 'candidate-observation-test',
         executionPolicy,

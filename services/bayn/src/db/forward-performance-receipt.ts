@@ -165,7 +165,7 @@ const ForwardPerformanceObservedCapacitySchema = Schema.Struct({
 )
 
 const ForwardPerformanceReceiptSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v3'),
+  schemaVersion: Schema.Literal('bayn.forward-performance-receipt.v4'),
   bindings: Schema.Struct({
     runtime: ForwardPerformanceBuildBindingSchema,
     source: Schema.NullOr(ForwardPerformanceBuildBindingSchema),
@@ -189,6 +189,7 @@ const ForwardPerformanceReceiptSchema = Schema.Struct({
     brokerExecutionFeesMicros: Schema.NullOr(SignedMicrosSchema),
     otherChargedCostsMicros: Schema.NullOr(SignedMicrosSchema),
     cashYieldMicros: Schema.NullOr(SignedMicrosSchema),
+    cashSettlementRoundingMicros: Schema.NullOr(SignedMicrosSchema),
     grossRealizedPnlMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedPnlAfterCostsMicros: Schema.NullOr(SignedMicrosSchema),
     netRealizedReturn: Schema.NullOr(
@@ -411,7 +412,7 @@ export const persistForwardPerformanceReceipt = (envelope: ForwardPerformanceRec
                 SELECT 1 FROM autonomous_cycle_shadow_decisions AS decision
                 WHERE decision.cycle_id = cycle.cycle_id
                   AND decision.decision_hash = cycle.decision_hash
-                  AND decision.schema_version = 'bayn.paper-cycle-decision.v1'
+                  AND decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
                   AND decision.document ->> 'mode' = 'PAPER'
                   AND decision.document #>> '{bindings,accountId}' = generation.account_id
                   AND decision.document #>> '{bindings,qualificationRunId}' = cycle.qualification_run_id

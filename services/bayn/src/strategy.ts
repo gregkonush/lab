@@ -1,7 +1,6 @@
 import type { RuntimeProvenance } from './contracts'
 import { makeJevDefinition } from './jev/decision'
 import { decodeJevProtocol, defaultJevProtocolDocument, jevBehaviorHash, type JevProtocol } from './jev/protocol'
-import type { StrategyDefinition } from './strategy/core'
 
 /** The application root composes exactly one reviewed strategy implementation. */
 export const activeStrategyName = 'jev' as const
@@ -14,7 +13,7 @@ export const makeActiveStrategyRuntime = (protocol: JevProtocol, provenance: Run
 })
 
 export interface StrategyRuntime {
-  readonly definition: StrategyDefinition<any, any, any, any>
+  readonly definition: ReturnType<typeof makeJevDefinition>
   readonly provenance: RuntimeProvenance
 }
 

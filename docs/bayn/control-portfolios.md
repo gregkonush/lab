@@ -5,18 +5,27 @@ portfolio owns cash, inventory, execution fees, daily turnover, exit triggers, a
 It evaluates opportunities from its own position state, including periods when the original Jev replay held a
 position. It never synthesizes Jev responses or supplies production trading authority.
 
-The Bayn image installs this command and its compiled Node entry point. For local work, build the component and run
-`node services/bayn/dist/control-study-command.js` with the same flags. The former source-tree tool is removed.
+Build the offline commands with `bun run --filter @proompteng/bayn build:research`, then run
+`node services/bayn/dist/research/control-study-command.js` with the same flags. The published Bayn image also
+contains `bayn-control-study`.
 `--help` requires no credentials. `--mode preflight` verifies the supplied source and writes coverage diagnostics
 without requesting model evaluations. An incomplete preflight writes its diagnostic and exits unsuccessfully.
 Installing the command does not schedule a capture, run a study, or qualify the input.
 
 This command produces development evidence. It does not satisfy the frozen
-[Jev acceptance protocol](jev-migration-acceptance-v2.json). Entry and management are selected explicitly. `entry: "JEV"` adds an independent native entry portfolio with
-mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. `management: "MECHANICAL"` removes model
-management, while `management: "JEV"` gives each repeated control its own native Jev management. The retained close
-control always uses its original close lifecycle. The full acceptance experiment still needs frozen control
-definitions, calibrated timing and execution assumptions, and untouched prospective sessions.
+[Jev acceptance protocol](jev-migration-acceptance-v2.json). `entry: "JEV"` adds an independent native entry
+portfolio with mechanical exits. `entry: "DETERMINISTIC"` retains deterministic entries. Only
+`management: "MECHANICAL"` is executable. The retired research model-management path is removed. The independent
+control profile does not qualify strategy-derived prices or the broker-held protection lifecycle. Acceptance
+still needs frozen definitions, calibrated execution assumptions and untouched prospective sessions.
+
+Controls require a complete regular broker session inside the replay interval. The broker calendar's `open` and
+`close` fields define that session, including early closes. Wider `session_open` and `session_close` bounds describe
+provider hours; the separate data window does not replace regular trading hours. Keep the original calendar and
+source unchanged. Preparation retains the complete reviewed Jev protocol for native observation and journal
+validation. The separate equity market profile selects source symbols; it cannot replace protocol fields or add
+market metadata to the serialized native protocol. Preparation rejects an interval with no complete regular
+session before any model dispatch.
 
 ## Offline input preflight
 
@@ -41,24 +50,22 @@ An available benchmark with every candidate excluded cannot pass it. Partial cov
 The original source receipt is retained unchanged. A complete screen does not establish original stream
 availability, prospective completeness, executable liquidity, calibrated latency, costs or profitability. Keep the
 input and diagnostic output private, outside Git and CI artifacts. Omitting `--mode`, or using `--mode study`, retains
-the registered study behavior. The sole development input contract is v7. Preflight never starts that study
+the registered study behavior. The sole development input contract is v9. Preflight never starts that study
 automatically.
 
 ## Fixed policies
 
-| Policy                       | Entry selection                                                                                                            | Size                                   | Exit                                                        |
-| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------- |
-| `RETAINED_BREAKOUT_CLOSE`    | Retained six-symbol breakout thresholds                                                                                    | 10% of bounded allocation              | Close window                                                |
-| `REPEATED_BREAKOUT`          | Retained breakout thresholds across Jev's candidate universe                                                               | Explicit research weight, at most 20%  | 15-minute maximum hold, 50 bp protective stop, close window |
-| `REPEATED_JEV_ENTRY`         | Native observation, model batch, entry probability gate and decision against this portfolio                                | Native allocation, matched to momentum | Same mechanical exits                                       |
-| `REPEATED_RELATIVE_MOMENTUM` | Positive return from the earliest common observed candidate and benchmark minute, with native spread and liquidity filters | Same research weight                   | Same mechanical management                                  |
+| Policy                       | Entry selection                                                                                                            | Size                                   | Exit                                                                                            |
+| ---------------------------- | -------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| `RETAINED_BREAKOUT_CLOSE`    | Retained six-symbol breakout thresholds                                                                                    | 10% of bounded allocation              | Close window                                                                                    |
+| `REPEATED_BREAKOUT`          | Retained breakout thresholds across Jev's candidate universe                                                               | Explicit research weight, at most 20%  | 15-minute maximum hold, 50 bp protective stop, 100 bp estimated net-profit target, close window |
+| `REPEATED_JEV_ENTRY`         | Native observation, model batch, entry probability gate and decision against this portfolio                                | Native allocation, matched to momentum | Same mechanical exits                                                                           |
+| `REPEATED_RELATIVE_MOMENTUM` | Positive return from the earliest common observed candidate and benchmark minute, with native spread and liquidity filters | Same research weight                   | Same mechanical management                                                                      |
 
-The table describes the mechanical lifecycles. In `JEV` mode, native model exits are also available to the two
-repeated controls. Existing exit triggers, protective stops, maximum holding time and the close window take
-precedence over a new inference. Each management request contains the control's own actual simulated fill quantity,
-cost basis, fees, entry time and current market evidence. Candidate strategy decisions are never reused as control
-management decisions. Entry and management track completed windows independently; partial exit retries preserve
-the original model trigger and require no new inference.
+The table describes the mechanical lifecycles. Jev selects entries and does not manage held positions in this
+comparison. Each portfolio retains its own simulated fills, cash, fees and inventory. Existing exit triggers,
+protective stops, net-profit targets, maximum holding time and the close window take precedence over another entry.
+Partial exit retries preserve the original mechanical trigger and require no new inference.
 
 Every policy starts polling after the first completed session minute and the native two-second delay. The protocol's
 30-minute lookback bounds the available context; it does not require 30 bars or delay admission by 30 minutes.
@@ -82,7 +89,7 @@ fallback. Use the native execution engine to verify those behaviors.
 
 ## Frozen residual-shock falsification candidate
 
-Input `bayn.control-study-input.v7` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
+Input `bayn.control-study-input.v9` adds `SPY_RELATIVE_SHOCK_REBOUND_60S_V1` when explicitly selected through
 `falsificationCandidate`. It requires deterministic entry, mechanical management, `repeatedTargetWeightPpm: 200000`,
 a declared `turnoverPolicy`, and native 30,000 ms polling. Freeze timing, execution and data-cost scenarios before
 any outcome. It cannot be combined with the Jev entry or Ridge experiments.
@@ -116,10 +123,9 @@ strategy. No provider calls, data acquisition, raw exporter or new evaluation en
 - Evaluate each successfully observed completed-minute window once. A canceled entry consumes that window.
   The 2-second completed-bar delay and 30-second session-anchored poll schedule remain unchanged. A minute closing
   at 10:00 is ordinarily first eligible at the 10:00:30 poll, before declared decision and routing delays.
-- Begin the exit at the first poll at or after the first actual partial entry fill plus 60 seconds. Close-window
-  and 50-bp protective-stop triggers take precedence. The native 15-minute holding ceiling remains a fallback.
+- Begin the exit at the first poll at or after the first actual partial entry fill plus 60 seconds. Close-window, 50-bp protective-stop and 100-bp estimated net-profit triggers take precedence. The native 15-minute holding ceiling remains a fallback.
   Routing, missing quotes and partial-fill retries can extend actual holding beyond 60 or 90 seconds. A target is
-  not a guaranteed execution deadline. No take-profit, learned management or same-window entry retry is added.
+  not a guaranteed execution deadline. The shared net-profit target applies; learned management and same-window entry retry remain absent.
 
 Selected and unselected candidate calculations are retained as rational numerators/denominators alongside the
 snapshot hash. Orders, fills, quote hashes, partial fills, retry triggers, missing observations and session marks
@@ -172,26 +178,11 @@ budget. Native replay applies the same per-quote consumption rule. Counterfactua
 
 The declared `decisionLatencyMs` covers the research scenario's full construction, evaluation, and persistence
 delay. Routing delay comes from the native replay assumptions and is added separately. The command does not
-measure full runtime latency. A scenario value cannot be presented as observed p95 latency. Jev management measures
-provider and simulation-journal work against an independent clock. Its elapsed time advances the market source,
-and expired responses cannot authorize model exits. This measures the offline persistence implementation, not the
-production PostgreSQL/controller path; the frozen comparison still requires common calibrated timing assumptions.
-The management pass advances its deadline clock without reading historical source records. After measurement ends,
-the source and equity marks catch up to that clock, including on failure. Replay parsing time never becomes model
-latency or changes the management deadline.
-
-Jev management definition `bayn.control-study-definition.v9` bounds the complete observation, inference and journal
-pass using the independent provider clock. Its deadline is the earlier of model validity and the first-fill maximum
-hold. Cancellation waits for cleanup and retains its elapsed time. A hold or model exit cannot commit at or after
-that deadline; the session then rechecks its mechanical exit. Received usage stays priced even when receipt
-persistence crosses the deadline; interrupted calls without usage remain unknown. Existing Jev reports retain
-their original bytes and identities. Run a new registered study with the corrected executable and definition for
-comparisons. Mechanical definitions and reports are unchanged by this correction.
-Journal operations retain their serial permit and scoped file cleanup without masking the complete operation from
-cancellation. Interruption can leave an uncertain durable prefix, so it permanently invalidates that journal and
-forbids further observation, batch or request work. Preserve the interrupted directory and start a new registered
-experiment; never resume it or infer a successful write from an existing file. Received-call retention and file
-finalizers still drain before management returns, and their elapsed time remains measured.
+measure full runtime latency. A scenario value cannot be presented as observed p95 latency. Native Jev entry
+measures provider and simulation-journal work against an independent clock before order pricing. This offline journal
+does not establish production PostgreSQL/controller latency. Cancellation retains elapsed cleanup time and can leave
+an uncertain durable prefix; preserve the interrupted directory and start a new registered experiment. Never resume
+it or infer successful persistence from the existence of a file.
 
 Every session retains opening, closing, and one-minute marked equity at a fresh bid with positive displayed size.
 It also marks each poll, decision completion, and the portfolio before and after each order outcome. Every valid
@@ -213,8 +204,8 @@ from each filled dollar of turnover as a cost stress.
 
 ### Scheduled opportunity accounting
 
-Input v7 always includes opportunity accounting. Current reports use `bayn.control-study-report.v6` and definition
-`bayn.control-study-definition.v10`. Older development input contracts are rejected; preserve old reports as historical
+Input v8 always includes opportunity accounting. Current reports use `bayn.control-study-report.v6` and definition
+`bayn.control-study-definition.v12`. Older development input contracts are rejected; preserve old reports as historical
 artifacts. The optional Ridge and residual-shock experiments retain their frozen mathematical definitions.
 
 Each session adds `simulatedOpportunityAccounting`. Its denominator is every session-open anchored poll strictly
@@ -257,7 +248,7 @@ Each flat Jev portfolio constructs a native reconciled observation from its own 
 its own batch, applies `decideJevEntry`, and fsyncs its decision before pricing. The measured provider and journal clock
 consume scheduled opportunities. `decisionLatencyMs` applies only to deterministic controls; it is not added again
 to model work. Entry abstentions retain paid calls. Failed, expired or interrupted model work remains unavailable;
-an interrupted journal cannot be reused and the experiment remains incomplete. Mechanical stops, maximum hold,
+an interrupted journal cannot be reused and the experiment remains incomplete. Mechanical stops, net-profit targets, maximum hold,
 partial fills, exit retries and close deadlines use the existing portfolio engine.
 
 The report retains `entryMode`, native batch/observation/decision hashes and commitment time in each decision.
@@ -278,13 +269,14 @@ A completed development replay does not prove executable capacity or live profit
 
 ## Run
 
-Create an input with the following shape. `backtest` is the complete existing `bayn.backtest.v3` document, including
+Create an input with the following shape. `backtest` is the complete existing `bayn.backtest.v5` document, including
 its source receipt bindings and native build/strategy identity. It identifies the source experiment; it does not
 claim that controls made Jev calls or executed the production interpreter.
 
 ```json
 {
-  "schemaVersion": "bayn.control-study-input.v7",
+  "schemaVersion": "bayn.control-study-input.v9",
+  "costObjective": "ALL_COSTS",
   "entry": "DETERMINISTIC",
   "turnoverPolicy": "ENTRY_AND_EXPECTED_EXIT",
   "management": "MECHANICAL",
@@ -298,7 +290,7 @@ The empty object above is a placeholder for the validated native document. Freez
 scenarios before viewing their outcomes. Preserve negative and incomplete results.
 
 ```sh
-bayn-control-study \
+node services/bayn/dist/research/control-study-command.js \
   --input /absolute/path/control-input.json \
   --input-sha256 <sha256-of-input-bytes> \
   --arrivals /absolute/path/arrivals.ndjson.gz \
@@ -310,7 +302,3 @@ bayn-control-study \
 The command refuses duplicate or incomplete flags, hash mismatches, and an existing output file. Keep the exact
 executable Git commit, input hashes, command, exit status, and report hash in the experiment receipt. A report
 records the source and policy definitions but does not independently prove which Git commit executed the command.
-
-For a separately registered managed study, set `management` to `JEV`, bind `BAYN_JEV_API_KEY` through the existing
-secret path, and add `--evidence-directory /absolute/path/new-evidence-directory`. That mode makes paid provider
-calls. It fails when the key or evidence directory is missing; it never silently switches to mechanical management.

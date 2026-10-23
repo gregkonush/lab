@@ -18,7 +18,7 @@ describe('landing browser validation workflow', () => {
     )?.[0]
     const runner = workflow.match(/runs-on: >-\n[\s\S]*?\n\s+env:/)?.[0]
 
-    expect(landingStep).toContain('bunx playwright install --with-deps chromium')
+    expect(landingStep).toContain('node .github/scripts/install-tengri-chromium.mjs')
     expect(landingStep).toContain('bun run --cwd apps/landing test:e2e')
     expect(landingStep).toContain('bun run --filter landing build')
     expect(landingStep.indexOf('bun run --filter landing build')).toBeLessThan(

@@ -74,7 +74,7 @@ async function mockReadyDesktop(page: Page) {
         : action.action === 'codex-models'
           ? { models: codexModelFixtures, nextCursor: null }
           : action.action === 'list-files'
-            ? { path: action.path ?? '/', entries: [] }
+            ? { path: action.path ?? '/workspace', entries: [] }
             : null
     await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ result }) })
   })

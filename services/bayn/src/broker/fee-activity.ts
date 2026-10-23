@@ -1,6 +1,6 @@
 import { Schema } from 'effect'
 import { PositiveMicrosSchema } from '../execution/contracts'
-import { SymbolSchema, IsoDateSchema, StrictNonEmptyStringSchema } from '../schemas'
+import { SymbolSchema, IsoDateSchema, StrictNonEmptyStringSchema, UtcOrderTimestampSchema } from '../schemas'
 
 export const FeeActivitySchema = Schema.Struct({
   accountId: StrictNonEmptyStringSchema,
@@ -14,5 +14,16 @@ export const FeeActivitySchema = Schema.Struct({
 }).check(
   Schema.makeFilter(
     (fee) => fee.cryptoCashFee !== true || (fee.coinDebit === undefined && BigInt(fee.netAmountMicros) < 0n),
+  ),
+)
+
+export const ObservedFeeActivitySchema = Schema.Struct({
+  ...FeeActivitySchema.fields,
+  sourceCreatedAt: Schema.optionalKey(UtcOrderTimestampSchema),
+}).check(
+  Schema.makeFilter(
+    (fee) =>
+      (fee.cryptoCashFee !== true || (fee.coinDebit === undefined && BigInt(fee.netAmountMicros) < 0n)) &&
+      (fee.sourceCreatedAt === undefined || fee.cryptoCashFee === true || fee.coinDebit !== undefined),
   ),
 )

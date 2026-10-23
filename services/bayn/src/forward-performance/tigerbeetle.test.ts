@@ -4,8 +4,8 @@ import { describe, expect, test } from 'bun:test'
 import { Effect, Result } from 'effect'
 import { AccountFlags, type Account, type Transfer } from 'tigerbeetle-node'
 
-import { brokerFeeLedgerPlan, prepareAccounting } from '../accounting/domain'
-import type { RuntimeConfig } from '../config'
+import { brokerFeeLedgerPlan, cashSettlementLedgerPlan, prepareAccounting } from '../accounting/domain'
+import type { RuntimeConfig } from '../config/model'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { stableU128 } from '../hash'
 import { assembleAccountPlan } from '../ledger/decisions'
@@ -210,6 +210,30 @@ const dependencies = (
 })
 
 describe('forward performance TigerBeetle read', () => {
+  test('cash settlement accounts reconcile globally and charge only their source generation', async () => {
+    const previous = [...plans(), cashSettlementLedgerPlan(accountId, hash('e'), '4900', ledger)]
+    const current = [...secondGenerationPlans(), cashSettlementLedgerPlan(accountId, hash('f'), '-2100', ledger)]
+    const all = [...previous, ...current]
+    const accountPlan = success(assembleAccountPlan(accountId, all))
+    const evidence = await Effect.runPromise(
+      Effect.scoped(
+        readForwardPerformanceLedger(
+          config,
+          accountId,
+          all,
+          undefined,
+          dependencies(materializeAccounts(accountPlan), materializeTransfers(accountPlan)),
+          current,
+        ),
+      ),
+    )
+    expect(evidence.ledgerExact).toBe(true)
+    expect(evidence.totals.cashSettlementRoundingMicros).toBe('-2100')
+    expect(evidence.totals.realizedGainMicros).toBe('20000000')
+    expect(evidence.totals.brokerExecutionFeesMicros).toBe('1000')
+    expect(evidence.totals.cashYieldMicros).toBe('0')
+  })
+
   test('reconciles cumulative stable-account balances while reporting only the selected generation totals', async () => {
     const priorPlans = plans()
     const currentPlans = secondGenerationPlans()
@@ -231,6 +255,7 @@ describe('forward performance TigerBeetle read', () => {
     expect(evidence.ledgerExact).toBe(true)
     expect(evidence.totals).toEqual({
       realizedGainMicros: '20000000',
+      cashSettlementRoundingMicros: '0',
       realizedLossMicros: '0',
       brokerExecutionFeesMicros: '1000',
       otherChargedCostsMicros: null,
@@ -284,6 +309,7 @@ describe('forward performance TigerBeetle read', () => {
     expect(evidence).toEqual({
       totals: {
         realizedGainMicros: '10000000',
+        cashSettlementRoundingMicros: '0',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '300',
         otherChargedCostsMicros: null,
@@ -321,6 +347,7 @@ describe('forward performance TigerBeetle read', () => {
     expect(evidence).toEqual({
       totals: {
         realizedGainMicros: '10000000',
+        cashSettlementRoundingMicros: '0',
         realizedLossMicros: '0',
         brokerExecutionFeesMicros: '300',
         otherChargedCostsMicros: null,

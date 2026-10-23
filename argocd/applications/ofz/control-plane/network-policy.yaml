@@ -32,6 +32,29 @@ spec:
     - to:
         - namespaceSelector:
             matchLabels:
+              kubernetes.io/metadata.name: glitchtip
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: glitchtip
+              app.kubernetes.io/component: web
+      ports:
+        - protocol: TCP
+          port: 8000
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: observability
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: tempo
+              app.kubernetes.io/instance: observability-tempo-v3
+              app.kubernetes.io/component: distributor
+      ports:
+        - protocol: TCP
+          port: 4318
+    - to:
+        - namespaceSelector:
+            matchLabels:
               kubernetes.io/metadata.name: kube-system
           podSelector:
             matchLabels:
