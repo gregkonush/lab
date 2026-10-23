@@ -4,6 +4,11 @@ Ofz owns the final Tengri policy schema, action catalog, typed authorization API
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
 Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
 
+[Dormant Relay support](../../docs/tengri/relay-staged-rollout.md) adds compatible
+connector contracts behind the default-off `TENGRI_CONNECTORS_ENABLED` server gate.
+The active native schema and existing diagnostic grants remain usable without
+enabling connectors or provisioning Relay.
+
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
 must check its expiring grant and its issuer's current permission in one fully consistent bulk request.

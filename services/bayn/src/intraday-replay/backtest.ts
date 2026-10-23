@@ -289,13 +289,14 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       input: decoded,
       sourceReceipt,
       runId,
-      protocol: { ...protocol, ...equityMarketProfile },
+      protocol,
       assets,
       identity,
       reportingWindows: sessions,
-      brokerSessions: calendar.sessions.filter(
-        (session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs,
-      ),
+      brokerSessions: calendarDays
+        .flatMap((day) => day.providerSessions)
+        .map((session) => ({ date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }))
+        .filter((session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs),
       openMs,
       closeMs,
       buildEvidence: {
@@ -406,7 +407,12 @@ export const runBacktest = (
       submissionTime: timing.currentUtcInstant,
       sourceManifestHash: source.source.sourceManifestHash,
       openingCashMicros: prepared.input.openingCashMicros,
-      protocol: prepared.protocol,
+      protocol: {
+        feed: equityMarketProfile.feed,
+        delayClass: equityMarketProfile.delayClass,
+        maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
+        executionModel: prepared.protocol.executionModel,
+      },
       assumptions: prepared.input.assumptions,
       fractionalTrading: prepared.input.fractionalTrading,
       assets: prepared.assets,

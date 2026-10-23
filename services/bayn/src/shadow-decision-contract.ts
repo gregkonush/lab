@@ -992,6 +992,18 @@ const streamingPricingEvidenceIssues = (
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
+    const target = document.strategyDecision
+    if (target?.schemaVersion === 'bayn.jev-entry-target.v6' && target.selectedSymbols.includes(symbol)) {
+      const plan = target.exitPolicy.plans[symbol]
+      // Match compileJevEntry using the exact quote bid, before instrument-price quantization.
+      if (plan === undefined || bid <= BigInt(plan.levels.stopPriceMicros))
+        return [
+          {
+            path: ['executionMarketDataRows'],
+            issue: 'entry pricing must remain strictly above the selected protective stop',
+          },
+        ]
+    }
     const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
     if (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||

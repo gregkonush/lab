@@ -841,6 +841,26 @@ test('an explicit known-cost diagnostic retains unknown data allocation without 
   expect(prepared.input.costObjective).toBe('KNOWN_COST_DIAGNOSTIC')
 })
 
+test('control preparation rejects an interval without a complete regular session', () => {
+  const { input, receipt } = frozenControlFixture()
+  const prepared = prepareControlStudy(
+    {
+      ...input,
+      backtest: {
+        ...input.backtest,
+        interval: { startAt: '2026-09-04T14:00:00.000Z', endAt: '2026-09-04T15:00:00.000Z' },
+      },
+    },
+    receipt,
+  )
+  expect(Result.isFailure(prepared)).toBe(true)
+  if (Result.isFailure(prepared)) {
+    expect(prepared.failure._tag).toBe('ControlStudyFailure')
+    if (prepared.failure._tag === 'ControlStudyFailure')
+      expect(prepared.failure.message).toBe('Control interval must contain a complete regular broker session')
+  }
+})
+
 test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(

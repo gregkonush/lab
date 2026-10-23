@@ -1,6 +1,7 @@
 pub mod bootstrap;
 pub mod catalog;
 pub mod commands;
+pub mod connector_agent;
 pub mod decision;
 pub mod native;
 pub mod policy;
