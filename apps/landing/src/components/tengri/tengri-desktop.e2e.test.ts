@@ -2564,6 +2564,9 @@ test('shows a submitted message before the server accepts it and restores reject
       timeout: 1_000,
     })
     await expect(composer).toHaveValue('')
+    await expect(tengri.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking')
+    await expect(tengri.getByText('Starting', { exact: true })).toHaveCount(0)
+    await expect(tengri.getByLabel('Agent status', { exact: true })).toHaveText('Working')
   } finally {
     releaseSend()
   }
@@ -8366,7 +8369,11 @@ test('shows concise response activity instead of internal run reasons', async ({
   const mock = await mockTengri(page, { durableRun: run })
   await page.goto('/')
   const chat = page.getByRole('region', { name: 'Tengri window' })
-  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Starting')
+  await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Thinking')
+  await expect(chat.getByText('Starting', { exact: true })).toHaveCount(0)
+  await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Working')
+  await expect(chat.getByText('Ask Codex to explore, change, or run something in this workspace.')).toHaveCount(0)
+  await chat.screenshot({ path: test.info().outputPath('accepted-response.png') })
   await expect(chat.getByText('Run accepted. Waiting for the agent.', { exact: true })).toHaveCount(0)
   run.state = { phase: 'waiting_for_guest', reason: 'waiting to protect the active run from automatic sleep' }
   await expect(chat.getByRole('status', { name: 'Agent activity' })).toHaveText('Connecting')
