@@ -2,6 +2,7 @@ import { expect, test } from 'bun:test'
 import { Effect, Redacted, Result } from 'effect'
 
 import type { ApplicationPlan } from '../app'
+import type { AuthorityGenerationStoreShape, CapitalGrantLifecycleStoreShape } from '../db/execution-store'
 import { alpacaSandboxBaseUrl } from '../broker/connection'
 import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
 import { makeStrategyProtocolHashResult } from '../contracts'
@@ -12,13 +13,22 @@ import {
   type ResearchCapitalActivationRequest,
 } from '../execution/configuration'
 import { config, fixtureRuntime } from '../testing/runtime-fixtures'
-import { AccountStatus, ReconciliationStatus } from '../execution/contracts'
+import {
+  AccountStatus,
+  Authority,
+  KillState,
+  ReconciliationStatus,
+  makeResearchCapitalGrantGenerationResult,
+} from '../execution/contracts'
+import { legacyAuthorityGenerationV3SchemaVersion } from '../execution/legacy-wire'
+import { strategyProtocolCutoverRestrictionReason } from '../execution/mandate'
 import { CapitalActivationReconciliationNotExact, OperationalError } from '../errors'
 import type { ReconciledBrokerState } from '../simulation-reconciliation/broker-model'
 import { canonicalHashV1Result } from '../hash'
 import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   configuredCapitalActivation,
+  prepareOrRecoverResearchCapitalActivation,
   refreshResearchCapitalActivationReconciliation,
   validateResearchCapitalPreflight,
   validateResearchCapitalRiskPolicy,
@@ -237,4 +247,79 @@ test('pre-activation retains a typed nonexact reconciliation failure until a lat
   expect(await Effect.runPromise(refresh)).toEqual({
     report: { reconciliation: { status: ReconciliationStatus.Exact } },
   })
+})
+
+test('protocol-cutover rearm requires fresh reconciliation before changing authority', async () => {
+  const current = request()
+  const priorPlanHash = 'd'.repeat(64)
+  const previous = Result.getOrThrow(
+    makeResearchCapitalGrantGenerationResult({
+      schemaVersion: legacyAuthorityGenerationV3SchemaVersion,
+      maximum: Authority.Execution,
+      previousGenerationHash: 'b'.repeat(64),
+      grant: { _tag: 'Research', planHash: priorPlanHash },
+      activationSourceRevision: current.activation.sourceRevision,
+      activationImageRepository: current.activation.imageRepository,
+      activationImageDigest: current.activation.imageDigest,
+      strategyName: current.strategy.name,
+      strategyBehaviorHash: current.strategy.behaviorHash,
+      strategyParameterHash: current.strategy.parameterHash,
+      strategyParameterSchemaVersion: current.strategy.parameterSchemaVersion,
+      strategyProtocolHash: current.strategy.protocolHash,
+      accountId,
+      brokerIdentityHash: identity.identityHash,
+      riskPolicyHash: current.riskPolicyHash,
+      proofPlanHash: priorPlanHash,
+      reconciliationId: 'e'.repeat(64),
+      reconciliationContentHash: 'e'.repeat(64),
+    }),
+  )
+  const authority: AuthorityGenerationStoreShape = {
+    readAuthorityState: Effect.succeed({
+      schemaVersion: 'bayn.paper-authority.v1',
+      generationHash: previous.generationHash,
+      maximum: Authority.Execution,
+      effective: Authority.Observe,
+      kill: KillState.Active,
+      reason: strategyProtocolCutoverRestrictionReason,
+      version: 2,
+      updatedAt: '2026-09-25T15:10:15.000Z',
+    }),
+    readResearchAuthorityGeneration: (hash) => Effect.succeed(hash === previous.generationHash ? previous : undefined),
+    ensureAuthorityGeneration: () => Effect.die('authority changed before fresh reconciliation'),
+    readOrInitializeObserveAuthority: () => Effect.die('unexpected authority initialization'),
+    readAuthorityGenerationLineage: () => Effect.die('unexpected lineage read'),
+  }
+  const lifecycle: CapitalGrantLifecycleStoreShape = {
+    activateResearchCapitalGrant: () => Effect.die('capital granted before fresh reconciliation'),
+  }
+  const unavailable = new OperationalError({
+    component: 'database',
+    operation: 'reconcile-test-fixture',
+    message: 'fresh reconciliation unavailable',
+    retryable: true,
+    cause: { _tag: 'TestReconciliationUnavailable' },
+  })
+  let reconciliations = 0
+  const result = await Effect.runPromise(
+    prepareOrRecoverResearchCapitalActivation(
+      plan(),
+      current,
+      null,
+      null,
+      authority,
+      lifecycle,
+      Effect.gen(function* () {
+        reconciliations += 1
+        return yield* unavailable
+      }),
+      1000,
+    ).pipe(Effect.result),
+  )
+  expect(reconciliations).toBe(1)
+  expect(Result.isFailure(result)).toBe(true)
+  if (Result.isFailure(result)) {
+    expect(result.failure.message).toBe('research capital pre-activation reconciliation failed')
+    expect(result.failure.cause).toBe(unavailable)
+  }
 })

@@ -19,6 +19,7 @@ import {
   legacyV1CompletedRestrictionReason,
   capitalGrantFromLegacyGeneration,
   capitalGrantKey,
+  strategyProtocolCutoverRestrictionReason,
 } from './mandate'
 
 describe('executionMandateAllocationCapitalMicros', () => {
@@ -404,6 +405,25 @@ describe('execution mandate decisions', () => {
     ).toEqual(Result.succeed({ _tag: 'Rearm' }))
   })
 
+  test.each([false, true])('rearms protocol-cutover PAPER authority while preserving identity fences', (matches) => {
+    const facts = {
+      generationHash: 'b'.repeat(64),
+      sourceGenerationHash: 'a'.repeat(64),
+      maximum: 'PAPER' as const,
+      effective: 'OBSERVE' as const,
+      kill: 'ACTIVE' as const,
+      currentGenerationMatchesRequest: matches,
+      reason: strategyProtocolCutoverRestrictionReason,
+    }
+    expect(decideExecutionMandateAuthority(facts)).toEqual(Result.succeed({ _tag: 'Rearm' }))
+    expect(decideExecutionMandateAuthority({ ...facts, sourceGenerationHash: facts.generationHash })).toEqual(
+      Result.fail({ _tag: 'IdentityDrift' }),
+    )
+    for (const reason of ['operator kill', `${strategyProtocolCutoverRestrictionReason}: unknown`]) {
+      expect(decideExecutionMandateAuthority({ ...facts, reason })).toEqual(Result.fail({ _tag: 'IdentityDrift' }))
+    }
+  })
+
   test('does not rearm an operator kill, an unchanged source generation, or unknown authority state', () => {
     const common = {
       generationHash: 'b'.repeat(64),
@@ -461,6 +481,7 @@ describe('execution mandate decisions', () => {
     for (const change of [
       { reason: 'operator hold' },
       { reason: 'unknown restriction' },
+      { reason: strategyProtocolCutoverRestrictionReason },
       { sourceGenerationHash: 'b'.repeat(64) },
     ]) {
       expect(decideExecutionMandateAuthority({ ...facts, ...change })).toEqual(Result.fail({ _tag: 'IdentityDrift' }))

@@ -28,6 +28,7 @@ import { CycleStore } from '../../cycle/store/model'
 import { CycleStoreLive } from '../../cycle/store/postgres'
 import { Authority, KillState, OrderSide, OrderType, TimeInForce } from '../../execution/contracts'
 import {
+  decideExecutionMandateAuthority,
   strategyProtocolCutoverRestrictionReason,
   executionActivationExpiredRestrictionReason,
   executionMandateCompletedRestrictionReason,
@@ -449,6 +450,14 @@ describePostgres('PostgreSQL authority cycle recovery', () => {
           yield* sql`UPDATE authority_state SET effective = 'OBSERVE', kill_state = 'ACTIVE',
   reason = ${reason}, version = version + 1, updated_at = ${fixture.restrictedAt} WHERE singleton`
           const authority = makeObserveAuthorityInterpreter(sql, makeAuthorityPostgres(sql), brokerIdentity)
+          const restricted = yield* authority.readAuthorityState
+          expect(
+            decideExecutionMandateAuthority({
+              ...restricted,
+              sourceGenerationHash: Result.getOrThrow(canonicalHashV1Result({ generation: 'observe' })),
+              currentGenerationMatchesRequest: false,
+            }),
+          ).toEqual(Result.succeed({ _tag: 'Rearm' }))
           let reconciliations = 0
           const reconcile = Effect.gen(function* () {
             // Reaching here proves that settlement did not require the new reconciliation in advance.
