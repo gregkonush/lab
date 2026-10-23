@@ -42,13 +42,14 @@ frozen feedback files. Title, summary, compaction, sharing, updates, warming and
 configuration is hashed into the policy. No Console login or paid key is required for this path.
 
 The loopback relay checks the actual model, session, output schema, input size, deadline and remaining call count
-before external I/O. All requests use the fixed OpenCode inference URL through the existing egress proxy. It
+before external I/O. All requests use the fixed OpenCode inference URL through the existing egress proxy on its separate OpenCode-only listener, port 3129. Kubernetes admits that listener
+only from the proposer; the ordinary trading/research listener cannot reach OpenCode. It
 forwards the native CLI's provider request; it does not imitate CLI headers in another inference client. Paid or
 unregistered calls and hidden extra model calls fail. An attempt that requires another model step is rejected.
 OpenCode's free-tier availability and models can change, so an unavailable free model stops the attempt.
 
 Receipts retain the actual native provider request bytes, their hash, the original provider SSE, model usage,
-configuration hash, native session ID, exact server/worker source revision and zero provider charge. Hosted weights,
+configuration hash, native session ID, observed provider first-token time, exact server/worker source revision and zero provider charge. Hosted weights,
 tokenizer and server image are not observable and are not assigned fictional self-hosted identities. The frozen
 native evaluator revision remains independent of the research worker revision. CPU operating allocations remain
 separate; a free provider does not make total research or Jev evaluation cost zero. Failed or timed-out claims cannot

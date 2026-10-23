@@ -10,6 +10,7 @@ import {
   Effect,
   FileSystem,
   Layer,
+  Result,
   Schedule,
   Schema,
   Semaphore,
@@ -34,6 +35,7 @@ import {
   maximumResearchStreamBytes,
   ResearchError,
   researchServingIdentity,
+  type ResearchRun,
 } from '../research-inference/contract'
 import { strictParseOptions } from '../schemas'
 import { admitOpenCodeCall, type OpenCodeAttempt } from './gateway'
@@ -61,27 +63,39 @@ const SessionSchema = Schema.Struct({
   }),
 })
 
-const boundedBytes = <E>(incoming: { readonly stream: Stream.Stream<Uint8Array, E> }, maximum: number) =>
+const captureProviderStream = <E>(incoming: { readonly stream: Stream.Stream<Uint8Array, E> }, run: ResearchRun) =>
   Effect.gen(function* () {
     const chunks: Uint8Array[] = []
+    const decoder = makeResearchStreamDecoder(run)
+    let invalid: ResearchError | undefined
     let length = 0
     yield* incoming.stream.pipe(
       Stream.runForEach((chunk) =>
         Effect.gen(function* () {
           length += chunk.byteLength
-          if (length > maximum) return yield* new ResearchError({ message: 'OpenCode response exceeds its byte limit' })
+          if (length > maximumResearchStreamBytes)
+            return yield* new ResearchError({ message: 'OpenCode response exceeds its byte limit' })
           chunks.push(chunk)
+          if (invalid === undefined) {
+            const parsed = decoder.push(chunk, yield* Clock.currentTimeMillis)
+            if (Result.isFailure(parsed)) invalid = parsed.failure
+          }
         }),
       ),
     )
-    return Buffer.concat(chunks)
+    return {
+      bytes: Buffer.concat(chunks),
+      firstTokenAtMs: decoder.snapshot().firstTokenAtMs,
+      validation: invalid === undefined ? decoder.complete() : Result.fail(invalid),
+    }
   })
 
 interface ActiveAttempt extends OpenCodeAttempt {
   readonly cancelled: Deferred.Deferred<never, ResearchError>
   readonly evidenceBase: string
+  readonly run: ResearchRun
   providerRequest: Buffer | undefined
-  response: { readonly bytes: Buffer; readonly status: number } | undefined
+  response: { readonly bytes: Buffer; readonly status: number; readonly firstTokenAtMs: number | null } | undefined
 }
 
 export const serveOpenCode = (
@@ -187,9 +201,11 @@ export const serveOpenCode = (
             HttpClientRequest.bodyText(body, 'application/json'),
           ),
         )
-        const bytes = yield* boundedBytes(response, maximumResearchStreamBytes)
-        current.response = { status: response.status, bytes }
+        const capture = yield* captureProviderStream(response, current.run)
+        const { bytes } = capture
+        current.response = { status: response.status, bytes, firstTokenAtMs: capture.firstTokenAtMs }
         yield* fs.writeFile(`${current.evidenceBase}.response.sse`, bytes, { flag: 'wx', mode: 0o600 })
+        if (response.status === 200) yield* Effect.fromResult(capture.validation)
         return HttpServerResponse.uint8Array(bytes, {
           status: response.status,
           contentType: response.status === 200 ? 'text/event-stream' : 'application/json',
@@ -283,6 +299,7 @@ export const serveOpenCode = (
           calls: 0,
           cancelled,
           evidenceBase: base,
+          run,
           providerRequest: undefined,
           response: undefined,
         }
@@ -331,6 +348,8 @@ export const serveOpenCode = (
               yield* fs.writeFileString(`${base}.session.json`, JSON.stringify(completed), { flag: 'wx', mode: 0o600 })
               if (response.status !== 200)
                 return HttpServerResponse.uint8Array(response.bytes, { status: 503, contentType: 'application/json' })
+              if (response.firstTokenAtMs === null)
+                return yield* new ResearchError({ message: 'OpenCode lacks a provider first-token observation' })
               const decoder = makeResearchStreamDecoder(run)
               yield* Effect.fromResult(decoder.push(response.bytes, yield* Clock.currentTimeMillis))
               yield* Effect.fromResult(decoder.complete())
@@ -351,6 +370,7 @@ export const serveOpenCode = (
                 {
                   schemaVersion: 'bayn.opencode-response.v1',
                   harnessEvidence: {
+                    firstTokenAtMs: response.firstTokenAtMs,
                     serverSourceRevision: config.sourceRevision,
                     sessionId,
                     configurationHash,

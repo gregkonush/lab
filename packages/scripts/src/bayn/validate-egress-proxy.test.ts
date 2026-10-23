@@ -9,6 +9,7 @@ describe('Bayn egress proxy contract', () => {
   test('allows only the exact trading, decision API and official public-source hosts over TLS CONNECT', () => {
     expect(validateBaynEgressProxy(deployedConfig)).toEqual({
       aclName: 'trading_api',
+      openCodeAllowedHosts: ['opencode.ai'],
       allowedHosts: [
         'api.alpaca.markets',
         'api.openai.com',
@@ -25,8 +26,15 @@ describe('Bayn egress proxy contract', () => {
 
   test.each([
     ['wildcard domain', deployedConfig.replace('api.alpaca.markets', '.alpaca.markets')],
+    [
+      'shared OpenCode bypass',
+      deployedConfig.replace('acl trading_api dstdomain ', 'acl trading_api dstdomain opencode.ai '),
+    ],
+    ['OpenCode listener bypass', deployedConfig.replace('http_access deny opencode_listener\n', '')],
     ['unrelated domain', deployedConfig.replace('api.alpaca.markets', 'example.com')],
     ['wildcard TypeSafe domain', deployedConfig.replace('api.typesafe.ai', '.typesafe.ai')],
+    ['wildcard OpenCode domain', deployedConfig.replace('opencode.ai', '.opencode.ai')],
+    ['unlisted OpenCode host', deployedConfig.replace('opencode.ai', 'console.opencode.ai')],
     ['wildcard OpenAI domain', deployedConfig.replace('api.openai.com', '.openai.com')],
     ['unrelated OpenAI frontend', deployedConfig.replace('api.openai.com', 'chatgpt.com')],
     ['duplicate replacing TypeSafe', deployedConfig.replace('api.typesafe.ai', 'api.alpaca.markets')],
@@ -38,10 +46,9 @@ describe('Bayn egress proxy contract', () => {
     ],
     [
       'allow before deny',
-      deployedConfig.replace(
-        'http_access deny !trading_api\nhttp_access deny blocked_private_v4\nhttp_access deny blocked_private_v6\nhttp_access allow CONNECT trading_api',
-        'http_access allow CONNECT trading_api\nhttp_access deny !trading_api\nhttp_access deny blocked_private_v4\nhttp_access deny blocked_private_v6',
-      ),
+      deployedConfig
+        .replace('http_access allow CONNECT trading_api\n', '')
+        .replace('http_access deny !CONNECT', 'http_access allow CONNECT trading_api\nhttp_access deny !CONNECT'),
     ],
   ])('rejects %s expansion', (_name, config) => {
     expect(() => validateBaynEgressProxy(config)).toThrow()

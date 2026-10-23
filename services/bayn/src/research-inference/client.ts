@@ -31,6 +31,7 @@ const ChunkSchema = Schema.Struct({
       delta: Schema.Struct({
         content: Schema.optionalKey(Schema.NullOr(Schema.String)),
         reasoning: Schema.optionalKey(Schema.NullOr(Schema.String)),
+        reasoning_content: Schema.optionalKey(Schema.NullOr(Schema.String)),
       }),
       finish_reason: Schema.NullOr(Schema.String),
     }),
@@ -111,7 +112,7 @@ export const makeResearchStreamDecoder = (run: RetainedResearchRun) => {
       for (const choice of chunk.choices) {
         if (choice.index !== 0 || finished)
           return yield* Result.fail(new ResearchError({ message: 'Research stream choice continued after finish' }))
-        if (choice.delta.reasoning !== undefined && choice.delta.reasoning !== null && choice.delta.reasoning !== '')
+        if ((choice.delta.reasoning?.length ?? 0) > 0 || (choice.delta.reasoning_content?.length ?? 0) > 0)
           firstTokenAtMs ??= now
         const content = choice.delta.content
         if (content !== undefined && content !== null && content !== '') {
@@ -244,7 +245,7 @@ export const inferResearch = Effect.fn('bayn.research.inference')(function* (
           return yield* new ResearchError({ message: 'OpenCode response and research worker source identities differ' })
         yield* Effect.fromResult(verifyOpenCodeEvidence(run, harnessEvidence, startedAtMs))
         yield* Effect.fromResult(
-          stream.push(Buffer.from(envelope.providerResponseBase64, 'base64'), yield* Clock.currentTimeMillis),
+          stream.push(Buffer.from(envelope.providerResponseBase64, 'base64'), harnessEvidence.firstTokenAtMs),
         )
       } else {
         yield* incoming.stream.pipe(

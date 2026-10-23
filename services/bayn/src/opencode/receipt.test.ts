@@ -47,6 +47,7 @@ const nativeRequest = JSON.stringify({
 const envelope = () => ({
   schemaVersion: 'bayn.opencode-response.v1',
   harnessEvidence: {
+    firstTokenAtMs: 0,
     serverSourceRevision: run.sourceRevision,
     sessionId: `ses_bayn_${run.studyHash}`,
     configurationHash: Result.getOrThrow(openCodeConfigurationHash),

@@ -51,7 +51,7 @@ spec:
           command: [node, dist/opencode-command.js]
           env:
             - name: BAYN_PUBLIC_INFORMATION_PROXY
-              value: http://bayn-egress-proxy.bayn.svc.cluster.local:3128
+              value: http://bayn-egress-proxy.bayn.svc.cluster.local:3129
             - name: NODE_ENV
               value: production
           ports:
@@ -149,5 +149,5 @@ spec:
             matchLabels:
               app.kubernetes.io/name: bayn-egress-proxy
       ports:
-        - port: 3128
+        - port: 3129
           protocol: TCP

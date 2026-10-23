@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { createServer } from 'node:http'
 
 import { NodeHttpClient, NodeHttpServer, NodeServices } from '@effect/platform-node'
-import { Clock, Deferred, Effect, FileSystem, Fiber, Layer, Schedule } from 'effect'
+import { Clock, Deferred, Effect, FileSystem, Fiber, Layer, Schedule, Stream } from 'effect'
 import { HttpClient, HttpClientRequest, HttpClientResponse } from 'effect/http'
 import { ChildProcessSpawner } from 'effect/process'
 
@@ -49,9 +49,18 @@ nativeTest(
               HttpClientResponse.fromWeb(
                 request,
                 new Response(
-                  streamFixture(
-                    '{"entry":"Assess the complete net-payoff plan from available evidence."}',
-                    openCodeModel,
+                  Stream.toReadableStream(
+                    Stream.concat(
+                      Stream.make(
+                        new TextEncoder().encode(
+                          streamFixture(
+                            '{"entry":"Assess the complete net-payoff plan from available evidence."}',
+                            openCodeModel,
+                          ),
+                        ),
+                      ),
+                      Stream.fromEffect(Effect.sleep('200 millis')).pipe(Stream.drain),
+                    ),
                   ),
                   { headers: { 'content-type': 'text/event-stream' } },
                 ),
@@ -112,6 +121,7 @@ nativeTest(
           })
         const first = yield* infer(run)
         expect(first.outcome).toBe(ResearchOutcome.Complete)
+        expect(first.completedAtMs - (first.firstTokenAtMs ?? first.completedAtMs)).toBeGreaterThanOrEqual(150)
         yield* Effect.fromResult(verifyResearchReceipt(run, first))
         const firstId = yield* Effect.fromResult(hashResearch(run))
         expect(yield* fs.exists(`${directory}/attempts/${firstId}.complete.json`)).toBe(true)

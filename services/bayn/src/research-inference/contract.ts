@@ -244,6 +244,7 @@ const Base64Schema = Schema.String.check(
   Schema.isPattern(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/),
 )
 export const OpenCodeEvidenceSchema = Schema.Struct({
+  firstTokenAtMs: NonNegativeIntegerSchema,
   serverSourceRevision: GitSourceRevisionSchema,
   sessionId: StrictNonEmptyStringSchema.check(Schema.isMaxLength(128)),
   configurationHash: Sha256Schema,

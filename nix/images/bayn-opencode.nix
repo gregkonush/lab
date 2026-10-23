@@ -23,6 +23,8 @@ pkgs.stdenv.mkDerivation {
   nativeBuildInputs = [ pkgs.autoPatchelfHook ];
   buildInputs = [ pkgs.stdenv.cc.cc.lib pkgs.openssl pkgs.zlib ];
   dontBuild = true;
+  # Stripping removes the appended Bun application payload.
+  dontStrip = true;
   installPhase = ''
     runHook preInstall
     install -Dm755 bin/opencode "$out/bin/opencode"
@@ -30,7 +32,13 @@ pkgs.stdenv.mkDerivation {
   '';
   doInstallCheck = true;
   installCheckPhase = ''
-    test "$("$out/bin/opencode" --version)" = "opencode v2.1.3"
+    export XDG_DATA_HOME="$TMPDIR/opencode-data"
+    export XDG_CONFIG_HOME="$TMPDIR/opencode-config"
+    export XDG_CACHE_HOME="$TMPDIR/opencode-cache"
+    export XDG_STATE_HOME="$TMPDIR/opencode-state"
+    opencode_version="$("$out/bin/opencode" --version)"
+    printf '%s\n' "$opencode_version"
+    test "$opencode_version" = "opencode v2.1.3"
   '';
   meta = {
     license = lib.licenses.mit;
