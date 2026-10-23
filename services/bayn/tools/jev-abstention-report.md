@@ -12,6 +12,9 @@ transaction IDs, episode boundaries, counts, fill-time duration, notionals, gros
 It does not use cumulative forward-performance envelope totals as a cycle result.
 
 The exporter must verify the durable cycle/intent linkage and original receipt/ledger/fee evidence separately.
+The outcome canonical hash is checked; transaction content/ledger-plan hashes and the exit source hash are only
+retained identifiers, not recomputed or authenticated. Source revision is declared/unverified; authority generation
+must match the sealed decision when present and is declared/unverified otherwise.
 Hashes establish consistency, not source authenticity. Imported fee attribution and quantity conservation are not
 independently reverified here. Missing fee allocation stays unknown; imported accrued net is never settled or
 fully loaded profit. Model, infrastructure and abstention costs must not be assumed zero or allocated from a
@@ -19,7 +22,8 @@ cumulative session total. This first-stage join does not produce an all-in retur
 
 Optional exit observations bind their source hash, cycle and opening transaction. They are imported observations,
 not proof of target-before-stop. Target paths remain UNKNOWN/censored, including after recovery or a completed
-exit; missing native market-path coverage cannot be repaired by a closed trade. An open/partial execution without
+exit; missing native market-path coverage cannot be repaired by a closed trade. BLOCKED may include executions
+that stopped during recovery; those transactions remain visible, not mislabeled as no-entry. An open/partial execution without
 an outcome remains UNKNOWN_OR_OPEN. The supplied denominator is retained but does not prove an independent
 complete opportunity schedule. Setup/plan choice mass remains categorical, not target-hit or profit probability.
 

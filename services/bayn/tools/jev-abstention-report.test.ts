@@ -96,7 +96,7 @@ const joinFixture = (crypto = false) => {
         cycleId,
         state: 'COMPLETED',
         sourceRevision: 'c'.repeat(40),
-        authorityGenerationHash: 'd'.repeat(64),
+        authorityGenerationHash: decision.strategyDecision.evidence.observation.authorityGenerationHash,
         decisionDocument: decision,
         strategyDecisionHash,
         transactions: trades.map((transaction) => ({ cycleId, strategyDecisionHash, transaction })),
@@ -138,6 +138,7 @@ test('realized join retains blocked missing-model and abstention denominator row
       {
         ...base,
         sourceRevision: 'd'.repeat(40),
+        authorityGenerationHash: decision.strategyDecision.evidence.observation.authorityGenerationHash,
         cycleId: decision.bindings.cycleId,
         state: 'NO_TRADE',
         decisionDocument: decision,
@@ -152,7 +153,7 @@ test('realized join retains blocked missing-model and abstention denominator row
   expect(report.completeOpportunityScheduleProven).toBe(false)
 })
 
-test.each(['cycle', 'decision', 'transaction', 'duplicate', 'outcome', 'exit', 'unknown-field'])(
+test.each(['cycle', 'decision', 'authority', 'transaction', 'duplicate', 'outcome', 'exit', 'unknown-field'])(
   'realized join rejects %s substitution',
   (kind) => {
     const input = joinFixture()
@@ -160,6 +161,7 @@ test.each(['cycle', 'decision', 'transaction', 'duplicate', 'outcome', 'exit', '
     if (row === undefined) throw new Error('Missing row')
     if (kind === 'cycle') row.cycleId = 'f'.repeat(64)
     if (kind === 'decision') row.strategyDecisionHash = 'f'.repeat(64)
+    if (kind === 'authority') row.authorityGenerationHash = 'f'.repeat(64)
     if (kind === 'transaction') {
       const link = row.transactions[0]
       if (link !== undefined) link.cycleId = 'f'.repeat(64)
@@ -172,20 +174,21 @@ test.each(['cycle', 'decision', 'transaction', 'duplicate', 'outcome', 'exit', '
   },
 )
 
-test('realized join retains an open partial execution without manufacturing a closed return', () => {
-  const input = joinFixture()
-  const row = input.cycles[0]
-  if (row === undefined) throw new Error('Missing row')
-  const report = reportJevRealizedEvidence({
-    ...input,
-    cycles: [
-      { ...row, state: 'ACTIVE', transactions: row.transactions.slice(0, 1), outcome: null, exitObservation: null },
-    ],
-  })
-  expect(report.rows[0]?.executionEvidence).toBe('UNKNOWN_OR_OPEN')
-  expect(report.rows[0]?.importedOutcome).toBeNull()
-  expect(report.rows[0]?.targetBeforeStop).toBe('UNKNOWN')
-})
+test.each(['ACTIVE', 'BLOCKED'])(
+  'realized join retains %s partial execution without manufacturing a closed return',
+  (state) => {
+    const input = joinFixture()
+    const row = input.cycles[0]
+    if (row === undefined) throw new Error('Missing row')
+    const report = reportJevRealizedEvidence({
+      ...input,
+      cycles: [{ ...row, state, transactions: row.transactions.slice(0, 1), outcome: null, exitObservation: null }],
+    })
+    expect(report.rows[0]?.executionEvidence).toBe('UNKNOWN_OR_OPEN')
+    expect(report.rows[0]?.importedOutcome).toBeNull()
+    expect(report.rows[0]?.targetBeforeStop).toBe('UNKNOWN')
+  },
+)
 
 test('realized join preserves imported crypto accrued costs once and rejects resealed wrong net', () => {
   const input = joinFixture(true)
@@ -219,6 +222,11 @@ test('realized join preserves imported crypto accrued costs once and rejects res
   expect(report.rows[0]?.importedOutcome?.costs.netPnlAfterAttributedCostsMicros).toBe('-100')
   expect(report.independentlyVerifiedLedger).toBe(false)
   value.costs.netPnlAfterAttributedCostsMicros = '-200'
+  expect(() => reportJevRealizedEvidence(withOutcome())).toThrow('Imported attributed net is inconsistent')
+  value.costs.netPnlAfterAttributedCostsMicros = '-100'
+  const first = row.transactions[0]
+  if (first === undefined) throw new Error('Missing fill')
+  first.transaction.feeMicros = '101'
   expect(() => reportJevRealizedEvidence(withOutcome())).toThrow('Imported attributed net is inconsistent')
 })
 

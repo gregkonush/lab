@@ -73,6 +73,7 @@ export const reportJevRealizedEvidence = (input: unknown) => {
     if (
       document !== null &&
       (document.bindings.cycleId !== row.cycleId ||
+        document.strategyDecision.evidence.observation.authorityGenerationHash !== row.authorityGenerationHash ||
         Result.getOrThrow(canonicalHashV1Result(document.strategyDecision)) !== row.strategyDecisionHash)
     )
       throw new Error('Foreign cycle or strategy decision hash')
@@ -94,8 +95,7 @@ export const reportJevRealizedEvidence = (input: unknown) => {
         return trade
       })
       .sort((a, b) => a.occurredAt.localeCompare(b.occurredAt) || a.transactionId.localeCompare(b.transactionId))
-    if ((row.state === 'NO_TRADE' || row.state === 'BLOCKED') && trades.length > 0)
-      throw new Error('No-entry cycle has execution transactions')
+    if (row.state === 'NO_TRADE' && trades.length > 0) throw new Error('No-entry cycle has execution transactions')
     const outcome = row.outcome?.value ?? null
     if (row.outcome !== null && Result.getOrThrow(canonicalHashV1Result(outcome)) !== row.outcome.contentHash)
       throw new Error('Imported outcome hash differs')
@@ -129,6 +129,8 @@ export const reportJevRealizedEvidence = (input: unknown) => {
       if (
         outcome.costs.status === 'ATTRIBUTED_ACCRUALS' &&
         (instrumentMarket(outcome.symbol) !== MarketKind.Crypto ||
+          BigInt(outcome.costs.attributedCostMicros) <
+            trades.reduce((sum, trade) => sum + BigInt(trade.feeMicros), 0n) ||
           BigInt(outcome.grossRealizedPnlMicros) - BigInt(outcome.costs.attributedCostMicros) !==
             BigInt(outcome.costs.netPnlAfterAttributedCostsMicros))
       )
@@ -146,6 +148,10 @@ export const reportJevRealizedEvidence = (input: unknown) => {
       state: row.state,
       sourceRevision: row.sourceRevision,
       authorityGenerationHash: row.authorityGenerationHash,
+      authorityBinding: document === null ? 'DECLARED_UNVERIFIED' : 'SEALED_DECISION_MATCH',
+      sourceRevisionBinding: 'DECLARED_UNVERIFIED',
+      transactionIntegrity: 'NOT_REVERIFIED',
+      exitSourceProvenance: 'DECLARED_UNVERIFIED',
       strategyDecisionHash: row.strategyDecisionHash,
       decision,
       transactionIds: trades.map((trade) => trade.transactionId),
