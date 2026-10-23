@@ -2026,6 +2026,8 @@ indicator math is unchanged, sparse intervals remain missing, and the first comp
 observation without waiting thirty minutes. Extended transport health requires quote delivery while retaining
 per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
 quote, trade and feature checks still govern every order.
+Equity admission starts after that first completed minute and its existing decision delay; the unused-entry lease
+remains 60 seconds. Continuous markets remain eligible before that boundary.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
 predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 140 owns the
