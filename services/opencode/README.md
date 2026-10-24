@@ -13,7 +13,10 @@ including sessions, provider authentication, caches and the server password.
 The first boot clones the public lab repository. Later boots preserve the exact
 checkout, branch and uncommitted work. Git push access requires an explicit user
 login; the server does not inherit the operator's GitHub or Codex credentials.
-The root filesystem is read only; workspace, home and temporary files are writable.
+The developer has an initialized single-user Nix store, so Nix commands can evaluate and
+build without a root daemon. Project files, sessions and credentials persist on the PVC;
+additional tools built into the container layer reset on rollout. The research container
+keeps its read-only root filesystem.
 
 Flamingo (`flamingo/qwen36-flamingo`) is the default. Native tools remain enabled.
 The full native integration catalog remains available through Connect and Models.

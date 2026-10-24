@@ -14,7 +14,7 @@ trap cleanup EXIT
 # Kubernetes normally supplies this ownership through fsGroup.
 docker run --rm --network none --user 0:0 --entrypoint bash -v "$volume:/data" "$image_id" \
   -c 'mkdir -p /data/home /data/workspace/lab; chown -R 65532:65532 /data'
-container="$(docker run --detach --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+container="$(docker run --detach --network none --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
   --cap-drop ALL --security-opt no-new-privileges:true --memory 2g --cpus 2 \
   -v "$volume:/var/lib/opencode" -v "$volume:/workspace" \
   "$image_id" bash -c 'git init /workspace/lab >/dev/null; exec /bin/opencode-server')"
@@ -47,6 +47,7 @@ docker exec "$container" bash -euc '
 for tool in opencode node bun go python3 uv ruby git gh nix kubectl helm kustomize kubeconform tofu buf make cc cmake rustc cargo ssh sqlite3 docker buildctl jq rg; do
   command -v "$tool" >/dev/null
 done
+nix build --no-link --impure --expr '''derivation { name = "opencode-development-proof"; system = builtins.currentSystem; builder = "/bin/bash"; args = [ "-c" "printf native-nix > $out" ]; }'''
 cd /workspace/lab
 printf "export const total = (a, b) => a + b\n" > total.js
 printf "import { test, expect } from \"bun:test\"; import { total } from \"./total.js\"; test(\"total\", () => expect(total(2,3)).toBe(5));\n" > total.test.js

@@ -78,7 +78,7 @@ spec:
               memory: 16Gi
           securityContext:
             allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
+            readOnlyRootFilesystem: false
             capabilities:
               drop: [ALL]
           volumeMounts:
