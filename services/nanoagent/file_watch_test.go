@@ -1171,3 +1171,76 @@ func TestFileWatcherSubscriberLimit(t *testing.T) {
 		files.unsubscribe(id)
 	}
 }
+
+func TestFileWatcherReleasesMoveResourcesAfterSubscribersClose(t *testing.T) {
+	for _, outcome := range []string{"rename", "cancel", "overflow", "pending-overflow"} {
+		t.Run(outcome, func(t *testing.T) {
+			t.Parallel()
+			workspace, err := newWorkspace(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer workspace.close()
+			left := filepath.Join(workspace.realRoot, "left")
+			right := filepath.Join(workspace.realRoot, "right")
+			for _, directory := range []string{left, right} {
+				if err := os.Mkdir(directory, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			}
+			source := filepath.Join(left, "source.txt")
+			destination := filepath.Join(right, "destination.txt")
+			if err := os.WriteFile(source, []byte("move"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+			files, err := newFileWatcher(workspace)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer files.close()
+			first, _, err := files.subscribe(0, "/workspace/left", left)
+			if err != nil {
+				t.Fatal(err)
+			}
+			second, _, err := files.subscribe(0, "/workspace/right", right)
+			if err != nil {
+				t.Fatal(err)
+			}
+			generation, err := files.beginPairedRename(source, destination)
+			if err != nil {
+				t.Fatal(err)
+			}
+			files.unsubscribe(first)
+			files.unsubscribe(second)
+			if outcome == "cancel" {
+				files.cancelPairedRename(source, generation)
+			} else {
+				if outcome == "pending-overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+				if outcome == "rename" {
+					if err := os.Rename(source, destination); err != nil {
+						t.Fatal(err)
+					}
+				}
+				files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/right/destination.txt"})
+				if outcome == "overflow" {
+					files.handleWatcherError(fsnotify.ErrEventOverflow)
+				}
+			}
+			deadline := time.Now().Add(time.Second)
+			for {
+				files.mu.Lock()
+				pending, completed, watched := len(files.expectedRenames), len(files.completedRenames), len(files.watched)
+				files.mu.Unlock()
+				if pending == 0 && completed == 0 && watched == 0 {
+					break
+				}
+				if time.Now().After(deadline) {
+					t.Fatalf("move retained resources: pending=%d completed=%d watched=%d", pending, completed, watched)
+				}
+				time.Sleep(time.Millisecond)
+			}
+		})
+	}
+}

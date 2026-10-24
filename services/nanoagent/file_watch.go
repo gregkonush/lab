@@ -47,6 +47,7 @@ type expectedFileRename struct {
 	destination           string
 	rawDestination        string
 	fenceDirectory        string
+	fenceLost             bool
 	destinationObserved   bool
 	rawObserved           bool
 	rawEchoPossible       bool
@@ -67,6 +68,7 @@ type completedFileRename struct {
 	destination         string
 	rawDestination      string
 	fenceDirectory      string
+	fenceLost           bool
 	rawEchoPossible     bool
 	rawObserved         bool
 	destinationObserved bool
@@ -155,6 +157,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 		delete(files.completedRenames, generation)
 	}
 	for source, expected := range files.expectedRenames {
+		expected.fenceLost = true
 		expected.deferredEvents = nil
 		expected.suppressedSource = false
 		expected.suppressedDestination = false
@@ -487,6 +490,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 			destination:         expected.destination,
 			rawDestination:      expected.rawDestination,
 			fenceDirectory:      expected.fenceDirectory,
+			fenceLost:           expected.fenceLost,
 			rawEchoPossible:     expected.rawEchoPossible || files.rawRenameMayArriveLocked(expected.rawSource),
 			rawObserved:         expected.rawObserved,
 			destinationObserved: expected.destinationObserved,
@@ -530,7 +534,7 @@ func (files *fileWatcher) rememberCompletedRenameLocked(completed completedFileR
 	if files.finishCompletedRenameLocked(completed.generation, completed) {
 		return
 	}
-	if completed.fenceDirectory != "" {
+	if completed.fenceDirectory != "" && !completed.fenceLost {
 		// The watched destination supplies an ordered fence even when delivery is delayed.
 		return
 	}
@@ -588,7 +592,7 @@ func (files *fileWatcher) expireCompletedRename(generation uint64) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
 	completed, found := files.completedRenames[generation]
-	if !found || completed.fenceDirectory != "" {
+	if !found || (completed.fenceDirectory != "" && !completed.fenceLost) {
 		return
 	}
 	delete(files.completedRenames, generation)
