@@ -1,6 +1,6 @@
 # Flamingo
 
-Flamingo is disabled. GitOps enforces zero Deployment replicas and retains the model-cache PVC. Argo automatic reconciliation keeps the workload stopped. The Blackwell allocation is released for Rune. The configuration below is retained for reference; re-enabling this service requires a reviewed GPU allocation change.
+Flamingo serves Bayn's GEPA instruction editor alongside coding agents and shares Turin's Blackwell GPU with Plex. The launch profile reserves 60% of physical GPU memory for vLLM and limits active sequences to eight. The model-cache PVC is retained across restarts.
 
 `flamingo` is the Turin Blackwell GPU model-serving application for coding
 agents. It is a normal Kubernetes Deployment, not a KubeVirt VM.
@@ -28,10 +28,10 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --trust-remote-code
 --dtype bfloat16
 --max-model-len 262144
---gpu-memory-utilization 0.85
+--gpu-memory-utilization 0.60
 --kv-cache-dtype fp8
---max-num-seqs 16
---max-num-batched-tokens 16384
+--max-num-seqs 8
+--max-num-batched-tokens 8192
 --enable-prefix-caching
 --reasoning-parser qwen3
 --enable-auto-tool-choice
@@ -39,10 +39,7 @@ model as an active fallback in GitOps, Pi, AnyPi, or OpenWebUI config.
 --optimization-level 2
 ```
 
-The production target is full 262K server context. If this profile fails,
-reduce concurrency first by moving to `--max-num-seqs 8` and
-`--max-num-batched-tokens 8192`. Do not reduce context below 262K unless both
-vLLM KV/concurrency tuning and an SGLang validation path fail.
+The production target remains full 262K server context. Bayn's GEPA editor uses this shared model; it has no separate GPU allocation. The 60% budget leaves memory for Plex and transient allocations. Validate startup, long-context inference, research latency, and actual GPU memory before tuning this shared profile. The historical standalone benchmarks below do not establish throughput for this profile. Do not reduce context below 262K unless both vLLM KV/concurrency tuning and an SGLang validation path fail.
 
 NUMA auto-binding is intentionally disabled. The vLLM 0.23.0 rollout proved
 that Turin's GPU-to-NUMA topology was not detected automatically and exited with
@@ -144,8 +141,7 @@ kubectl -n flamingo exec deploy/flamingo -- df -h /models || true
 Expected:
 
 - `nvidia.com/gpu` allocatable is non-zero.
-- `flamingo` and the approved Plex transcode workload are the only expected
-  Blackwell GPU consumers before tuning.
+- `flamingo` and the approved Plex transcode workload share the Blackwell. Inspect actual VRAM use before tuning.
 - `saigak` is not consuming a Turin/Blackwell GPU slot; it must remain the
   separate embeddings path.
 - The model-cache PVC has enough free space for the Qwen3.6 NVFP4 artifact.
@@ -287,20 +283,13 @@ with CUDA OOM in the FlashInfer fused-MoE path after only about `593 MiB` was
 free on the physical Blackwell. Run `smoke` first, move Saigak off Blackwell,
 then use `full` as the promotion gate for one candidate at a time.
 
-`candidate-profiles.yaml` is the rendered GitOps source for safe rollout
-profiles. It is a no-traffic ConfigMap, not a second model server, so Argo can
-carry the policy without allocating another Blackwell GPU or changing the
-production route.
-
-| Profile | Context | `gpu_memory_utilization` | `max_num_seqs` | `max_num_batched_tokens` | Notes |
-| --- | ---: | ---: | ---: | ---: | --- |
-| `baseline-131k` | `131072` | `0.94` | `128` | `16384` | Pre-optimization baseline only |
-| `context-262k-fp8` | `262144` | `0.85` | `16` | `16384` | Current production baseline |
-| `eager-262k` | `262144` | `0.85` | `16` | `16384` | Test `--safetensors-load-strategy eager` alone before promotion |
-| `image-lane` | `262144` | `0.85` | `16` | `16384` | New official stable vLLM CUDA digest with current flags first |
-| `batch-262k-24k` | `262144` | `0.88` | `24` | `24576` | Test only after Saigak leaves Turin |
-| `batch-262k-32k` | `262144` | `0.90` | `32` | `32768` | Promote only if TTFT, KV usage, and Plex remain acceptable |
-| `mtp-262k-n1..4` | `262144` | `0.85` | `16` | `16384` | One MTP value per rollout; compare real acceptance length |
+The Deployment is the current rollout input. Keep GPU memory utilization at
+`0.60`, eight active sequences, 8192 batched tokens and the full 262144 context.
+Retiring the dedicated Bayn model does not authorize increasing this allocation;
+Plex and transient GPU allocations still share the physical device. Any increase
+requires a separate measured capacity change with startup, inference and Plex
+evidence. The unused ConfigMap containing historical standalone candidates is
+removed; the results below remain historical benchmark evidence.
 
 ### Recorded Live Optimization Run
 
@@ -474,3 +463,16 @@ GPUs after Plex preservation; time-sliced replicas are not enough.
 - [Unsloth Qwen3.6-35B-A3B-NVFP4](https://huggingface.co/unsloth/Qwen3.6-35B-A3B-NVFP4)
 - [vLLM tool calling](https://docs.vllm.ai/en/stable/features/tool_calling/)
 - [vLLM optimization](https://docs.vllm.ai/en/stable/configuration/optimization/)
+
+## Serving identity and availability
+
+Model and tokenizer revisions are pinned to `739af1e7aac320af1682ed1e0cce369af4c5265d`.
+The ASGI middleware emits `x-model-serving-identity` from loaded vLLM configuration and checks the loaded commit,
+tokenizer revision and chat-template source. Response bodies pass through without buffering. This metadata allows
+research clients to verify the shared model before accepting generated instructions.
+
+The central Alloy scrapes the shared `/metrics` endpoint every fifteen seconds. `FlamingoModelUnavailable` warns
+when the model is unavailable for fifteen minutes while its deployment remains enabled. Model failure has no
+trading authority effect. Check readiness and shared GPU pressure before submitting a research request.
+
+Run `python3 -m unittest discover -s argocd/applications/flamingo -p 'test_*.py' -v` to validate the middleware.

@@ -2,11 +2,19 @@ import { describe, expect, test } from 'bun:test'
 import { readFileSync } from 'node:fs'
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import type { IntradayBar } from '../intraday/model'
-import { decodeRollingMarketFeature, featureMatchesBars, type RollingMarketFeature } from './contract'
+import { intradayInstantNanos } from '../intraday/time'
+import {
+  decodeRollingMarketFeature,
+  featureBarContentHash,
+  featureMatchesBars,
+  type RollingMarketFeature,
+} from './contract'
 
-const fixture: unknown = JSON.parse(readFileSync(new URL('./fixtures/rolling-price-v1.json', import.meta.url), 'utf8'))
+const fixture: unknown = JSON.parse(
+  readFileSync(new URL('./fixtures/observed-price-window-v1.json', import.meta.url), 'utf8'),
+)
 const feature = () => Result.getOrThrow(decodeRollingMarketFeature(fixture))
 const start = Date.parse('2026-09-11T13:30:00Z')
 const bars = (): readonly IntradayBar[] =>
@@ -36,13 +44,46 @@ const bars = (): readonly IntradayBar[] =>
   }))
 const rehash = (changed: RollingMarketFeature): RollingMarketFeature => ({
   ...changed,
-  featureId: canonicalHashV1(changed.material),
+  featureId: Result.getOrThrow(canonicalHashV1Result(changed.material)),
 })
 
 describe('Dorvud rolling feature wire contract', () => {
+  test('accepts only bounded IEX windows contained in one computation segment', () => {
+    const original = feature()
+    for (const [startAt, accepted] of [
+      ['2026-09-11T11:50:00Z', false],
+      ['2026-09-11T12:00:00Z', true],
+      ['2026-09-11T13:00:00Z', true],
+      ['2026-09-11T13:20:00Z', false],
+      ['2026-09-11T13:30:00Z', true],
+      ['2026-09-11T19:30:00Z', true],
+      ['2026-09-11T19:50:00Z', false],
+      ['2026-09-11T20:00:00Z', true],
+      ['2026-09-11T20:50:00Z', false],
+    ] as const) {
+      const shift = Date.parse(startAt) - original.material.windowStartMs
+      const nanos = BigInt(shift) * 1_000_000n
+      const changed = rehash({
+        ...original,
+        computedAtMs: original.computedAtMs + shift,
+        material: {
+          ...original.material,
+          windowStartMs: original.material.windowStartMs + shift,
+          windowEndMs: original.material.windowEndMs + shift,
+          inputs: original.material.inputs.map((input) => ({
+            ...input,
+            eventTimeNanos: String(BigInt(input.eventTimeNanos) + nanos),
+            ingestionTimeNanos: String(BigInt(input.ingestionTimeNanos) + nanos),
+          })),
+        },
+      })
+      expect(Result.isSuccess(decodeRollingMarketFeature(changed))).toBe(accepted)
+    }
+  })
+
   test('decodes the Kotlin-produced fixture with identical definition and content identity', () => {
     const value = feature()
-    expect(value.featureId).toBe(canonicalHashV1(value.material))
+    expect(value.featureId).toBe(Result.getOrThrow(canonicalHashV1Result(value.material)))
     expect(value.material.values).toEqual({
       referencePriceMicros: '100000000',
       rangeHighPriceMicros: '131000000',
@@ -51,6 +92,33 @@ describe('Dorvud rolling feature wire contract', () => {
       totalVolumeMicros: '307500000',
     })
     expect(Result.getOrThrow(featureMatchesBars(value, bars()))).toBe(true)
+  })
+
+  test('matches exact sub-millisecond source identity and rejects its millisecond archive truncation', () => {
+    for (const nanos of [1, 999_999, 1_000_001, 321_780_322, 999_999_999]) {
+      const exactBars = bars().map((bar) => ({
+        ...bar,
+        ingestedAt: `${bar.ingestedAt.slice(0, 20)}${String(nanos).padStart(9, '0')}Z`,
+      }))
+      const original = feature()
+      const precise = rehash({
+        ...original,
+        material: {
+          ...original.material,
+          inputs: exactBars.map((bar) => ({
+            eventTimeNanos: String(intradayInstantNanos(bar.eventAt)),
+            ingestionTimeNanos: String(intradayInstantNanos(bar.ingestedAt)),
+            sourceTopic: bar.sourceTopic,
+            sourcePartition: bar.sourcePartition,
+            sourceOffset: bar.sourceOffset,
+            contentHash: Result.getOrThrow(featureBarContentHash(bar)),
+          })),
+        },
+      })
+      expect(Result.getOrThrow(featureMatchesBars(precise, exactBars))).toBe(true)
+      const truncated = exactBars.map((bar) => ({ ...bar, ingestedAt: `${bar.ingestedAt.slice(0, 23)}Z` }))
+      expect(Result.getOrThrow(featureMatchesBars(precise, truncated))).toBe(false)
+    }
   })
 
   test('retains canonical identities regardless of wire property order and changing input revisions', () => {
@@ -133,12 +201,12 @@ describe('Dorvud rolling feature wire contract', () => {
     ).toBe(true)
   })
 
-  test('rejects incomplete windows and future input availability even with a matching hash', () => {
+  test('rejects absent range-completion input and future availability even with a matching hash', () => {
     const value = feature()
     expect(
       Result.isFailure(
         decodeRollingMarketFeature(
-          rehash({ ...value, material: { ...value.material, inputs: value.material.inputs.slice(1) } }),
+          rehash({ ...value, material: { ...value.material, inputs: value.material.inputs.slice(0, -1) } }),
         ),
       ),
     ).toBe(true)

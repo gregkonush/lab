@@ -33,6 +33,7 @@ test('CNPG relabeling retains the complete bounded database diagnostics and coll
   }
   for (const sample of [
     'up;',
+    'scrape_duration_seconds;',
     'cnpg_collector_last_collection_error;',
     'cnpg_collector_collection_errors_total;',
     'cnpg_collector_collection_duration_seconds;',
@@ -50,6 +51,48 @@ test('CNPG relabeling retains the complete bounded database diagnostics and coll
     'unrelated_metric;',
   ])
     expect(allow.test(sample)).toBe(false)
+})
+
+test('Bayn database diagnostics use one fast scrape without duplicating other database targets', () => {
+  const config = readRepoFile('argocd/applications/observability/cluster-metrics-alloy-config.river')
+  const route = (name: string, action: 'keep' | 'drop') => {
+    const block = config.match(new RegExp(`discovery\\.relabel "${name}" \\{([\\s\\S]*?)\\n\\}`))?.[1]
+    if (!block) throw new Error(`Missing database target route: ${name}`)
+    expect(block).toMatch(/targets\s*=\s*discovery\.relabel\.cnpg_metrics\.output/)
+    expect(block).toMatch(new RegExp(`action\\s*=\\s*"${action}"`))
+    expect(block).toMatch(/source_labels\s*=\s*\["namespace", "cluster"\]/)
+    const encoded = block.match(/regex\s*=\s*("(?:[^"\\]|\\.)*")/)?.[1]
+    if (!encoded) throw new Error(`Missing database target selector: ${name}`)
+    const matches = new RegExp(`^(?:${JSON.parse(encoded)})$`)
+    return (namespace: string, cluster: string) => matches.test(`${namespace};${cluster}`) === (action === 'keep')
+  }
+  const fast = route('cnpg_bayn_metrics', 'keep')
+  const ordinary = route('cnpg_other_metrics', 'drop')
+  for (const [namespace, cluster, expected] of [
+    ['bayn', 'bayn-db', 'fast'],
+    ['bayn', 'bayn-db-new', 'ordinary'],
+    ['bayn', '', 'ordinary'],
+    ['bayn-new', 'bayn-db', 'ordinary'],
+    ['torghut', 'torghut-db', 'ordinary'],
+    ['buzz', 'buzz-db', 'ordinary'],
+    ['', '', 'ordinary'],
+  ]) {
+    expect([
+      ...(fast(namespace, cluster) ? ['fast'] : []),
+      ...(ordinary(namespace, cluster) ? ['ordinary'] : []),
+    ]).toEqual([expected])
+  }
+  const fastScrape = config.match(/prometheus\.scrape "cnpg_bayn" \{([\s\S]*?)\n\}/)?.[1]
+  const ordinaryScrape = config.match(/prometheus\.scrape "cnpg" \{([\s\S]*?)\n\}/)?.[1]
+  expect(fastScrape).toMatch(/targets\s*=\s*discovery\.relabel\.cnpg_bayn_metrics\.output/)
+  expect(fastScrape).toMatch(/scrape_interval\s*=\s*"5s"/)
+  expect(fastScrape).toMatch(/scrape_timeout\s*=\s*"4s"/)
+  expect(ordinaryScrape).toMatch(/targets\s*=\s*discovery\.relabel\.cnpg_other_metrics\.output/)
+  expect(ordinaryScrape).toMatch(/scrape_interval\s*=\s*"30s"/)
+  for (const scrape of [fastScrape, ordinaryScrape]) {
+    expect(scrape).toMatch(/job_name\s*=\s*"cnpg-postgres"/)
+    expect(scrape).toMatch(/forward_to\s*=\s*\[prometheus\.relabel\.cnpg_metrics\.receiver\]/)
+  }
 })
 
 test('Ceph exporter discovery is per pod and keeps complete latency-counter pairs', () => {
@@ -108,6 +151,13 @@ test('host storage collector reads host counters without a public listener or Ku
   })
   expect(config).toMatch(/procfs_path\s*=\s*"\/host\/proc"/)
   expect(config).toMatch(/sysfs_path\s*=\s*"\/host\/sys"/)
+  const deviceFilter = config.match(/device_include\s*=\s*"([^"]+)"/)?.[1]
+  if (!deviceFilter) throw new Error('Missing host storage device filter')
+  const devices = new RegExp(deviceFilter)
+  for (const device of ['sda', 'sdaa', 'nvme0n1', 'nvme3n1', 'rbd0', 'rbd1', 'rbd13'])
+    expect(devices.test(device)).toBe(true)
+  for (const device of ['loop0', 'ram0', 'sda1', 'nvme0n1p4', 'rbd1p1', 'rbd1-extra'])
+    expect(devices.test(device)).toBe(false)
   expect(config).toContain('sys.env("NODE_NAME")')
   // Exporter-provided target labels override scrape job_name. The discovered
   // integrations/unix label must be replaced before these targets are scraped.
@@ -149,7 +199,126 @@ test('Ceph performance rules preserve missing-data semantics and inventory cover
   )
 })
 
-test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
+test('critical Ceph alerts opt into the configured email route', () => {
+  const manifest = YAML.parse(readRepoFile('argocd/applications/observability/graf-mimir-rules.yaml'))
+  const groups = YAML.parse(manifest.data['graf-rules.yaml']).groups
+  const storageRules: Array<{ alert: string; labels: Record<string, string> }> =
+    groups.find((group: { name: string }) => group.name === 'torghut-storage-alerts.rules')?.rules ?? []
+  const criticalRules = storageRules.filter(
+    (rule) => rule.labels.service === 'ceph-storage' && rule.labels.severity === 'critical',
+  )
+  expect(criticalRules.map((rule) => rule.alert)).toEqual([
+    'CephClusterHealthError',
+    'CephSlowOps',
+    'CephOsdReadLatencyHigh',
+    'CephOsdCommitLatencyCritical',
+  ])
+
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  const emailRoute = alertmanager.route.routes.find(
+    (route: { receiver: string }) => route.receiver === 'critical-email',
+  )
+  expect(emailRoute.matchers).toEqual(['severity = "critical"', 'notify = "email"'])
+  const emailReceiver = alertmanager.receivers.find(
+    (receiver: { name: string }) => receiver.name === emailRoute.receiver,
+  )
+  expect(emailReceiver.email_configs).toHaveLength(1)
+  for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
+})
+
+test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  const route = alertmanager.route.routes.find((entry: { matchers: string[] }) =>
+    entry.matchers.includes('severity = "warning"'),
+  )
+  expect(route).toEqual({
+    receiver: 'critical-email',
+    matchers: ['severity = "warning"', 'notify = "email"'],
+    group_wait: '10s',
+    group_interval: '2m',
+    repeat_interval: '4h',
+    continue: false,
+  })
+  expect(alertmanager.route.receiver).toBe('default-receiver')
+  expect(alertmanager.receivers.map((entry: { name: string }) => entry.name)).toEqual([
+    'default-receiver',
+    'critical-email',
+  ])
+})
+
+test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
+  const mimir = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
+  const grafana = YAML.parse(readRepoFile('argocd/applications/observability/grafana-values.yaml'))
+  const datasource = grafana.datasources['datasources.yaml'].datasources.find(
+    (source: { type: string }) => source.type === 'alertmanager',
+  )
+  expect(datasource).toBeDefined()
+  expect(datasource.url).toBe('http://observability-mimir-gateway.observability.svc.cluster.local')
+  expect(datasource.access).toBe('proxy')
+  expect(datasource.jsonData).toMatchObject({ implementation: 'mimir', handleGrafanaManagedAlerts: false })
+
+  const externalUrl = new URL(mimir.mimir.structuredConfig.alertmanager.external_url)
+  expect(externalUrl.origin).toBe('https://mimir.ide-newton.ts.net')
+  const uiPath = externalUrl.pathname
+  const snippet = mimir.gateway.nginx.config.serverSnippet
+  const redirects = Array.from(snippet.matchAll(/location\s+(=)?\s+([^\s{]+)\s*\{\s*return\s+302\s+"([^"]+)";\s*\}/g))
+  expect(redirects.map((match) => [match[1], match[2]])).toEqual([
+    ['=', uiPath],
+    ['=', `${uiPath}/`],
+  ])
+  for (const match of redirects) {
+    const target = new URL(match[3])
+    expect(target.origin).toBe('https://grafana.ide-newton.ts.net')
+    expect(target.pathname).toBe('/alerting/groups')
+    expect(target.searchParams.get('alertmanager')).toBe(datasource.name)
+    expect(match[3].endsWith('#')).toBe(true)
+  }
+})
+
+test('alert email uses Brevo SMTP credentials from the existing secret store', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const kustomization = YAML.parse(readRepoFile('argocd/applications/observability/kustomization.yaml'))
+  const alertmanagerPatch = kustomization.patches.find(
+    (entry: { target?: { name?: string } }) => entry.target?.name === 'observability-mimir-alertmanager',
+  )
+  const volume = YAML.parse(alertmanagerPatch.patch).find(
+    (entry: { value?: { name?: string } }) => entry.value?.name === 'alertmanager-fallback-config',
+  ).value
+  expect(externalSecret.spec.target.name).toBe('observability-alertmanager-email-brevo')
+  expect(volume.secret.secretName).toBe(externalSecret.spec.target.name)
+  expect(volume.secret.optional).not.toBe(true)
+  const template = externalSecret.spec.target.template.data
+  const alertmanager = YAML.parse(template['alertmanager_fallback_config.yaml'])
+  expect(externalSecret.spec.secretStoreRef).toEqual({ kind: 'ClusterSecretStore', name: 'onepassword-infra' })
+  expect(alertmanager.global).toMatchObject({
+    smtp_smarthost: 'smtp-relay.brevo.com:587',
+    smtp_auth_username: '{{ .smtp_username }}',
+    smtp_auth_password: '{{ .smtp_password }}',
+    smtp_require_tls: true,
+  })
+  expect(template['smtp-username']).toBe('{{ .smtp_username }}')
+  expect(
+    externalSecret.spec.data.map((entry: { secretKey: string; remoteRef: { key: string } }) => [
+      entry.secretKey,
+      entry.remoteRef.key,
+    ]),
+  ).toEqual([
+    ['smtp_username', 'brevo/username'],
+    ['smtp_password', 'brevo/password'],
+    ['smtp_from', 'brevo/from'],
+    ['email_to', 'brevo/to'],
+  ])
+})
+
+test('Ceph bounded scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
   for (const key of [
@@ -160,7 +329,7 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
     'osd_scrub_sleep',
   ])
     expect(config.osd[key]).toBeUndefined()
-  expect(config.osd.osd_mclock_profile).toBe('custom')
+  expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
   expect(config.osd.osd_max_scrubs).toBe('1')

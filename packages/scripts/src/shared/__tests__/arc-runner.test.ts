@@ -56,63 +56,133 @@ describe('ARC Nix runner toolchain', () => {
 
   it('places AMD64 Nix, Docker, and workspace writes on one disposable local NVMe volume', () => {
     const application = YAML.parseDocument(arcApplication)
-    const valuesPath = ['spec', 'sources', 2, 'helm', 'valuesObject']
-    expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe('arc-amd64')
-    const pod = application.getIn([...valuesPath, 'template', 'spec'])
-    if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
+    for (const [index, name, storageClass] of [[2, 'arc-amd64', 'local-path-ci-amd64']] as const) {
+      const valuesPath = ['spec', 'sources', index, 'helm', 'valuesObject']
+      expect(application.getIn([...valuesPath, 'runnerScaleSetName'])).toBe(name)
+      expect(application.getIn([...valuesPath, 'scaleSetLabels']).toJSON()).toContain('arc-amd64')
+      const pod = application.getIn([...valuesPath, 'template', 'spec'])
+      if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
 
-    const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
-    expect(pod.toJSON()).toMatchObject({
-      nodeSelector: { 'kubernetes.io/arch': 'amd64', 'kubernetes.io/hostname': 'turin' },
-      initContainers: expect.arrayContaining([
-        expect.objectContaining({
-          volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
-        }),
-      ]),
-      containers: expect.arrayContaining([
-        expect.objectContaining({
-          name: 'runner',
-          volumeMounts: expect.arrayContaining([
-            { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
-            { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
-            { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
-            workMount,
-          ]),
-        }),
-        expect.objectContaining({
-          name: 'dind',
-          volumeMounts: expect.arrayContaining([
-            workMount,
-            { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
-            { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
-          ]),
-        }),
-      ]),
-      volumes: expect.arrayContaining([
-        {
-          name: 'scratch',
-          ephemeral: {
-            volumeClaimTemplate: expect.objectContaining({
-              spec: {
-                accessModes: ['ReadWriteOnce'],
-                storageClassName: 'local-path-turin-nvme-transcend',
-                volumeMode: 'Filesystem',
-                resources: { requests: { storage: '45Gi' } },
-              },
-            }),
+      const workMount = { name: 'scratch', mountPath: '/home/runner/_work', subPath: 'work' }
+      expect(pod.toJSON()).toMatchObject({
+        nodeSelector: { 'kubernetes.io/arch': 'amd64' },
+        affinity: {
+          nodeAffinity: {
+            requiredDuringSchedulingIgnoredDuringExecution: {
+              nodeSelectorTerms: [
+                {
+                  matchExpressions: [
+                    { key: 'kubernetes.io/hostname', operator: 'In', values: ['turin', 'talos-192-168-1-194'] },
+                  ],
+                },
+              ],
+            },
           },
         },
-      ]),
-    })
+        initContainers: expect.arrayContaining([
+          expect.objectContaining({
+            volumeMounts: expect.arrayContaining([{ name: 'scratch', mountPath: '/scratch' }]),
+          }),
+        ]),
+        containers: expect.arrayContaining([
+          expect.objectContaining({
+            name: 'runner',
+            volumeMounts: expect.arrayContaining([
+              { name: 'scratch', mountPath: '/nix', subPath: 'nix' },
+              { name: 'scratch', mountPath: '/home/runner/.cache', subPath: 'cache' },
+              { name: 'scratch', mountPath: '/tmp', subPath: 'tmp' },
+              workMount,
+            ]),
+          }),
+          expect.objectContaining({
+            name: 'dind',
+            volumeMounts: expect.arrayContaining([
+              workMount,
+              { name: 'scratch', mountPath: '/var/lib/docker', subPath: 'docker' },
+              { name: 'scratch', mountPath: '/var/lib/containerd', subPath: 'containerd' },
+            ]),
+          }),
+        ]),
+        volumes: expect.arrayContaining([
+          {
+            name: 'scratch',
+            ephemeral: {
+              volumeClaimTemplate: expect.objectContaining({
+                spec: {
+                  accessModes: ['ReadWriteOnce'],
+                  storageClassName: storageClass,
+                  volumeMode: 'Filesystem',
+                  resources: { requests: { storage: '45Gi' } },
+                },
+              }),
+            },
+          },
+        ]),
+      })
+      expect(pod.toJSON().tolerations).toContainEqual({
+        key: 'workload.proompteng.ai/compute-local',
+        operator: 'Equal',
+        value: 'true',
+        effect: 'NoSchedule',
+      })
+    }
   })
 
   it('keeps lab ARC runner concurrency capped', () => {
-    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 5')
+    expect(runnerScaleSetBlock('arc-arm64')).toContain('maxRunners: 8')
     expect(runnerScaleSetBlock('arc-arm64')).toContain('minRunners: 1')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 5')
-    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 1')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('maxRunners: 9')
+    expect(runnerScaleSetBlock('arc-amd64')).toContain('minRunners: 2')
+    expect(arcApplication).not.toContain('runnerScaleSetName: arc-amd64-ryzen')
+    expect(arcApplication).not.toContain('arc-amd64-turin')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('maxRunners: 1')
     expect(runnerScaleSetBlock('analysis-arm64')).toContain('minRunners: 1')
+  })
+
+  it('places nine shared-label slots as three Ryzen and six Turin runners', () => {
+    const application = YAML.parseDocument(arcApplication)
+    const pod = application.getIn(['spec', 'sources', 2, 'helm', 'valuesObject', 'template', 'spec'])
+    if (!YAML.isMap(pod)) throw new Error('AMD64 runner Pod template is missing')
+    expect(pod.toJSON().topologySpreadConstraints).toEqual([
+      {
+        maxSkew: 3,
+        minDomains: 2,
+        topologyKey: 'kubernetes.io/hostname',
+        whenUnsatisfiable: 'DoNotSchedule',
+        nodeTaintsPolicy: 'Honor',
+        labelSelector: {
+          matchLabels: { 'actions.github.com/scale-set-name': 'arc-amd64', 'app.kubernetes.io/component': 'runner' },
+        },
+      },
+    ])
+    const request = [0, 1].reduce((total, index) => {
+      const memory = pod.getIn(['containers', index, 'resources', 'requests', 'memory'])
+      if (typeof memory !== 'string' || !/^\d+Gi$/.test(memory)) throw new Error('Expected explicit Gi memory request')
+      return total + Number.parseInt(memory, 10)
+    }, 0)
+    expect(request * 3 + 11.94).toBeLessThan(61.82)
+    expect(request * 4).toBeGreaterThan(61.82)
+    const placements = Array.from({ length: 10 }, (_, count) => count).filter(
+      (ryzen) => ryzen * request + 11.94 <= 61.82 && Math.abs(ryzen - (9 - ryzen)) <= 3,
+    )
+    expect(placements).toEqual([3])
+    const config = YAML.parseDocument(
+      readRepoFile('argocd/applications/local-path/patches/local-path-config.patch.yaml'),
+    )
+    const data = JSON.parse(String(config.getIn(['data', 'config.json'])))
+    expect(data.nodePathMap).toEqual([])
+    expect(data.storageClassConfigs['local-path-ci-amd64'].nodePathMap).toEqual([
+      { node: 'turin', paths: ['/var/mnt/turin-nvme-transcend'] },
+      { node: 'talos-192-168-1-194', paths: ['/var/mnt/local-path-provisioner'] },
+      { node: 'DEFAULT_PATH_FOR_NON_LISTED_NODES', paths: [] },
+    ])
+    expect(Object.keys(data.storageClassConfigs).sort()).toEqual([
+      'local-path',
+      'local-path-ci-amd64',
+      'local-path-ryzen',
+      'local-path-turin-nvme-intel',
+      'local-path-turin-nvme-transcend',
+    ])
   })
 
   it('serializes registry uploads from every runner scale set', () => {

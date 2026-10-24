@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Result } from 'effect'
 
-import { canonicalHashV1, sha256 } from './hash'
+import { sha256, canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
 import { makeInferenceCostReport } from './inference-costs'
 import { JevOutcome, makeJevEvaluationReceipt } from './jev/evidence'
@@ -35,7 +35,7 @@ const inference = (missing = false) => {
             status: JevOutcome.Received,
             inference: {
               requestHash: request.requestHash,
-              responseHash: canonicalHashV1(response),
+              responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
               startedAt: request.observedAt,
               completedAt: request.observedAt,
               response,
@@ -274,6 +274,7 @@ describe('document-bound external operating costs', () => {
     expect(report.invoiceReconciled).toBe(false)
     expect(report.totalOperatingCostMicros).toBeNull()
     expect(report.netEconomicPnlMicros).toBeNull()
+    expect(report.qualificationInferenceCostMicros).toBeNull()
   })
 
   test('reconciles credits and all allocation shares, replacing rather than adding the tariff estimate', () => {
@@ -288,7 +289,7 @@ describe('document-bound external operating costs', () => {
     expect(report.qualificationInferenceCostMicros).toBe('4200')
     expect(report.importedUnallocatedCostMicros).toBe('0')
     const { reportHash, ...material } = report
-    expect(reportHash).toBe(canonicalHashV1(material))
+    expect(reportHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
   })
 
   test('applies the qualification maximum once and keeps unresolved tariff coverage explicit', () => {

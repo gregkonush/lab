@@ -1,6 +1,7 @@
 import { PgClient } from '@effect/sql-pg'
 import { Context, Data, Effect, Layer, pipe, Result, Schema } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
+import { databaseUtcInstant } from '../../db/clock'
 
 import {
   type CycleEconomicsObservation,
@@ -10,7 +11,7 @@ import {
   type DurableAuthorityObservation,
   type ReconciliationObservation,
 } from '../observability'
-import { CycleState, CycleTerminalReason } from '../model'
+import { CycleState, CycleTerminalReason, ExecutionCalendarObservationMaterialSchema } from '../model'
 import { describeEntryAllocation, EntryAllocationFactsSchema } from '../entry-allocation-observation'
 import { lastEntryAllocationQuery } from './entry-allocation-query'
 import { Authority, KillState, ReconciliationStatus } from '../../execution/contracts'
@@ -21,6 +22,7 @@ import {
   SignedMicrosSchema,
   StrictNonEmptyStringSchema,
   UtcInstantSchema,
+  UtcDatabaseInstantSchema,
   strictParseOptions,
 } from '../../schemas'
 
@@ -121,6 +123,9 @@ const ProjectionRowSchema = Schema.Struct({
   current_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   current_signal_session_date: Schema.NullOr(IsoDateSchema),
   current_execution_session_date: Schema.NullOr(IsoDateSchema),
+  current_execution_calendar_schema_version: Schema.NullOr(
+    ExecutionCalendarObservationMaterialSchema.fields.executionCalendarSchemaVersion,
+  ),
   current_state: NullableCycleState,
   current_snapshot_id: NullableSha256,
   current_decision_hash: NullableSha256,
@@ -137,6 +142,9 @@ const ProjectionRowSchema = Schema.Struct({
   last_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   last_signal_session_date: Schema.NullOr(IsoDateSchema),
   last_execution_session_date: Schema.NullOr(IsoDateSchema),
+  last_execution_calendar_schema_version: Schema.NullOr(
+    ExecutionCalendarObservationMaterialSchema.fields.executionCalendarSchemaVersion,
+  ),
   last_state: NullableCycleState,
   last_snapshot_id: NullableSha256,
   last_decision_hash: NullableSha256,
@@ -158,7 +166,7 @@ const ProjectionRowSchema = Schema.Struct({
   authority_effective: Schema.NullOr(Schema.Enum(Authority)),
   authority_kill: Schema.NullOr(Schema.Enum(KillState)),
   authority_reason: NullableString,
-  authority_updated_at: NullableDate,
+  authority_updated_at: Schema.NullOr(UtcDatabaseInstantSchema),
   reconciliation_id: NullableSha256,
   reconciliation_account_id: Schema.NullOr(StrictNonEmptyStringSchema),
   reconciliation_status: Schema.NullOr(Schema.Enum(ReconciliationStatus)),
@@ -201,11 +209,11 @@ export type CycleObservabilityProjectionRow = ProjectionRow
 const ProjectionRowsSchema = Schema.Tuple([ProjectionRowSchema])
 const decodeRunId = Schema.decodeUnknownEffect(Sha256Schema, strictParseOptions)
 const decodeAccountId = Schema.decodeUnknownEffect(StrictNonEmptyStringSchema, strictParseOptions)
-const decodeProjectionRowsResult = Schema.decodeUnknownResult(ProjectionRowsSchema, strictParseOptions)
 
-export const decodeCycleObservabilityProjectionRows = (
-  rows: unknown,
-): Result.Result<readonly [CycleObservabilityProjectionRow], Schema.SchemaError> => decodeProjectionRowsResult(rows)
+export const decodeCycleObservabilityProjectionRows = Schema.decodeUnknownResult(
+  ProjectionRowsSchema,
+  strictParseOptions,
+)
 
 const messageOf = (cause: unknown): string =>
   pipe(
@@ -234,6 +242,7 @@ const snapshotFromRow = (
   const accountId = row[`${prefix}_account_id`]
   const signalSessionDate = row[`${prefix}_signal_session_date`]
   const executionSessionDate = row[`${prefix}_execution_session_date`]
+  const executionCalendarSchemaVersion = row[`${prefix}_execution_calendar_schema_version`]
   const authoritySessionDate = signalSessionDate ?? executionSessionDate
   const phase = row[`${prefix}_state`]
   const submissionOpenAt = row[`${prefix}_submission_open_at`]
@@ -246,6 +255,7 @@ const snapshotFromRow = (
     accountId === null ||
     authoritySessionDate === null ||
     executionSessionDate === null ||
+    executionCalendarSchemaVersion === null ||
     phase === null ||
     submissionOpenAt === null ||
     submissionCutoffAt === null ||
@@ -261,6 +271,7 @@ const snapshotFromRow = (
     accountId,
     signalSessionDate: authoritySessionDate,
     executionSessionDate,
+    executionCalendarSchemaVersion,
     phase,
     snapshotId: row[`${prefix}_snapshot_id`],
     decisionHash: row[`${prefix}_decision_hash`],
@@ -297,7 +308,7 @@ const authorityFromRow = (
     effective: row.authority_effective,
     kill: row.authority_kill,
     reason: row.authority_reason,
-    updatedAt: row.authority_updated_at.toISOString(),
+    updatedAt: row.authority_updated_at,
   })
 }
 
@@ -655,10 +666,11 @@ const makeCycleObservability = Effect.gen(function* () {
             WHERE transaction.account_id = (SELECT account_id FROM selected_account)
           ),
           selected_broker_fee_cash AS (
-            SELECT coalesce(sum(fee.net_amount_micros), 0) AS net_amount_micros
-            FROM broker_fee_accounting AS fee
+            SELECT coalesce(sum(fee.cash_delta_micros), 0) AS net_amount_micros,
+              COALESCE((SELECT sum(cost_basis_micros) FROM broker_inventory_debits WHERE account_id=(SELECT account_id FROM selected_account) AND posted AND effective_at<=CURRENT_TIMESTAMP),0) AS coin_cost_micros
+            FROM broker_cash_fee_deltas AS fee
             WHERE fee.account_id = (SELECT account_id FROM selected_account)
-              AND fee.first_observed_at <= CURRENT_TIMESTAMP
+              AND fee.effective_at <= CURRENT_TIMESTAMP
               AND fee.posted_at <= CURRENT_TIMESTAMP
           ),
           selected_accounting_receipts AS (
@@ -754,6 +766,7 @@ const makeCycleObservability = Effect.gen(function* () {
             current.account_id AS current_account_id,
             current.signal_session_date::text AS current_signal_session_date,
             current.execution_session_date::text AS current_execution_session_date,
+            current.execution_calendar_schema_version AS current_execution_calendar_schema_version,
             current.state AS current_state,
             current.snapshot_id AS current_snapshot_id,
             current.decision_hash AS current_decision_hash,
@@ -770,6 +783,7 @@ const makeCycleObservability = Effect.gen(function* () {
             last.account_id AS last_account_id,
             last.signal_session_date::text AS last_signal_session_date,
             last.execution_session_date::text AS last_execution_session_date,
+            last.execution_calendar_schema_version AS last_execution_calendar_schema_version,
             last.state AS last_state,
             last.snapshot_id AS last_snapshot_id,
             last.decision_hash AS last_decision_hash,
@@ -808,7 +822,7 @@ const makeCycleObservability = Effect.gen(function* () {
             authority.effective AS authority_effective,
             authority.kill_state AS authority_kill,
             authority.reason AS authority_reason,
-            authority.updated_at AS authority_updated_at,
+            ${databaseUtcInstant(sql, sql`authority.updated_at`)} AS authority_updated_at,
             reconciliation.reconciliation_id,
             reconciliation.account_id AS reconciliation_account_id,
             reconciliation.status AS reconciliation_status,
@@ -851,12 +865,30 @@ const makeCycleObservability = Effect.gen(function* () {
                   'quoteCount', coalesce((decision.document #>> '{bindings,executionMarketData,quoteCount}')::integer, 0),
                   'tradeCount', coalesce((decision.document #>> '{bindings,executionMarketData,tradeCount}')::integer, 0),
                   'targetPlanStatus', decision.document #>> '{targetPlan,status}',
-                  'targetPlanReason', decision.document #>> '{targetPlan,reason}',
+                  'targetPlanReason', CASE
+                    WHEN decision.document #>> '{targetPlan,status}' = 'NO_TRADE'
+                      AND decision.document #>> '{strategyDecision,schemaVersion}' = 'bayn.jev-entry-target.v6'
+                      AND decision.document #> '{strategyDecision,entryPlanRejections}' <> '{}'::jsonb
+                    THEN CASE
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IS NULL OR reason.value NOT IN (
+                          'MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED', 'NO_FUNDED_CANDIDATES'
+                        )
+                      ) THEN NULL
+                      WHEN EXISTS (
+                        SELECT 1 FROM jsonb_each_text(decision.document #> '{strategyDecision,entryPlanRejections}') reason
+                        WHERE reason.value IN ('MODEL_WAIT', 'MODEL_AVOID', 'MODEL_SETUP_UNSUPPORTED')
+                      ) THEN 'JEV_MODEL_ABSTAINED'
+                      ELSE 'JEV_NO_FUNDED_CANDIDATES'
+                    END
+                    ELSE decision.document #>> '{targetPlan,reason}'
+                  END,
                   'targetCount', (
                     SELECT count(*)::integer
                     FROM jsonb_array_elements(coalesce(decision.document #> '{targetPlan,targets}', '[]'::jsonb)) AS target
-                    WHERE (target ->> 'currentQuantityMicros')::numeric <>
-                      (target ->> 'targetQuantityMicros')::numeric
+                    WHERE (target ->> 'currentQuantityAtoms')::numeric <>
+                      (target ->> 'targetQuantityAtoms')::numeric
                   ),
                   'orderedIntentCount', coalesce(jsonb_array_length(decision.document -> 'orderedIntentIds'), 0),
                   'dispatchable', coalesce((decision.document ->> 'dispatchable')::boolean, false),
@@ -935,7 +967,7 @@ const makeCycleObservability = Effect.gen(function* () {
               ),
               'positionCount', CASE
                 WHEN EXISTS (SELECT 1 FROM latest_position_snapshot)
-                THEN (SELECT count(*)::integer FROM current_positions WHERE quantity_micros <> 0)
+                THEN (SELECT count(*)::integer FROM current_positions WHERE quantity_atoms <> 0)
                 ELSE NULL
               END,
               'grossExposureMicros', CASE
@@ -986,10 +1018,10 @@ const makeCycleObservability = Effect.gen(function* () {
             coalesce((SELECT sum(realized_pnl_micros) FROM selected_accounting_transactions), 0)::text
               AS accounting_gross_realized_pnl_micros,
             (coalesce((SELECT sum(fee_micros) FROM selected_accounting_transactions), 0)
-              - (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
+              - (SELECT net_amount_micros FROM selected_broker_fee_cash) + (SELECT coin_cost_micros FROM selected_broker_fee_cash))::text
               AS accounting_execution_fees_micros,
             (coalesce((SELECT sum(realized_pnl_micros - fee_micros) FROM selected_accounting_transactions), 0)
-              + (SELECT net_amount_micros FROM selected_broker_fee_cash))::text
+              + (SELECT net_amount_micros FROM selected_broker_fee_cash) - (SELECT coin_cost_micros FROM selected_broker_fee_cash))::text
               AS accounting_net_realized_pnl_after_execution_fees_micros,
             (SELECT created_at FROM latest_performance_receipt) AS performance_receipt_created_at,
             (SELECT document -> 'evidence' ->> 'status' FROM latest_performance_receipt)

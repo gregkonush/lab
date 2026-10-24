@@ -3,6 +3,7 @@ kind: Kustomization
 namespace: temporal
 
 resources:
+  - cassandra-pvcs.yaml
   - upgrade/cassandra-509-rollout.yaml
   - upgrade/cassandra-509-backup.yaml
   - upgrade/cassandra-4112-rollout.yaml
@@ -64,6 +65,14 @@ patches:
         path: /spec/template/spec/containers/0/image
         value: mirror.gcr.io/cassandra:5.0.9@sha256:d35e159439b302146f964919904f84fd3c2cebf347272b8cb8c4368c1cf200e5
       - op: add
+        path: /spec/template/spec/containers/0/startupProbe
+        value:
+          exec:
+            command: ["/bin/sh", "-c", "nodetool status"]
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 90
+      - op: add
         path: /spec/template/spec/containers/0/env/-
         value:
           name: CASSANDRA_NUM_TOKENS
@@ -124,6 +133,8 @@ helmCharts:
         enabled: true
         storageClass: rook-ceph-block
         accessMode: ReadWriteOnce
+        # Immutable live template. Existing ordinal claims are managed at 30Gi in cassandra-pvcs.yaml.
+        # See README.md before changing this value or scaling beyond the three declared claims.
         size: 20Gi
       config:
         cluster_size: 3

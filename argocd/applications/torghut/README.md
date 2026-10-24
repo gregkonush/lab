@@ -53,18 +53,31 @@ complete a stateful upgrade. Use the operator's explicit savepoint redeployment 
 4. Check the actual Flink job reaches `RUNNING`, restores the selected state, and completes a new checkpoint.
    Confirm raw/feature output and archive progress independently of Kargo or Argo status.
 
-Nonce `2` selects `savepoint-437918-85237d1073d0`, the retained rolling-feature savepoint recorded by the operator
-before the technical-indicator upgrade. Its 205,817-byte `_metadata` was read successfully through the existing
-checkpoint identity on 2026-09-13; SHA-256 is `16c4ebc4937b2e47070758775af35d29561fe990c9a898da2985b759a15eae20`.
-Use `TA_FEATURE_RESTORE_TOPOLOGY=ROLLING_FEATURES` with this saved topology. The old job failed before restoring
-the new graph, so this recovery resumes the same selected state rather than moving back to the older nonce-1
-bootstrap point. Kafka sources resume their saved offsets; the new technical source reads retained bars from
-the beginning. Existing at-least-once sink semantics still apply when records are replayed.
+Nonce `3` selects `savepoint-1d9e60-f3e71d89dac4`, the operator's latest upgrade savepoint before the October 11
+application driver failed while ClickHouse and Keeper were unavailable. Its 231,644-byte `_metadata` was read
+through the existing checkpoint identity on 2026-10-11; SHA-256 is
+`6c47daf1d5aa265caa54c39f3e9489dc7c62febaa44dfd6cb68165268fcdd899`.
+Keep `TA_FEATURE_RESTORE_TOPOLOGY=ROLLING_FEATURES` and all restoration IDs. Kafka sources resume their saved
+offsets; existing at-least-once sink semantics still apply when records are replayed. Do not select the older nonce-2
+bootstrap savepoint for an ordinary restart.
 
 Once restored, keep the nonce stable;
 ordinary subsequent upgrades resume using the operator's checkpoint/savepoint lifecycle. Increment it only for a
 new explicitly selected recovery. The operator does not support automatic rollback after this redeployment: if
 restoration fails, retain the saved data, repair the state compatibility, and deliver another reviewed recovery.
+
+Both retained pipelines enable `kubernetes.operator.job.restart.failed`, allowing the existing operator to recover
+terminal failures from successful checkpoint state after a dependency outage. This does not skip state, permit
+non-restored operators, or change the savepoint upgrade mode. Verify actual restoration and new completed checkpoints.
+
+Alloy labels producer logs from Kubernetes discovery with `namespace`, `pod`, `container` and `service` before
+forwarding them to Loki. Query `{namespace="torghut",service="torghut-ta"}` or the exact GlitchTip server and event
+timestamp. A healthy Alloy Pod alone does not prove these labels or log delivery; verify current records for the
+forwarder and both Flink process types after deployment.
+
+Alloy scrapes `torghut-ta-metrics` and `market-data-archive-metrics`. The signal pipeline alerts distinguish missing
+scrapes, a reachable JobManager without a running job, and stalled or missing checkpoints. Each routes to the existing
+critical email receiver. A Ready JobManager alone is insufficient; check the Flink REST job state and checkpoint age.
 
 The behavior is documented in the
 [deployed operator's recovery contract](https://github.com/apache/flink-kubernetes-operator/blob/79d730bab4d8403f3a447fb027f879f5cbdc59ad/docs/content/docs/custom-resource/job-management.md#redeploy-using-the-savepointredeploynonce).

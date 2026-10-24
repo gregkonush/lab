@@ -60,6 +60,7 @@ const earlyNixImageApps = new Set([
   'jangar',
   'oirat',
   'olden',
+  'opencode',
   'proompteng',
   'sag',
   'symphony',
@@ -84,6 +85,7 @@ const appToNixAttr = new Map<string, string>([
   ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
+  ['opencode', 'opencode-image'],
   ['proompteng', 'proompteng-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
@@ -116,9 +118,10 @@ const appToDeployScriptPath = new Map<string, string>([
 ])
 
 const appToWorkflowPaths = new Map<string, string[]>([
-  ['rune', ['.github/workflows/rune-images.yml', 'argocd/applications/kargo']],
+  ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
+  ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
@@ -159,13 +162,13 @@ type KargoImageContract = {
 
 const kargoImageApps = new Map<string, KargoImageContract>([
   [
-    'rune',
+    'ofz',
     {
       kind: 'promotion-template',
-      bootstrapReferences: ['registry.ide-newton.ts.net/lab/rune:unpromoted'],
-      reason: 'The pinned Rune serving engine is built and signed in CI, then promoted by Kargo',
-      repositories: ['registry.ide-newton.ts.net/lab/rune'],
-      workflowPaths: ['.github/workflows/rune-images.yml', 'argocd/applications/kargo'],
+      bootstrapReferences: ['registry.ide-newton.ts.net/lab/ofz:unpromoted'],
+      reason: 'The Ofz API and audit exporter share one verified CI image promoted by Kargo',
+      repositories: ['registry.ide-newton.ts.net/lab/ofz'],
+      workflowPaths: ['.github/workflows/ofz.yaml', 'argocd/applications/kargo'],
     },
   ],
   [
@@ -232,6 +235,51 @@ const listYamlFiles = (dir: string): string[] => {
     }
   }
   return entries.sort()
+}
+
+const listApplicationYamlFiles = (dir: string, visited = new Set<string>()): string[] => {
+  if (!existsSync(dir) || visited.has(dir)) return []
+  visited.add(dir)
+  const kustomization = ['kustomization.yaml', 'kustomization.yml', 'Kustomization']
+    .map((name) => join(dir, name))
+    .find((path) => existsSync(path))
+  if (!kustomization) return listYamlFiles(dir)
+
+  const files = new Set(
+    readdirSync(dir)
+      .map((name) => join(dir, name))
+      .filter((path) => statSync(path).isFile() && /\.(ya?ml)$/.test(path)),
+  )
+  files.add(kustomization)
+  for (const document of readYamlDocuments(kustomization)) {
+    if (!isRecord(document)) continue
+    const paths: unknown[] = [
+      ...(['resources', 'bases', 'components', 'patchesStrategicMerge'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field] : [],
+      ),
+      ...(['patches', 'patchesJson6902'] as const).flatMap((field) =>
+        Array.isArray(document[field]) ? document[field].flatMap((entry) => (isRecord(entry) ? [entry.path] : [])) : [],
+      ),
+      ...(Array.isArray(document.helmCharts)
+        ? document.helmCharts.flatMap((chart) =>
+            isRecord(chart)
+              ? [chart.valuesFile, ...(Array.isArray(chart.additionalValuesFiles) ? chart.additionalValuesFiles : [])]
+              : [],
+          )
+        : []),
+    ]
+    for (const path of paths) {
+      if (typeof path !== 'string' || /^(?:https?:\/\/|git::)/.test(path)) continue
+      const absolute = resolve(dir, path)
+      if (!existsSync(absolute)) continue
+      if (statSync(absolute).isDirectory()) {
+        for (const input of listApplicationYamlFiles(absolute, visited)) files.add(input)
+      } else if (/\.(ya?ml)$/.test(absolute)) {
+        files.add(absolute)
+      }
+    }
+  }
+  return [...files].sort()
 }
 
 const isEnabledValue = (value: unknown): boolean => {
@@ -401,7 +449,7 @@ const inspectApplicationPath = (root: string, entry: EnabledAppInventoryEntry): 
   }
 
   const absolutePath = resolve(root, entry.path)
-  const yamlFiles = listYamlFiles(absolutePath)
+  const yamlFiles = listApplicationYamlFiles(absolutePath)
   const repoImages = new Set<string>()
   let hasHelmChart = false
 
