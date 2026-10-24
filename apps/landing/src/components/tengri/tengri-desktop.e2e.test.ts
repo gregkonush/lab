@@ -2269,11 +2269,11 @@ test('shows no retry action while a healthy conversation is loading or after it 
   await mock.waitForHeldResume()
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeDisabled()
-  expect(await tengri.getByRole('button', { name: 'Retry conversation recovery' }).count()).toBe(0)
+  expect(await tengri.getByRole('button', { name: 'Retry', exact: true }).count()).toBe(0)
   mock.releaseHeldResume()
   await expect(tengri.getByText('Conversation loaded.', { exact: true })).toBeVisible()
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
 })
 
 test('ignores an old conversation failure after switching to a successfully loaded conversation', async ({ page }) => {
@@ -2316,7 +2316,7 @@ test('ignores an old conversation failure after switching to a successfully load
   await expect
     .poll(() => mock.actions.some((action) => action.action === 'resume-thread' && action.threadId === 'thread-beta'))
     .toBe(true)
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   await expect(tengri.getByRole('alert')).toHaveCount(0)
   await expect(tengri.locator('[data-conversation-id="thread-beta"]')).toHaveAttribute('aria-current', 'true')
 })
@@ -2370,10 +2370,11 @@ test('automatically recovers a saved conversation after a temporary control-plan
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toHaveCount(0)
   await page.clock.runFor(1_000)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
@@ -2384,10 +2385,10 @@ test('automatically recovers a saved conversation after a cleanly truncated hist
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toBeVisible()
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
   await page.clock.runFor(1_000)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
@@ -2400,7 +2401,8 @@ test('cancels a pending conversation recovery retry when the chat window closes'
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+  await expect(tengri.getByText('Tengri control plane is unavailable', { exact: true })).toHaveCount(0)
   await tengri.getByRole('button', { name: 'Close Tengri', exact: true }).click()
   await page.clock.runFor(31_000)
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(1)
@@ -2451,7 +2453,7 @@ for (const unavailable of ['model', 'effort']) {
     const reasoning = tengri.getByRole('combobox', { name: 'Reasoning effort' })
     await expect(reasoning).toBeEnabled()
     await selectCodexOption(page, reasoning, 'Low')
-    await tengri.getByRole('button', { name: 'Retry conversation recovery' }).click()
+    await tengri.getByRole('button', { name: 'Retry', exact: true }).click()
     await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
     expect(mock.actions.filter((action) => action.action === 'resume-thread').at(-1)).toMatchObject({
       model: unavailable === 'model' ? 'gpt-6.1-sol' : 'gpt-5.6-luna',
@@ -2630,6 +2632,153 @@ for (const outcome of ['accepted', 'rejected'] as const) {
       await chat.getByRole('button', { name: 'Stop response', exact: true }).click()
       await expect.poll(() => mock.actions.find((action) => action.action === 'interrupt-turn')?.runId).toBe(sentRunId)
     } else await expect(composer).toHaveValue('Send from Alpha')
+  })
+}
+
+for (const submit of ['keyboard', 'button'] as const) {
+  test(`keeps the composer focused and editable through a ${submit} send`, async ({ page }) => {
+    const mock = await mockTengri(page)
+    let sending = false
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'send-turn')
+        return route.fallback()
+      sending = true
+      await held
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+    await composer.fill('Send this message')
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    if (submit === 'keyboard') await composer.press('Enter')
+    else await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    try {
+      await expect.poll(() => sending).toBe(true)
+      await expect(composer).toBeFocused()
+      await expect(composer).toBeEditable()
+      await expect(
+        chat.getByRole('button', { name: 'Send message', exact: true }).locator('svg.animate-spin'),
+      ).toHaveCount(0)
+      await composer.fill('Keep this next draft')
+      if (submit === 'button') {
+        await pasteClipboardImage(page, composer)
+        const attachments = chat.getByRole('list', { name: 'Image attachments' })
+        await expect(attachments.getByRole('img')).toHaveCount(1)
+        await attachments.getByRole('button', { name: /^Remove image/ }).click()
+        await expect(attachments).toHaveCount(0)
+        await pasteClipboardImage(page, composer)
+        await expect(attachments.getByRole('img')).toHaveCount(1)
+      }
+    } finally {
+      release()
+    }
+    await expect.poll(() => mock.actions.filter((action) => action.action === 'send-turn').length).toBe(1)
+    await expect(composer).toBeFocused()
+    await expect(composer).toHaveValue('Keep this next draft')
+    await expect(composer).toBeEditable()
+    if (submit === 'button') {
+      await expect(chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+      expect(mock.actions.find((action) => action.action === 'send-turn')?.images).toEqual([])
+      expect((await new AxeBuilder({ page }).include('[aria-label="Message composer"]').analyze()).violations).toEqual(
+        [],
+      )
+      await page.screenshot({ path: 'test-results/composer-next-draft.png' })
+    }
+  })
+}
+
+test('preserves a newer draft when the preceding message fails', async ({ page }) => {
+  await mockTengri(page)
+  let sending = false
+  let release = () => {}
+  const held = new Promise<void>((resolve) => {
+    release = resolve
+  })
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'send-turn')
+      return route.fallback()
+    sending = true
+    await held
+    return route.fulfill({ status: 403, json: { error: 'This message was not permitted' } })
+  })
+  await page.goto('/')
+  const chat = page.getByRole('region', { name: 'Tengri window' })
+  const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+  await composer.fill('The original message')
+  await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+  await composer.press('Enter')
+  try {
+    await expect.poll(() => sending).toBe(true)
+    await expect(composer).toBeEditable()
+    await composer.fill('My newer draft')
+  } finally {
+    release()
+  }
+  await expect(chat.getByRole('alert')).toHaveText('This message was not permitted')
+  await expect(composer).toHaveValue('My newer draft')
+  await expect(chat.getByRole('article', { name: 'Your message' })).toHaveText('The original message')
+})
+
+for (const { phase, confirmationThread } of [
+  { phase: 'running', confirmationThread: 'thread-1' },
+  { phase: 'succeeded', confirmationThread: 'thread-1' },
+  { phase: 'running', confirmationThread: 'another-thread' },
+] as const) {
+  const name =
+    confirmationThread === 'thread-1'
+      ? `recovers a ${phase} message after its submission response is lost`
+      : 'rejects a message confirmation from a different conversation'
+  test(name, async ({ page }) => {
+    await mockTengri(page)
+    let operationId = ''
+    let sends = 0
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback()
+      const action = route.request().postDataJSON()
+      if (action.action === 'send-turn') {
+        sends++
+        operationId = String(action.operationId)
+        return route.fulfill({ status: 503, json: { error: 'Tengri control plane is unavailable' } })
+      }
+      if (action.action === 'codex-run' && operationId) {
+        expect(action.runId).toBe(operationId)
+        return route.fulfill({
+          json: {
+            result: {
+              runId: operationId,
+              agentId: 'microvm-ada',
+              threadId: confirmationThread,
+              state: { phase, turnId: 'turn-recovered' },
+            },
+          },
+        })
+      }
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+    await composer.fill('Keep the accepted operation')
+    await expect(chat.getByRole('button', { name: 'Send message', exact: true })).toBeEnabled()
+    await composer.press('Enter')
+    await expect.poll(() => sends).toBe(1)
+    if (confirmationThread !== 'thread-1') {
+      await expect(chat.getByRole('alert')).toHaveText('Message confirmation returned a different conversation')
+      await expect(composer).toHaveValue('Keep the accepted operation')
+      await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText('Ready')
+      expect(sends).toBe(1)
+      return
+    }
+    await expect(chat.getByLabel('Agent status', { exact: true })).toHaveText(phase === 'running' ? 'Working' : 'Ready')
+    await expect(composer).toHaveValue('')
+    await expect(composer).toBeFocused()
+    await expect(chat.getByRole('alert')).toHaveCount(0)
+    expect(sends).toBe(1)
   })
 }
 
@@ -3400,32 +3549,32 @@ test('keeps a committed delete transition gated when snapshot refresh fails', as
   await expect(page.getByRole('navigation', { name: 'Dock' })).toHaveCount(0)
 })
 
-test('keeps a missing conversation until the user chooses to start a new one in the same workspace', async ({
-  page,
-}) => {
+test('shows one quiet missing-conversation state and keeps new chat in the sidebar', async ({ page }) => {
   const failure = { status: 404, error: 'Codex conversation could not be found', code: 'conversation_not_found' }
   const mock = await mockTengri(page, { resumeThreadErrors: [failure, failure] })
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-missing'))
   await page.goto('/')
 
   const tengri = page.getByRole('region', { name: 'Tengri window' })
-  const prompt = tengri.getByRole('textbox', { name: 'Message your agent' })
-  await expect(tengri.getByRole('alert')).toHaveText('Codex conversation could not be found')
-  await expect(
-    tengri.getByText(
-      'This saved conversation is no longer available. Start a new conversation to continue in this workspace.',
-    ),
-  ).toBeVisible()
-  await expect(prompt).toBeDisabled()
+  await expect(tengri.getByRole('alert')).toHaveCount(0)
+  await expect(tengri.getByText('This conversation is unavailable.', { exact: true })).toBeVisible()
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(1)
+  await expect(tengri.getByRole('form', { name: 'Message composer' })).toHaveCount(0)
+  expect((await new AxeBuilder({ page }).include('[aria-label="Tengri window"]').analyze()).violations).toEqual([])
+  await page.screenshot({ path: 'test-results/conversation-unavailable.png' })
   expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
 
-  await tengri.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await tengri.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect.poll(() => mock.getResumeThreadResponseCount()).toBe(2)
-  await expect(tengri.getByRole('button', { name: 'Start a new conversation', exact: true })).toBeVisible()
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(1)
   expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-missing')
   expect(mock.actions.some((action) => action.action === 'create-thread')).toBe(false)
 
-  await tengri.getByRole('button', { name: 'Start a new conversation', exact: true }).click()
+  await tengri
+    .getByTestId('agent-conversation-sidebar')
+    .getByRole('button', { name: 'New conversation', exact: true })
+    .click()
+  const prompt = tengri.getByRole('textbox', { name: 'Message your agent' })
   await expect(prompt).toBeEnabled()
   await expect(prompt).toBeFocused()
   await expect(tengri.getByRole('alert')).toHaveCount(0)
@@ -3451,15 +3600,16 @@ test('retries a temporary conversation failure without replacing the saved threa
   await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-recoverable'))
   await page.goto('/')
   const tengri = page.getByRole('region', { name: 'Tengri window' })
-  await expect(tengri.getByRole('alert')).toHaveText('Tengri control plane is unavailable')
+  await expect(tengri.getByRole('alert')).toHaveCount(0)
+  await expect(tengri.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
   await expect(tengri.getByRole('button', { name: 'Start a new conversation', exact: true })).toHaveCount(0)
-  await tengri.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await page.clock.runFor(1_000)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(tengri.getByRole('alert')).toHaveCount(0)
   expect(await page.evaluate(() => localStorage.getItem('tengri-thread:microvm-ada'))).toBe('thread-recoverable')
   expect(mock.actions.filter((action) => action.action === 'create-thread')).toHaveLength(0)
   await page.clock.runFor(31_000)
-  await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+  await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   expect(mock.actions.filter((action) => action.action === 'resume-thread')).toHaveLength(2)
 })
@@ -3480,7 +3630,7 @@ test('clears an unavailable sidebar marker after successful conversation recover
   const tengri = page.getByRole('region', { name: 'Tengri window' })
   const row = tengri.locator('[data-conversation-id="thread-recoverable"]')
   await expect(row.getByText('Unavailable', { exact: true })).toBeVisible()
-  await tengri.getByRole('button', { name: 'Retry conversation recovery' }).click()
+  await tengri.getByRole('button', { name: 'Retry', exact: true }).click()
   await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
   await expect(row.getByText('Unavailable', { exact: true })).toHaveCount(0)
   await expect
@@ -3797,6 +3947,13 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
     },
     {
       sequence: 46,
+      kind: 'warning',
+      method: 'deprecationNotice',
+      itemId: '',
+      text: 'Full-history hydration is deprecated for paginated threads',
+    },
+    {
+      sequence: 47,
       kind: 'error',
       method: 'turn/completed',
       itemId: '',
@@ -3818,7 +3975,10 @@ test('does not duplicate snapshot-covered Codex messages when event replay races
   await expect(page.getByText('Tokens: 10 input · 4 output', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Weekly 90% left · Credits: 62,307', { exact: true })).toHaveCount(0)
   await expect(page.getByText('Tokens: 20 input · 6 output', { exact: true })).toHaveCount(0)
-  await expect(page.getByText('Weekly 88% left · Credits: 62,307', { exact: true })).toHaveCount(1)
+  await expect(page.getByText('Weekly 88% left · Credits: 62,307', { exact: true })).toHaveCount(0)
+  await expect(
+    page.getByText('Full-history hydration is deprecated for paginated threads', { exact: true }),
+  ).toHaveCount(0)
   await expect(page.getByText('One oversized Codex event was omitted', { exact: true })).toHaveCount(1)
   await expect(page.getByText('The turn failed', { exact: true })).toHaveCount(1)
 })
@@ -6951,7 +7111,7 @@ test('recovery follows the latest restored message and stays at the bottom after
   try {
     await expect(tengri.getByRole('article', { name: 'Codex response' })).toHaveCount(31)
     await expect(tengri.getByRole('textbox', { name: 'Message your agent' })).toBeEnabled()
-    await expect(tengri.getByRole('button', { name: 'Retry conversation recovery' })).toHaveCount(0)
+    await expect(tengri.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
     await expect.poll(distanceFromBottom).toBeLessThan(2)
   } finally {
     imageResponse.resolve()
