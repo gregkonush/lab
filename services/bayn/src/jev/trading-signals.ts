@@ -8,7 +8,10 @@ import { isCryptoMarketFeature } from '../market-data/features/crypto-contract'
 import { BigDecimal, Result } from 'effect'
 
 import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
-import { deriveIntradayMomentumSignalMetrics } from '../strategy/intraday-momentum/decision-core'
+import {
+  deriveIntradayBidBreakoutBps,
+  deriveIntradayMomentumSignalMetrics,
+} from '../strategy/intraday-momentum/decision-core'
 import type { StrategyMarketSnapshot, VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 
 import {
@@ -394,7 +397,12 @@ const requestFromSnapshot = (
           ...candidate.state,
           currentPriceSignals: {
             lookbackReturnBps: currentPriceMetrics.lookbackReturnBps,
-            breakoutBps: currentPriceMetrics.breakoutBps,
+            breakoutBps: usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? yield* deriveIntradayBidBreakoutBps(candidate.prices, symbol)
+              : currentPriceMetrics.breakoutBps,
+            breakoutPricingBasis: usesWindowTradeEvidence(snapshot.manifest, symbol)
+              ? 'CURRENT_BID'
+              : 'CURRENT_ASK_AND_FRESH_TRADE',
             spreadBps: currentPriceMetrics.spreadBps,
             rangeLocationPpm: currentPriceMetrics.rangeLocationPpm,
             referenceAt: common.referenceAt,
