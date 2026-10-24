@@ -152,6 +152,18 @@ describe('streaming raw and rolling feature projection', () => {
       const otherPartition = incorporateMarketRecord(state, { ...changed(1), partition: 1 }, universe, end + 4000)
       expect(otherPartition.rejections.size).toBe(0)
       expect(otherPartition.offsets.get(`${universe.topics[channel]}:1`)).toBe('1')
+      const advancedPartition = incorporateMarketRecord(
+        otherPartition,
+        { ...changed(20), partition: 1 },
+        universe,
+        end + 4000,
+      )
+      expect(advancedPartition.offsets.get(`${universe.topics[channel]}:1`)).toBe('20')
+      // This now enters the older-offset branch. Partition 0's retained offset 1
+      // must not be mistaken for partition 1's already superseded event.
+      expect(incorporateMarketRecord(advancedPartition, { ...changed(1), partition: 1 }, universe, end + 4000)).toBe(
+        advancedPartition,
+      )
       expect(state.rejections.size).toBe(0)
       expect((channel === 'quotes' ? retained.quoteHistory : retained.tradeHistory).get('AAPL')).toBe(history)
     },
