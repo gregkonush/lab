@@ -1,4 +1,5 @@
 import { entryBracketProtection } from './execution/position-protection'
+import { jevProfitTargetLimitFloors } from './jev/exit'
 import { NativeProtectionSchema } from './execution/contracts'
 import { intentPlanSchemaVersion } from './execution/contracts'
 import { MarketSourcesSchema } from './market-data/streaming/raw-events'
@@ -992,6 +993,18 @@ const streamingPricingEvidenceIssues = (
     if (Result.isFailure(values))
       return [{ path: ['executionMarketDataRows'], issue: 'streaming quote exceeds exact numeric bounds' }]
     const { bid, ask, bidSize, askSize } = values.success
+    const target = document.strategyDecision
+    if (target?.schemaVersion === 'bayn.jev-entry-target.v6' && target.selectedSymbols.includes(symbol)) {
+      const plan = target.exitPolicy.plans[symbol]
+      // Match compileJevEntry using the exact quote bid, before instrument-price quantization.
+      if (plan === undefined || bid <= BigInt(plan.levels.stopPriceMicros))
+        return [
+          {
+            path: ['executionMarketDataRows'],
+            issue: 'entry pricing must remain strictly above the selected protective stop',
+          },
+        ]
+    }
     const increment = BigInt(plannerInput.precision.quantityIncrementAtoms)
     if (
       prices.bidPriceMicros[symbol] !== quantizeInstrumentPriceMicros(symbol, bid, 'DOWN').toString() ||
@@ -1758,6 +1771,14 @@ const executionMaterialIssues = (
   if (new Set(document.orderedIntentIds).size !== document.orderedIntentIds.length) {
     issues.push({ path: ['orderedIntentIds'], issue: 'must not contain duplicate intent identities' })
   }
+  const floorResult = jevProfitTargetLimitFloors(
+    document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined,
+    document.createdAt,
+    document.targetPlan.targets,
+  )
+  if (Result.isFailure(floorResult))
+    issues.push({ path: ['strategyDecision'], issue: 'profit limits require the exact entry-bound exit plan' })
+  const profitFloors: Readonly<Record<string, bigint>> = Result.isSuccess(floorResult) ? floorResult.success : {}
   for (const [index, target] of targets.entries()) {
     if (
       target.strategyName !== document.bindings.strategyName ||
@@ -1816,6 +1837,7 @@ const executionMaterialIssues = (
       const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
       const expectedProposedPositions = proposedPositionSequence?.[index]
       const plannedTarget = document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+      const minimumSellPriceMicros = profitFloors[target.symbol]
       const pricing =
         plannedTarget === undefined
           ? undefined
@@ -1827,6 +1849,7 @@ const executionMaterialIssues = (
               quantityAtoms: BigInt(target.quantityAtoms),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
+              ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

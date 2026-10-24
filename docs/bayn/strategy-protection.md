@@ -1,29 +1,39 @@
 # Jev-selected trade plans and broker protection
 
-Jev judges the current setup and conditionally selects a complete entry, stop loss and take profit before execution.
-Protocol v17 / signal state v16, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
+Jev judges the current setup and whether a complete entry, stop loss and take profit justify an actual trade before execution.
+Protocol v20 / signal state v17, batch v6, entry target v6, exit target v5 and position-exit policy v4 define the executable contracts.
 Broker protection, sizing, cost, account-risk and holding/session safeguards remain enforced.
 
 ## Model contract
 
 Jev returns two typed judgments over the same supplied state in one request. The `setup` Choice classifies the current
-observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice assumes a supported long setup and
-selects the complete funded plan that fits the observed structure, movement scale and net reward versus risk, or abstains.
+observations as `upward`, `unclear` or `adverse`. Independently, the `action` Choice judges whether any supplied complete
+funded trade has observational support for a cost-covering exit within the holding deadline, or abstains. It assesses
+entry, stop, target and time-limit liquidation together. Upward structure alone cannot establish an economic trade.
 A plan option contains its stop, stop-limit, take-profit, immutable funded quantity ceiling and estimated net loss/profit.
-Code admits an entry only when the actual setup answer is `upward` and the conditional answer selects a supplied plan.
-An adverse or unclear setup rejects even a selected conditional plan. A supported setup cannot override `wait` or `avoid`.
+Code admits an entry only when the setup answer is `upward` and the actual-entry answer selects a supplied plan.
+An adverse or unclear setup rejects even a selected plan. A supported setup cannot override `wait` or `avoid`.
 Missing or malformed answers fail closed. No `enter` option exists without a complete funded plan.
 Candidates are ranked by the upward setup probability, whose three alternatives are the same for every candidate;
-conditional plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
+plan probabilities compare only that candidate's menu. Neither quantity is a target-hit or profit probability.
 Management still asks whether to hold or exit.
 See the [Choice contract](https://docs.typesafe.ai/primitives/choice) and
 [System One programming model](https://docs.typesafe.ai/concepts/system-one).
 
-Code builds at most sixteen plans from four representative stop levels and four target levels. The candidate menu combines
-observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed OHLC range,
-with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid. Target scenarios
-lie those steps above the modeled break-even exit bid. Deduplication, conservative instrument rounding and four evenly spaced
-representatives bound each set. The model selects the actual plan; these construction rules never select a default exit.
+Code builds at most sixteen plans from four representative stop levels and up to four targets per stop. The candidate menu
+combines observed OHLC levels with explicit hypothetical price scenarios. Its scenario step is one quarter of the observed
+OHLC range, with a minimum executable tick. Stop scenarios lie one, two, four and eight steps below the observed bid.
+Market-price target scenarios lie those steps above the observed bid; three representative targets retain the range's
+price anchors after the existing fee-covering filter.
+
+Each stop can also have a `NET_REWARD_ORDER_SCENARIO`. Code solves for conservative target proceeds equal to acquisition
+cost plus the complete modeled stop loss, then rounds the target up to the executable tick. Entry and exit fees, entry
+and stop execution allowances, and cash rounding remain included. This proposes a net reward of at least the modeled loss rather
+than offering a fee-only target with microscopic profit. It is a conditional payoff scenario, not an expected return or
+evidence that the price can be reached. If it cannot fit the existing liquidation search bound, code omits that scenario
+while retaining other fundable market-price choices. Range proposals retain `OBSERVED_RANGE_ORDER_SCENARIO`. Deduplication
+and conservative instrument rounding preserve the sixteen-plan bound. Jev selects the actual plan; these construction
+rules never select an entry or default exit.
 
 Every option labels its terms `HYPOTHETICAL_ORDER_PRICES`. Proposed future levels are neither recorded market observations
 nor forecasts. Observed bars, features, prices and source identities remain unchanged in model state. A fresh high can therefore
@@ -31,7 +41,10 @@ have candidate targets without inventing historical highs. Candidate coverage an
 validation; a supplied candidate is not evidence that the market will reach it.
 
 Code funds every complete plan before inference. Target proceeds must exceed acquisition cost after modeled entry and exit
-fees and adverse execution allowances. Stop proceeds must be positive and below acquisition cost. If allocation or prices
+fees at the enforced take-profit sell limit. The limit is already the minimum execution price; discounting it again
+would count an additional allowance that the order does not permit. State exposes `takeProfitBreakEvenLimitUsd` and
+`takeProfitRequiredBidRiseBps` separately from `holdingExitBreakEvenBidUsd` and `holdingExitRequiredBidRiseBps`.
+Holding-time liquidation retains the adverse quote allowance. Stop proceeds must be positive and below acquisition cost. If allocation or prices
 cannot fund any plan, only abstention remains. The exact sealed request, response and deterministic reconstruction bind the
 chosen plan. A missing, foreign, altered, stale or unsupported choice cannot authorize an order. Model abstention remains
 explicit in `entryPlanRejections`, and public no-trade status distinguishes `JEV_MODEL_ABSTAINED` from
@@ -89,10 +102,18 @@ require a new reconciliation. Retrying cancellation addresses the same broker or
 terminal, with fresh exact inventory and accounting, before a new close sells the residual. A filled parent does not
 make its remaining children disappear. Unknown submissions are recovered by their original client identity.
 
+Application take-profit closes preserve the sealed profit limit even if a refreshed quote falls below the trigger.
+Protection cancellation stores the verified exit target with its existing durable command. Position recovery checks
+the original entry, account and plan binding and retains `profitExitRequested`; releasing protection cannot erase the profit floor.
+The pricing, immutable decision verifier and submission reconstruction enforce the same floor. An unfilled or partial
+profit order is canceled at the actual first-fill holding deadline, including while new submissions are disabled.
+Residual closes release the profit floor when the current bid crosses the original stop or holding time elapses.
+Existing quote/risk expiration and cancel-confirm-reconcile requirements still apply; a profit limit never guarantees a fill.
+
 ## Hard cutover
 
-Migration 137 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
-immutable financial and model history, restricts new Jev authority to v17, and accepts only current batch and
+Migration 143 requires flat, settled and fully accounted inventory with fresh exact reconciliation. It retains
+immutable financial and model history, restricts new Jev authority to v20, and accepts only current batch and
 native protection contracts for new writes. It retires prior PAPER authority through the established OBSERVE
 recovery path. A new same-account mandate is bound to the verified published image before PAPER restoration.
 No legacy strategy evaluator or geometric exit fallback remains executable. Replay checkpoint v10 rejects

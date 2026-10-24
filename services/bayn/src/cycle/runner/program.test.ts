@@ -10,7 +10,9 @@ import { makeCycleExecutionPolicy, makeCycleIdentity } from '../construction'
 import { CycleState, CycleTerminalReason, type AutonomousCycle, AutonomousCycleSchema } from '../model'
 import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
 import { makeInitialCycle } from '../store/decisions'
-import { makeIntradayCycleDraft } from './calendar-decisions'
+import { unusedEntryExpiresAt } from '../entry-admission'
+import { continuousMarketHours } from '../../market-hours'
+import { makeIntradayCycleDraft, selectIntradayExecutionSession } from './calendar-decisions'
 import type { CycleRunContext } from './model'
 import { discoverAutonomousCyclePass } from './program'
 
@@ -74,11 +76,11 @@ const blockedCycle = (ordinal = 1, overrides: Record<string, unknown> = {}): Aut
   )
 
 const fixture = (
-  cycle = blockedCycle(),
+  cycle: AutonomousCycle | null = blockedCycle(),
   observation = calendar,
   readDecisionDocument: CycleStoreShape['readDecisionDocument'] = () => Effect.succeed(Option.none()),
 ) => {
-  const cycles = new Map([[cycle.identity.cycleId, cycle]])
+  const cycles = new Map<string, AutonomousCycle>(cycle === null ? [] : [[cycle.identity.cycleId, cycle]])
   let latest = cycle
   let acquisitions = 0
   const broker: BrokerReadShape = {
@@ -104,7 +106,7 @@ const fixture = (
   }
   const store: CycleStoreShape = {
     read: (id) => Effect.sync(() => Option.fromUndefinedOr(cycles.get(id))),
-    readAuthoritySlot: () => Effect.sync(() => Option.some(latest)),
+    readAuthoritySlot: () => Effect.sync(() => (latest === null ? Option.none() : Option.some(latest))),
     readDecisionDocument,
     readOldestUnfinished: forbidden,
     activate: forbidden,
@@ -136,6 +138,49 @@ const fixture = (
 }
 
 describe('unbound pre-submission cycle recovery', () => {
+  test.each([
+    { at: '2026-09-18T13:29:59.999Z', equityReady: false },
+    { at: '2026-09-18T13:30:00.000Z', equityReady: false },
+    { at: '2026-09-18T13:30:59.999Z', equityReady: false },
+    { at: '2026-09-18T13:31:01.999Z', equityReady: false },
+    { at: '2026-09-18T13:31:02.000Z', equityReady: true },
+  ])('starts the equity entry lease only when a completed minute can be observed: $at', async ({ at, equityReady }) => {
+    const result = await fixture(null).run(context, at)
+    expect(result.outcome).toBe('ACQUIRED')
+    if (result.outcome !== 'ACQUIRED') throw new Error('entry cycle not acquired')
+    expect(result.receipt.cycle.window.executionCalendarSchemaVersion).toBe(
+      equityReady ? 'bayn.alpaca-market-calendar-observation.v2' : 'bayn.continuous-market-hours.v1',
+    )
+    expect(unusedEntryExpiresAt(result.receipt.cycle)).toBe(Date.parse(at) + 60_000)
+  })
+
+  test('keeps continuous admission available at equity open after a settled crypto attempt', async () => {
+    const createdAt = '2026-09-18T13:28:00.000Z'
+    const previousSession = selectIntradayExecutionSession(continuousMarketHours, policy, createdAt)
+    if (previousSession === undefined) throw new Error('continuous fixture session missing')
+    const previous = makeInitialCycle(
+      Result.getOrThrow(makeIntradayCycleDraft(context, continuousMarketHours, previousSession, 2)),
+      createdAt,
+    )
+    const result = await fixture({
+      ...previous,
+      state: CycleState.NoTrade,
+      bindings: { snapshotId: '7'.repeat(64), decisionHash: '8'.repeat(64) },
+      stateVersion: 4,
+      updatedAt: '2026-09-18T13:28:05.000Z',
+      terminalAt: '2026-09-18T13:28:05.000Z',
+    }).run(context, session.openAt)
+    expect(result).toMatchObject({
+      outcome: 'ACQUIRED',
+      receipt: {
+        cycle: {
+          identity: { entryAttemptOrdinal: 3 },
+          window: { executionCalendarSchemaVersion: 'bayn.continuous-market-hours.v1' },
+        },
+      },
+    })
+  })
+
   test('completed attempts alternate markets even when lease and cooldown return to the same UTC minute parity', async () => {
     const { terminalReason: _, ...prior } = blockedCycle(1, {
       bindings: { snapshotId: '7'.repeat(64), decisionHash: '8'.repeat(64) },

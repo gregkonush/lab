@@ -711,13 +711,16 @@ describePostgres('PostgreSQL complete Jev batches', () => {
             return statement
           },
         })
-        const evidence = yield* readJevEvaluationEvidence(monitored, [
+        const { evidence, observationHashes } = yield* readJevEvaluationEvidence(monitored, [
           first.request.requestId,
           foreignFirst.request.requestId,
         ])
         expect(evidence.size).toBe(2)
         expect(evidence.get(first.request.requestId)?.request).toEqual(first.request)
         expect(evidence.get(foreignFirst.request.requestId)?.request).toEqual(foreignFirst.request)
+        expect(observationHashes.toSorted()).toEqual(
+          [fixture.observation.contentHash, foreignObservation.contentHash].toSorted(),
+        )
         if (lookup === undefined) throw new Error('Combined read did not verify candidate observations')
         yield* expectIndexedObservationLookup(sql, lookup, 2)
         expect(yield* batches.read(plan.batchId)).toEqual(stored)
@@ -1203,6 +1206,103 @@ describePostgres('PostgreSQL complete Jev batches', () => {
           expect(active).toBe(0)
         }),
       ).pipe(atObservation),
+    )
+  })
+
+  test('concurrent finalizers seal already committed receipts into one immutable result', async () => {
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const batches = yield* JevBatchStore
+        const admission = yield* batches.begin(plan, fixture.observation.payload)
+        yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, { concurrency: 'unbounded' })
+        const sql = yield* PgClient.PgClient
+        expect(yield* sql`SELECT result_hash FROM jev_batch_results`).toEqual([])
+        const finalized = yield* Effect.all(
+          Array.from({ length: 4 }, () => batches.finish(plan.batchId)),
+          { concurrency: 'unbounded' },
+        )
+        const saved = yield* batches.read(plan.batchId)
+        if (saved === null || saved.result === null) throw new Error('Committed receipts did not finalize')
+        for (const result of finalized) expect(result).toEqual(saved)
+        expect(Result.getOrThrow(usableJevBatchInferences(plan, saved.result, observed))).toHaveLength(requested.length)
+        expect(yield* sql`SELECT result_hash FROM jev_batch_results`).toEqual([
+          { result_hash: saved.result.resultHash },
+        ])
+        expect(yield* sql`SELECT count(*)::integer AS count FROM jev_evaluation_receipts`).toEqual([
+          { count: requested.length },
+        ])
+      }).pipe(Effect.provideService(JevClient, successful), atObservation),
+    )
+  })
+
+  test('recorded finalization races a pending recovery without a foreign-key deadlock', async () => {
+    await runtime.runPromise(
+      Effect.scoped(
+        Effect.gen(function* () {
+          const batches = yield* JevBatchStore
+          const sql = yield* PgClient.PgClient
+          const admission = yield* batches.begin(plan, fixture.observation.payload)
+          const paused = yield* Deferred.make<void>()
+          const resume = yield* Deferred.make<void>()
+          const inserting = yield* Deferred.make<void>()
+          const inserted = yield* Deferred.make<void>()
+          const held = new Proxy(sql, {
+            apply(target, receiver, argumentsList) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+              const query = statement.compile()[0]
+              return query.includes('SELECT request_id FROM jev_evaluation_requests') && query.includes('FOR UPDATE')
+                ? Deferred.succeed(paused, undefined).pipe(
+                    Effect.andThen(Deferred.await(resume)),
+                    Effect.andThen(statement),
+                  )
+                : statement
+            },
+          })
+          const pending = yield* (yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, held)))
+            .finish(plan.batchId)
+            .pipe(Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(paused)
+          yield* Effect.forEach(admission.dispatches, evaluateClaimedJevOnce, { concurrency: 'unbounded' })
+          const monitored = new Proxy(sql, {
+            apply(target, receiver, argumentsList) {
+              const statement: Statement<Record<string, unknown>> = Reflect.apply(target, receiver, argumentsList)
+              return statement.compile()[0].includes('INSERT INTO jev_batch_results')
+                ? Deferred.succeed(inserting, undefined).pipe(Effect.andThen(statement))
+                : statement
+            },
+          })
+          const recorded = yield* (yield* makeJevBatchStore.pipe(Effect.provideService(PgClient.PgClient, monitored)))
+            .finish(plan.batchId)
+            .pipe(Effect.ensuring(Deferred.succeed(inserted, undefined)), Effect.forkScoped({ startImmediately: true }))
+          yield* Deferred.await(inserting)
+          let observed = false
+          for (let attempt = 0; attempt < 100; attempt += 1) {
+            if (yield* Deferred.isDone(inserted)) {
+              observed = true
+              break
+            }
+            const [state] = yield* Schema.decodeUnknownEffect(
+              Schema.Tuple([Schema.Struct({ waiting: Schema.Boolean })]),
+            )(
+              yield* sql`SELECT EXISTS (
+              SELECT 1 FROM pg_stat_activity WHERE datname=current_database()
+                AND wait_event_type='Lock' AND query LIKE ${'%INSERT INTO jev_batch_results%'}
+            ) AS waiting`,
+            )
+            if (state?.waiting) {
+              observed = true
+              break
+            }
+          }
+          yield* Deferred.succeed(resume, undefined)
+          expect(observed).toBe(true)
+          const results = yield* Effect.all([Fiber.join(pending), Fiber.join(recorded)], { concurrency: 'unbounded' })
+          const saved = yield* batches.read(plan.batchId)
+          if (saved === null || saved.result === null) throw new Error('Racing finalizers did not commit a result')
+          for (const result of results) expect(result).toEqual(saved)
+          expect(yield* sql`SELECT count(*)::integer AS count FROM jev_batch_results`).toEqual([{ count: 1 }])
+        }),
+      ).pipe(Effect.provideService(JevClient, successful), atObservation),
     )
   })
 

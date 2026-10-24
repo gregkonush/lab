@@ -4,6 +4,11 @@ Ofz owns the final Tengri policy schema, action catalog, typed authorization API
 The migration is tracked in [the implementation checklist](../../docs/tengri/ofz-implementation-status.md).
 Ofz and its consumers release through the coordinated Ofz, Tengri, Nanoagent and Proompteng cohort.
 
+[Dormant Relay support](../../docs/tengri/relay-staged-rollout.md) adds compatible
+connector contracts behind the default-off `TENGRI_CONNECTORS_ENABLED` server gate.
+The active native schema and existing diagnostic grants remain usable without
+enabling connectors or provisioning Relay.
+
 [`schema.zed`](schema.zed) uses immutable workspace and namespace UIDs, active platform membership, explicit workspace
 roles and native expiring agent grants. Platform administration grants no workspace content access. An agent decision
 must check its expiring grant and its issuer's current permission in one fully consistent bulk request.
@@ -88,7 +93,11 @@ platform objects keep activation fenced. The final authority check repeats that 
 It rechecks archive health after its own
 audit insertion before removing the platform fence. Completed retries return their original receipt and report current
 fence, version, recovery generation and archive health. They cannot re-add an offboarded administrator or undo a later
-recovery fence. Bootstrap markers use a separate namespace from ordinary policy-command UUIDs. Audit identifies the
+recovery fence. Once both bootstrap and activation have committed, retries match the original manifest and return
+the original receipts even when the binary packages a newer source schema. They do not install that schema or change
+existing relationships. Unfinished initialization and activation remain bound to their original compiled schema;
+installing later policy definitions requires a separate reviewed migration. Bootstrap markers use a separate namespace
+from ordinary policy-command UUIDs. Audit identifies the
 actual PostgreSQL owner authority rather than claiming an API SPIFFE caller.
 
 Before running these commands in production, verify old-writer fencing, the reviewed native credential rotation and

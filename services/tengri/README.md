@@ -1,5 +1,10 @@
 # Tengri control plane
 
+The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
+`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
+workspace and conversation requests do not call Relay.
+
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
@@ -160,16 +165,16 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.7`; journals from another VMM revision require fenced recovery. Disk writes start on the
+`1.16.1+tengri-async-io.8`; journals from another VMM revision require fenced recovery. Disk writes start on the
 bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
 The ring requires pre-registered files and permits only read, write, and flush operations.
 New full memory snapshots retain zero pages as file holes, with the same logical length and byte contents. Existing
 nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
 snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
-snapshot pages during sleep. Interactive restore uses demand paging with speculative read-ahead disabled. Full capture
-uses normal read-ahead for its sequential scan, then restores the interactive hint on success and failure so the live
-VM can recover from a failed save or flush. Snapshot restore consumes the
-generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
+snapshot pages during sleep. Snapshot restore and full capture use upstream demand paging with normal read-ahead.
+Disabling read-ahead serialized thousands of small reads during a cold resume, delaying local guest readiness and Codex
+RPCs. Native qualification retains the one-second cold-resume limit and the terminal responsiveness gate under disk load.
+Snapshot restore consumes the generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
@@ -290,7 +295,7 @@ parsing each page. An explicit completion record is required, and any
 failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
-The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
@@ -454,9 +459,10 @@ and Proompteng release images build only from `main`. PRs do not build unused na
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
 Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
-native qualification. Guest test binaries stay local to that job. Native qualification does not import or export a
-separate registry cache or wait for the other architecture. Publication still requires both architectures and the full
-controller and guest source validation.
+native qualification. The runtime and harness builds both import the existing per-architecture Tengri cache: a cache
+hit in the runtime request does not materialize every intermediate build result for the later harness request.
+Guest test binaries stay local to that job. Native qualification does not create a separate registry cache or wait for
+the other architecture. Publication still requires both architectures and the full controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
@@ -470,6 +476,10 @@ eviction, guest administration, and browser startup. It also requires terminal f
 Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
 disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
 error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
+The retained `io-responsiveness.json` aligns heartbeat windows with bounded samples of the VMM main thread and four
+vCPUs. It records public scheduler, page-fault and wait-state counters so a failed responsiveness gate can be traced
+without capturing guest memory, RPC payloads or credentials. Sampling stops after the I/O probe, with a twelve-second
+upper bound. The latency limits and fifty heartbeat samples remain unchanged.
 The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
@@ -605,7 +615,7 @@ The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks e
 Run the native correlation and interruption contract with an isolated pinned binary:
 
 ```sh
-TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.159.2 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.164.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
 ```
 
 The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's
