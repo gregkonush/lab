@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test'
-import { Result, Schema } from 'effect'
+import { DateTime, Result, Schema } from 'effect'
 import fc from 'fast-check'
 
 import { MarketCalendarResponseSchema } from './broker/alpaca/model'
@@ -9,6 +9,83 @@ import { canonicalHashV1Result } from './hash'
 import { marketHoursAreCanonical, executionCloseRecoveryExpiry } from './market-hours'
 import { IsoDateSchema } from './schemas'
 import { checkProperty } from './testing/property-test-support'
+
+// Independent pre-optimization oracle: full zoned date decomposition, not the new clock-only formatter.
+const originalClockSession = (instant: string) => {
+  const parts = DateTime.toParts(DateTime.makeZonedUnsafe(instant, { timeZone: 'America/New_York' }))
+  const minute = parts.hour * 60 + parts.minute
+  return minute < 480 || minute >= 1020 ? null : minute < 570 ? 'pre' : minute < 960 ? 'regular' : 'post'
+}
+
+test('property: clock-only formatting preserves the full zoned oracle across canonical dates and nanoseconds', () => {
+  checkProperty(
+    'equity-clock-zoned-equivalence',
+    fc.property(
+      fc.integer({
+        min: Date.parse('0000-01-01T00:00:00.000Z'),
+        max: Date.parse('9999-12-31T23:59:59.999Z'),
+      }),
+      fc.integer({ min: 0, max: 999999 }),
+      (epoch, subMillisecond) => {
+        const instant = new Date(epoch).toISOString()
+        const nanos = `${instant.slice(0, -1)}${String(subMillisecond).padStart(6, '0')}Z`
+        expect(equityClockSession(instant)).toBe(originalClockSession(instant))
+        expect(equityClockSession(nanos)).toBe(originalClockSession(nanos))
+      },
+    ),
+    2000,
+  )
+})
+
+test('clock sessions preserve midnight, DST transitions and historical second-offset boundaries', () => {
+  for (const day of ['1883-11-18', '2026-03-08', '2026-11-01']) {
+    const midnight = Date.parse(`${day}T00:00:00.000Z`)
+    for (let minute = 0; minute < 24 * 60; minute++) {
+      for (const offset of [0, 59999]) {
+        const instant = new Date(midnight + minute * 60000 + offset).toISOString()
+        expect(equityClockSession(instant)).toBe(originalClockSession(instant))
+      }
+    }
+  }
+  for (const [day, utcOffset] of [
+    ['2026-07-01', 4],
+    ['2026-12-01', 5],
+  ] as const) {
+    const midnight = Date.parse(`${day}T00:00:00.000Z`) + utcOffset * 3600000
+    expect(equityClockSession(new Date(midnight).toISOString())).toBeNull()
+    for (const [minute, before, after] of [
+      [480, null, 'pre'],
+      [570, 'pre', 'regular'],
+      [960, 'regular', 'post'],
+      [1020, 'post', null],
+    ] as const) {
+      const boundary = midnight + minute * 60000
+      expect(equityClockSession(new Date(boundary - 1).toISOString())).toBe(before)
+      expect(equityClockSession(new Date(boundary).toISOString())).toBe(after)
+      expect(equityClockSession(new Date(boundary + 1).toISOString())).toBe(after)
+    }
+  }
+})
+
+test('clock formatting retains Effect input parsing and zoned range refusals', () => {
+  for (const instant of ['2026-10-23T13:30:00', '2026-10-23T19:00:00+05:30', 'Fri, 23 Oct 2026 13:30:00 GMT'])
+    expect(equityClockSession(instant)).toBe(originalClockSession(instant))
+  for (const instant of ['', 'invalid', '2026-13-42T99:99:99Z']) {
+    expect(() => equityClockSession(instant)).toThrow()
+    expect(() => originalClockSession(instant)).toThrow()
+  }
+  const minimum = -8640000000000000 + 12 * 3600000
+  const maximum = 8640000000000000 - 14 * 3600000
+  for (const epoch of [minimum, maximum]) {
+    const instant = new Date(epoch).toISOString()
+    expect(equityClockSession(instant)).toBe(originalClockSession(instant))
+  }
+  for (const epoch of [minimum - 1, maximum + 1]) {
+    const instant = new Date(epoch).toISOString()
+    expect(() => equityClockSession(instant)).toThrow(RangeError)
+    expect(() => originalClockSession(instant)).toThrow(RangeError)
+  }
+})
 
 const calendar = (date: string, close = '16:00', sessionClose = '2000') => {
   const day = Schema.decodeUnknownSync(IsoDateSchema)(date)

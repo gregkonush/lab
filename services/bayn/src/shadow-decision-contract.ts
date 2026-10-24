@@ -1,4 +1,5 @@
 import { entryBracketProtection } from './execution/position-protection'
+import { jevProfitTargetLimitFloors } from './jev/exit'
 import { NativeProtectionSchema } from './execution/contracts'
 import { intentPlanSchemaVersion } from './execution/contracts'
 import { MarketSourcesSchema } from './market-data/streaming/raw-events'
@@ -1770,6 +1771,14 @@ const executionMaterialIssues = (
   if (new Set(document.orderedIntentIds).size !== document.orderedIntentIds.length) {
     issues.push({ path: ['orderedIntentIds'], issue: 'must not contain duplicate intent identities' })
   }
+  const floorResult = jevProfitTargetLimitFloors(
+    document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined,
+    document.createdAt,
+    document.targetPlan.targets,
+  )
+  if (Result.isFailure(floorResult))
+    issues.push({ path: ['strategyDecision'], issue: 'profit limits require the exact entry-bound exit plan' })
+  const profitFloors: Readonly<Record<string, bigint>> = Result.isSuccess(floorResult) ? floorResult.success : {}
   for (const [index, target] of targets.entries()) {
     if (
       target.strategyName !== document.bindings.strategyName ||
@@ -1828,6 +1837,7 @@ const executionMaterialIssues = (
       const executionIntent = makeExecutionIntentFromDecodedPlan(plan, document.bindings.authorityGenerationHash)
       const expectedProposedPositions = proposedPositionSequence?.[index]
       const plannedTarget = document.targetPlan.targets.find(({ symbol }) => symbol === target.symbol)
+      const minimumSellPriceMicros = profitFloors[target.symbol]
       const pricing =
         plannedTarget === undefined
           ? undefined
@@ -1839,6 +1849,7 @@ const executionMaterialIssues = (
               quantityAtoms: BigInt(target.quantityAtoms),
               referencePriceMicros: BigInt(plannedTarget.referencePriceMicros),
               limitSlippageBps: BigInt(document.entryLimitSlippageBps ?? document.closeLimitSlippageBps ?? 0),
+              ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
             })
       const expectedProposedPositionsHash =
         expectedProposedPositions === undefined ? undefined : canonicalHashV1Result(expectedProposedPositions)

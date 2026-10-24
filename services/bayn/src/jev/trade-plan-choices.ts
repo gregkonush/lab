@@ -6,6 +6,7 @@ import type { StrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { numberToMicros, priceNumberToMicros, scaledNumber } from '../strategy/execution-model/fixed-point'
 import { JevContractError, type JevRequest, type JevResponse } from './contract'
 import { fundJevTradePlan, type JevEntryEconomics } from './entry-economics'
+import { jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 import { JevFundedExitPlanSchema, JevStrategyExitPlanSchema } from './strategy-exit-plan'
 
@@ -29,11 +30,11 @@ export const jevEntrySetupQuestion = {
   },
 } satisfies JevRequest['questions'][string]
 
-const representativePrices = (values: readonly bigint[]) => {
+const representativePrices = (values: readonly bigint[], maximum: number) => {
   const prices = [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
   return prices.filter((_, index) =>
-    Array.from({ length: Math.min(4, prices.length) }, (_, slot) =>
-      Math.floor((slot * (prices.length - 1)) / Math.max(1, Math.min(4, prices.length) - 1)),
+    Array.from({ length: Math.min(maximum, prices.length) }, (_, slot) =>
+      Math.floor((slot * (prices.length - 1)) / Math.max(1, Math.min(maximum, prices.length) - 1)),
     ).includes(index),
   )
 }
@@ -79,19 +80,51 @@ export const jevTradePlanQuestion = (input: {
         quantizeInstrumentPriceMicros(symbol, bid + 1n, 'UP') - quantizeInstrumentPriceMicros(symbol, bid, 'DOWN')
       const rangeStep = (high - low + 3n) / 4n
       const step = rangeStep > tick ? rangeStep : tick
-      const breakEven = yield* priceNumberToMicros(economics.breakEvenExitBidUsd, 'break-even plan bid', 'UP')
+      const acquisition = BigInt(economics.acquisitionCostMicros)
+      const upperLimit = BigInt(economics.maximumEntryPriceMicros) * 2n
+      const liquidation = { protocol, symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
+      const maximumTarget = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: upperLimit })
+      const profitableLimit = yield* jevBreakEvenExitLimitPrice({
+        ...liquidation,
+        acquisitionCostMicros: acquisition + 1n,
+        upperLimitPriceMicros: upperLimit,
+      })
+      const minimumProfitPrice = quantizeInstrumentPriceMicros(symbol, profitableLimit, 'UP')
       const moves = [1n, 2n, 4n, 8n]
       const stops = representativePrices(
         [...values.filter((price) => price < bid), ...moves.map((multiple) => bid - step * multiple)]
           .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'DOWN'))
           .filter((price) => price > 0n && price < bid),
+        4,
       )
-      const profits = representativePrices(
-        [...values.filter((price) => price > breakEven), ...moves.map((multiple) => bid + step * multiple)]
+      const marketProfits = representativePrices(
+        [...values, ...moves.map((multiple) => bid + step * multiple)]
           .map((price) => quantizeInstrumentPriceMicros(symbol, price, 'UP'))
-          .filter((price) => price > breakEven),
+          .filter((price) => price >= minimumProfitPrice),
+        3,
       )
       for (const stop of stops) {
+        const stopLimit = quantizeInstrumentPriceMicros(
+          symbol,
+          (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
+          'UP',
+        )
+        const stopValue = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: stopLimit })
+        const loss = acquisition - stopValue.conservativeNetMicros
+        const requiredTargetNet = acquisition + loss
+        const rewardPrice =
+          stopValue.conservativeNetMicros > 0n && loss > 0n && requiredTargetNet <= maximumTarget.conservativeNetMicros
+            ? quantizeInstrumentPriceMicros(
+                symbol,
+                yield* jevBreakEvenExitLimitPrice({
+                  ...liquidation,
+                  acquisitionCostMicros: requiredTargetNet,
+                  upperLimitPriceMicros: upperLimit,
+                }),
+                'UP',
+              )
+            : undefined
+        const profits = representativePrices([...marketProfits, ...(rewardPrice === undefined ? [] : [rewardPrice])], 4)
         for (const profit of profits) {
           const levels = yield* Schema.decodeUnknownResult(JevStrategyExitPlanSchema)({
             schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
@@ -102,11 +135,7 @@ export const jevTradePlanQuestion = (input: {
             maximumHoldingMinutes: protocol.maximumHoldingMinutes,
             maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
             stopPriceMicros: stop.toString(),
-            stopLimitPriceMicros: quantizeInstrumentPriceMicros(
-              symbol,
-              (stop * BigInt(10_000 - protocol.maximumEntryLimitSlippageBps) + 9_999n) / 10_000n,
-              'UP',
-            ).toString(),
+            stopLimitPriceMicros: stopLimit.toString(),
             profitLimitPriceMicros: profit.toString(),
           }).pipe(
             Result.mapError((cause) => new JevContractError({ message: 'Proposed trade plan is invalid', cause })),
@@ -115,6 +144,7 @@ export const jevTradePlanQuestion = (input: {
           if (funded === null) continue
           criteria[`plan_${Object.keys(criteria).length - 2}`] = {
             priceBasis: 'HYPOTHETICAL_ORDER_PRICES',
+            targetBasis: profit === rewardPrice ? 'NET_REWARD_ORDER_SCENARIO' : 'OBSERVED_RANGE_ORDER_SCENARIO',
             meaning:
               'A supplied complete long entry, stop and target plan. Its payoff numbers are conditional on execution at the proposed prices; assess whether entering this trade now is supported by the observations and holding horizon.',
             plan: funded.exitPlan,

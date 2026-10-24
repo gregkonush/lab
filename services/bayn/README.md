@@ -4,6 +4,9 @@ Bayn is a single-writer execution service for equities and continuous USD crypto
 decides what should happen, Effect interprets one bounded pass, PostgreSQL stores trading truth, TigerBeetle stores
 accounting truth, and the broker adapter performs account-environment-neutral execution.
 
+The optional [OHLCV + image dual-signal shadow command](../../docs/bayn/dual-signal-shadow.md) compares Jev and
+OpenAI Decisions over correlated views of the same market data without changing order authority.
+
 The [October 20 system cleanup](../../docs/bayn/system-cleanup-2026-10-20.md) records the database and
 observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
 event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.
@@ -54,11 +57,12 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v18 / signal state v16. Jev separately judges the current setup and whether an actual
+The source selects `jev` protocol v20 / signal state v17. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
-setup. Code supplies bounded hypothetical order scenarios and observed price context,
-labels the scenarios explicitly, and validates/funds every candidate before inference. A price above a recent high is
+setup. Code supplies a bounded menu of market-price targets and per-stop net-reward scenarios whose conservative modeled
+profit covers the modeled loss. It labels the hypothetical scenarios explicitly and validates/funds every candidate
+before inference. A price above a recent high is
 an order proposal, never fabricated market history. The stop and target remain one complete plan, with no default
 exit selected by code, and no momentum prefilter. Costs, exposure sizing, account risk limits and broker protection
 remain enforced. See [strategy protection](../../docs/bayn/strategy-protection.md) for candidate construction, venue
@@ -126,7 +130,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v18 uses state v16.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v20 uses state v17.
 Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
@@ -953,6 +957,11 @@ a fresh capture. This linkage does not prove full-session capture completeness o
   rollback, Alpaca reads, TigerBeetle requests, broker snapshot reads, and reconciliation persistence are distinguishable.
 - Jev HTTP spans retain Effect's default redaction for authorization, cookies, Set-Cookie and API-key headers while
   preserving HTTP status, timing and rate-limit diagnostics. The inference client preserves caller-provided redaction.
+- Rejected positions responses emit one bounded schema diagnostic on the existing read span and a warning. The
+  `broker.decode_field` path uses only authored position fields and `[]` in place of array indices; issue, expected type
+  and actual type use fixed categories. Payload values, arbitrary keys, schema messages and account identifiers are
+  omitted. The response remains `INVALID_RESPONSE`; unsupported issue shapes report `unknown` rather than formatting
+  the error. Successful reads, other endpoints, deadlines, retries, validation and freshness are unchanged.
 - Failed OTLP trace export attempts emit `Bayn OTLP trace export attempt failed` warnings to stderr. They contain the
   telemetry stage, service, source revision when configured, and HTTP status or transport reason. Collector bodies,
   headers, endpoints, and raw errors are omitted, and command JSON output stays on stdout. Successful exports remain
@@ -1662,7 +1671,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v16"`, and positive `maximumCalls`. The input
+`inputDefinition: "bayn.jev-trading-signal-state.v17"`, and positive `maximumCalls`. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
@@ -1885,8 +1894,13 @@ failures with observation age, without recording account identifiers or payloads
 
 The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
 consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
-runner and active factor/editor contracts are removed. Jev remains the typed System One model; the pinned Qwen3-8B
-endpoint only edits the question document through the signed research workflow.
+runner and active factor/editor contracts are removed. Jev remains the typed System One model. The selected shared Flamingo or native OpenCode free endpoint only edits
+the question document through the signed research workflow. The isolated CPU gateway `opencode-research` in
+namespace `opencode` retains one session per study,
+with one hosted call per proposal and no paid fallback. Its actual provider input, raw response and source/configuration
+identity travel in the verified research receipt, with separate gateway and worker source revisions.
+See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
+for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and
@@ -2022,6 +2036,8 @@ indicator math is unchanged, sparse intervals remain missing, and the first comp
 observation without waiting thirty minutes. Extended transport health requires quote delivery while retaining
 per-symbol gaps as diagnostics; absent trade prints are not heartbeat failures. Calendar eligibility and candidate
 quote, trade and feature checks still govern every order.
+Equity admission starts after that first completed minute and its existing decision delay; the unused-entry lease
+remains 60 seconds. Continuous markets remain eligible before that boundary.
 
 Migrations 113 and 114 installed the extended-session execution contract and replaced the IOC-only completion
 predicate with the shared strict DAY/IOC proof, including the renamed partial-fill helper. Migration 140 owns the

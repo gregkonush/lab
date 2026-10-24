@@ -551,8 +551,8 @@ test('sealed wait diagnostics preserve decisions and distinguish protocol from i
   expect(report).toMatchObject({
     diagnosticOnly: true,
     schemaVersion: 'bayn.jev-abstention-report.v2',
-    protocol: 'bayn.jev.protocol.v18',
-    inputDefinition: 'bayn.jev-trading-signal-state.v16',
+    protocol: 'bayn.jev.protocol.v20',
+    inputDefinition: 'bayn.jev-trading-signal-state.v17',
     selectedSymbols: [],
     profitableEdgeProven: false,
   })
@@ -620,7 +620,7 @@ test('crypto economics and coverage are measured from sealed source rather than 
   if (candidate === undefined || !('plans' in candidate) || !('coverage' in candidate))
     throw new Error('Expected requested SOL candidate')
   expect(candidate.fees).toEqual({ estimatedFeeBpsPerSide: 25, estimatedRoundTripFeesBps: 50 })
-  expect(candidate.entryEconomics?.requiredBidRiseBps).toBeGreaterThan(80)
+  expect(candidate.entryEconomics?.holdingExitRequiredBidRiseBps).toBeGreaterThan(80)
   expect(candidate.plans.length).toBeGreaterThan(0)
   expect(candidate.netRewardRisk).toEqual({
     minimum: Math.min(...candidate.plans.map((plan) => plan.netRewardRisk)),
@@ -628,7 +628,9 @@ test('crypto economics and coverage are measured from sealed source rather than 
   })
   for (const plan of candidate.plans) {
     expect(plan.netRewardRisk).toBeCloseTo(plan.estimatedProfitUsd / plan.estimatedLossUsd)
-    expect(plan.targetRiseFromBidBps).toBeGreaterThan(candidate.entryEconomics?.requiredBidRiseBps ?? Infinity)
+    expect(plan.targetRiseFromBidBps).toBeGreaterThan(
+      candidate.entryEconomics?.takeProfitRequiredBidRiseBps ?? Infinity,
+    )
   }
   const bars = snapshot.bars.filter((bar) => bar.symbol === 'SOL/USD')
   expect(candidate.coverage.suppliedBarCount).toBe(bars.length)

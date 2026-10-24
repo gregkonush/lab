@@ -21,6 +21,68 @@ const input = {
   limitSlippageBps: 0n,
 } as const
 
+test.each(['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])(
+  '%s take-profit limits retain their minimum sell price when the quote changes',
+  (symbol) => {
+    const terms = {
+      symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.Limit,
+      timeInForce: symbol.includes('/') ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
+      quantityAtoms: 2_000_000_000n,
+      limitSlippageBps: 10n,
+    }
+    for (const referencePriceMicros of [100_210_000n, 99_000_000n]) {
+      const pricing = Result.getOrThrow(
+        deriveExecutionIntentPricing({
+          ...terms,
+          referencePriceMicros,
+          minimumSellPriceMicros: 100_210_000n,
+        }),
+      )
+      expect(pricing.expectedExecutionPriceMicros).toBe(100_210_000n)
+      const request = Result.getOrThrow(
+        orderRequestBody({
+          ...terms,
+          quantityAtoms: String(terms.quantityAtoms),
+          clientOrderId: 'b1_' + 'A'.repeat(43),
+          limitPriceMicros: String(pricing.expectedExecutionPriceMicros),
+          notionalLimitMicros: String(pricing.notionalLimitMicros),
+        }),
+      )
+      expect(request.limit_price).toBe('100.21')
+      expect(request).toMatchObject({ side: 'sell' })
+    }
+    const favorable = { ...terms, referencePriceMicros: 101_000_000n }
+    expect(
+      Result.getOrThrow(deriveExecutionIntentPricing({ ...favorable, minimumSellPriceMicros: 100_210_000n })),
+    ).toEqual(Result.getOrThrow(deriveExecutionIntentPricing(favorable)))
+  },
+)
+
+test('a sell floor cannot be nonpositive or attached to a buy', () => {
+  for (const minimumSellPriceMicros of [0n, -1n])
+    expect(
+      Result.isFailure(
+        deriveExecutionIntentPricing({
+          ...input,
+          side: OrderSide.Sell,
+          orderType: OrderType.Limit,
+          minimumSellPriceMicros,
+        }),
+      ),
+    ).toBe(true)
+  expect(
+    Result.isFailure(
+      deriveExecutionIntentPricing({
+        ...input,
+        orderType: OrderType.Limit,
+        minimumSellPriceMicros: 100_000_000n,
+      }),
+    ),
+  ).toBe(true)
+})
+
 describe('execution intent pricing', () => {
   test('keeps an NVDA limit marketable after the observed submission price move without exceeding the risk cap', () => {
     for (const [reference, expectedLimit, arrivalAsk] of [

@@ -85,7 +85,18 @@ export const makeNativeArrivalStore = (sql: PgClient.PgClient): NativeArrivalSto
                 compressed: Buffer.from(chunk.compressed),
               })
           }
-          if (additions.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(additions)}`
+          let batch: typeof additions = []
+          let bytes = 0
+          for (const addition of additions) {
+            if (batch.length > 0 && (batch.length >= 16 || bytes + addition.compressed.byteLength > 1024 * 1024)) {
+              yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
+              batch = []
+              bytes = 0
+            }
+            batch.push(addition)
+            bytes += addition.compressed.byteLength
+          }
+          if (batch.length > 0) yield* sql`INSERT INTO native_arrival_chunks ${sql.insert(batch)}`
         }),
       )
     }).pipe(Effect.mapError(error)),

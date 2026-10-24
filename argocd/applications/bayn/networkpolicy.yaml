@@ -193,6 +193,16 @@ spec:
       ports:
         - port: 3128
           protocol: TCP
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: opencode
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: opencode-research
+      ports:
+        - port: 3129
+          protocol: TCP
   egress:
     - to:
         - namespaceSelector:

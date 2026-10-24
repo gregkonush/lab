@@ -20,12 +20,12 @@ const prepare = (strategy: StrategyRuntime) =>
   })
 
 test('autonomous startup admits the exact source-selected model trade-plan identity', () => {
-  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v18')
+  expect(fixtureRuntime.definition.parameters.schemaVersion).toBe('bayn.jev.protocol.v20')
   const result = Result.getOrThrow(prepare(fixtureRuntime))
   expect(result.strategyProtocolHash).toBe(
     Result.getOrThrow(makeStrategyProtocolHashResult(fixtureRuntime.provenance.strategy)),
   )
-  expect(result.strategyProtocolHash).toBe('03d49555af1590514bd756099f8da95495faad7645a00b4081532edf4bf0793a')
+  expect(result.strategyProtocolHash).toBe('f4a4ea1fff4aaba7ebfeb7a2a40b7a1823880f948bd8000cbb99db29187fbd5e')
 })
 
 test('rejects retired Jev protocols at the only active protocol boundary', () => {
@@ -34,6 +34,7 @@ test('rejects retired Jev protocols at the only active protocol boundary', () =>
     'bayn.jev.protocol.v2',
     'bayn.jev.protocol.v13',
     'bayn.jev.protocol.v15',
+    'bayn.jev.protocol.v18',
   ]) {
     expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion }))).toBe(true)
   }
