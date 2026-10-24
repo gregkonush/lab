@@ -1,10 +1,15 @@
 # Tengri control plane
 
+The additive `ConnectorAgent` RPC is [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Without the exact server-side setting `TENGRI_CONNECTORS_ENABLED=true`, it returns
+`UNIMPLEMENTED` before authentication, workspace lookups or guest calls. Existing
+workspace and conversation requests do not call Relay.
+
 The signed guest request protocol is implemented by the Rust `guest_authorization` library and Nanoagent's
 `internal/guestauth` package. Protocol 4 binds the actor, Ofz audit receipt and recovery generation, full runtime claim,
 controller fence, action, content target, request hash, five-second admission deadline and nonce. Its Ed25519
 signing key belongs only in the controller; supervisors and guests receive the public key. Shared deterministic vectors
-cover both languages and all 19 RPC classifications against the Ofz operation catalog. Regenerate them with
+cover both languages and all 18 RPC classifications against the Ofz operation catalog. Regenerate them with
 `node services/tengri/fixtures/generate-ofz-guest-request-v4.mjs` from the repository root.
 
 Ofz checks the complete observation policy before the controller signs the exact request. Scoped proofs carry only
@@ -23,11 +28,13 @@ observed 20.9-second commit tail without changing request lifetimes or synchrono
 ownership expires after 60 seconds; SQL acquisition polling and durable acquisition can add failover time. A known
 ownership loss still stops the controller immediately.
 Schema/readiness checks and leadership reads, acquisition, renewal and release use a separate two-connection SQL pool.
-Ticket writes retain their existing request pools: twelve connections per controller and two per supervisor.
+Ticket writes use eight connections per controller and two per supervisor.
 Blocked request writes cannot exhaust the connections used to confirm runtime authority. Both pools use the same
 verified database TLS configuration, SQL identity and query limits; every fence check still reads current SQL authority.
-Two controller replicas and one rolling-update surge need at most 42 connections. Six supervisors need 24 connections
-in total. Promote the Ofz managed-role limits and 220-connection server budget before rolling out the separated pools;
+Two controller replicas and one rolling-update surge need at most 30 connections. Run workers share one connection
+for SQL coordination and schema checks, with no ticket-write pool. Eight simultaneous worker Pods, including retained
+versions and registration overlap, keep the controller role within its existing 42-connection limit. Six supervisors
+need 24 connections in total. Retain the Ofz managed-role limits and 220-connection server budget;
 reducing them while these pools are active can reject connections. No runtime schema migration or credential rotation is required.
 Readiness probes and terminal cleanup use separately audited, narrowly typed workload decisions. The supervisor
 verifies the actual canonical opening protobuf, runtime claim, Pod UID, leader fence and installed recovery generation,
@@ -158,16 +165,16 @@ The runner's durable journal binds the Pod and home UID, guest image, kernel dig
 snapshot generation, and owner/epoch. The packaged Firecracker is built from the checksum-pinned 1.16.1 source with its
 upstream Rust 1.95.0 toolchain and release musl seccomp policy. Its memory snapshot file uses direct I/O, avoiding a second
 buffered copy of guest RAM that can exhaust the runner's memory limit during sleep. The journal records this patch as
-`1.16.1+tengri-async-io.7`; journals from another VMM revision require fenced recovery. Disk writes start on the
+`1.16.1+tengri-async-io.8`; journals from another VMM revision require fenced recovery. Disk writes start on the
 bounded io_uring workers, so buffered writes cannot run inline on the VMM thread that also handles terminal vsock traffic.
 The ring requires pre-registered files and permits only read, write, and flush operations.
 New full memory snapshots retain zero pages as file holes, with the same logical length and byte contents. Existing
 nonempty snapshot files still overwrite zero pages, including a snapshot backing the current guest mapping; diff
 snapshots keep their existing dirty-page writes. This reduces disk writes and cold reads without retaining resident
-snapshot pages during sleep. Interactive restore uses demand paging with speculative read-ahead disabled. Full capture
-uses normal read-ahead for its sequential scan, then restores the interactive hint on success and failure so the live
-VM can recover from a failed save or flush. Snapshot restore consumes the
-generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
+snapshot pages during sleep. Snapshot restore and full capture use upstream demand paging with normal read-ahead.
+Disabling read-ahead serialized thousands of small reads during a cold resume, delaying local guest readiness and Codex
+RPCs. Native qualification retains the one-second cold-resume limit and the terminal responsiveness gate under disk load.
+Snapshot restore consumes the generation before vCPUs run, then synchronizes the guest clock before thawing root/home,
 binds the owner, and checks files, a round trip on the guest's prepared readiness PTY, and initialized Codex. The host samples the clock after the vsock handshake so connection and thaw time cannot leave fresh authorization proofs ahead of the guest clock. The readiness shell survives in the snapshot rather than being forked again during restore. A failed save may resume
 only the still-live guest. Older memory is never restored against disks that may have advanced.
 
@@ -288,7 +295,7 @@ parsing each page. An explicit completion record is required, and any
 failed or interrupted page fails the restore instead of displaying incomplete history. Threads explicitly marked `legacy` retain the
 single full-history snapshot and cursor contract required by their reconstructed item identities.
 
-The guest pins Codex 0.159.2 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
+The guest pins Codex 0.164.0 in `services/nanoagent/bootstrap-codex.sh` so ChatGPT-backed guests can use
 `gpt-6.1-sol`. Its generated item-page schema returns `{ turnId, item }` entries, not bare items. The independently generated `packages/codex` SDK is not the guest
 protocol authority. Verify changes against the pinned binary with
 `codex app-server generate-json-schema --experimental --out <temporary-directory>`.
@@ -359,6 +366,12 @@ enabling slot creation during cutover.
 Supervisor readiness checks the shared database schema and runner state together under a two-second deadline.
 A vacant, awake or sleeping runner cannot advertise a usable slot while its supervisor's database connection is
 unavailable. Process liveness remains independent of that dependency.
+The supervisor's `/readyz` response contains only a bounded reason code: `ready` (200), or
+`admission_unavailable`, `schema_unavailable`, `runner_unavailable`, or `timeout` (503).
+Admission means the replay startup fence has not elapsed. Schema includes SQL connectivity or checksum failure;
+runner includes an unavailable control socket or a phase other than vacant, awake, or sleeping. Timeout retains
+the same two-second combined dependency deadline. These codes do not expose underlying errors, credentials,
+claims, or filesystem paths, and do not authorize bypassing readiness or resetting slot storage.
 
 The namespace allows seven Leases for six slot claims and rolling-upgrade headroom, including a retired
 controller-election Lease left by older releases. The old Lease is ignored; it grants no controller authority.
@@ -406,7 +419,19 @@ See [implementation status](../../docs/tengri/ofz-implementation-status.md) for 
 
 System Settings → Lifecycle controls `spec.power.idleTimeoutMinutes`. The default is 60 minutes, values through 1440
 are accepted, and zero disables automatic sleep. Manual sleep always releases resident guest RAM. Changing the timeout
-starts a new idle interval; authenticated activity extends it. Retained homes have no expiry or automatic deletion deadline.
+starts a new idle interval; authenticated activity extends it. Automatic sleep also requires the guest to confirm that
+Codex is idle across all conversations. Active turns, pending starts/steering and approvals keep the VM awake even with
+no browser connected. The idle interval starts again when work finishes. Work-state probes do not count as user activity;
+unavailable, restarting or older guests without work metadata defer automatic sleep. Each guest control request records
+activity synchronously using the workspace UID and resource version before it receives signed guest authority. Admission
+is serialized per workspace across clients in the same guest pool, so parallel browser module requests do not exhaust
+each other's CAS retries. Other workspaces remain independent; no policy decision or admission result is cached.
+Admission and automatic sleep contend on the same resource version: an admitted control invalidates the idle decision, while a
+reserved sleep rejects new controls even through cached connections. Guest authority expires within five seconds of
+admission so delayed requests cannot outlive that activity interval. Preview and existing-terminal ticket issuance also
+perform admission even when no guest control RPC is sent. Metadata work probes and background editor/browser renewals
+do not perform admission. Manual sleep remains explicit.
+Retained homes have no expiry or automatic deletion deadline.
 
 The authorization cutover requires the reviewed Ofz API, shared TLS control database, separate workload roles,
 exact-peer SPIFFE registrations and coordinated BFF signing-key rotation. The owner authorized deleting the existing
@@ -440,9 +465,10 @@ and Proompteng release images build only from `main`. PRs do not build unused na
 PR-specific registry caches. Main publication retains both native architectures, paired guest checksum validation,
 and the KVM lifecycle gates before exposing either image to Kargo.
 Each architecture builds its guest, controller, and native fixture in one job with the same BuildKit builder, then runs
-native qualification. Guest test binaries stay local to that job. Native qualification does not import or export a
-separate registry cache or wait for the other architecture. Publication still requires both architectures and the full
-controller and guest source validation.
+native qualification. The runtime and harness builds both import the existing per-architecture Tengri cache: a cache
+hit in the runtime request does not materialize every intermediate build result for the later harness request.
+Guest test binaries stay local to that job. Native qualification does not create a separate registry cache or wait for
+the other architecture. Publication still requires both architectures and the full controller and guest source validation.
 `TENGRI_KVM_TEST_IMAGE`, `TENGRI_KVM_GUEST_IMAGE`, `TENGRI_KVM_OUTPUT`, `TENGRI_KVM_SECCOMP`, and `TENGRI_KVM_SAMPLES`
 select the artifacts, absolute local result directory, native OCI seccomp profile, and sample count for
 `bash services/tengri/test-kvm.sh`. The native job extracts the runner seccomp profile from its architecture-specific
@@ -456,6 +482,10 @@ eviction, guest administration, and browser startup. It also requires terminal f
 Neovim first screen below one second, and 50 heartbeat samples with p95 below 100 ms during eight seconds of guest
 disk writes and flushes. It checks io_uring worker bounds, cgroup attribution and the PID limit, then injects a read
 error into only the disposable fixture home disk and requires the guest to report it while remaining responsive.
+The retained `io-responsiveness.json` aligns heartbeat windows with bounded samples of the VMM main thread and four
+vCPUs. It records public scheduler, page-fault and wait-state counters so a failed responsiveness gate can be traced
+without capturing guest memory, RPC payloads or credentials. Sampling stops after the I/O probe, with a twelve-second
+upper bound. The latency limits and fifty heartbeat samples remain unchanged.
 The first sleep lasts three minutes so the previous host SVID
 expires before restore. These are lifecycle smoke checks, not a measured latency distribution. Receipts include
 `validationMode: smoke` and omit a p95 value until at least 50 samples are collected.
@@ -512,8 +542,97 @@ starting or steering a turn, preventing silent image loss during a mismatched re
 under `/workspace/.tengri-attachments` through gRPC, and submits Codex `localImage` inputs. A failed image write
 fails the request before Codex starts or steers a turn. Attachments remain with the persistent workspace so saved
 conversation references remain valid.
-If a batch write fails, Tengri attempts to remove its unsent files, including a partially committed failed write.
-Create-only conflicts preserve the existing file. Cleanup failures are logged while the original upload error is retained.
+Attachments use SHA-256 content paths. A create-only conflict is reused only after reading and verifying the exact
+content revision. Failed batches preserve staged content, because a path may already belong to an accepted run or
+conversation. Attachment and native operation receipts remain with the retained workspace until owner deletion.
+
+## Durable Codex runs
+
+Guest API 7 requires canonical UUID operation identities for every submission and control, plus confirmed native
+command cleanup before reporting cancellation. Old guests require a fenced cold replacement on their retained home.
+`SendCodexInput` returns a
+durable run, and `GetActiveCodexRun` recovers the workspace's run without relying on browser storage. `GetCodexRun`
+returns its current state. The public controller stages content-addressed image references and acknowledges a run
+after Restate accepts the signed admission under its stable workflow key. The `run-worker` command runs the Restate
+endpoint separately from elected controller reconciliation. There is no direct public turn-start fallback or SQL outbox.
+
+`TengriWorkspaceRuns` holds one active run per immutable workspace UID. Its short claim and release handlers are
+private to Restate service calls; signed active-run queries remain available to the authorized controller. Admission,
+control, and query signatures have distinct domains. Shared workspace admission handlers authenticate each attempt
+before creating a private run or control workflow. A rotated key rejects only that attempt with a retryable response;
+a newly signed attempt can use the same operation UUID. Accepted workflows use private Restate calls and the workspace
+records the exact run binding, so subsequent key rotation does not strand accepted work. A changed payload under an existing run ID fails. Each
+guest RPC obtains current Ofz authority and the current SQL leader fence before the exact signed guest request. A stored
+admission or transcript does not grant execution authority.
+
+Nanoagent fsyncs its operation intent before dispatch. Locally detected process exit and shutdown remain uncertain
+transport failures. Only native invalid-request, method-not-found and invalid-params errors have a typed rejection
+receipt that can terminate admission. Other native errors retain acceptance reconciliation. Native terminal
+notifications are fsynced under their accepting generation, thread and turn. Version 2 interrupted receipts additionally
+require confirmed termination of that turn's native command sessions. Nanoagent tracks command item IDs before
+interruption, inventories and terminates only those background terminals, and verifies their absence before writing
+the receipt. Other turns' background commands remain running. Cleanup retries cannot target a replacement process.
+Confirmed failure and interruption survive process replacement without trusting reconstructed interrupted history.
+
+Committed receipts return the original result across retries
+and supervisor replacement. A lost turn response is reconciled by bounded native history reads matching the exact
+`clientId` to a single turn. Zero or ambiguous matches keep the operation uncertain and block a fresh submission;
+they never resend the model request. Observation uses bounded metadata pages and the accepting Codex process identity.
+An unfinished turn from a dead process requires reconciliation. Pending approval snapshots and exact submitted
+controls live in Restate. One workflow per control ID records the exact pending approval scope before delivering
+the decision, and duplicate callers attach to its recorded result. Changed payloads fail the stored digest check.
+Native approval IDs additionally bind a random process identity, thread, and turn.
+
+Stop is a durable request. The workspace object retains the latest authenticated Stop authority, ordered by the original
+admission deadline, so a new login can replace an expired cancellation context. Delayed older controls cannot replace
+that context. The run polls this short object call and retains sole ownership of native interruption and completion.
+It checks recorded Stop again after preparation and before dispatch, cancelling unstarted work without contacting Codex.
+Repeated observations return only changed controls. Stop does not release the workspace after an interrupt acknowledgement: the worker waits for
+the exact terminal receipt with confirmed command cleanup. Native interrupted history alone retains cancellation
+and the sleep pin. Snapshot sleep pauses execution; Stop remains pending until resume can confirm interruption
+of the preserved turn. Ofz's completed-removal record proves permanent workspace destruction and closes abandoned
+runs; a missing Kubernetes object supplies no such proof. Unknown outcomes retain the workspace claim. The desktop
+displays waiting, recovery, approval, cancellation, and reconciliation states. Active work pins a
+MicroVM annotation before dispatch. Idle sleep must claim that same field with a UID/resource-version CAS before
+requesting an Ofz stop, so an old idle decision cannot sleep a concurrent admission. Automatic idle sleep respects
+the pin even while the worker is down. Explicit sleep, removal, and Ofz revocation retain their lifecycle authority. Terminal cleanup removes only the matching pin
+using MicroVM UID and resource-version preconditions.
+
+Runs have a 24-hour execution budget and a 30-minute approval wait budget. Expiry requests Stop and still requires a
+terminal outcome or permanent removal receipt. Restate retains completed run and control workflows for seven days.
+Admission attempt journals expire after one minute; they do not reserve run or control identities before authentication.
+Read-only status queries journal their signature and two-second admission-expiry check so a worker retry replays
+the same read path. Rechecking a mutable key or wall clock before a replayed state read can cause a journal mismatch.
+Workspace claim returns the latest Stop with its result, avoiding a separate initial Stop call; the run still checks
+Stop after preparation and immediately before dispatch. This changes the private claim response contract. Drain active
+run and control invocations before registering this worker version, and retain earlier versions for pinned history.
+Completed read-only query journals expire immediately, and unchanged observed state produces no repeated snapshot. Guest receipts and
+content-addressed attachments remain with the bounded 32 GiB retained home until owner deletion, preserving native
+conversation references and duplicate suppression after workflow retention expires. A full or corrupt journal fails
+before another effect. These rules do not make arbitrary shell, browser, or external service effects transactional.
+
+GitOps registers immutable worker versions through `RestateDeployment` in sync wave 1, after wave 0 has applied
+the release ConfigMap, network policies, quota, and controller. Admission fails closed until registration succeeds. Existing versions must drain, including
+their retained invocations, before deletion; `revisionHistoryLimit` is a rollback setting, not permission to destroy
+pinned work. The namespace budget allows eight worker Pods across active, retained, and overlapping versions. A full
+budget blocks another rollout until versions drain. Never force-delete a worker with pending work to make capacity.
+The [execution plan](../../docs/tengri/durable-agent-execution-plan.md) tracks evidence and delivery gates.
+
+Run the native correlation and interruption contract with an isolated pinned binary:
+
+```sh
+TENGRI_CODEX_CONTRACT_BINARY=/absolute/path/to/codex-0.164.0 GOWORK=off go test -race -run TestPinnedCodexRecoversAcceptance .
+```
+
+The test creates an isolated Codex home with an unauthenticated loopback fixture provider. It does not use a user's
+account. Run the real Restate process-replacement fixture with Docker available:
+
+```sh
+cargo test --locked restate_preserves_acceptance_exclusion_and_stop_across_worker_sigkill -- --ignored --nocapture
+```
+
+This fixture starts a disposable pinned Restate 1.7.9 and kills an independent worker process. Its guest is sleeping;
+running-command recovery and authenticated deployment acceptance remain separate evidence boundaries.
 
 ## Error reporting and request traces
 

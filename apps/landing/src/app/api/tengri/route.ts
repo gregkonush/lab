@@ -10,6 +10,8 @@ import {
   deleteFile,
   getCodexAccount,
   getCodexLogin,
+  getCodexRun,
+  getActiveCodexRun,
   interruptCodexTurn,
   isTengriControlPlaneConfigured,
   issuePreviewSession,
@@ -180,6 +182,12 @@ async function runAction(request: Request) {
       case 'codex-models':
         result = await listCodexModels(identity, action.agentId, action.cursor, request.signal)
         break
+      case 'active-codex-run':
+        result = await getActiveCodexRun(identity, action.agentId)
+        break
+      case 'codex-run':
+        result = await getCodexRun(identity, action.agentId, action.runId)
+        break
       case 'create-thread':
         result = await createCodexThread(identity, action.agentId, {
           model: action.model,
@@ -202,6 +210,7 @@ async function runAction(request: Request) {
           identity,
           action.agentId,
           action.threadId,
+          action.operationId,
           action.text,
           {
             model: action.model,
@@ -216,20 +225,36 @@ async function runAction(request: Request) {
           action.agentId,
           action.threadId,
           action.turnId,
+          action.operationId,
+          action.runId,
           action.text,
           action.images,
         )
         break
       case 'interrupt-turn':
-        await interruptCodexTurn(identity, action.agentId, action.threadId, action.turnId)
+        await interruptCodexTurn(identity, action.agentId, action.runId, action.operationId)
         result = null
         break
       case 'answer-questions':
-        await answerCodexQuestions(identity, action.agentId, action.approvalId, action.response)
+        await answerCodexQuestions(
+          identity,
+          action.agentId,
+          action.approvalId,
+          action.runId,
+          action.operationId,
+          action.response,
+        )
         result = null
         break
       case 'resolve-approval':
-        await resolveCodexApproval(identity, action.agentId, action.approvalId, action.decision)
+        await resolveCodexApproval(
+          identity,
+          action.agentId,
+          action.approvalId,
+          action.runId,
+          action.operationId,
+          action.decision,
+        )
         result = null
         break
       case 'preview-session':

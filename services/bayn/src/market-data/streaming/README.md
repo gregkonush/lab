@@ -34,9 +34,17 @@ and reducer dispositions. Repeated deliveries, rejected inputs, tombstones and i
 own receipts. The global consumer sequence spans equities and crypto; filtering out another market cannot claim a
 complete original prefix.
 
+Chunk appends and replay reads use the `(capture_id, ordinal)` primary key. Migration 0142 removes the unused global
+content-hash unique index, which caused random reads across unrelated captures on every append. Header and compressed
+byte hash checks, ordered-prefix guards and immutable-row triggers remain enforced. The header hash includes the capture
+ID and ordinal, so a repeated valid header is already rejected by the primary key and prefix guard.
+
 The capture owns one database connection outside the trading writer fence. It compresses batches at 256 KiB, bounds
 each uncompressed chunk to 4 MiB and queued compressed bytes to 64 MiB, and flushes a short tail every second.
 Compression batches yield to Node I/O; the writer groups up to 8 MiB or 256 chunks into one atomic database append.
+Within that transaction, PostgreSQL inserts at most 1 MiB or 16 chunks per statement. This bounds each SQL statement
+while sharing one synchronous durable commit across the append. A failed statement rolls back the whole append.
+An individual valid chunk above the SQL byte target is written whole under the existing chunk and queue bounds.
 Database writes run in a scoped background fiber. A full compressed queue backpressures the consumer until the
 writer acknowledges space. The ticker and consumer share one buffer permit, so a waiting flush cannot reorder
 chunks or grow the open buffer. Existing quote freshness and bootstrap deadlines still apply while consumption waits.
@@ -307,7 +315,7 @@ state and never clears either database. Give each attempt a distinct `replicate`
 PostgreSQL while retaining TigerBeetle under the same run ID is not a fresh run. Database clients close with the command. Individual database and reconciliation operations retain their deadlines; the total backtest length is governed by the selected sessions.
 The normal service composition does not load this command or its virtual clock.
 
-`bayn.backtest.v4` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
+`bayn.backtest.v5` binds one explicit UTC interval, the unchanged source-controlled strategy and build, opening cash,
 broker assets, execution assumptions and controller cadence. The source must cover the complete interval. UTC reporting
 windows are contiguous, including weekends. The retained Alpaca calendar still controls equities, with a successor
 session after the interval. Crypto remains continuous through the same engine and shared account.

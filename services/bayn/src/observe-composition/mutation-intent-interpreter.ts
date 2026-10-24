@@ -1,5 +1,5 @@
 import { intentPlanSchemaVersion } from '../execution/contracts'
-import { Effect, Option, Result } from 'effect'
+import { Duration, Effect, Option, Result } from 'effect'
 import { withObservedStage } from '../telemetry'
 
 import { MutationOperation } from '../broker/alpaca-mutations/model'
@@ -27,6 +27,17 @@ import {
 } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import {
+  jevBrokerEvidenceFreshUntilMs,
+  jevProfitTargetHoldingDeadlineAt,
+  jevProfitTargetLimitFloors,
+  jevProfitTargetStopCrossed,
+} from '../jev/exit'
+import { jevPricingQuery } from '../jev/runtime'
+import { IntradaySnapshotPurpose, type IntradayMarketDataService } from '../market-data/intraday/model'
+import { isIntradaySnapshotPending } from '../market-data/intraday/pending'
+import { persistIntradayRecordRows } from '../market-data/intraday/verification'
+import { loadIntradaySnapshot } from './intraday-market-data'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
@@ -67,6 +78,7 @@ export type MutationIntentInput = {
   readonly mutationPhase?: 'ENTRY' | 'CLOSE'
   readonly executionCycleCloseSubmitCutoffAt?: string
   readonly executionCycleCloseExpiresAt?: string
+  readonly intradayMarketData?: IntradayMarketDataService
 }
 
 export type MutationPreparation = {
@@ -208,6 +220,7 @@ const validateCurrentMutationExecutionTerms = (
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
+  minimumSellPriceMicros: bigint | undefined,
 ): Result.Result<void, CycleRunnerError> => {
   const pricing = deriveExecutionIntentPricing({
     symbol: targetIntent.symbol,
@@ -217,6 +230,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityAtoms: BigInt(targetIntent.quantityAtoms),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     limitSlippageBps: BigInt(limitSlippageBps),
+    ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -584,7 +598,15 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
       return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
+    const profitTarget =
+      document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined
+    const profitHoldingDeadlineAt = yield* Effect.fromResult(jevProfitTargetHoldingDeadlineAt(profitTarget)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
     if (allowSubmit) {
+      const profitFloors = yield* Effect.fromResult(
+        jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
       for (const prepared of preparedIntents) {
         const requiresFreshSubmission =
           prepared.stored === undefined ||
@@ -596,6 +618,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
+            profitFloors[prepared.targetIntent.symbol],
           ),
         )
       }
@@ -754,6 +777,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           if (observation._tag === 'StableOpen') {
             if (
               drainOpenOrders ||
+              (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
               (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=
@@ -764,6 +788,96 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
                 action: 'CANCEL',
                 intentId: prepared.intent.intentId,
                 observedAt: facts.evaluatedAt,
+              }
+            }
+            // A resting funded profit limit must release the outstanding order when its
+            // entry-bound stop crosses, including recovery where new submissions are forbidden.
+            // Cancellation is the only action here; terminal reconciliation still precedes any replan.
+            const state = facts.reconciliation.brokerState
+            if (
+              mutationPhase === 'CLOSE' &&
+              record.intent.side === OrderSide.Sell &&
+              profitTarget !== undefined &&
+              profitHoldingDeadlineAt !== undefined &&
+              profitTarget.symbols[0] === record.intent.symbol &&
+              input.intradayMarketData !== undefined &&
+              document.executionSession !== undefined &&
+              state.account.accountId === input.accountId &&
+              state.reconciliation.status === ReconciliationStatus.Exact &&
+              facts.reconciliation.report.metrics.accountingExact &&
+              (latest === undefined || state.reconciliation.reconciledAt >= latest.occurredAt) &&
+              state.unknownOrderCount === 0 &&
+              facts.reconciliation.riskContext.unknownMutationCount === 0 &&
+              state.positions.some(
+                (position) => position.symbol === record.intent.symbol && BigInt(position.quantityAtoms) > 0n,
+              )
+            ) {
+              const observedAt = yield* dependencies.now
+              const freshUntil = jevBrokerEvidenceFreshUntilMs(state)
+              const budgetMs = Math.max(
+                0,
+                Math.min(
+                  profitTarget.evidence.protocol.maximumQuoteAgeMs,
+                  Date.parse(profitHoldingDeadlineAt) - Date.parse(observedAt),
+                  freshUntil - Date.parse(observedAt) - 1,
+                ),
+              )
+              if (
+                budgetMs > 0 &&
+                [
+                  state.account.observedAt,
+                  state.positionsObservedAt,
+                  state.ordersObservedAt,
+                  state.reconciliation.reconciledAt,
+                ].every((at) => at <= observedAt)
+              ) {
+                const marketData = input.intradayMarketData
+                const calendar = document.executionSession.calendar
+                const stop = yield* Effect.gen(function* () {
+                  const query = yield* Effect.fromResult(
+                    jevPricingQuery(
+                      cycle,
+                      profitTarget.evidence.protocol,
+                      calendar,
+                      observedAt,
+                      [record.intent.symbol],
+                      IntradaySnapshotPurpose.Liquidation,
+                    ),
+                  )
+                  const pricing = yield* loadIntradaySnapshot(marketData, query)
+                  const rows = yield* Effect.fromResult(persistIntradayRecordRows(pricing))
+                  const checkedAt = yield* dependencies.now
+                  if (Date.parse(checkedAt) >= freshUntil) return undefined
+                  const crossed = yield* Effect.fromResult(
+                    jevProfitTargetStopCrossed(profitTarget, observedAt, checkedAt, {
+                      manifest: pricing.manifest,
+                      rows,
+                    }),
+                  )
+                  return crossed ? checkedAt : undefined
+                }).pipe(
+                  Effect.catchTags({
+                    JevAwaitingEvidence: () => Effect.void,
+                    OperationalError: (cause) =>
+                      isIntradaySnapshotPending(cause.cause) || cause.retryable ? Effect.void : Effect.fail(cause),
+                  }),
+                  Effect.timeoutOption(Duration.millis(budgetMs)),
+                  Effect.mapError((cause) =>
+                    mutationRunnerError({
+                      message: 'Pending profit stop evidence could not be verified',
+                      cause,
+                      failure: 'market-data',
+                    }),
+                  ),
+                )
+                if (Option.isSome(stop) && stop.value !== undefined) {
+                  return {
+                    _tag: 'Execute',
+                    action: 'CANCEL',
+                    intentId: prepared.intent.intentId,
+                    observedAt: stop.value,
+                  }
+                }
               }
             }
             pendingIntentFound = true

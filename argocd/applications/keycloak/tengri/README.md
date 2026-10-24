@@ -17,22 +17,35 @@ The dedicated `tengri` login theme extends Keycloak's built-in theme. Its shared
 verification and errors with the landing app's Geist font, pear mark, dark wallpaper, window and blue actions.
 Assets are served by Keycloak with no external font or image requests. The template retains Keycloak 26.7.4's
 session checking, import map and one-click link protection. Its registration module uses Keycloak 26.7.4's
-WebAuthn implementation and default authenticator label without calling `window.prompt()`, which embedded browsers
-reject after creating the credential. The real browser fixture disables prompts, enrolls passkeys, then disables user
+WebAuthn implementation with a unique automatic authenticator label without calling `window.prompt()`, which embedded
+browsers reject after creating the credential. Unique labels prevent Keycloak from rejecting a second passkey for
+having the same name. The real browser fixture disables prompts, enrolls passkeys, then disables user
 verification for subsequent authentication. It verifies that theme and PIN-policy migration preserve existing
 credentials while other security drift still fails.
-The authentication template and module also follow Keycloak 26.7.4. They pass the enrolled authenticators' transport
-metadata to WebAuthn UI hints. Hardware-only credentials prefer `security-key`, so Chrome prioritizes the YubiKey
-prompt over the phone/QR flow. An internal authenticator prefers `client-device` followed by `security-key`, keeping
-password managers such as 1Password available. Unknown transports retain the browser's default chooser. These hints
-do not restrict authenticators or change credential validation. The browser fixture records real WebAuthn requests
-and verifies fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
+Registration and authentication request `client-device`, `hybrid`, and `security-key` UI hints so browsers offer
+password managers such as 1Password, a nearby phone through a QR code, and hardware keys. The hints do not restrict
+authenticators or change credential validation. The browser fixture records real WebAuthn requests and verifies
+fresh sign-in with both USB and platform passkeys, including their hints and PIN policy.
+Verification delegates credential selection to the browser or password manager. Its Continue button becomes disabled
+while the passkey request is pending. Stored credential labels and transport details stay out of the page.
+
+Sign in through **Continue with GitHub**, then use your saved passkey. First-time sign-in asks you to create one.
+Use **Settings > Access > Add another passkey** to enroll an additional credential.
+The BFF requests Keycloak's `webauthn-register` application-initiated action through the existing PKCE flow.
+GitHub sign-in and a fresh assertion with an existing passkey precede registration. Then choose 1Password on your
+phone, or choose a nearby phone in your computer's passkey dialog and scan its QR code. On iPhone, enable 1Password
+under **Settings > General > AutoFill & Passwords** first. Existing passkeys remain enrolled. A user with only a USB
+key must verify with that key once before adding the phone credential. This action uses the same origin checks,
+OAuth binding, assurance requirements, callback, and ingress rate limit as sign-in.
+The browser fixture adds a platform credential to an existing USB-key account and completes a fresh login at a
+phone viewport with the USB authenticator removed. A real phone and 1Password provider still require manual proof.
 These upstream assets retain their [Apache 2.0 license](theme/LICENSE.txt).
 The unchanged wallpaper is attributed in the [landing asset README](../../../../apps/landing/public/tengri/README.md).
 Geist retains its [SIL Open Font License](theme/login/resources/fonts/OFL.txt), and the pear retains the
 [Pictogrammers notice](theme/login/resources/img/pictogrammers-LICENSE.txt) under Apache 2.0.
 The browser fixture checks desktop and 320px setup, verification and error layouts, font loading, reduced motion,
-keyboard activation and WCAG A/AA rules. Set `TENGRI_IDENTITY_SCREENSHOTS` to a directory to retain its six screenshots.
+keyboard activation and WCAG A/AA rules. It also covers multiple saved credentials and a pending prompt recovered by
+reload. Set `TENGRI_IDENTITY_SCREENSHOTS` to a directory to retain the screenshots.
 
 GitHub's numeric profile ID is copied by its built-in broker mapper into an administrator-only `github_id` attribute.
 The username derives from that ID. Email does not link accounts or grant authority. The broker session's provider note

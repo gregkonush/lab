@@ -61,7 +61,7 @@ func RPCAction(method string) (Action, error) {
 		return TerminalObserve, nil
 	case "CreateTerminal", "TerminateTerminal", "AttachTerminal":
 		return TerminalControl, nil
-	case "CodexCall", "CodexLogin", "ResolveCodexApproval", "WatchCodexEvents":
+	case "CodexCall", "CodexLogin", "WatchCodexEvents":
 		return CodexControl, nil
 	default:
 		return "", errors.New("unknown guest RPC")

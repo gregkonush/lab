@@ -154,6 +154,24 @@ impl WorkspaceAuthorization {
         }
     }
 
+    pub(crate) async fn removal_complete(&self, uid: &str) -> Result<bool, Status> {
+        match self {
+            Self::Ofz(client) => {
+                let state = match client.workspace_state(uid).await {
+                    Ok(state) => state,
+                    Err(error) if error.code() == tonic::Code::NotFound => return Ok(false),
+                    Err(error) => return Err(error),
+                };
+                Ok(state.workspace_uid == uid
+                    && state.state == "removed"
+                    && !state.running
+                    && !state.runtime_allowed)
+            }
+            #[cfg(test)]
+            _ => Ok(false),
+        }
+    }
+
     pub(crate) async fn runtime_state(
         &self,
         agent: &MicroVM,

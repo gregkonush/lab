@@ -95,9 +95,7 @@ pub fn rpc_action(method: &str) -> Option<GuestAction> {
         "WriteFile" | "CreateDirectory" | "MoveFile" | "DeleteFile" => GuestAction::FilesWrite,
         "ListTerminals" => GuestAction::TerminalObserve,
         "CreateTerminal" | "TerminateTerminal" | "AttachTerminal" => GuestAction::TerminalControl,
-        "CodexCall" | "CodexLogin" | "ResolveCodexApproval" | "WatchCodexEvents" => {
-            GuestAction::CodexControl
-        }
+        "CodexCall" | "CodexLogin" | "WatchCodexEvents" => GuestAction::CodexControl,
         _ => return None,
     })
 }

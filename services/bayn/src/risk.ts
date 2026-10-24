@@ -995,7 +995,8 @@ const buildAuthorityAndStateGates = (
 const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { intent, policy, state } = facts
   const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
-  const proceedsFloor = intent.side === OrderSide.Sell && intent.orderType === OrderType.Limit
+  const proceedsFloor =
+    intent.side === OrderSide.Sell && (intent.orderType === OrderType.Limit || intent.orderType === OrderType.StopLimit)
   return [
     makeGate(
       Gate.IntentNotional,

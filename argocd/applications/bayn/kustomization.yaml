@@ -31,6 +31,7 @@ resources:
   - bayn-research-db-sealedsecret.yaml
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
+  - opencode-retained-state.yaml
   - research-networkpolicy.yaml
 configMapGenerator:
   - name: bayn-telemetry

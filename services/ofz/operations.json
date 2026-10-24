@@ -1,6 +1,36 @@
 [
   {
     "surface": "controller",
+    "operation": "ConnectorAgent",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off connector gate precedes authentication, workspace admission and guest effects"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/identity",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/configure",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "codex",
+    "operation": "relay/remove",
+    "action": "ACTION_CODEX_CONTROL",
+    "dispatch": "Default-off guest connector gate precedes identity files or app-server configuration"
+  },
+  {
+    "surface": "ofz",
+    "operation": "CheckConnectorAgent",
+    "action": "ACTION_CONNECTOR_EXECUTE",
+    "dispatch": "Default-off connector gate precedes database, replay and authorization effects"
+  },
+  {
+    "surface": "controller",
     "operation": "GetRequestAudience",
     "public": true,
     "internal_only": true,
@@ -124,6 +154,16 @@
   {
     "surface": "controller",
     "operation": "SendCodexInput",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetCodexRun",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "GetActiveCodexRun",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -254,11 +294,6 @@
   },
   {
     "surface": "guest",
-    "operation": "ResolveCodexApproval",
-    "action": "ACTION_CODEX_CONTROL"
-  },
-  {
-    "surface": "guest",
     "operation": "WatchCodexEvents",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -321,6 +356,31 @@
   {
     "surface": "codex",
     "operation": "turn/interrupt",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/read",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/operation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/pending",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/reconcileOperation",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "tengri/resolveApproval",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -431,6 +491,16 @@
   {
     "surface": "bff",
     "operation": "resume-thread",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "active-codex-run",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "codex-run",
     "action": "ACTION_CODEX_CONTROL"
   },
   {
@@ -1004,6 +1074,12 @@
     "operation": "POST /api/auth/step-up",
     "public": true,
     "dispatch": "Pre-admission OAuth exchange; Ofz establishes a session only after verified identity and active membership."
+  },
+  {
+    "surface": "bff_auth",
+    "operation": "POST /api/auth/add-passkey",
+    "public": true,
+    "dispatch": "GitHub and an existing passkey authorize Keycloak credential enrollment; Ofz establishes a session only after verified identity and active membership."
   },
   {
     "surface": "bff_auth",

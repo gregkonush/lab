@@ -4,13 +4,21 @@ import { Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { JevCandidatePlanStatus } from './batch'
 import { decodeJevProtocol, defaultJevProtocolDocument } from './protocol'
-import { decideJevEntry, JevEntryTargetSchema } from './decision'
+import { decideJevEntry, JevEntryTargetSchema, reproduceDecisionEvidence, selectJevEntryCandidates } from './decision'
 import { nativeJevFixture, nativeJevDecisionEvidence } from './native.test-support'
 import { makeJevTradingSignalRequest } from './trading-signals'
-import { selectedJevTradePlan } from './trade-plan-choices'
+import { JevEntrySetup, selectedJevTradePlan } from './trade-plan-choices'
 import { nativeJevInference } from './native.test-support'
+import { prepareJevRequest } from './contract'
 
 const fixture = nativeJevFixture()
+
+test('a positive native inference fixture survives canonical request serialization', () => {
+  const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  const serialized = Result.getOrThrow(prepareJevRequest(JSON.parse(prepared.body)))
+  const inference = nativeJevInference(serialized.request, fixture.snapshot.manifest.observedAt)
+  expect(Result.getOrThrow(selectedJevTradePlan(serialized.request, inference.response))).not.toBeNull()
+})
 
 test('negative own and relative returns reach Jev without a momentum gate', () => {
   const falling = nativeJevFixture(undefined, undefined, undefined, undefined, undefined, { AAPL: -0.02, AMZN: -0.03 })
@@ -67,7 +75,7 @@ test('abstention and an unknown complete plan cannot authorize entry', () => {
     Result.isFailure(
       selectedJevTradePlan(prepared.request, {
         ...inference.response,
-        answers: { action: { ...action, choice: 'plan_unknown' } },
+        answers: { ...inference.response.answers, action: { ...action, choice: 'plan_unknown' } },
       }),
     ),
   ).toBe(true)
@@ -81,9 +89,109 @@ test('abstention and an unknown complete plan cannot authorize entry', () => {
   ).toBe(true)
 })
 
+test('a supplied economic plan cannot authorize entry when the independent setup is adverse or unclear', () => {
+  const prepared = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
+  const inference = nativeJevInference(prepared.request, fixture.snapshot.manifest.observedAt)
+  const setup = (choice: string) => ({
+    type: 'choice' as const,
+    choice,
+    confidence: 0.8,
+    probabilities: {
+      upward: choice === 'upward' ? 0.8 : 0.1,
+      unclear: choice === 'unclear' ? 0.8 : 0.1,
+      adverse: choice === 'adverse' ? 0.8 : 0.1,
+    },
+  })
+  for (const choice of ['unclear', 'adverse']) {
+    expect(
+      Result.getOrThrow(
+        selectedJevTradePlan(prepared.request, {
+          ...inference.response,
+          answers: { ...inference.response.answers, setup: setup(choice) },
+        }),
+      ),
+    ).toBeNull()
+  }
+  expect(
+    Result.getOrThrow(
+      selectedJevTradePlan(prepared.request, {
+        ...inference.response,
+        answers: { ...inference.response.answers, setup: setup('upward') },
+      }),
+    ),
+  ).not.toBeNull()
+  const { setup: _setup, ...missing } = inference.response.answers
+  expect(Result.isFailure(selectedJevTradePlan(prepared.request, { ...inference.response, answers: missing }))).toBe(
+    true,
+  )
+})
+
+test('entry selection rejects unsupported setups and ranks supported setups independently of plan confidence', () => {
+  const evidence = nativeJevDecisionEvidence(fixture)
+  const { observation, inferences } = Result.getOrThrow(reproduceDecisionEvidence(evidence))
+  const requests = evidence.batchPlan.candidates.filter(
+    (candidate) => candidate.status === JevCandidatePlanStatus.Requested,
+  )
+  for (const choice of [JevEntrySetup.Adverse, JevEntrySetup.Unclear]) {
+    const unsupported = inferences.map(({ symbol, requestId, inference }) => ({
+      symbol,
+      requestId,
+      inference: {
+        ...inference,
+        response: {
+          ...inference.response,
+          answers: {
+            ...inference.response.answers,
+            setup: {
+              type: 'choice' as const,
+              choice,
+              confidence: 0.8,
+              probabilities: {
+                upward: 0.1,
+                unclear: choice === JevEntrySetup.Unclear ? 0.8 : 0.1,
+                adverse: choice === JevEntrySetup.Adverse ? 0.8 : 0.1,
+              },
+            },
+          },
+        },
+      },
+    }))
+    const result = Result.getOrThrow(selectJevEntryCandidates(observation, unsupported, requests))
+    expect(result.selected).toEqual([])
+    expect(new Set(Object.values(result.entryPlanRejections))).toEqual(new Set(['MODEL_SETUP_UNSUPPORTED']))
+  }
+  const supported = inferences
+    .filter(({ symbol }) => symbol === 'AAPL' || symbol === 'AMZN')
+    .map(({ symbol, requestId, inference }) => {
+      const setup = inference.response.answers['setup']
+      if (setup?.type !== 'choice') throw new Error('Expected setup')
+      const probability = symbol === 'AAPL' ? 0.6 : 0.7
+      return {
+        symbol,
+        requestId,
+        inference: {
+          ...inference,
+          response: {
+            ...inference.response,
+            answers: {
+              ...inference.response.answers,
+              setup: {
+                ...setup,
+                probabilities: { upward: probability, unclear: (1 - probability) / 2, adverse: (1 - probability) / 2 },
+              },
+            },
+          },
+        },
+      }
+    })
+  expect(
+    Result.getOrThrow(selectJevEntryCandidates(observation, supported, requests)).selected.map(({ symbol }) => symbol),
+  ).toEqual(['AMZN'])
+})
+
 test('the retired geometric protocol and exit caps are rejected rather than used as defaults', () => {
   expect(
-    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v14' })),
+    Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, schemaVersion: 'bayn.jev.protocol.v17' })),
   ).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumCapitalRiskBps: 10 }))).toBe(true)
   expect(Result.isFailure(decodeJevProtocol({ ...defaultJevProtocolDocument, maximumStopBps: 500 }))).toBe(true)

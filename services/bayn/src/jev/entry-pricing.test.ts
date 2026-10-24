@@ -63,6 +63,18 @@ const pricingFixture = (bidPrice: number, askPrice: number, bidSize = 100, askSi
 }
 
 describe('Jev entry execution quote eligibility', () => {
+  test.each([0, -10000, 10000])('entry compilation preserves the stop boundary at offset %s micros', (offset) => {
+    const original = pricingFixture(100, 100.02)
+    const plan = original.decision.exitPolicy.plans['AAPL']
+    if (plan === undefined) throw new Error('Missing selected fixture plan')
+    const bid = (Number(plan.levels.stopPriceMicros) + offset) / 1_000_000
+    const { fixture, decision, pricing } = pricingFixture(bid, bid + 0.01)
+    const compiled = compileJevEntry(decision, fixture.snapshot, pricing)
+    expect(Result.isSuccess(compiled)).toBe(offset > 0)
+    if (Result.isFailure(compiled))
+      expect(compiled.failure).toMatchObject({ readiness: DecisionReadinessReason.NoEligibleCandidate })
+  })
+
   test('an approved entry compiles with a fresh execution quote from before the minute boundary', () => {
     const quoteAt = '2026-09-04T14:29:59.000Z'
     const { fixture, decision, pricing } = pricingFixture(100, 100.02, 100, 100, quoteAt)

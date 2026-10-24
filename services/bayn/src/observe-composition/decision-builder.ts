@@ -9,7 +9,7 @@ import { JevBatchStore } from '../jev/batch-evaluation'
 import { JevEvaluationStore } from '../jev/evaluation'
 import { JevClient } from '../jev/client'
 import { decideJevEntry } from '../jev/decision'
-import type { JevExitTarget } from '../jev/exit'
+import { jevProfitTargetLimitFloors, type JevExitTarget } from '../jev/exit'
 import { decodeJevProtocol } from '../jev/protocol'
 import { decodeJevPortfolio, JevPurpose, type JevPortfolio } from '../jev/portfolio'
 import {
@@ -948,8 +948,7 @@ const compileObserveStrategyDecision = <R>(
     const decision = yield* Effect.fromResult(decideJevEntry(evidence))
     if (
       decision.selectedSymbols.length === 0 &&
-      Date.parse(input.cycle.window.submissionCutoffAt) - Date.parse(evidence.decidedAt) >
-        (input.decisionFinalizationHeadroomMs ?? 0)
+      admissionExpiresAt - Date.parse(evidence.decidedAt) > (input.decisionFinalizationHeadroomMs ?? 0)
     )
       return yield* new JevAwaitingEvidence({
         message: 'Jev entry remains armed for a qualifying fresh signal',
@@ -1156,6 +1155,7 @@ const executionRiskContext = (
 
 type RiskInputPreparation = {
   readonly limitSlippageBps: number
+  readonly minimumSellPriceMicros?: Readonly<Record<string, bigint>>
   readonly entryQuotes?: Readonly<Record<string, EntryQuoteFreshness>>
   readonly executionModel: CycleExecutionModel
   readonly reconciliation: ReconciliationPassResult
@@ -1198,6 +1198,7 @@ const reduceRiskInputs = (
           )
         }
         const referencePrice = BigInt(referencePriceMicros)
+        const minimumSellPriceMicros = input.minimumSellPriceMicros?.[target.symbol]
         return Result.map(
           deriveExecutionIntentPricing({
             symbol: target.symbol,
@@ -1207,6 +1208,7 @@ const reduceRiskInputs = (
             quantityAtoms: BigInt(target.quantityAtoms),
             referencePriceMicros: referencePrice,
             limitSlippageBps: BigInt(input.limitSlippageBps),
+            ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
           }),
           (pricing): ShadowDeltaRiskInput => {
             const state: State = {
@@ -1846,9 +1848,13 @@ const buildClosingExecutionCycleDecisionWithSource = <R>(
       Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
     )
     const closeLimitSlippageBps = policy.maxAdverseSlippageBps
+    const minimumSellPriceMicros = yield* Effect.fromResult(
+      jevProfitTargetLimitFloors(request.exitTarget, evaluatedAt, targetPlan.targets),
+    ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
     const riskInputs = yield* Effect.fromResult(
       reduceRiskInputs({
         limitSlippageBps: closeLimitSlippageBps,
+        minimumSellPriceMicros,
         executionModel,
         reconciliation,
         authorityObservation: executionAuthority,

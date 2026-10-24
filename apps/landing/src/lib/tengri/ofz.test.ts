@@ -12,6 +12,8 @@ import { createSpiffeFixture } from './spiffe.fixture'
 
 void mock.module('server-only', () => ({}))
 const { ofzCall, OfzError } = await import('./ofz')
+// Keep one-time observability module loading outside the RPC deadline test.
+await import('@/lib/observability/server')
 const environment = {
   OFZ_GRPC_ENDPOINT: process.env.OFZ_GRPC_ENDPOINT,
   SPIFFE_ENDPOINT_SOCKET: process.env.SPIFFE_ENDPOINT_SOCKET,
