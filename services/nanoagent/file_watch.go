@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -711,6 +712,23 @@ func (files *fileWatcher) releaseWatchLocked(directory string) {
 	}
 	delete(files.watched, directory)
 	_ = files.watcher.Remove(directory)
+	// A removed source watch cannot produce the echo expected by a rename.
+	// Keep the destination fence until its ordered event arrives, but do not
+	// retain that watch forever waiting for a source event that cannot arrive.
+	for source, expected := range files.expectedRenames {
+		if !files.rawRenameMayArriveLocked(expected.rawSource) {
+			expected.rawEchoPossible = false
+			files.expectedRenames[source] = expected
+		}
+	}
+	for generation, completed := range files.completedRenames {
+		rawSource := filepath.Join(files.workspace.realRoot, strings.TrimPrefix(completed.rawSource, workspacePath))
+		if !files.rawRenameMayArriveLocked(rawSource) {
+			completed.rawEchoPossible = false
+			files.completedRenames[generation] = completed
+			files.finishCompletedRenameLocked(generation, completed)
+		}
+	}
 }
 
 func (files *fileWatcher) invalidateDirectory(directory string) {

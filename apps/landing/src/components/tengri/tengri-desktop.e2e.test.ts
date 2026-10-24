@@ -2882,9 +2882,15 @@ test('does not replace the selected conversation when a background thread creati
   await chat.getByRole('button', { name: 'Send message', exact: true }).click()
   try {
     await expect.poll(() => creating).toBe(true)
+    await composer.fill('Next draft for the pending conversation')
     await sidebar.locator('[data-conversation-id="thread-existing"]').click()
     await expect(composer).toBeEnabled()
     await composer.fill('Existing draft')
+    await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+    await expect(composer).toHaveValue('')
+    await composer.fill('Unrelated new conversation draft')
+    await sidebar.locator('[data-conversation-id="thread-existing"]').click()
+    await expect(composer).toHaveValue('Existing draft')
   } finally {
     release()
   }
@@ -2892,6 +2898,10 @@ test('does not replace the selected conversation when a background thread creati
   await expect(sidebar.locator('[data-conversation-id="thread-existing"]')).toHaveAttribute('aria-current', 'true')
   await expect(composer).toHaveValue('Existing draft')
   await expect(chat.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+  await sidebar.locator('[data-conversation-id="thread-1"]').click()
+  await expect(composer).toHaveValue('Next draft for the pending conversation')
+  await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+  await expect(composer).toHaveValue('Unrelated new conversation draft')
 })
 
 for (const outcome of ['completed', 'uncertain'] as const) {

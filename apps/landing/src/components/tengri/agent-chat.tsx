@@ -206,6 +206,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
   const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
+  const creatingDraftRef = useRef<{
+    selection: number
+    draft?: { text: string; images: DraftImage[] }
+  } | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [threadResumeRevision, setThreadResumeRevision] = useState(0)
@@ -1122,6 +1126,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return
     if (activeTurnIdRef.current && !runMatchesThread) return
     const selectedConversation = conversationSelection.current
+    if (!threadId) creatingDraftRef.current = { selection: selectedConversation }
     submissionThread.current = threadId
     let submittedThread = threadId
     setSubmitting(true)
@@ -1280,6 +1285,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     if (conversationSelection.current !== selectedConversation) {
+      if (!threadId && creatingDraftRef.current?.selection === selectedConversation) {
+        const draft = creatingDraftRef.current.draft
+        if (draft) draftsRef.current.set(thread.id, draft)
+        creatingDraftRef.current = null
+      }
       setConversations((current) =>
         upsertStoredConversation(
           agentId,
@@ -1294,6 +1304,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return { id: thread.id, activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
     }
     if (!threadId) {
+      creatingDraftRef.current = null
       draftsRef.current.delete('')
       const assignThread = (event: CodexBufferedEvent) =>
         event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
@@ -1401,13 +1412,16 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }
 
   function resetTranscriptUi(nextThreadId: string) {
+    const creatingDraft = creatingDraftRef.current
+    const leavingCreation = !threadIdRef.current && creatingDraft?.selection === conversationSelection.current
+    if (leavingCreation) creatingDraft.draft = { text: prompt, images: imagesRef.current }
     conversationSelection.current += 1
     recoverInitialRun.current = false
     if (!nextThreadId)
       retainedEvents.current = retainedEvents.current.filter(
         (event) => event.threadId || codexEventIsRuntimeError(event),
       )
-    if (!threadIdRef.current && !nextThreadId) {
+    if (leavingCreation || (!threadIdRef.current && !nextThreadId)) {
       draftsRef.current.delete('')
     } else {
       draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
