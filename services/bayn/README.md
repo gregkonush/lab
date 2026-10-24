@@ -7,7 +7,7 @@ accounting truth, and the broker adapter performs account-environment-neutral ex
 The optional [OHLCV + image dual-signal shadow command](../../docs/bayn/dual-signal-shadow.md) compares Jev and
 OpenAI Decisions over correlated views of the same market data without changing order authority.
 
-The [October 20 system cleanup](../../docs/bayn/archive/system-cleanup-2026-10-20.md) records the database and
+The [October 20 system cleanup](../../archive/docs/bayn/system-cleanup-2026-10-20.md) records the database and
 observability audit. Migration 134 removes six empty retired tables and the obsolete broker-error/rate-limit
 event variants. It refuses populated retired evidence and preserves active broker failures, accounting and replay.
 `tools/audit-database.sql` provides bounded read-only table sizes, exact retirement counts and migration readback.

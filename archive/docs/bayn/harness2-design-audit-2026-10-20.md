@@ -1,8 +1,7 @@
 # Harness2 and Jev design audit
 
-> **Archived record.** This design assessment covers a retired adapter. The resulting optimizer decision is recorded
-> in [Jev optimization](../jev-optimization.md); this note is retained for provenance. See the
-> [archive index](README.md).
+> **Archived record.** This design assessment covers a retired adapter. The resulting optimizer decision is recorded in
+> [Jev optimization](../../../docs/bayn/jev-optimization.md); this note is retained for provenance.
 
 Initial research date: 2026-10-20 America/Los_Angeles. Primary sources rechecked on 2026-10-22.
 Initial implementation inspected at
@@ -266,9 +265,9 @@ identity, native request construction and exclusions, immutable observations and
 retained raw responses, explicit incomplete outcomes, bounded calls, private artifacts and no broker authority in
 the research command. Their tests prove these boundaries. They do not prove a trading edge.
 
-The repo already defines a stronger experiment in [the Jev incremental-value audit](../jev-incremental-audit.md),
-[matched-entry study](../matched-entry-study.md), [native export contract](../study-evidence-export.md),
-[control portfolios](../control-portfolios.md) and [net-edge research](../net-edge-research.md). These documents are
+The repo already defines a stronger experiment in [the Jev incremental-value audit](../../../docs/bayn/jev-incremental-audit.md),
+[matched-entry study](../../../docs/bayn/matched-entry-study.md), [native export contract](../../../docs/bayn/study-evidence-export.md),
+[control portfolios](../../../docs/bayn/control-portfolios.md) and [net-edge research](../../../docs/bayn/net-edge-research.md). These documents are
 navigation and contracts. Their synthetic tests and existing tools must not be represented as completed real-market
 coverage. The new Harness2 runner does not currently consume their economic reports.
 
@@ -329,7 +328,7 @@ objective than judging behavioral contrast alone. That is an architectural infer
 GEPA or the TypeSafe cookbook. Keep Harness2's proposal mechanism as one testable candidate; require evidence for
 the extra search cost before expanding recursion or the experience library.
 
-The existing [frozen Jev acceptance protocol](../jev-migration-acceptance-v2.json) and its
+The existing [frozen Jev acceptance protocol](../../../docs/bayn/jev-migration-acceptance-v2.json) and its
 `services/bayn/src/jev/acceptance.ts` implementation already define a separate numerical qualification question,
 including matched controls, execution stress and attempt-indexed comparison error. A narrow prompt comparison
 must not silently replace those controls or introduce a competing statistical pass rule. In particular, generating
