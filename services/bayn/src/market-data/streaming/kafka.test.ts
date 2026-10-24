@@ -222,6 +222,7 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       const capture = captures[0]
       if (first === undefined || capture === undefined) throw new Error('missing initial consumer capture')
       const initial = yield* market.read
+      // Malformed records exercise exact delivery retention, not market-content validity or freshness.
       const record = (offset: string): KafkaConsumedRecord => ({
         topic: 'quotes',
         partition: 0,
@@ -272,6 +273,8 @@ test('failed native retention releases Kafka consumption and preserves incomplet
       })
       expect(chunks).toHaveLength(1)
       expect(chunks[0]?.header.lastConsumerSequence).toBe(1)
+      expect(chunks[0]?.header.captureId).toBe(capture.status().captureId)
+      expect(ends[0]?.lastChunkHash).toBe(chunks[0]?.contentHash)
       transports[1]?.send(record('0'))
       yield* TestClock.adjust(1_000)
       expect(captures[1]?.status()).toMatchObject({
@@ -280,6 +283,7 @@ test('failed native retention releases Kafka consumption and preserves incomplet
         durableConsumerSequence: 1,
       })
       expect(chunks).toHaveLength(2)
+      expect(chunks[1]?.header.captureId).toBe(captures[1]?.status().captureId)
       expect(ends[0]?.status).toBe('INCOMPLETE')
     }),
   )
