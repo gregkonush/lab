@@ -133,6 +133,16 @@
   },
   {
     "surface": "controller",
+    "operation": "ListCodexThreads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
+    "operation": "SetCodexThreadArchived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "controller",
     "operation": "GetCodexLogin",
     "action": "ACTION_CODEX_CONTROL"
   },
@@ -321,6 +331,21 @@
   {
     "surface": "codex",
     "operation": "mcpServerStatus/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/list",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/archive",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "codex",
+    "operation": "thread/unarchive",
     "action": "ACTION_CODEX_CONTROL"
   },
   {

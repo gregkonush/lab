@@ -282,6 +282,9 @@ func (server *guestRPCServer) CodexCall(ctx context.Context, req *pb.CodexReques
 		if errors.Is(err, errCodexOperationConflict) {
 			return nil, status.Error(codes.AlreadyExists, errCodexOperationConflict.Error())
 		}
+		if errors.Is(err, errCodexThreadActive) {
+			return nil, status.Error(codes.FailedPrecondition, errCodexThreadActive.Error())
+		}
 		if errors.Is(err, errCodexOperationUnknown) {
 			return nil, status.Error(codes.FailedPrecondition, errCodexOperationUnknown.Error())
 		}

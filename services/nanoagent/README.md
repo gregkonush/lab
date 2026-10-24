@@ -158,6 +158,9 @@ Unsupported and oversized question schemas still fail explicitly without fabrica
 
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
+Session discovery and archiving use the pinned native `thread/list`, `thread/archive`, and `thread/unarchive` APIs.
+Archiving retains the session's history. It shares the native operation mutex with turn admission and rejects an
+active turn before calling the app-server. The controller also rejects archiving a session with an unfinished durable run.
 
 ## Firecracker rootfs and persistent tools
 

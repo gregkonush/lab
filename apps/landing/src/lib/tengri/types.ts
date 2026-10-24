@@ -65,6 +65,11 @@ export type TengriFileEntry = {
   modifiedAt: string
 }
 
+export type TengriFileList = {
+  path: string
+  entries: TengriFileEntry[]
+}
+
 export type TengriFileSearchResult = {
   entries: TengriFileEntry[]
   truncated: boolean
@@ -177,6 +182,8 @@ export type TengriAction =
   | { action: 'codex-models'; agentId: string; cursor?: string }
   | { action: 'active-codex-run'; agentId: string }
   | { action: 'codex-run'; agentId: string; runId: string }
+  | { action: 'list-threads'; agentId: string; archived: boolean; cursor?: string }
+  | { action: 'set-thread-archived'; agentId: string; threadId: string; archived: boolean }
   | ({ action: 'create-thread'; agentId: string } & TengriCodexOptions)
   | ({ action: 'resume-thread'; agentId: string; threadId: string } & TengriCodexOptions)
   | ({

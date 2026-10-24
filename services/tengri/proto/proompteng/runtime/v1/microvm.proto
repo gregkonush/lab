@@ -27,6 +27,8 @@ service MicroVMControlPlane {
 
   rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
   rpc ListCodexModels(ListCodexModelsRequest) returns (CodexModels);
+  rpc ListCodexThreads(ListCodexThreadsRequest) returns (CodexThreads);
+  rpc SetCodexThreadArchived(SetCodexThreadArchivedRequest) returns (Empty);
   rpc ConnectorAgent(ConnectorAgentRequest) returns (CodexModels);
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
@@ -213,6 +215,9 @@ message TerminalTicket {
 message GetCodexAccountRequest { string agent_id = 1; }
 message ListCodexModelsRequest { string agent_id = 1; string cursor = 2; }
 message CodexModels { string raw_json = 1; }
+message ListCodexThreadsRequest { string agent_id = 1; bool archived = 2; string cursor = 3; }
+message CodexThreads { string raw_json = 1; }
+message SetCodexThreadArchivedRequest { string agent_id = 1; string thread_id = 2; bool archived = 3; }
 message GetCodexLoginRequest { string agent_id = 1; }
 message StartCodexLoginRequest { string agent_id = 1; }
 message CreateCodexThreadRequest {

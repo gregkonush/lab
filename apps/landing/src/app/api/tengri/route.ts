@@ -20,6 +20,7 @@ import {
   issueTerminalTicket,
   listAgents,
   listCodexModels,
+  listCodexThreads,
   listFiles,
   listTerminals,
   moveFile,
@@ -31,6 +32,7 @@ import {
   resumeCodexThread,
   searchFiles,
   sendCodexTurn,
+  setCodexThreadArchived,
   sleepAgent,
   startCodexLogin,
   steerCodexTurn,
@@ -193,6 +195,13 @@ async function runAction(request: Request) {
           model: action.model,
           reasoningEffort: action.reasoningEffort,
         })
+        break
+      case 'list-threads':
+        result = await listCodexThreads(identity, action.agentId, action.archived, action.cursor, request.signal)
+        break
+      case 'set-thread-archived':
+        await setCodexThreadArchived(identity, action.agentId, action.threadId, action.archived)
+        result = null
         break
       case 'resume-thread':
         return await resumeCodexThread(
