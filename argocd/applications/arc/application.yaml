@@ -11,7 +11,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-controller
-        skipCrds: false
         valuesObject:
           nodeSelector:
             kubernetes.io/arch: amd64
@@ -20,7 +19,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -31,7 +29,7 @@ spec:
           scaleSetLabels:
             - arc-arm64
           minRunners: 1
-          maxRunners: 5
+          maxRunners: 8
           listenerTemplate:
             spec:
               nodeSelector:
@@ -59,7 +57,7 @@ spec:
               initContainers:
                 - name: init-dind-externals
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  command: [ "cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/" ]
                   resources:
                     requests:
                       cpu: "100m"
@@ -70,7 +68,7 @@ spec:
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["/bin/bash", "-lc"]
+                  command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
                       set -euo pipefail
@@ -150,7 +148,6 @@ spec:
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-amd64
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -160,8 +157,8 @@ spec:
           runnerScaleSetName: arc-amd64
           scaleSetLabels:
             - arc-amd64
-          minRunners: 1
-          maxRunners: 5
+          minRunners: 2
+          maxRunners: 9
           listenerTemplate:
             spec:
               nodeSelector:
@@ -175,7 +172,6 @@ spec:
             spec:
               nodeSelector:
                 kubernetes.io/arch: amd64
-                kubernetes.io/hostname: turin
               dnsConfig:
                 searches:
                   - ide-newton.ts.net
@@ -186,7 +182,7 @@ spec:
               initContainers:
                 - name: init-dind-externals
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["/bin/bash", "-lc"]
+                  command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
                       set -Eeuo pipefail
@@ -204,7 +200,7 @@ spec:
                       [[ "$scratch_device" && "$scratch_fstype" ]] ||
                         fail "scratch volume is not mounted"
                       [[ "$scratch_fstype" == xfs ]] ||
-                        fail "expected the Turin local scratch XFS volume, got filesystem $scratch_fstype"
+                        fail "expected a local scratch XFS volume, got filesystem $scratch_fstype"
                       [[ "$scratch_device" != overlay && "$scratch_device" != "$root_device" ]] ||
                         fail "scratch path resolves to the runner root filesystem ($scratch_device)"
 
@@ -316,7 +312,7 @@ spec:
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["/bin/bash", "-lc"]
+                  command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
                       set -euo pipefail
@@ -339,6 +335,10 @@ spec:
                   env:
                     - name: ACTIONS_RUNNER_CONTAINER_HOOKS
                       value: /home/runner/k8s/index.js
+                    - name: ARC_RUNNER_NODE_NAME
+                      valueFrom:
+                        fieldRef:
+                          fieldPath: spec.nodeName
                     - name: ACTIONS_RUNNER_POD_NAME
                       valueFrom:
                         fieldRef:
@@ -411,7 +411,7 @@ spec:
                       spec:
                         accessModes:
                           - ReadWriteOnce
-                        storageClassName: local-path-turin-nvme-transcend
+                        storageClassName: local-path-ci-amd64
                         volumeMode: Filesystem
                         resources:
                           requests:
@@ -420,12 +420,38 @@ spec:
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
+              affinity:
+                nodeAffinity:
+                  requiredDuringSchedulingIgnoredDuringExecution:
+                    nodeSelectorTerms:
+                      - matchExpressions:
+                          - key: kubernetes.io/hostname
+                            operator: In
+                            values:
+                              - turin
+                              - talos-192-168-1-194
+              tolerations:
+                - key: workload.proompteng.ai/compute-local
+                  operator: Equal
+                  value: "true"
+                  effect: NoSchedule
+              topologySpreadConstraints:
+                # Four 16Gi runners cannot fit Ryzen's 61.82Gi allocatable. Allow the
+                # nine shared-label slots to reach three on Ryzen and six on Turin.
+                - maxSkew: 3
+                  minDomains: 2
+                  topologyKey: kubernetes.io/hostname
+                  whenUnsatisfiable: DoNotSchedule
+                  nodeTaintsPolicy: Honor
+                  labelSelector:
+                    matchLabels:
+                      actions.github.com/scale-set-name: arc-amd64
+                      app.kubernetes.io/component: runner
     - repoURL: ghcr.io
       chart: actions/actions-runner-controller-charts/gha-runner-scale-set
       targetRevision: 0.14.2
       helm:
         releaseName: arc-runner-set-analysis
-        skipCrds: false
         valuesObject:
           controllerServiceAccount:
             name: arc-controller-gha-rs-controller
@@ -465,7 +491,7 @@ spec:
               initContainers:
                 - name: init-dind-externals
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/"]
+                  command: [ "cp", "-r", "-v", "/home/runner/externals/.", "/home/runner/tmpDir/" ]
                   resources:
                     requests:
                       cpu: "100m"
@@ -476,7 +502,7 @@ spec:
               containers:
                 - name: runner
                   image: registry.ide-newton.ts.net/lab/arc-runner@sha256:a8c4b666048512444f9304166a049fd18dff51367af568e1248f59ec5bb59ea0
-                  command: ["/bin/bash", "-lc"]
+                  command: [ "/bin/bash", "-lc" ]
                   args:
                     - |
                       set -euo pipefail
@@ -551,7 +577,6 @@ spec:
                   emptyDir: {}
                 - name: dind-externals
                   emptyDir: {}
-
   destination:
     server: https://kubernetes.default.svc
     namespace: arc

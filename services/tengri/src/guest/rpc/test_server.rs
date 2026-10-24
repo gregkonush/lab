@@ -9,6 +9,7 @@ type Handler<Input, Output> = Arc<dyn Fn(Request<Input>) -> Result<Output, Statu
 pub(crate) struct TestService {
     pub get_info: Option<Handler<proto::Empty, proto::GuestInfo>>,
     pub open_editor: Option<Handler<proto::Empty, proto::Editor>>,
+    pub open_browser: Option<Handler<proto::Empty, proto::Browser>>,
     pub list_files: Option<Handler<proto::Path, proto::FileList>>,
     pub read_file: Option<Handler<proto::Path, proto::FileContent>>,
     pub write_file: Option<Handler<proto::FileWrite, proto::FileWriteResult>>,
@@ -21,17 +22,10 @@ pub(crate) struct TestService {
     pub terminate_terminal: Option<Handler<proto::TerminalId, proto::Empty>>,
     pub codex_call: Option<Handler<proto::CodexRequest, proto::CodexResult>>,
     pub codex_login: Option<Handler<proto::Empty, proto::CodexLoginState>>,
-    pub resolve_codex_approval: Option<Handler<proto::CodexApproval, proto::Empty>>,
 }
 
 #[tonic::async_trait]
 impl proto::nanoagent_service_server::NanoagentService for TestService {
-    async fn refresh_spire_bootstrap(
-        &self,
-        _: Request<proto::SpireBootstrap>,
-    ) -> Result<Response<proto::Empty>, Status> {
-        Err(Status::unimplemented("fixture has no SPIRE agent"))
-    }
     async fn get_info(
         &self,
         request: Request<proto::Empty>,
@@ -48,6 +42,15 @@ impl proto::nanoagent_service_server::NanoagentService for TestService {
         self.open_editor
             .as_ref()
             .ok_or_else(|| Status::unimplemented("OpenEditor"))?(request)
+        .map(Response::new)
+    }
+    async fn open_browser(
+        &self,
+        request: Request<proto::Empty>,
+    ) -> Result<Response<proto::Browser>, Status> {
+        self.open_browser
+            .as_ref()
+            .ok_or_else(|| Status::unimplemented("OpenBrowser"))?(request)
         .map(Response::new)
     }
     async fn list_files(
@@ -175,15 +178,6 @@ impl proto::nanoagent_service_server::NanoagentService for TestService {
             .ok_or_else(|| Status::unimplemented("CodexLogin"))?(request)
         .map(Response::new)
     }
-    async fn resolve_codex_approval(
-        &self,
-        request: Request<proto::CodexApproval>,
-    ) -> Result<Response<proto::Empty>, Status> {
-        self.resolve_codex_approval
-            .as_ref()
-            .ok_or_else(|| Status::unimplemented("ResolveCodexApproval"))?(request)
-        .map(Response::new)
-    }
     type WatchCodexEventsStream =
         Pin<Box<dyn Stream<Item = Result<proto::CodexEvent, Status>> + Send>>;
     async fn watch_codex_events(
@@ -223,6 +217,7 @@ impl TestServer {
                 token: "fixture-token".into(),
                 http: reqwest::Client::new(),
                 preview_tls: None,
+                claim_headers: Default::default(),
             },
             server,
         }

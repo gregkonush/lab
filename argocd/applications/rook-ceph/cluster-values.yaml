@@ -74,19 +74,8 @@ cephClusterSpec:
       rgw_s3_auth_use_sts: "false"
     osd:
       bluestore_cache_autotune: "true"
-      # Clear scrub debt on the shared HDDs. Scrub shares the background best-effort
-      # class with backfill, snaptrim and PG deletion; it is not background recovery.
-      osd_mclock_profile: "custom"
-      # Reservations sum to 100%; zero limits let idle capacity serve any class.
-      osd_mclock_scheduler_client_res: "0.4"
-      osd_mclock_scheduler_client_wgt: "1"
-      osd_mclock_scheduler_client_lim: "0"
-      osd_mclock_scheduler_background_recovery_res: "0.1"
-      osd_mclock_scheduler_background_recovery_wgt: "1"
-      osd_mclock_scheduler_background_recovery_lim: "0"
-      osd_mclock_scheduler_background_best_effort_res: "0.5"
-      osd_mclock_scheduler_background_best_effort_wgt: "2"
-      osd_mclock_scheduler_background_best_effort_lim: "0"
+      # Favor application latency while retaining the built-in background scrub share.
+      osd_mclock_profile: "high_client_ops"
       # Fallback for future HDD OSDs. Current OSDs have per-daemon measured overrides below.
       osd_mclock_max_capacity_iops_hdd: "275"
       # Seagate Exos X24 24TB HDDs advertise 285 MB/s / 272 MiB/s sustained transfer.
@@ -96,8 +85,10 @@ cephClusterSpec:
       # Automatically repair small scrub inconsistencies. Larger damage still requires operator review.
       osd_scrub_auto_repair: "true"
       osd_scrub_auto_repair_num_errors: "5"
-      # Keep concurrent HDD seeks bounded while the profile gives scrubs more capacity.
+      # Bound seek contention on the shared HDDs serving synchronous database WAL.
       osd_max_scrubs: "1"
+      # Recurring backfill must not indefinitely postpone integrity checks.
+      osd_scrub_during_recovery: "true"
       # Equal endpoints allow scrubs all day and overwrite the former 08:00-12:00
       # restriction in Ceph's config store. Keep scrub intervals and debt alerts enabled.
       osd_scrub_begin_hour: "0"
@@ -130,10 +121,21 @@ cephClusterSpec:
     # ampone/talos-192-168-1-203 control-plane slot.
     allowMultiplePerNode: false
 
-  # Keep talos-192-168-1-194 as control-plane only (mon node, no OSDs).
+  # Ceph's own services retain Ryzen as the third monitor failure domain.
+  # Application pods consuming Ceph PVCs do not receive this toleration.
   placement:
+    all:
+      tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
     mon:
       tolerations:
+        - key: workload.proompteng.ai/compute-local
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
         - key: node-role.kubernetes.io/control-plane
           operator: Exists
           effect: NoSchedule
@@ -178,6 +180,12 @@ cephClusterSpec:
     ssl: false
 
   network:
+    provider: multus
+    selectors:
+      cluster: rook-ceph/ceph-cluster-100g
+    addressRanges:
+      cluster:
+        - 10.100.0.0/24
     connections:
       encryption:
         enabled: false
@@ -276,6 +284,8 @@ cephObjectStores:
       gateway:
         port: 80
         instances: 2
+        rgwCommandFlags:
+          rgw_frontends: "beast port=8080 tcp_nodelay=1"
         priorityClassName: system-cluster-critical
         resources:
           requests:

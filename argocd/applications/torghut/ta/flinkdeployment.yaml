@@ -37,6 +37,9 @@ spec:
       rootLogger.level = INFO
       rootLogger.appenderRef.console.ref = ConsoleAppender
       rootLogger.appenderRef.rolling.ref = RollingFileAppender
+      rootLogger.appenderRef.glitchtip.ref = GlitchTip
+      appender.glitchtip.type = DorvudGlitchTip
+      appender.glitchtip.name = GlitchTip
 
       # Uncomment this if you want to _only_ change Flink's logging
       #logger.flink.name = org.apache.flink
@@ -86,6 +89,7 @@ spec:
       # rootLogger.level = DEBUG
   flinkConfiguration:
     kubernetes.operator.job.upgrade.last-state-fallback.enabled: "false"
+    kubernetes.operator.job.restart.failed: "true"
     state.checkpoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/checkpoints
     state.savepoints.dir: s3a://flink-checkpoints/torghut/technical-analysis/savepoints
     execution.checkpointing.mode: EXACTLY_ONCE
@@ -163,6 +167,13 @@ spec:
               value: sha-a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
             - name: TORGHUT_TA_COMMIT
               value: a5091e63aaef285f750ea2e35d8f5f70eb91a1d4
+            - name: DORVUD_GLITCHTIP_DSN
+              valueFrom:
+                configMapKeyRef:
+                  name: dorvud-glitchtip
+                  key: DORVUD_GLITCHTIP_DSN
+            - name: DORVUD_ERROR_SERVICE
+              value: torghut-ta
           ports:
             - containerPort: 9249
               name: metrics
@@ -190,5 +201,5 @@ spec:
     parallelism: 8
     upgradeMode: savepoint
     state: running
-    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-437918-85237d1073d0
-    savepointRedeployNonce: 2
+    initialSavepointPath: s3a://flink-checkpoints/torghut/technical-analysis/savepoints/savepoint-1d9e60-f3e71d89dac4
+    savepointRedeployNonce: 3

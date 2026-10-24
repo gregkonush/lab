@@ -2,12 +2,22 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result } from '../hash'
 import { JevFailure, JevResponseSchema, type JevResponse } from '../jev/contract'
-import { PositiveMicrosSchema, UnsignedMicrosSchema } from '../schemas'
+import { NonNegativeIntegerSchema, PositiveMicrosSchema, UnsignedMicrosSchema } from '../schemas'
 import type { ReplayJevCall } from './jev-timing'
 
 export const ReplayJevCostModelSchema = Schema.Struct({
   inputMicrosPerMillionTokens: PositiveMicrosSchema,
   outputMicrosPerMillionTokens: UnsignedMicrosSchema,
+})
+
+export const ReplayJevCostSummarySchema = Schema.Struct({
+  callCount: NonNegativeIntegerSchema,
+  unresolvedCallCount: NonNegativeIntegerSchema,
+  inputTokens: UnsignedMicrosSchema,
+  outputTokens: UnsignedMicrosSchema,
+  knownCostMicros: UnsignedMicrosSchema,
+  rounding: Schema.Literal('ceil-each-call-to-one-micro'),
+  basis: Schema.Literal('declared-tariff-pending-invoice-verification'),
 })
 
 const UsageReceiptSchema = Schema.Struct({
@@ -20,7 +30,9 @@ const verifiedUsage = (call: ReplayJevCall): JevResponse['usage'] | undefined =>
   if (outcome.status === 'RECEIVED') return outcome.inference.response.usage
   if (
     outcome.status !== 'FAILED' ||
-    (outcome.failure !== JevFailure.Response && outcome.failure !== JevFailure.Timeout) ||
+    (outcome.failure !== JevFailure.Response &&
+      outcome.failure !== JevFailure.Timeout &&
+      outcome.failure !== JevFailure.Status) ||
     outcome.responseHash === null
   )
     return undefined

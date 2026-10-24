@@ -23,7 +23,7 @@ spec:
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
-    podAntiAffinityType: required
+    podAntiAffinityType: preferred
     topologyKey: kubernetes.io/hostname
   resources:
     requests:

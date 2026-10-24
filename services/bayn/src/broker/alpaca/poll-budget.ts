@@ -1,6 +1,5 @@
 import { Clock, Effect, Ref } from 'effect'
 import { HttpClient, type HttpClientResponse } from 'effect/http'
-import { randomUUID } from 'node:crypto'
 
 const accountLimit = 200
 const minimumRequestCostMs = 600
@@ -31,7 +30,6 @@ const resetTime = (value: string | undefined): number => {
 }
 
 export const makeBrokerObservationBudget = Effect.gen(function* () {
-  const pendingCapture = yield* Ref.make<string | null>(null)
   const state = yield* Ref.make<PollBudgetState>({
     scheduledStartAtMs: yield* Clock.currentTimeMillis,
     requests: 0,
@@ -87,18 +85,6 @@ export const makeBrokerObservationBudget = Effect.gen(function* () {
       })
     })
   return {
-    prepareCapture: Effect.gen(function* () {
-      const token = yield* Effect.sync(randomUUID)
-      yield* Ref.set(pendingCapture, token)
-      return token
-    }),
-    claimCapture: (token: string, startDeadlineMs: number) =>
-      Effect.gen(function* () {
-        const now = yield* Clock.currentTimeMillis
-        return yield* Ref.modify(pendingCapture, (pending) =>
-          pending === token ? [now <= startDeadlineMs, null] : [false, pending],
-        )
-      }),
     beginCapture: Effect.gen(function* () {
       while (true) {
         const now = yield* Clock.currentTimeMillis

@@ -20,6 +20,11 @@ global:
 spire-server:
   enabled: false
 spire-agent:
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   sds:
     enabled: true
     disableSPIFFECertValidation: false
@@ -48,10 +53,15 @@ spire-agent:
   resources:
     requests:
       cpu: 50m
-      memory: 64Mi
-    limits:
       memory: 256Mi
+    limits:
+      memory: 512Mi
 spiffe-csi-driver:
+  tolerations:
+    - key: workload.proompteng.ai/compute-local
+      operator: Equal
+      value: "true"
+      effect: NoSchedule
   kubeletPath: /var/lib/kubelet
   resources:
     requests:
