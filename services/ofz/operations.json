@@ -515,6 +515,16 @@
   },
   {
     "surface": "bff",
+    "operation": "list-threads",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
+    "operation": "set-thread-archived",
+    "action": "ACTION_CODEX_CONTROL"
+  },
+  {
+    "surface": "bff",
     "operation": "resume-thread",
     "action": "ACTION_CODEX_CONTROL"
   },
