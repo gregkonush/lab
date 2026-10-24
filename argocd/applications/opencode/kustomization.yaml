@@ -3,7 +3,6 @@ kind: Kustomization
 namespace: opencode
 resources:
 - research.yaml
-- migration.yaml
 - server.yaml
 - networkpolicy.yaml
 - tailscale-ingress.yaml
@@ -14,4 +13,4 @@ configMapGenerator:
 images:
 - name: opencode-main
   newName: registry.ide-newton.ts.net/lab/opencode
-  digest: sha256:6cd7ddd4702fd29e3f131579bd41b9f483566905efed9af953e0411d733362a0
+  digest: sha256:19c2fbaab504858ee8e80b161b48349411f249bd9b1c423c99bfad17c963de63
