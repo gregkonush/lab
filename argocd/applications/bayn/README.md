@@ -197,18 +197,19 @@ and remaining economic assumptions. Native children and protective disposals sha
 Migration 144 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `91ee179be3c096b91037620e8763b856744602fd86ba8c14b467f15e19d94f8c`.
-The protocol cutover uses OBSERVE authority. All three runtime manifests use read-only broker access with no capital
-authority, activation request or build lineage. After the v21 image is
-published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
-together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
-account losses, peak equity and turnover history remain in place.
+The v21 OBSERVE cutover completed through source `6eb66bb1b15d4bf2ad0f66c151160ab51505db9c` and verified image
+`sha256:a985d7383f644b2e83422d12696095c2d6be2d9ba44e13c52c6e0e54e671ec52`, with migration 144,
+the completed native activation hook, flat inventory and fresh EXACT reconciliation.
+The current sealed PAPER request is `afd0e042639bd40c62f98c529e36f07f3565bebf621cc700c7da810e22c8768e`,
+authored against that verified source and image. All three runtime manifests reference the request and matching
+build lineage; their standalone broker and capital settings remain read-only and none. Native grant activation owns
+PAPER permission. The sealed identity, activation generation and all three build lineages move together through Kargo.
+The request retains the existing broker account, monetary limits and risk-policy hash. Account losses, peak equity
+and turnover history remain in place. The retired v20 request remains in Git history.
 
-The retired v20 PAPER request is `933a611d7eebc8a1348cb615550b3374eddec41f64cb90b3a2be23ea39ea838a`.
-It binds reviewed source `0bd754692dc5c281fb77725ddd47d704237c9098` and verified image
-`sha256:b015e9ec3c22dfda4c21b19a4278c79938a8440a76d942b9c16c292dcdda828a` after the completed OBSERVE cutover.
-That request is retained in Git history and is absent from the current SealedSecret. The native hook still requires
-fresh flat/exact accounting before the new v21 PAPER activation. The signal repair does not establish profitable
-entries or a natural round trip; those require runtime broker and accounting evidence after activation.
+The native hook requires fresh flat/exact accounting before realizing the new v21 PAPER authority. The signal repair
+and a successful activation do not establish profitable entries or a natural round trip. Those require subsequent
+runtime broker fills, posted fees and accounting evidence.
 
 Image promotion does not grant capital authority. A reviewed sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
