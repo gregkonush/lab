@@ -51,11 +51,6 @@ spec:
                     secretKeyRef:
                       name: bayn-evidence-db
                       key: fqdn-uri
-                - name: BAYN_ALPACA_ACCOUNT_ID
-                  valueFrom:
-                    secretKeyRef:
-                      name: bayn-alpaca-auth
-                      key: account-id
                 - name: BAYN_PUBLIC_INFORMATION_STORAGE_ENDPOINT
                   value: http://rook-ceph-rgw-objectstore.rook-ceph.svc:80
                 - name: BAYN_PUBLIC_INFORMATION_BUCKET

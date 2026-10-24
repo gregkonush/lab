@@ -36,7 +36,7 @@ on every connection, including reconnects. The table grants remain the write bou
 changes its own read-only setting. Real PostgreSQL tests check the exact SELECT set and denied trading
 deletion, accounting reads, research-claim reads and schema creation.
 
-The collector receives the reader URI, existing private capture-bucket credentials and account identifier.
+The arrival collector receives only the reader URI and existing private capture-bucket credentials.
 It has no mounted Kubernetes token or model/broker credential. Its network policy permits DNS, Bayn
 PostgreSQL and the existing Ceph object store. It exposes no listener.
 
@@ -83,6 +83,8 @@ bayn-jev-study-export --session YYYY-MM-DD --output /private/new-session-directo
 It exports the complete recorded cycle/batch cut, including no-batch cycles, management, exclusions,
 abstentions and pending results. It binds raw data bytes and inventory counts in the native receipt. A new
 private directory is required. This command does not claim complete source/controller coverage.
+Run it separately with the account identifier and filesystem allowance described in the
+[session export procedure](study-evidence-export.md#execution-and-storage); the arrival CronJob has neither.
 
 Timing collection and verification remain a separate boundary. Retain original Tempo responses before
 their retention window expires and pair them with exact stored decisions through the
