@@ -1,3 +1,4 @@
+import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
 import executableProfitLimits from '../../migrations/0143_executable_profit_limits'
 import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_append_locality'
 import fundedPlanCoverage from '../../migrations/0141_funded_plan_coverage'
@@ -146,6 +147,7 @@ import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
   '143_executable_profit_limits': executableProfitLimits,
+  '144_aligned_signal_periods': alignedSignalPeriods,
   '142_native_arrival_append_locality': nativeArrivalAppendLocality,
   '140_economic_trade_plans': economicTradePlans,
   '141_funded_plan_coverage': fundedPlanCoverage,
