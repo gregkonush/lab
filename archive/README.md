@@ -1,6 +1,6 @@
 # Archive
 
-This directory contains deprecated/outdated runbooks and manifests kept for historical
+This directory contains deprecated/outdated runbooks, docs and manifests kept for historical
 reference.
 
 Rules:

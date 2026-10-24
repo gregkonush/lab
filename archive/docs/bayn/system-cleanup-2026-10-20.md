@@ -1,7 +1,8 @@
 # Bayn system cleanup, October 20, 2026
 
 > **Archived record.** This is a point-in-time audit, not current guidance. The migrations it inspects have been
-> applied, and it is not a retention policy or a continuing health guarantee. See the [archive index](README.md).
+> applied, and it is not a retention policy or a continuing health guarantee. Current guidance is in the
+> [service README](../../../services/bayn/README.md) and [architecture](../../../docs/bayn/architecture.md).
 
 ## Scope and evidence
 
