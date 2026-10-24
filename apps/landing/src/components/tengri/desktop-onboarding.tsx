@@ -7,7 +7,7 @@ import type { ReactNode } from 'react'
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 
-import { tengriAuthClient } from '@/lib/tengri/auth-client'
+import { startTengriSignIn } from '@/lib/tengri/auth-client'
 import { desktopRefreshDelay, resolveDesktopGate, type DesktopGateState } from '@/lib/tengri/desktop-gate'
 import type { TengriAgent, TengriDesktopSnapshot } from '@/lib/tengri/types'
 import { createAgentFormSchema, type CreateAgentFormValues } from '@/schemas/tengri-agent'
@@ -21,7 +21,9 @@ import {
 } from './desktop-session-storage'
 import { useModalFocus } from './modal-focus'
 import { ReadyDesktop } from './ready-desktop'
+import { TengriMark } from './tengri-mark'
 import { useDesktopReducedMotion } from './use-desktop-reduced-motion'
+import { WindowControls } from './window-controls'
 
 const RecoveryOwnerContext = createContext<string | undefined>(undefined)
 
@@ -109,11 +111,23 @@ export default function DesktopOnboarding() {
   }, [pendingDeletionAgentCreatedAt, pendingDeletionAgentId, refresh])
   useEffect(() => {
     if (pendingDeletionAgentId) return
-    const refreshDelay = desktopRefreshDelay(gate, Date.now())
+    const nextRefreshDelay = () => (snapshotError ? 30_000 : desktopRefreshDelay(gate, Date.now()))
+    const refreshDelay = nextRefreshDelay()
     if (refreshDelay === null) return
-    const timer = window.setTimeout(() => void refresh(), refreshDelay)
-    return () => window.clearTimeout(timer)
-  }, [gate, pendingDeletionAgentId, refresh])
+    let cancelled = false
+    let timer: number
+    const poll = async () => {
+      await refresh()
+      if (!cancelled) {
+        timer = window.setTimeout(() => void poll(), nextRefreshDelay() ?? refreshDelay)
+      }
+    }
+    timer = window.setTimeout(() => void poll(), refreshDelay)
+    return () => {
+      cancelled = true
+      window.clearTimeout(timer)
+    }
+  }, [gate, pendingDeletionAgentId, refresh, snapshotError])
 
   if (gate.kind === 'ready' && snapshot?.user) {
     return (
@@ -132,7 +146,7 @@ export default function DesktopOnboarding() {
 
   return (
     <RecoveryOwnerContext value={recoveryOwnerId}>
-      <main className="font-system relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
+      <main className="font-geist relative min-h-[100svh] overflow-hidden bg-[#080b13] text-white selection:bg-[#6da8ff]/35">
         <div aria-hidden="true" className="absolute inset-0 bg-[url('/tengri/wallpaper.webp')] bg-cover bg-center" />
         <div aria-hidden="true" className="absolute inset-0 bg-black/10" />
         <header className="absolute inset-x-0 top-0 z-20 flex h-8 items-center justify-between border-b border-white/10 bg-white/[0.055] px-4 text-[12px] text-white/72 backdrop-blur-2xl">
@@ -144,7 +158,13 @@ export default function DesktopOnboarding() {
         </header>
         <div className="relative z-10 grid min-h-[100svh] place-items-center px-5 pt-12 pb-8">
           <AnimatePresence mode="wait">
-            <DesktopGate key={gate.kind} gate={gate} onAgentDeleted={beginAgentDeletion} onRefresh={refresh} />
+            <DesktopGate
+              key={`${snapshot?.user?.id}/${gate.kind}`}
+              gate={gate}
+              principalId={snapshot?.user?.id}
+              onAgentDeleted={beginAgentDeletion}
+              onRefresh={refresh}
+            />
           </AnimatePresence>
         </div>
       </main>
@@ -154,10 +174,12 @@ export default function DesktopOnboarding() {
 
 function DesktopGate({
   gate,
+  principalId,
   onAgentDeleted,
   onRefresh,
 }: {
   gate: DesktopGateState
+  principalId?: string
   onAgentDeleted: (agent: TengriAgent) => void
   onRefresh: () => Promise<void>
 }) {
@@ -165,7 +187,7 @@ function DesktopGate({
     return (
       <StatusWindow
         icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
-        title="Starting Tengri"
+        title="Tengri"
         detail="Loading your workspace…"
         progress
       />
@@ -201,7 +223,7 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'create') return <CreateAgentWindow onCreated={onRefresh} />
+  if (gate.kind === 'create') return <CreateAgentWindow principalId={principalId} onCreated={onRefresh} />
   if (gate.kind === 'ready') {
     return (
       <ActionWindow
@@ -213,9 +235,17 @@ function DesktopGate({
       />
     )
   }
-  if (gate.kind === 'sleeping') return <SleepingAgentWindow agent={gate.agent} onChanged={onRefresh} />
+  if (gate.kind === 'sleeping')
+    return <SleepingAgentWindow principalId={principalId} agent={gate.agent} onChanged={onRefresh} />
   if (gate.kind === 'failed') {
-    return <FailedAgentWindow agent={gate.agent} onChanged={onRefresh} onDeleted={onAgentDeleted} />
+    return (
+      <FailedAgentWindow
+        principalId={principalId}
+        agent={gate.agent}
+        onChanged={onRefresh}
+        onDeleted={onAgentDeleted}
+      />
+    )
   }
   if (gate.kind === 'unknown') {
     return (
@@ -245,25 +275,17 @@ function SignInWindow() {
   function signIn() {
     setBusy(true)
     setError('')
-    void tengriAuthClient.signIn
-      .social({ provider: 'github', callbackURL: '/' })
-      .then((result) => {
-        if (result.error) {
-          setError(result.error.message || 'Tengri could not start GitHub sign-in')
-          setBusy(false)
-        }
-      })
-      .catch((cause: unknown) => {
-        setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
-        setBusy(false)
-      })
+    void startTengriSignIn().catch((cause: unknown) => {
+      setError(cause instanceof Error ? cause.message : 'Tengri could not start GitHub sign-in')
+      setBusy(false)
+    })
   }
 
   return (
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Your GitHub identity owns one private Firecracker agent and its persistent workspace."
+      detail="First sign in with GitHub. Then use your saved passkey, or create one if this is your first sign-in."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}
@@ -273,7 +295,7 @@ function SignInWindow() {
   )
 }
 
-function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
+function CreateAgentWindow({ principalId, onCreated }: { principalId?: string; onCreated: () => Promise<void> }) {
   const {
     formState: { errors, isSubmitting },
     handleSubmit,
@@ -287,7 +309,7 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
 
   const createAgent = handleSubmit(async ({ displayName }) => {
     try {
-      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName })
+      await runTengriAction<TengriAgent>({ action: 'create-agent', displayName }, { principalId })
       await onCreated()
     } catch (cause) {
       setError('root.server', { message: cause instanceof Error ? cause.message : 'Agent could not be created' })
@@ -320,9 +342,9 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
           </p>
         ) : null}
         <dl className="mt-5 grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-white/10 bg-white/10 text-center">
-          <Resource label="CPU" value="2 cores" />
-          <Resource label="Memory" value="4 GiB" />
-          <Resource label="Workspace" value="16 GiB" />
+          <Resource label="CPU" value="4 cores" />
+          <Resource label="Memory" value="8 GiB" />
+          <Resource label="Workspace" value="32 GiB" />
         </dl>
         {errors.root?.server ? (
           <p
@@ -349,7 +371,15 @@ function CreateAgentWindow({ onCreated }: { onCreated: () => Promise<void> }) {
   )
 }
 
-function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChanged: () => Promise<void> }) {
+function SleepingAgentWindow({
+  principalId,
+  agent,
+  onChanged,
+}: {
+  principalId?: string
+  agent: TengriAgent
+  onChanged: () => Promise<void>
+}) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
 
@@ -357,7 +387,10 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     setBusy(true)
     setError('')
     try {
-      await runTengriAction<TengriAgent>({ action: 'resume-agent', agentId: agent.id })
+      await runTengriAction<TengriAgent>(
+        { action: 'resume-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       await onChanged()
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : 'Agent could not be resumed')
@@ -370,7 +403,7 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <Moon className="h-7 w-7 text-[#b7a6ff]" />}
       title={busy ? 'Waking your agent' : `${agent.displayName} is sleeping`}
-      detail="The microVM Pod is stopped. Your workspace and Codex state remain on persistent storage."
+      detail="Your workspace, running processes, and Codex state are saved to disk."
       error={error}
       actionIcon={<Play aria-hidden="true" className="h-4 w-4 fill-current" />}
       actionBusy={busy}
@@ -382,54 +415,27 @@ function SleepingAgentWindow({ agent, onChanged }: { agent: TengriAgent; onChang
 
 function FailedAgentWindow({
   agent,
+  principalId,
   onChanged,
   onDeleted,
 }: {
   agent: TengriAgent
+  principalId?: string
   onChanged: () => Promise<void>
   onDeleted: (agent: TengriAgent) => void
 }) {
   const [deleteBusy, setDeleteBusy] = useState(false)
   const [error, setError] = useState('')
   const [confirmOpen, setConfirmOpen] = useState(false)
-  const [sleepBusy, setSleepBusy] = useState(false)
-  const [sleepCommitted, setSleepCommitted] = useState(false)
-
-  useEffect(() => {
-    if (!sleepCommitted) return
-    let cancelled = false
-    let timer: number | undefined
-
-    const refreshUntilSleeping = async () => {
-      await onChanged()
-      if (!cancelled) timer = window.setTimeout(() => void refreshUntilSleeping(), 2_000)
-    }
-    void refreshUntilSleeping()
-
-    return () => {
-      cancelled = true
-      if (timer !== undefined) window.clearTimeout(timer)
-    }
-  }, [onChanged, sleepCommitted])
-
-  async function preserveWorkspace() {
-    setSleepBusy(true)
-    setError('')
-    try {
-      await runTengriAction<TengriAgent>({ action: 'sleep-agent', agentId: agent.id })
-      setSleepCommitted(true)
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The failed agent could not be stopped')
-    } finally {
-      setSleepBusy(false)
-    }
-  }
 
   async function deleteAgent() {
     setDeleteBusy(true)
     setError('')
     try {
-      await runTengriAction<null>({ action: 'delete-agent', agentId: agent.id })
+      await runTengriAction<null>(
+        { action: 'delete-agent', agentId: agent.id, workspaceUid: agent.uid },
+        { principalId },
+      )
       onDeleted(agent)
       publishDeletedDesktopState(agent.id)
       setConfirmOpen(false)
@@ -440,17 +446,6 @@ function FailedAgentWindow({
     }
   }
 
-  if (sleepCommitted) {
-    return (
-      <StatusWindow
-        icon={<LoaderCircle className="h-7 w-7 animate-spin text-[#8abfff]" />}
-        title="Putting agent to sleep"
-        detail="Stopping the failed Firecracker guest while keeping the persistent workspace."
-        progress
-      />
-    )
-  }
-
   return (
     <>
       <div aria-hidden={confirmOpen || undefined} inert={confirmOpen || undefined}>
@@ -459,14 +454,13 @@ function FailedAgentWindow({
           title="Agent could not start"
           detail={agent.message || agent.conditions.at(-1)?.message || 'Tengri reported a guest startup failure.'}
           error={error}
-          actionIcon={<Moon aria-hidden="true" className="h-4 w-4" />}
-          actionBusy={sleepBusy}
-          actionLabel="Sleep and Keep Workspace"
-          onAction={() => void preserveWorkspace()}
+          actionBusy={deleteBusy}
+          actionLabel="Refresh Status"
+          onAction={() => void onChanged()}
           secondaryAction={
             <button
               type="button"
-              disabled={sleepBusy || deleteBusy}
+              disabled={deleteBusy}
               onClick={() => setConfirmOpen(true)}
               className="inline-flex items-center gap-2 rounded-xl bg-red-700 px-4 py-2.5 text-sm font-semibold text-white outline-none transition hover:bg-red-600 focus-visible:ring-2 focus-visible:ring-red-200 disabled:opacity-40"
             >
@@ -570,12 +564,8 @@ function LifecycleWindow({
       transition={{ duration: reducedMotion ? 0 : 0.2, ease: [0.22, 1, 0.36, 1] }}
       onKeyDown={interactive ? modalFocus.onKeyDown : undefined}
     >
-      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-4">
-        <div aria-hidden="true" className="flex gap-2">
-          <span className="h-3 w-3 rounded-full bg-[#ff5f57]" />
-          <span className="h-3 w-3 rounded-full bg-[#febc2e]" />
-          <span className="h-3 w-3 rounded-full bg-[#28c840]" />
-        </div>
+      <div className="relative flex h-11 items-center border-b border-white/9 bg-white/[0.035] px-2.5">
+        <WindowControls active title={title} />
         <span className="pointer-events-none absolute inset-x-24 truncate text-center text-xs font-semibold text-white/54">
           {title}
         </span>
@@ -628,15 +618,6 @@ function ProgressBar() {
         transition={reducedMotion ? undefined : { repeat: Number.POSITIVE_INFINITY, duration: 1.2, ease: 'easeInOut' }}
       />
     </div>
-  )
-}
-
-function TengriMark() {
-  return (
-    <span aria-hidden="true" className="relative grid h-4 w-4 place-items-center rounded-full border border-white/60">
-      <span className="h-1.5 w-1.5 rounded-full bg-white/85" />
-      <span className="absolute -top-1 h-1.5 w-px bg-white/60" />
-    </span>
   )
 }
 

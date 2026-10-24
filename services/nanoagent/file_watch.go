@@ -1,9 +1,7 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -166,7 +164,7 @@ func (files *fileWatcher) handleWatcherError(err error) {
 
 func (files *fileWatcher) publishResetLocked() {
 	files.sequence++
-	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: "/"}
+	reset := fileEvent{Sequence: files.sequence, Kind: "reset", Path: workspacePath}
 	files.buffer = []fileEvent{reset}
 	for id, subscription := range files.subscriptions {
 		delivery := reset
@@ -362,11 +360,11 @@ func (files *fileWatcher) suppressRawEvent(event fileEvent, absolutePath string)
 func (files *fileWatcher) deferExpectedEventLocked(expected *expectedFileRename, deferred deferredFileEvent) {
 	if len(expected.deferredEvents) == 1 &&
 		expected.deferredEvents[0].event.Kind == "reset" &&
-		expected.deferredEvents[0].event.Path == "/" {
+		expected.deferredEvents[0].event.Path == workspacePath {
 		return
 	}
 	if len(expected.deferredEvents) >= fileRenameDeferredEventLimit {
-		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: "/"}}}
+		expected.deferredEvents = []deferredFileEvent{{event: fileEvent{Kind: "reset", Path: workspacePath}}}
 		return
 	}
 	expected.deferredEvents = append(expected.deferredEvents, deferred)
@@ -498,7 +496,7 @@ func (files *fileWatcher) publishPairedRename(source string, generation uint64, 
 		files.invalidateDirectoryLocked(expected.rawSource)
 		for _, deferred := range expected.deferredEvents {
 			if deferred.event.Kind == "reset" {
-				if deferred.event.Path == "/" {
+				if deferred.event.Path == workspacePath {
 					files.publishResetLocked()
 				} else {
 					files.publishScopedResetLocked(deferred.event.Path)
@@ -730,74 +728,9 @@ func (files *fileWatcher) invalidateDirectoryLocked(directory string) {
 	delete(files.watched, directory)
 }
 
-func (server *apiServer) handleWatchFiles(writer http.ResponseWriter, request *http.Request) {
-	target, err := server.workspace.resolveExisting(request.URL.Query().Get("path"))
-	if err != nil {
-		writeWorkspaceError(writer, err)
-		return
-	}
-	info, err := os.Stat(target)
-	if err != nil || !info.IsDir() {
-		writeAPIError(writer, http.StatusBadRequest, "watch path must be a directory")
-		return
-	}
-	flusher, ok := writer.(http.Flusher)
-	if !ok {
-		writeAPIError(writer, http.StatusInternalServerError, "streaming is unavailable")
-		return
-	}
-	// An initial Tengri subscription omits the cursor and tails from the current
-	// sequence. Explicit cursors, including zero, retain replay semantics for
-	// reconnects and direct Nanoagent clients.
-	var id uint64
-	var events <-chan fileEvent
-	if request.URL.Query().Has("after") {
-		after, parseErr := strconv.ParseUint(request.URL.Query().Get("after"), 10, 64)
-		if parseErr != nil {
-			writeAPIError(writer, http.StatusBadRequest, "after must be an unsigned sequence")
-			return
-		}
-		id, events, err = server.fileWatcher.subscribe(after, server.workspace.displayPath(target), target)
-	} else {
-		id, events, err = server.fileWatcher.subscribeCurrent(server.workspace.displayPath(target), target)
-	}
-	if err != nil {
-		writeAPIError(writer, http.StatusTooManyRequests, err.Error())
-		return
-	}
-	defer server.fileWatcher.unsubscribe(id)
-	writer.Header().Set("Content-Type", "application/x-ndjson")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.Header().Set("X-Content-Type-Options", "nosniff")
-	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
-	heartbeat := time.NewTicker(15 * time.Second)
-	defer heartbeat.Stop()
-	encoder := json.NewEncoder(writer)
-	for {
-		select {
-		case <-request.Context().Done():
-			return
-		case event, open := <-events:
-			if !open {
-				return
-			}
-			if err := encoder.Encode(event); err != nil {
-				return
-			}
-			flusher.Flush()
-		case <-heartbeat.C:
-			if _, err := writer.Write([]byte("\n")); err != nil {
-				return
-			}
-			flusher.Flush()
-		}
-	}
-}
-
 func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 	if event.Kind == "reset" {
-		return event.Path == "/" || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
+		return event.Path == workspacePath || pathWithin(prefix, event.Path) || pathWithin(event.Path, prefix)
 	}
 	if pathMatchesWatchPrefix(prefix, event.Path) || pathMatchesWatchPrefix(prefix, event.routingPath) {
 		return true
@@ -808,7 +741,7 @@ func fileEventMatchesPrefix(event fileEvent, prefix string) bool {
 }
 
 func pathMatchesWatchPrefix(prefix string, path string) bool {
-	return path != "" && (prefix == "/" || pathWithin(prefix, path))
+	return path != "" && pathWithin(prefix, path)
 }
 
 func parseBoundedInt(value string, minimum, maximum int) (int, error) {

@@ -11,20 +11,22 @@ import ./bun-workspace-service.nix {
   serviceName = "bumba";
   packageName = "@proompteng/bumba";
   depsHash = {
-    x86_64-linux = "sha256-3bYjnzGcQW/tNWbrRq1WQTZYyvvdBbEWcREM3dy22ak=";
-    aarch64-linux = "sha256-+HVNk4KyoRVK0bXmIRy5CtmyIVgSQucwAihDgFCmy0A=";
+    x86_64-linux = "sha256-R/H9X//JXksoAM4jm7aNDeSNhgrt5GUI99IDgG6Ama4=";
+    aarch64-linux = "sha256-gojR9ee04L/POEAMzccKbgGjOTtZQgcMXPTVgjWTSvk=";
   };
   installFilters = [
     "@proompteng/bumba"
-    "@proompteng/temporal-bun-sdk"
   ];
   sourcePaths = [
-    "packages/temporal-bun-sdk"
     "services/bumba"
   ];
   buildCommands = [
-    "bun --cwd=packages/temporal-bun-sdk run build"
+    "bun services/bumba/scripts/verify-temporal-runtime.ts services/bumba"
   ];
+  runtimeInstallPhase = ''
+    cp -R "$TMPDIR/work/." "$out/app/"
+    bun "$out/app/services/bumba/scripts/verify-temporal-runtime.ts" "$out/app/services/bumba"
+  '';
   command = [
     "tini"
     "-g"

@@ -4,6 +4,7 @@
   repoRoot,
   bun,
   nodejs,
+  repoRevision ? "dirty",
 }:
 
 import ./bun-workspace-service.nix {
@@ -11,8 +12,8 @@ import ./bun-workspace-service.nix {
   serviceName = "proompteng";
   packageName = "landing";
   depsHash = {
-    x86_64-linux = "sha256-zU6F/cG9/KbQmEn3XfNQ/j2rUUqGWRn7LIuVnW2GM50=";
-    aarch64-linux = "sha256-MYvTE3Gp+/B8tUeyKYFcyXfQYSIJ55ScJah+SP29REY=";
+    x86_64-linux = "sha256-PTO4SoB1vaBGTc75X6tkg6j2lBdtJqz8C8Y8QXBDVOw=";
+    aarch64-linux = "sha256-C+6/BVMsoBo6r2Xwoc6w8ZeB7IWMPG3x5ENxCUPIaZQ=";
   };
   dependencyClosure = "bunCache";
   installFilters = [
@@ -26,6 +27,8 @@ import ./bun-workspace-service.nix {
     "packages/backend"
     "packages/design"
     "services/tengri/proto"
+    "services/tengri/migrations"
+    "services/tengri/fixtures"
   ];
   buildCommands = [
     "bun --cwd=apps/landing run prebuild"
@@ -40,6 +43,8 @@ import ./bun-workspace-service.nix {
     fi
     mkdir -p "$out/app/services/tengri/proto"
     cp -R "$TMPDIR/work/services/tengri/proto/." "$out/app/services/tengri/proto/"
+    mkdir -p "$out/app/services/tengri/migrations"
+    cp -R "$TMPDIR/work/services/tengri/migrations/." "$out/app/services/tengri/migrations/"
   '';
   command = [
     "node"
@@ -47,6 +52,7 @@ import ./bun-workspace-service.nix {
   ];
   workingDir = "/app/apps/landing";
   env = [
+    "APP_SOURCE_REVISION=${repoRevision}"
     "PORT=3000"
     "HOSTNAME=0.0.0.0"
     "TENGRI_PROTO_PATH=/app/services/tengri/proto/proompteng/runtime/v1/microvm.proto"

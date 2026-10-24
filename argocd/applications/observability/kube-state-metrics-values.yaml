@@ -1,4 +1,9 @@
 fullnameOverride: observability-kube-state-metrics
+image:
+  registry: registry.k8s.io
+  repository: kube-state-metrics/kube-state-metrics
+  tag: v2.20.0
+  sha: sha256:42cfe3723a5f058171c627537fb57a3ea0f26e4380fa18555a95cb1a1b4cfc5b
 prometheusScrape: false
 replicas: 1
 
@@ -149,6 +154,27 @@ customResourceState:
                   path:
                     - spec
                     - replicas
+            - name: deployment_status_ready_replicas
+              help: Ready pods of the updated RestateDeployment revision, excluding retained revisions.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, readyReplicas]
+                  nilIsZero: false
+            - name: deployment_metadata_generation
+              help: Desired RestateDeployment object generation.
+              each:
+                type: Gauge
+                gauge:
+                  path: [metadata, generation]
+                  nilIsZero: false
+            - name: deployment_status_observed_generation
+              help: RestateDeployment generation observed by its controller.
+              each:
+                type: Gauge
+                gauge:
+                  path: [status, observedGeneration]
+                  nilIsZero: false
 
 resources:
   requests:
