@@ -14,6 +14,7 @@ export interface ExecutionIntentPricingInput {
   readonly quantityAtoms: bigint
   readonly referencePriceMicros: bigint
   readonly limitSlippageBps: bigint
+  readonly minimumSellPriceMicros?: bigint
 }
 
 export interface ExecutionIntentPricing {
@@ -29,7 +30,7 @@ export type ExecutionIntentPricingFailure =
     }
   | {
       readonly _tag: 'InvalidQuoteBoundIntent'
-      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage'
+      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage' | 'invalid-sell-floor'
       readonly quantityAtoms: bigint
       readonly referencePriceMicros: bigint
     }
@@ -64,12 +65,25 @@ export const deriveExecutionIntentPricing = (
     })
   }
   const buy = input.side === OrderSide.Buy
+  if (input.minimumSellPriceMicros !== undefined && (buy || input.minimumSellPriceMicros <= 0n)) {
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-sell-floor',
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  }
   const boundary = input.referencePriceMicros * (10_000n + (buy ? input.limitSlippageBps : -input.limitSlippageBps))
-  const price = quantizeInstrumentPriceMicros(
+  const quotePrice = quantizeInstrumentPriceMicros(
     input.symbol,
     (boundary + (buy ? 0n : 9_999n)) / 10_000n,
     buy ? 'DOWN' : 'UP',
   )
+  const floor =
+    input.minimumSellPriceMicros === undefined
+      ? quotePrice
+      : quantizeInstrumentPriceMicros(input.symbol, input.minimumSellPriceMicros, 'UP')
+  const price = quotePrice < floor ? floor : quotePrice
   const notionalLimitMicros = (input.quantityAtoms * price + (buy ? quantityScale - 1n : 0n)) / quantityScale
   if (price <= 0n || notionalLimitMicros <= 0n)
     return Result.fail({

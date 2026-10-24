@@ -51,6 +51,7 @@ import { parseCodexModelPage, type TengriCodexOptions } from './codex-models'
 import { SpiffeSource, parseSpiffeId, verifySpiffePeer } from './spiffe'
 import { tengriPowerSettingsSchema, type TengriPowerSettings } from './schemas'
 import { codexHistoryResponse } from './codex-history-stream'
+import { codexRunSchema, type TengriCodexRun } from './codex-run'
 import type { CodexHistoryPage } from './codex-history'
 import { TENGRI_UNARY_TIMEOUT_MS } from './limits'
 
@@ -592,16 +593,18 @@ export async function sendCodexTurn(
   identity: TengriIdentity,
   agentId: string,
   threadId: string,
+  operationId: string,
   text: string,
   options: TengriCodexOptions = {},
   images: readonly TengriCodexImage[] = [],
 ) {
-  return normalizeTurn(
+  return normalizeRun(
     await unary<RawRecord>(
       'sendCodexInput',
       {
         agentId,
         threadId,
+        operationId,
         text,
         ...options,
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
@@ -611,11 +614,40 @@ export async function sendCodexTurn(
   )
 }
 
+export async function getActiveCodexRun(identity: TengriIdentity, agentId: string) {
+  const result = await unary<RawRecord>('getActiveCodexRun', { id: agentId }, identity)
+  return result.runId ? normalizeRun(result) : null
+}
+
+export async function getCodexRun(identity: TengriIdentity, agentId: string, runId: string) {
+  return normalizeRun(await unary<RawRecord>('getCodexRun', { agentId, runId }, identity))
+}
+
+function normalizeRun(value: RawRecord): TengriCodexRun {
+  if (typeof value.stateJson !== 'string') throw new TengriUnavailableError('Invalid durable run state')
+  let state: unknown
+  try {
+    state = JSON.parse(value.stateJson)
+  } catch {
+    throw new TengriUnavailableError('Invalid durable run state')
+  }
+  const parsed = codexRunSchema.safeParse({
+    runId: value.runId,
+    agentId: value.agentId,
+    threadId: value.threadId,
+    state,
+  })
+  if (!parsed.success) throw new TengriUnavailableError('Invalid durable run state')
+  return parsed.data
+}
+
 export async function steerCodexTurn(
   identity: TengriIdentity,
   agentId: string,
   threadId: string,
   turnId: string,
+  operationId: string,
+  runId: string,
   text: string,
   images: readonly TengriCodexImage[] = [],
 ) {
@@ -623,9 +655,11 @@ export async function steerCodexTurn(
     await unary<RawRecord>(
       'steerCodexInput',
       {
+        runId,
         agentId,
         threadId,
         turnId,
+        operationId,
         text,
         images: images.map((image) => ({ mediaType: image.mediaType, content: Buffer.from(image.data, 'base64') })),
       },
@@ -634,21 +668,28 @@ export async function steerCodexTurn(
   )
 }
 
-export async function interruptCodexTurn(identity: TengriIdentity, agentId: string, threadId: string, turnId: string) {
-  await unary('interruptCodexTurn', { agentId, threadId, turnId }, identity)
+export async function interruptCodexTurn(
+  identity: TengriIdentity,
+  agentId: string,
+  runId: string,
+  operationId: string,
+) {
+  await unary('interruptCodexTurn', { agentId, runId, operationId }, identity)
 }
 
 export async function answerCodexQuestions(
   identity: TengriIdentity,
   agentId: string,
   approvalId: string,
+  runId: string,
+  operationId: string,
   response: import('./codex-input').TengriCodexInputResponse,
 ) {
   const { codexInputResponseSchema } = await import('./codex-input')
   const validated = codexInputResponseSchema.parse(response)
   await unary<RawRecord>(
     'resolveCodexApproval',
-    { agentId, approvalId, responseJson: Buffer.from(JSON.stringify(validated)) },
+    { agentId, approvalId, runId, operationId, responseJson: Buffer.from(JSON.stringify(validated)) },
     identity,
     130_000,
   )
@@ -658,6 +699,8 @@ export async function resolveCodexApproval(
   identity: TengriIdentity,
   agentId: string,
   approvalId: string,
+  runId: string,
+  operationId: string,
   decision:
     | 'approve-once'
     | 'approve-session'
@@ -672,7 +715,7 @@ export async function resolveCodexApproval(
     'approve-network-policy-amendment': 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
     deny: 'CODEX_APPROVAL_DECISION_DENY',
   }[decision]
-  await unary('resolveCodexApproval', { agentId, approvalId, decision: wireDecision }, identity)
+  await unary('resolveCodexApproval', { agentId, approvalId, runId, operationId, decision: wireDecision }, identity)
 }
 
 export async function issuePreviewSession(
@@ -954,7 +997,7 @@ async function metadata(
   const { injectTrace } = await import('@/lib/observability/server')
   injectTrace((key, header) => value.set(key, header))
   const binding = await invokeUnary<RawRecord>(client, 'getRequestAudience', {}, value, 2000, signal)
-  if (binding.guestApiProtocolVersion !== 5) {
+  if (binding.guestApiProtocolVersion !== 7) {
     throw new TengriUnavailableError('Tengri controller does not support the required guest API version')
   }
   if (typeof binding.audience !== 'string') throw new TengriUnavailableError('Tengri request audience is missing')
@@ -1008,7 +1051,7 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
     case grpc.status.PERMISSION_DENIED:
       return new TengriUnavailableError('Tengri request is not permitted', 403)
     case grpc.status.NOT_FOUND:
-      if (methodName === 'resumeCodexThread' && isMissingCodexConversation(error.details)) {
+      if (methodName === 'resumeCodexThread' && error.details === 'Codex conversation could not be found') {
         return new TengriUnavailableError('Codex conversation could not be found', 404, 'conversation_not_found')
       }
       return new TengriUnavailableError('Tengri resource was not found', 404)
@@ -1022,6 +1065,16 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       }
       return new TengriUnavailableError('Tengri resource already exists', 409)
     case grpc.status.FAILED_PRECONDITION:
+      if (
+        ['steerCodexInput', 'resolveCodexApproval'].includes(methodName) &&
+        error.details === 'Codex control was not dispatched'
+      ) {
+        return new TengriUnavailableError(
+          'The turn changed before this control was delivered. Try again.',
+          409,
+          'control_not_dispatched',
+        )
+      }
       if (
         methodName === 'createAgent' &&
         ['workspace reservation expired', 'workspace reservation released'].includes(error.details)
@@ -1052,20 +1105,6 @@ function mapGrpcError(error: grpc.ServiceError, methodName: string) {
       return new TengriUnavailableError('Tengri request timed out', 504)
     default:
       return new TengriUnavailableError('Tengri control plane is unavailable', 503)
-  }
-}
-
-function isMissingCodexConversation(details: string) {
-  try {
-    const payload: unknown = JSON.parse(details)
-    return (
-      typeof payload === 'object' &&
-      payload !== null &&
-      'error' in payload &&
-      payload.error === 'Codex conversation could not be found'
-    )
-  } catch {
-    return false
   }
 }
 

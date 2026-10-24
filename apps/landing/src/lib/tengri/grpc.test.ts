@@ -91,7 +91,7 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
-let receiverGuestApiProtocolVersion = 5
+let receiverGuestApiProtocolVersion = 7
 let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
@@ -466,12 +466,52 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
+      callback(null, {
+        runId: call.request.operationId,
+        agentId: call.request.agentId,
+        threadId: call.request.threadId,
+        stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+      })
+    },
+    getActiveCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(
+        null,
+        call.request.id === 'agent-empty'
+          ? {}
+          : {
+              runId: '11111111-1111-4111-8111-111111111111',
+              agentId: call.request.id,
+              threadId: 'thread-selected',
+              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+            },
+      )
+    },
+    getCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        runId: call.request.runId,
+        agentId: call.request.agentId,
+        threadId: 'thread-selected',
+        stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+      })
     },
     steerCodexInput(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.text === 'not-dispatched') {
+        callback(serviceError(grpc.status.FAILED_PRECONDITION, 'Codex control was not dispatched'), null)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, { id: 'turn-selected', threadId: call.request.threadId })
@@ -632,7 +672,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       const threadId = String(call.request.threadId)
       if (threadId === 'missing-conversation') {
-        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
+        call.emit('error', serviceError(grpc.status.NOT_FOUND, 'Codex conversation could not be found'))
         return
       }
       if (threadId === 'missing-resource') {
@@ -643,7 +683,7 @@ beforeAll(async () => {
         return
       }
       if (threadId === 'unavailable-conversation') {
-        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
+        call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
       call.write({
@@ -713,6 +753,33 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('identifies a recorded control that was rejected before native dispatch', async () => {
+    const { steerCodexTurn } = await import('./grpc')
+    expect(
+      await rejection(
+        steerCodexTurn(
+          identity,
+          'agent-test',
+          'thread-selected',
+          'turn-selected',
+          '22222222-2222-4222-8222-222222222222',
+          '11111111-1111-4111-8111-111111111111',
+          'not-dispatched',
+        ),
+      ),
+    ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
+  })
+  test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
+    const { getActiveCodexRun } = await import('./grpc')
+    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
+      runId: '11111111-1111-4111-8111-111111111111',
+      agentId: 'agent-test',
+      threadId: 'thread-selected',
+      state: { phase: 'running', turnId: 'turn-selected' },
+    })
+    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
+  })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
     try {
@@ -736,7 +803,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { writeFile } = await import('./grpc')
     const before = fileWriteCalls
     try {
-      for (const version of [0, 4, 6]) {
+      for (const version of [0, 4, 5, 6, 8]) {
         receiverGuestApiProtocolVersion = version
         expect(
           await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
@@ -744,7 +811,7 @@ describe('Tengri gRPC BFF transport', () => {
         expect(fileWriteCalls).toBe(before)
       }
     } finally {
-      receiverGuestApiProtocolVersion = 5
+      receiverGuestApiProtocolVersion = 7
     }
     await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
     expect(fileWriteCalls).toBe(before + 1)
@@ -811,7 +878,14 @@ describe('Tengri gRPC BFF transport', () => {
     } satisfies import('./codex-models').TengriCodexOptions
     await createCodexThread(identity, 'agent-test', options)
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
-    await sendCodexTurn(identity, 'agent-test', 'thread-selected', 'Read the workspace', options)
+    await sendCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      '11111111-1111-4111-8111-111111111111',
+      'Read the workspace',
+      options,
+    )
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
   })
 
@@ -819,14 +893,31 @@ describe('Tengri gRPC BFF transport', () => {
     const { sendCodexTurn, steerCodexTurn } = await import('./grpc')
     const content = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0])
     const images = [{ mediaType: 'image/png' as const, data: content.toString('base64') }]
-    await sendCodexTurn(identity, 'agent-test', 'thread-selected', '', {}, images)
+    await sendCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      '11111111-1111-4111-8111-111111111111',
+      '',
+      {},
+      images,
+    )
     expect(receivedRequest).toMatchObject({
       agentId: 'agent-test',
       text: '',
       images: [{ mediaType: 'image/png', content }],
     })
     expect(metadataContext().actor?.identity).toEqual({ case: 'humanId', value: identity.session.humanId })
-    await steerCodexTurn(identity, 'agent-test', 'thread-selected', 'turn-selected', 'Inspect this', images)
+    await steerCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      'turn-selected',
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      'Inspect this',
+      images,
+    )
     expect(receivedRequest).toMatchObject({
       turnId: 'turn-selected',
       text: 'Inspect this',
@@ -1641,7 +1732,14 @@ describe('Tengri gRPC BFF transport', () => {
   test('sends validated user answers separately from approval decisions', async () => {
     const { answerCodexQuestions } = await import('./grpc')
     const response = { answers: { environment: { answers: ['Staging'] } } }
-    await answerCodexQuestions(identity, 'agent-test', 'question-1', response)
+    await answerCodexQuestions(
+      identity,
+      'agent-test',
+      'question-1',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      response,
+    )
     if (!receivedRequest) throw new Error('The question response did not reach the gRPC server')
     expect(receivedRequest.agentId).toBe('agent-test')
     expect(receivedRequest.approvalId).toBe('question-1')
@@ -1652,18 +1750,36 @@ describe('Tengri gRPC BFF transport', () => {
   test('preserves structured command approval decisions across gRPC', async () => {
     const { resolveCodexApproval } = await import('./grpc')
 
-    await resolveCodexApproval(identity, 'agent-test', 'approval-1', 'approve-exec-policy-amendment')
+    await resolveCodexApproval(
+      identity,
+      'agent-test',
+      'approval-1',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      'approve-exec-policy-amendment',
+    )
     expect(receivedRequest).toEqual({
       agentId: 'agent-test',
       approvalId: 'approval-1',
+      runId: '11111111-1111-4111-8111-111111111111',
+      operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
     })
 
-    await resolveCodexApproval(identity, 'agent-test', 'approval-2', 'approve-network-policy-amendment')
+    await resolveCodexApproval(
+      identity,
+      'agent-test',
+      'approval-2',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      'approve-network-policy-amendment',
+    )
     expect(receivedRequest).toEqual({
       agentId: 'agent-test',
       approvalId: 'approval-2',
+      runId: '11111111-1111-4111-8111-111111111111',
+      operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
     })

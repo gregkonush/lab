@@ -75,7 +75,9 @@ describePostgres('unused schema hard cutover', () => {
         const before = yield* evidence
         yield* postgresMigrations
         expect(yield* evidence).toEqual(before)
-        expect(yield* sql`SELECT max(migration_id)::integer AS id FROM schema_migrations`).toEqual([{ id: 134 }])
+        expect(yield* sql`SELECT migration_id::integer AS id FROM schema_migrations WHERE migration_id = 134`).toEqual([
+          { id: 134 },
+        ])
         for (const table of retiredTables)
           expect(yield* sql`SELECT to_regclass(${`public.${table}`}) AS relation`).toEqual([{ relation: null }])
         for (const table of [

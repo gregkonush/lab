@@ -103,7 +103,6 @@ export const reconciliationForPreparation = <R>(
   refresh: Effect.Effect<ReconciliationPassResult, ReconciliationPassError, R>,
   readAuthority: Effect.Effect<AuthorityState, ReconciliationPassError, R>,
   maximumAgeMs: number,
-  pricingMaximumAgeMs = maximumAgeMs,
 ) =>
   Effect.gen(function* () {
     const previous = yield* Ref.make(initial)
@@ -137,27 +136,18 @@ export const reconciliationForPreparation = <R>(
           const cached = yield* Ref.get(previous)
           const authority = yield* readAuthority
           const now = yield* Clock.currentTimeMillis
-          const reusableUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
           const freshUntil =
-            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, pricingMaximumAgeMs)
-          if (
-            cached !== undefined &&
-            reusableUntil !== undefined &&
-            freshUntil !== undefined &&
-            now < reusableUntil &&
-            now + minimumRemainingMs < freshUntil
-          )
+            cached === undefined ? undefined : reconciliationReusableUntil(cached, authority, now, maximumAgeMs)
+          if (cached !== undefined && freshUntil !== undefined && now + minimumRemainingMs < freshUntil)
             return { reconciliation: cached, freshUntil }
           const reconciliation = yield* refreshAndRemember
           const refreshedAuthority = yield* readAuthority
           const refreshedAt = yield* Clock.currentTimeMillis
-          // Cadence controls reuse, not broker validity: short cadences may still refresh again after pricing.
           const refreshedUntil = reconciliationReusableUntil(
             reconciliation,
             refreshedAuthority,
             refreshedAt,
-            pricingMaximumAgeMs,
+            maximumAgeMs,
           )
           return {
             reconciliation,
@@ -483,6 +473,8 @@ const makeRecoveryFirstCycleDriverEffect = (
 ): Effect.Effect<RecoveryFirstCycleDriver, never, RecoveryFirstRuntime> =>
   Effect.gen(function* () {
     const cadence = yield* Ref.make<ReconciliationCadenceState>({})
+    // A local continuation hint, not evidence or mutation authority. Restarting loses only acceleration.
+    const postExitCloseAt = yield* Ref.make<string | undefined>(undefined)
     // The generation deadline can interrupt reconciliation before its own timeout is reported.
     // Clear this marker before entering any cycle work; only the serialized preflight may retry without restriction.
     const preflightOnly = yield* Ref.make(false)
@@ -494,6 +486,7 @@ const makeRecoveryFirstCycleDriverEffect = (
         capability._tag === 'RecoveryOnly' ? Effect.void : capability.executionProgram.recordReconciliation(result),
       ),
       Effect.tap(() => markMutationReconciliationCompleted(cadence)),
+      Effect.tap(() => Ref.set(postExitCloseAt, undefined)),
       Effect.onExit((exit) =>
         Exit.isFailure(exit) && capability._tag !== 'RecoveryOnly'
           ? capability.executionProgram.invalidateBrokerState
@@ -511,10 +504,27 @@ const makeRecoveryFirstCycleDriverEffect = (
             nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs),
           })),
         )
-      return currentUtcInstant.pipe(
-        Effect.flatMap((observedAt) => observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })),
-        Effect.map((observation) => ({ observation })),
-      )
+      return Effect.gen(function* () {
+        const observedAt = yield* currentUtcInstant
+        const closeAt = yield* Ref.get(postExitCloseAt)
+        const remaining = closeAt === undefined ? 0 : Date.parse(closeAt) - Date.parse(observedAt)
+        const missingPostExitCut =
+          remaining > 0 &&
+          error.operation === 'reconcile' &&
+          error.cause instanceof OperationalError &&
+          error.cause.operation === 'reconciliation' &&
+          error.cause.cause instanceof BrokerReadError &&
+          error.cause.cause.operation === 'preflight' &&
+          error.cause.cause.kind === BrokerReadErrorKind.Timeout &&
+          error.cause.cause.observationFailure === 'NO_ADMISSIBLE_CUT'
+        if (missingPostExitCut) yield* Ref.set(cadence, {})
+        else yield* Ref.set(postExitCloseAt, undefined)
+        const observation = yield* observeMutationPass(startup, { outcome: 'FAILED', observedAt, error })
+        return {
+          observation,
+          ...(missingPostExitCut ? { nextDelayMs: Math.min(mutationConsistencyDelayMs, nextDelayMs, remaining) } : {}),
+        }
+      })
     }
     const observeCycleFailure = (error: CycleRunnerError) =>
       (capability._tag !== 'RecoveryOnly' && shouldRestrictMutationLoopFailure(error)
@@ -567,7 +577,6 @@ const makeRecoveryFirstCycleDriverEffect = (
           preflight,
           reconcile,
           authorityStore.readAuthorityState,
-          Math.min(policy.maxBrokerStateAgeMs, input.reconciliationIntervalMs),
           policy.maxBrokerStateAgeMs,
         )
         const context: CycleRunContext<ObserveDecisionRuntime> = {
@@ -597,6 +606,10 @@ const makeRecoveryFirstCycleDriverEffect = (
           // after a process restart cadence also starts empty and therefore reconciles. Restate persists the shorter
           // one-shot due time in controller state, so the continuation survives worker replacement without duplicating I/O.
           yield* Ref.set(cadence, {})
+          yield* Ref.set(
+            postExitCloseAt,
+            result.logContext.mutationPhase === 'CLOSE' ? result.cycle.window.executionCloseAt : undefined,
+          )
           return {
             result: deferPostMutationReconciliation(result),
             nextDelayMs: recoveryFirstCycleNextDelayMs({ ...input, postMutationDelayMs: result.delayMs }),

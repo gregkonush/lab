@@ -922,6 +922,46 @@ describe('Kafka bootstrap and scoped consumption', () => {
     expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
   })
 
+  test('reports a local bootstrap deadline distinctly while preserving fail-closed retry and cleanup', async () => {
+    const transports: FakeTransport[] = []
+    const logs: unknown[] = []
+    const logger = Logger.make(({ message }) => logs.push(message))
+    await program(
+      Effect.gen(function* () {
+        const projection = yield* makeKafkaMarketProjection(config, [universe], () => {
+          const transport = new FakeTransport()
+          if (transports.length === 0)
+            transport.offsets = async (_topics, timestamp) => positions(timestamp === -1n ? '1' : '0')
+          transports.push(transport)
+          return transport
+        })
+        yield* TestClock.adjust('5 seconds')
+        expect(Exit.isFailure(yield* Effect.exit(projection.read))).toBe(true)
+        expect(transports).toHaveLength(1)
+        yield* TestClock.adjust('2 seconds')
+        expect(logs).toContainEqual([
+          'Kafka market projection cycle failed',
+          expect.objectContaining({
+            operation: 'bootstrap',
+            reason: 'BOOTSTRAP_DEADLINE_EXCEEDED',
+            failureCodes: [],
+            retryableBySupervisor: true,
+          }),
+        ])
+        expect(transports[0]?.closeCount).toBe(1)
+        yield* TestClock.adjust('3 seconds')
+        expect((yield* projection.status).failure).toBeUndefined()
+        yield* projection.read
+        expect(logs).toContainEqual([
+          'Kafka market projection recovered',
+          expect.objectContaining({ reason: 'BOOTSTRAP_DEADLINE_EXCEEDED' }),
+        ])
+      }).pipe(Effect.provide(Logger.layer([logger]))),
+    )
+    expect(transports).toHaveLength(2)
+    expect(transports.every((transport) => transport.closeCount === 1)).toBe(true)
+  })
+
   test('retains the first invalidation cause and reports recovery without private transport details', async () => {
     const transports: FakeTransport[] = []
     const logs: unknown[] = []
@@ -947,7 +987,7 @@ describe('Kafka bootstrap and scoped consumption', () => {
         expect((yield* projection.read).projection.epoch).not.toBe(prior.projection.epoch)
         expect(logs).toContainEqual([
           'Kafka market projection cycle failed',
-          expect.objectContaining({ failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
+          expect.objectContaining({ reason: 'TRANSPORT_FAILURE', failureCodes: ['PLT_KFK_AUTHENTICATION'] }),
         ])
         expect(logs).toContainEqual([
           'Kafka market projection recovered',

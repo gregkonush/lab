@@ -369,7 +369,12 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
               ) ON COMMIT DROP`
               yield* sql`CREATE TEMP TABLE intents (
                 intent_id text PRIMARY KEY,
-                cycle_id text NOT NULL
+                cycle_id text NOT NULL,
+                account_id text,
+                authority_generation_hash text
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+                cycle_id text, decision_hash text, schema_version text, document jsonb
               ) ON COMMIT DROP`
               yield* sql`INSERT INTO authority_generations (
                 generation_hash,
@@ -439,6 +444,135 @@ describePostgres('Forward-performance PostgreSQL read boundary', () => {
       )
 
       expect(counts).toEqual({ withoutReconciliation: 1, withoutFutureFacts: 0, withDurableAndPastFacts: 4 })
+    } finally {
+      await runtime.dispose()
+    }
+  })
+
+  test('counts pre-created unfinished cycles by their durable generation binding', async () => {
+    const parsed = new URL(testUrl)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname) || !parsed.pathname.endsWith('_test'))
+      throw new Error('BAYN_TEST_POSTGRES_URL must target an isolated local _test database')
+    const runtime = ManagedRuntime.make(PostgresClientLive(config).pipe(Layer.provideMerge(NodeServices.layer)))
+    const accountId = 'precreated-cycle-account'
+    const generationHash = hash('a')
+    const planHash = hash('b')
+    const cycleId = hash('c')
+    const decisionHash = hash('d')
+    try {
+      const counts = await runtime.runPromise(
+        Effect.gen(function* () {
+          const sql = yield* PgClient.PgClient
+          return yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`CREATE TEMP TABLE authority_generations (
+                generation_hash text, maximum text, account_id text, qualification_run_id text,
+                research_plan_hash text, activated_at timestamptz, previous_generation_hash text
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE reconciliations (
+                reconciliation_id text, account_id text, reconciled_at timestamptz
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycles (
+                cycle_id text, account_id text, state text, submission_open_at timestamptz,
+                decision_hash text, qualification_run_id text, created_at timestamptz
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+                cycle_id text, decision_hash text, schema_version text, document jsonb
+              ) ON COMMIT DROP`
+              yield* sql`CREATE TEMP TABLE intents (
+                cycle_id text, account_id text, authority_generation_hash text
+              ) ON COMMIT DROP`
+              yield* sql`INSERT INTO authority_generations VALUES (
+                ${generationHash}, 'PAPER', ${accountId}, NULL, ${planHash}, '2026-09-04T00:00:00Z', NULL
+              )`
+              yield* sql`INSERT INTO reconciliations VALUES (
+                ${hash('e')}, ${accountId}, '2026-09-04T21:00:00Z'
+              )`
+              yield* sql`INSERT INTO autonomous_cycles VALUES (
+                ${cycleId}, ${accountId}, 'ACTIVE', '2026-09-04T13:30:00Z', ${decisionHash},
+                ${planHash}, '2026-09-03T19:00:00Z'
+              )`
+              const readCount = readForwardPerformanceUnclosedCycleCount(sql, accountId, generationHash)
+              const unbound = yield* readCount
+              const accountWide = yield* readForwardPerformanceUnclosedCycleCount(sql, accountId)
+              const decision = (binding: string) => ({
+                mode: 'PAPER',
+                bindings: { accountId, qualificationRunId: planHash, authorityGenerationHash: binding },
+              })
+              yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
+                ${cycleId}, ${decisionHash}, 'bayn.paper-cycle-decision.v2', ${JSON.stringify(decision(hash('f')))}::jsonb
+              )`
+              const foreignDecision = yield* readCount
+              yield* sql`UPDATE autonomous_cycle_shadow_decisions
+                SET document = ${JSON.stringify(decision(generationHash))}::jsonb`
+              const activeDecision = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'PENDING'`
+              const pendingDecision = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'BLOCKED'`
+              const blockedDecision = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE', submission_open_at = '2026-09-08T13:30:00Z'`
+              const futureBoundDecision = yield* readCount
+              yield* sql`INSERT INTO authority_generations VALUES (
+                ${hash('f')}, 'PAPER', ${accountId}, NULL, ${planHash}, '2026-09-05T00:00:00Z', ${generationHash}
+              )`
+              const afterSuccessor = yield* readCount
+              const foreignGeneration = yield* readForwardPerformanceUnclosedCycleCount(sql, accountId, hash('f'))
+              const foreignAccount = yield* readForwardPerformanceUnclosedCycleCount(sql, 'foreign', generationHash)
+              yield* sql`UPDATE autonomous_cycles SET decision_hash = NULL`
+              yield* sql`INSERT INTO intents VALUES (${cycleId}, ${accountId}, ${generationHash})`
+              const boundIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'PENDING'`
+              const pendingIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'BLOCKED'`
+              const blockedIntent = yield* readCount
+              yield* sql`UPDATE autonomous_cycles SET state = 'ACTIVE'`
+              yield* sql`UPDATE intents SET account_id = 'foreign'`
+              const foreignIntentAccount = yield* readCount
+              yield* sql`UPDATE intents SET account_id = ${accountId}, authority_generation_hash = ${hash('f')}`
+              const foreignIntentGeneration = yield* readCount
+              yield* sql`UPDATE intents SET authority_generation_hash = ${generationHash}`
+              yield* sql`UPDATE autonomous_cycles SET state = 'COMPLETED'`
+              const completed = yield* readCount
+              return {
+                unbound,
+                accountWide,
+                foreignDecision,
+                activeDecision,
+                pendingDecision,
+                blockedDecision,
+                futureBoundDecision,
+                afterSuccessor,
+                foreignGeneration,
+                foreignAccount,
+                boundIntent,
+                pendingIntent,
+                blockedIntent,
+                foreignIntentAccount,
+                foreignIntentGeneration,
+                completed,
+              }
+            }),
+          )
+        }),
+      )
+      expect(counts).toEqual({
+        unbound: 0,
+        accountWide: 1,
+        foreignDecision: 0,
+        activeDecision: 1,
+        pendingDecision: 1,
+        blockedDecision: 1,
+        futureBoundDecision: 1,
+        afterSuccessor: 1,
+        foreignGeneration: 0,
+        foreignAccount: 0,
+        boundIntent: 1,
+        pendingIntent: 1,
+        blockedIntent: 1,
+        foreignIntentAccount: 0,
+        foreignIntentGeneration: 0,
+        completed: 0,
+      })
     } finally {
       await runtime.dispose()
     }

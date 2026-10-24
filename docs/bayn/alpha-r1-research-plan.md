@@ -1,8 +1,12 @@
 # Connect Alpha-R1 to Bayn research
 
+Historical factor-screening design. Active research now follows the [Jev optimization contract](jev-optimization.md), with
+a general instruction editor and native Jev evaluation. Alpha-R1 registrations remain immutable evidence and
+cannot be submitted for new inference. The implementation and serving identities below describe the retired plan.
+
 The independent research Workflow, streaming client, immutable attempt receipts, expense projection and operator
 command are implemented. The isolated worker and approved credentials are enrolled in
-[Bayn GitOps](../../argocd/applications/bayn/README.md#isolated-alpha-r1-research), using the existing Kargo release path.
+[Bayn GitOps](../../argocd/applications/bayn/README.md#isolated-jev-instruction-research), using the existing Kargo release path.
 No strategy has been admitted or economically qualified by this work.
 
 The endpoint returns its verified model-lock identity and deployment-bound serving image with every inference

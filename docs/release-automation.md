@@ -91,11 +91,9 @@ Torghut application paths remain inputs to all five existing main-only image wor
 includes the configuration from the built source. This uses Kargo's
 [image subscriptions and matching-image criteria](https://docs.kargo.io/user-guide/how-to-guides/working-with-warehouses).
 
-Bayn model provisioning also takes its source commit from the built image. Its Warehouse requires the repository's source annotation,
-a nonempty revision, and a successful build receipt whose run-qualified tag matches both the revision and run ID.
-The Stage checks out that verified image revision. Only Bayn model source, workflow, and deployment paths trigger its
-image build; shared Kargo and platform ApplicationSet changes do not rebuild its provisioning image. There is no independent Git
-subscription to select an earlier commit when an atomic push ends beyond the last Bayn model path change.
+Bayn's research worker and CPU-only OpenCode proposer consume the same immutable Bayn image through
+`lab-delivery/bayn`. The dedicated Bayn model image, Warehouse and Stage are retired. Shared Flamingo serving remains
+independent, with its pinned serving identity verified by research receipts.
 
 An authorized rollout includes manual Argo CD syncs of reviewed, committed desired state without another approval.
 Verify the target, exact revision, live diff, and required CI before syncing. Limit root/ApplicationSet syncs to the
@@ -188,3 +186,10 @@ evidence, then restore Kargo control through Git/configuration afterward.
 
 Historical release-branch and Image Updater documents are not current operating instructions; consult Git history when
 auditing an old transaction.
+
+The standalone `opencode` Application uses `lab/opencode`, Warehouse/Stage
+`opencode`, and `kargo/opencode`. Its personal development server and isolated
+Bayn research gateway consume the same promoted immutable image. Bayn workers
+remain on `lab/bayn`; research receipts record both worker and gateway source
+revisions. The [OpenCode migration contract](../services/opencode/README.md)
+requires offline state verification before the new research gateway can start.

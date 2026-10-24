@@ -86,18 +86,23 @@ const prepareHistoryStorageFixture = Effect.gen(function* () {
     yield* sql.asCommand(sql.unsafe(statement))
 })
 
-test('extended-session acquisition fixture partitions events without inventing missing prints', async () => {
+test('regular-session acquisition uses broker hours instead of the extended data window', async () => {
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
       const captured = yield* backfillAlpacaHistory(historyFixtureRequest, directory)
       const dataset = yield* readHistoricalDataset(directory, captured.datasetId)
+      expect(dataset.sessions[0]).toEqual({
+        date: '2026-09-10',
+        openAt: '2026-09-10T13:30:00.000Z',
+        closeAt: '2026-09-10T14:05:00.000Z',
+      })
       expect(captured.records).toBe(420)
       for (const kind of ['bars', 'quotes', 'trades']) {
         const chunks = dataset.manifest.chunks.filter((chunk) => chunk.kind === kind)
         expect(chunks.reduce((count, chunk) => count + chunk.rowCount, 0)).toBe(140)
-        if (kind !== 'bars') expect(chunks.some((chunk) => chunk.rowCount === 0)).toBe(true)
+        if (kind !== 'bars') expect(chunks.some((chunk) => chunk.rowCount === 0)).toBe(false)
         for (const chunk of chunks) yield* readHistoricalChunk(dataset, chunk)
       }
     }).pipe(Effect.scoped, Effect.provide(fixtureLayer)),
