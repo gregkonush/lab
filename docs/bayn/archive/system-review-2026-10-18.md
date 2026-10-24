@@ -1,5 +1,9 @@
 # Bayn system review — 18 October 2026
 
+> **Archived record.** This is a point-in-time snapshot, not current guidance. Its deployed image, accounting
+> totals, strategy parameters and research priorities describe 18 October 2026 and have since been superseded. See the
+> [archive index](README.md) for the current sources of truth.
+
 ## Decision
 
 Admit and finalize a Jev batch in one atomic PostgreSQL statement when every candidate is already excluded. No inference result remains to be collected in that case. The change preserves the validated plan, result schema, decision exclusions, expiry checks and recovery behavior while removing a separate finalization transaction.
@@ -13,7 +17,7 @@ This is a pre-rollout research and qualification record. The originating pull re
 The inspected source is [87b6a14db2650c7eb5caed66c6e67dc4a7896f1b](https://github.com/proompteng/lab/commit/87b6a14db2650c7eb5caed66c6e67dc4a7896f1b).
 The deployed image at the initial readback was
 sha256:8fb29b4cb998d80b3133918d83bd8281986bfc892f674b7c7f6f5e88b93e9581.
-The [machine-readable evidence](evidence/2026-10-18-atomic-abstention.json) retains the bounded operational snapshot, aggregate query, scope and local qualification results.
+The [machine-readable evidence](../evidence/2026-10-18-atomic-abstention.json) retains the bounded operational snapshot, aggregate query, scope and local qualification results.
 
 | Component                             | Current role                                                          | Consequence for this review                                                                                  |
 | ------------------------------------- | --------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
@@ -26,7 +30,7 @@ The [machine-readable evidence](evidence/2026-10-18-atomic-abstention.json) reta
 | Alpaca sandbox                        | Existing paper execution environment                                  | Simulated fills cannot establish executable live-market edge.                                                |
 | OpenTelemetry and operational status  | Execution-stage and health evidence                                   | Use independent timing records for claims about latency and information availability.                        |
 
-These roles are described in the [service README](../../services/bayn/README.md), [batch store](../../services/bayn/src/db/jev-batch-postgres.ts), [protocol](../../services/bayn/src/jev/protocol.ts), [archive design](market-data-archive.md) and [matched-entry study](matched-entry-study.md).
+These roles are described in the [service README](../../../services/bayn/README.md), [batch store](../../../services/bayn/src/db/jev-batch-postgres.ts), [protocol](../../../services/bayn/src/jev/protocol.ts), [archive design](../market-data-archive.md) and [matched-entry study](../matched-entry-study.md).
 
 ### Operational baseline
 
@@ -44,7 +48,7 @@ At 07:20:25 UTC, the native status readback was READY, with exact reconciliation
 
 The current strategy has a 15-minute horizon/maximum hold, 50-basis-point stop, one-position limit and allocation capped at 20% of equity. Entry requires the existing validated source and momentum conditions and the supported net-economics decision. No evidence in this review supports changing these constraints. Source eligibility, authority, capital grants, reconciliation, risk and order controls retain their existing enforcement.
 
-Crypto economics are material at this horizon. The existing execution model includes a 25-basis-point coin charge on entry and a 25-basis-point rounded cash charge on exit. An earlier **19-round-trip** sample recorded price P&L of −$197.251644, fees of $1,182.554501 and net P&L of −$1,379.806145. Its scope differs from the later 539-fill accounting snapshot; the two samples must not be combined as though they were one decomposition. See [net-edge research](net-edge-research.md) and [17 October crypto research](crypto-entry-research-2026-10-17.md).
+Crypto economics are material at this horizon. The existing execution model includes a 25-basis-point coin charge on entry and a 25-basis-point rounded cash charge on exit. An earlier **19-round-trip** sample recorded price P&L of −$197.251644, fees of $1,182.554501 and net P&L of −$1,379.806145. Its scope differs from the later 539-fill accounting snapshot; the two samples must not be combined as though they were one decomposition. See [net-edge research](../net-edge-research.md) and [17 October crypto research](../crypto-entry-research-2026-10-17.md).
 
 ### Existing strategy research
 
@@ -52,7 +56,7 @@ The 17 October work screened six catchup, washout and breakout variants against 
 
 Bayn also contains a native seven-feature ridge control, retrospective equity screens across 13 policies, and a matched-entry comparison of immediate momentum, delayed momentum and Jev under common exits. The research documentation records the original-arrival and independent timing gaps. Retrospective source correctness and reproducible arithmetic are useful; they do not establish that each input was available to the live process at the historical decision instant.
 
-The [prior research review](recent-strategy-research-2026-10-06.md), [study export](study-evidence-export.md), [matched-entry study](matched-entry-study.md), and [archive design](market-data-archive.md) are the relevant history. The appropriate response to unsuccessful screens is to retain them and improve subsequent evidence, rather than silently increasing the search space until an attractive backtest appears.
+The [prior research review](../recent-strategy-research-2026-10-06.md), [study export](../study-evidence-export.md), [matched-entry study](../matched-entry-study.md), and [archive design](../market-data-archive.md) are the relevant history. The appropriate response to unsuccessful screens is to retain them and improve subsequent evidence, rather than silently increasing the search space until an attractive backtest appears.
 
 ## The measured persistence opportunity
 
@@ -162,7 +166,7 @@ NautilusTrader is another useful design reference. Alpaca was not listed on the 
 
 ## Autonomous skill installation and application
 
-The repository now contains [autonomous-agents](../../skills/autonomous-agents/SKILL.md) from
+The repository now contains [autonomous-agents](../../../skills/autonomous-agents/SKILL.md) from
 [sickn33/antigravity-awesome-skills](https://github.com/sickn33/antigravity-awesome-skills/tree/c564f9f4aee8a143c48218805b65f0f6956c6264/skills/autonomous-agents),
 pinned to c564f9f4aee8a143c48218805b65f0f6956c6264.
 

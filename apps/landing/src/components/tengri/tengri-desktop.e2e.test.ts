@@ -8414,6 +8414,79 @@ test('records Stop for an accepted run before a native turn exists', async ({ pa
 })
 
 test.describe('durable control retries', () => {
+  for (const acknowledgement of ['before response', 'after response'] as const) {
+    test(`clears an approval delivery error confirmed ${acknowledgement}`, async ({ page }) => {
+      const runId = '33333333-3333-4333-8333-333333333333'
+      const approvalId = 'process-identity:17'
+      const mock = await mockTengri(page, {
+        durableRun: {
+          runId,
+          agentId: 'microvm-ada',
+          threadId: 'thread-recovered',
+          state: { phase: 'running', turnId: 'turn-recovered' },
+        },
+      })
+      let releaseResponse = () => {}
+      const responseGate = new Promise<void>((resolve) => {
+        releaseResponse = resolve
+      })
+      let controls = 0
+      await page.route('**/api/tengri', async (route) => {
+        if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'resolve-approval')
+          return route.fallback()
+        controls++
+        await responseGate
+        await route.fulfill({ status: 503, json: { error: 'The approval response was unavailable' } })
+      })
+      await page.goto('/')
+      const chat = page.getByRole('region', { name: 'Tengri window' })
+      await expect(chat.getByRole('button', { name: 'Stop response', exact: true })).toBeEnabled()
+      const base = { threadId: 'thread-recovered', turnId: 'turn-recovered', itemId: '', text: '' }
+      await emitCodexEvent(page, {
+        ...base,
+        sequence: 1,
+        kind: 'approval',
+        method: 'item/commandExecution/requestApproval',
+        approvalId,
+        rawJson: '{}',
+      })
+      const card = chat.getByRole('article', { name: 'Codex approval' })
+      await card.getByRole('button', { name: 'Approve once', exact: true }).click()
+      await expect.poll(() => controls).toBe(1)
+      if (acknowledgement === 'after response') {
+        releaseResponse()
+        await expect(chat.getByRole('alert')).toHaveText('The approval response was unavailable')
+        await emitCodexEvent(page, {
+          ...base,
+          sequence: 2,
+          kind: 'thread-state',
+          method: 'serverRequest/resolved',
+          approvalId: '',
+          rawJson: JSON.stringify({ params: { requestId: 'another-approval' } }),
+        })
+        await expect(chat.getByRole('alert')).toHaveText('The approval response was unavailable')
+      }
+      await emitCodexEvent(page, {
+        ...base,
+        sequence: 3,
+        kind: 'thread-state',
+        method: 'serverRequest/resolved',
+        approvalId: '',
+        rawJson: JSON.stringify({ params: { requestId: approvalId } }),
+      })
+      await expect(card).toHaveCount(0)
+      if (acknowledgement === 'before response') {
+        releaseResponse()
+        await expect
+          .poll(() => page.evaluate((key) => localStorage.getItem(key), `tengri-control:${runId}:${approvalId}`))
+          .toBeNull()
+      }
+      await expect(chat.getByRole('alert')).toHaveCount(0)
+      expect(controls).toBe(1)
+      expect(mock.actions.some((action) => action.action === 'send-turn')).toBe(false)
+    })
+  }
+
   test('retires an expired approval after its run completes without approving another turn', async ({ page }) => {
     const run: TengriCodexRun = {
       runId: '33333333-3333-4333-8333-333333333333',

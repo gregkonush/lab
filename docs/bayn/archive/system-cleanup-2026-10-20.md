@@ -1,5 +1,8 @@
 # Bayn system cleanup, October 20, 2026
 
+> **Archived record.** This is a point-in-time audit, not current guidance. The migrations it inspects have been
+> applied, and it is not a retention policy or a continuing health guarantee. See the [archive index](README.md).
+
 ## Scope and evidence
 
 This audit compares source `99b89a30f308dcdc90771711e1995ec85b206b54` with the running service,
