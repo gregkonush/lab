@@ -100,6 +100,63 @@ const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
   selectStreamingInputs(state, { ...query, observedAt: new Date(at).toISOString() })
 
 describe('streaming raw and rolling feature projection', () => {
+  test.each(['quotes', 'trades'] as const)(
+    'conflicting redelivery of a retained older %s record blocks the cut',
+    (channel) => {
+      const payload = channel === 'quotes' ? { bp: 130, ap: 131, bs: 100, as: 100 } : { p: 130, s: 100 }
+      const original = rawRecord(channel, 10, end + 2000, payload)
+      const newer = rawRecord(channel, 11, end + 2500, payload)
+      const state = incorporate([...raw(), featureRecord, original, newer])
+      expect(Result.isSuccess(select(state))).toBe(true)
+      expect(incorporateMarketRecord(state, original, universe, end + 4000)).toBe(state)
+      const conflict = incorporateMarketRecord(
+        state,
+        rawRecord(channel, 10, end + 2000, { ...payload, ...(channel === 'quotes' ? { ap: 132 } : { p: 131 }) }),
+        universe,
+        end + 4000,
+      )
+      expect(conflict.rejections.get(`${universe.topics[channel]}:0`)?.at(-1)?.reason).toBe(
+        'conflicting-immutable-record',
+      )
+      expect(Result.isFailure(select(conflict, end + 4000))).toBe(true)
+      expect(conflict.quoteHistory).toBe(state.quoteHistory)
+      expect(conflict.tradeHistory).toBe(state.tradeHistory)
+      expect(conflict.sequence).toBe(state.sequence)
+      expect(state.rejections.size).toBe(0)
+    },
+  )
+
+  test.each(['quotes', 'trades'] as const)(
+    'immutable %s conflict checks stop at the retained history boundary',
+    (channel) => {
+      const payload = channel === 'quotes' ? { bp: 130, ap: 131, bs: 100, as: 100 } : { p: 130, s: 100 }
+      const records = Array.from({ length: 513 }, (_, offset) =>
+        rawRecord(channel, offset, end + 2000 + offset, payload),
+      )
+      const state = incorporate(records)
+      const history = (channel === 'quotes' ? state.quoteHistory : state.tradeHistory).get('AAPL')
+      expect(history).toHaveLength(512)
+      expect(history?.[0]?.value.sourceOffset).toBe('1')
+      const changed = (offset: number) =>
+        rawRecord(channel, offset, end + 2000 + offset, {
+          ...payload,
+          ...(channel === 'quotes' ? { ap: 132 } : { p: 131 }),
+        })
+      // An evicted coordinate has no retained bytes to compare. Do not invent a conflict.
+      expect(incorporateMarketRecord(state, changed(0), universe, end + 4000)).toBe(state)
+      const retained = incorporateMarketRecord(state, changed(1), universe, end + 4000)
+      expect(retained.rejections.get(`${universe.topics[channel]}:0`)?.at(-1)?.reason).toBe(
+        'conflicting-immutable-record',
+      )
+      // The same numeric offset in another partition is a distinct transport coordinate.
+      const otherPartition = incorporateMarketRecord(state, { ...changed(1), partition: 1 }, universe, end + 4000)
+      expect(otherPartition.rejections.size).toBe(0)
+      expect(otherPartition.offsets.get(`${universe.topics[channel]}:1`)).toBe('1')
+      expect(state.rejections.size).toBe(0)
+      expect((channel === 'quotes' ? retained.quoteHistory : retained.tradeHistory).get('AAPL')).toBe(history)
+    },
+  )
+
   test('other feature definitions neither reject nor authorize the selected observed-history contract', () => {
     const unrelated = {
       ...featureRecord,
