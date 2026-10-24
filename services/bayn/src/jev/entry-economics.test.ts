@@ -10,14 +10,82 @@ import { makeJevTradingSignalRequest } from './trading-signals'
 import { checkProperty } from '../testing/property-test-support'
 import { maximumAllocatedBuyQuantities, maximumFundedBuyQuantities } from './entry-sizing'
 import { jevEntryEconomics } from './entry-economics'
+import { fundJevTradePlan } from './entry-economics'
 import { defaultJevProtocolDocument } from './protocol'
+import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { OrderSide, OrderType, TimeInForce } from '../execution/contracts'
+import { calculateSessionFees } from '../strategy/execution-model/fees'
+import { quantityScale } from '../quantity'
+
+test('funding values a native take-profit at its submitted minimum sell price', () => {
+  const protocol = defaultJevProtocolDocument
+  const economics = Result.getOrThrow(
+    jevEntryEconomics({
+      protocol,
+      symbol: 'AAPL',
+      bidMicros: 100_000_000n,
+      askMicros: 100_000_000n,
+      capitalMicros: '100000000000',
+    }),
+  )
+  if (economics === null) throw new Error('Expected a funded equity quantity')
+  const levels = {
+    schemaVersion: 'bayn.jev-strategy-exit-plan.v3' as const,
+    rule: 'model-selected-complete-plan' as const,
+    symbol: 'AAPL',
+    sourceStartAt: '2026-10-23T14:00:00.000Z',
+    sourceEndAt: '2026-10-23T14:30:00.000Z',
+    maximumHoldingMinutes: 15,
+    maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+    stopPriceMicros: '99000000',
+    stopLimitPriceMicros: '98910000',
+    profitLimitPriceMicros: '100210000',
+  }
+  const quantity = BigInt(economics.receivedQuantityAtoms)
+  const proceeds = (BigInt(levels.profitLimitPriceMicros) * quantity) / quantityScale
+  const fees = Result.getOrThrow(
+    calculateSessionFees(
+      [{ symbol: 'AAPL', side: 'sell', quantityAtoms: quantity, notionalMicros: proceeds }],
+      protocol.executionModel,
+      1_000_000n,
+    ),
+  )
+  expect(proceeds - fees.cashMicros).toBeGreaterThan(BigInt(economics.acquisitionCostMicros))
+  const request = Result.getOrThrow(
+    orderRequestBody({
+      symbol: 'AAPL',
+      side: OrderSide.Buy,
+      orderType: OrderType.Limit,
+      timeInForce: TimeInForce.Day,
+      clientOrderId: 'b1_' + 'A'.repeat(43),
+      quantityAtoms: economics.maximumQuantityAtoms,
+      limitPriceMicros: economics.maximumEntryPriceMicros,
+      notionalLimitMicros: String(
+        (BigInt(economics.maximumEntryPriceMicros) * BigInt(economics.maximumQuantityAtoms) + quantityScale - 1n) /
+          quantityScale,
+      ),
+      protection: {
+        _tag: 'Bracket',
+        stopPriceMicros: levels.stopPriceMicros,
+        stopLimitPriceMicros: levels.stopLimitPriceMicros,
+        profitLimitPriceMicros: levels.profitLimitPriceMicros,
+      },
+    }),
+  )
+  expect(request.take_profit?.limit_price).toBe('100.21')
+  const funded = Result.getOrThrow(fundJevTradePlan({ protocol, economics, levels }))
+  expect(funded).not.toBeNull()
+  expect(BigInt(funded?.exitPlan.estimatedTargetNetMicros ?? '0')).toBeGreaterThan(
+    BigInt(economics.acquisitionCostMicros),
+  )
+})
 
 test('typed entry and protection choices support an entry without a confidence gate', () => {
   const fixture = nativeJevFixture()
   const request = Result.getOrThrow(makeJevTradingSignalRequest(fixture.observation.payload, 'AAPL'))
   expect(
     Object.fromEntries(Object.entries(request.request.questions).map(([name, question]) => [name, question.type])),
-  ).toEqual({ action: 'choice' })
+  ).toEqual({ action: 'choice', setup: 'choice' })
   const evidence = nativeJevDecisionEvidence(fixture, 'enter', 0.4)
   expect(Result.getOrThrow(decideJevEntry(evidence)).selectedSymbols).toEqual(['AAPL'])
 })
@@ -73,7 +141,7 @@ test('property: crypto break-even bid covers both adverse limits, the coin debit
           const fee = ((proceeds * 25n + 99_999_999n) / 100_000_000n) * 10_000n
           return proceeds - fee
         }
-        const bid = BigInt(Math.round(economics.breakEvenExitBidUsd * 1_000_000))
+        const bid = BigInt(Math.round(economics.holdingExitBreakEvenBidUsd * 1_000_000))
         expect(net(bid)).toBeGreaterThanOrEqual(acquired)
         expect(net(bid - 1n)).toBeLessThan(acquired + 10_000n)
         const centInPrice = (10_000n * 1_000_000_000n + received - 1n) / received

@@ -187,7 +187,7 @@ function DesktopGate({
     return (
       <StatusWindow
         icon={<LoaderCircle className="h-7 w-7 animate-spin" />}
-        title="Starting Tengri"
+        title="Tengri"
         detail="Loading your workspace…"
         progress
       />
@@ -285,7 +285,7 @@ function SignInWindow() {
     <ActionWindow
       icon={busy ? <LoaderCircle className="h-7 w-7 animate-spin" /> : <CircleUserRound className="h-7 w-7" />}
       title="Sign in to Tengri"
-      detail="Sign in with GitHub and your passkey. Ofz determines which workspaces you can access."
+      detail="First sign in with GitHub. Then use your saved passkey, or create one if this is your first sign-in."
       error={error}
       actionIcon={<CircleUserRound aria-hidden="true" className="h-4 w-4" />}
       actionBusy={busy}

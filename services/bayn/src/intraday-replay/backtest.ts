@@ -1,6 +1,7 @@
 import { ReplayInstrumentsSchema } from './execution-core'
 import { equityMarketProfile, jevMarketProfiles } from '../jev/markets'
 import { defaultJevProtocolDocument } from '../jev/protocol'
+import { jevInstructions } from '../jev/instructions'
 
 import { OperationDeadlineClock, operationTimeoutOrElse } from '../operation-timeout'
 import { utcInstantFromEpochMillis } from '../time'
@@ -21,6 +22,7 @@ import {
   NonNegativeIntegerSchema,
   PositiveIntegerSchema,
   PositiveMicrosSchema,
+  Sha256Schema,
   StrictNonEmptyStringSchema,
   UnsignedMicrosSchema,
   UtcInstantSchema,
@@ -34,7 +36,7 @@ import {
 } from '../strategy'
 import { JevClient } from '../jev/client'
 import { jevModel } from '../jev/contract'
-import { makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
+import { makeBoundedReplayJevProvider, makeReplayJevTiming, type ReplayJevCall } from './jev-timing'
 import { calculateReplayJevCosts, ReplayJevCostModelSchema } from './jev-costs'
 import {
   BacktestSourceManifestSchema,
@@ -69,6 +71,7 @@ export enum BacktestIssue {
   MissingDecisionData = 'missing-decision-data',
   UnresolvedModelCost = 'unresolved-model-cost',
   UnresolvedExecutionCost = 'unresolved-execution-cost',
+  UnresolvedDataCost = 'unresolved-data-cost',
 }
 
 export const assessBacktestSession = (input: {
@@ -106,14 +109,16 @@ export const assessBacktestSession = (input: {
 }
 
 export const BacktestInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.backtest.v4'),
+  schemaVersion: Schema.Literal('bayn.backtest.v5'),
+  jevInstructionsHash: Sha256Schema,
   inference: Schema.Struct({
     mode: Schema.Literal('measured-provider'),
     model: Schema.Literal(jevModel),
     inputDefinition: Schema.Literal(defaultJevProtocolDocument.inputDefinition),
     costs: ReplayJevCostModelSchema,
+    maximumCalls: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(1_000_000)),
   }),
-  allocatedDataCostPerSessionMicros: UnsignedMicrosSchema,
+  allocatedDataCostPerSessionMicros: Schema.NullOr(UnsignedMicrosSchema),
   replicate: StrictNonEmptyStringSchema,
   interval: Schema.Struct({ startAt: UtcInstantSchema, endAt: UtcInstantSchema }),
   source: BacktestSourceManifestSchema,
@@ -139,6 +144,13 @@ export const BacktestInputSchema = Schema.Struct({
   }),
 })
 
+const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparisonFields } = BacktestInputSchema.fields
+export const BacktestComparisonInputSchema = Schema.Struct(comparisonFields)
+export const backtestComparisonInput = (input: typeof BacktestInputSchema.Type) => {
+  const { replicate: _replicate, jevInstructionsHash: _instructions, ...comparison } = input
+  return comparison
+}
+
 export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceReceipt) =>
   Result.gen(function* () {
     const supplied = yield* Schema.decodeUnknownResult(BacktestInputSchema, strictParseOptions)(input)
@@ -150,6 +162,10 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
     yield* validateBacktestSourceManifest(decoded.source)
     yield* validateBacktestSourceCuts(decoded.source, sourceReceipt)
     const baselineProtocol = yield* loadActiveStrategyProtocol()
+    if (decoded.jevInstructionsHash !== (yield* canonicalHashV1Result(jevInstructions)))
+      return yield* Result.fail(
+        new ReplayBrokerFailure({ message: 'Replay instructions differ from its compiled executable' }),
+      )
     const baselineParameterHash = yield* canonicalHashV1Result(baselineProtocol)
     if (
       decoded.build.strategyBehaviorHash !== activeStrategyBehaviorHash ||
@@ -273,13 +289,14 @@ export const prepareBacktest = (input: unknown, sourceReceipt: BacktestSourceRec
       input: decoded,
       sourceReceipt,
       runId,
-      protocol: { ...protocol, ...equityMarketProfile },
+      protocol,
       assets,
       identity,
       reportingWindows: sessions,
-      brokerSessions: calendar.sessions.filter(
-        (session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs,
-      ),
+      brokerSessions: calendarDays
+        .flatMap((day) => day.providerSessions)
+        .map((session) => ({ date: session.date, openAt: session.regularOpenAt, closeAt: session.regularCloseAt }))
+        .filter((session) => Date.parse(session.openAt) >= openMs && Date.parse(session.closeAt) <= closeMs),
       openMs,
       closeMs,
       buildEvidence: {
@@ -368,9 +385,10 @@ export const runBacktest = (
     )
     yield* advanceTo(initializationStartedAtMs)
     const inferenceCalls: ReplayJevCall[] = []
+    const boundedProvider = makeBoundedReplayJevProvider(yield* JevClient, prepared.input.inference.maximumCalls)
     const timing = yield* makeReplayJevTiming({
       measureDatabaseTime: clock.measure,
-      provider: yield* JevClient,
+      provider: boundedProvider.provider,
       providerClock,
       advanceTo,
       advanceDeadlineTo,
@@ -389,7 +407,12 @@ export const runBacktest = (
       submissionTime: timing.currentUtcInstant,
       sourceManifestHash: source.source.sourceManifestHash,
       openingCashMicros: prepared.input.openingCashMicros,
-      protocol: prepared.protocol,
+      protocol: {
+        feed: equityMarketProfile.feed,
+        delayClass: equityMarketProfile.delayClass,
+        maximumQuoteAgeMs: prepared.protocol.maximumQuoteAgeMs,
+        executionModel: prepared.protocol.executionModel,
+      },
       assumptions: prepared.input.assumptions,
       fractionalTrading: prepared.input.fractionalTrading,
       assets: prepared.assets,
@@ -439,10 +462,11 @@ export const runBacktest = (
     let peakEquity = BigInt(prepared.input.openingCashMicros)
     let maximumObservedDrawdown = 0n
     let previousClosingEquity = peakEquity
-    let accruedDataCost = 0n
-    const markedNetEquity = (equityMicros: string) =>
+    let accruedKnownDataCost = 0n
+    const allocatedDataCost = prepared.input.allocatedDataCostPerSessionMicros
+    const equityAfterKnownCosts = (equityMicros: string) =>
       BigInt(equityMicros) -
-      accruedDataCost -
+      accruedKnownDataCost -
       BigInt(calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs).knownCostMicros)
     const observeEquity = (equity: bigint) => {
       if (equity > peakEquity) peakEquity = equity
@@ -456,7 +480,7 @@ export const runBacktest = (
         Effect.gen(function* () {
           let valuationFailureCount = 0
           const firstCallIndex = inferenceCalls.length
-          accruedDataCost += BigInt(prepared.input.allocatedDataCostPerSessionMicros)
+          if (allocatedDataCost !== null) accruedKnownDataCost += BigInt(allocatedDataCost)
           const schedule = yield* driveReplaySession(
             {
               ...runtime,
@@ -468,7 +492,7 @@ export const runBacktest = (
                     )
                     const usableValuation =
                       Result.isSuccess(valued) && qualifiesReplayValuation(valued.success.valuation)
-                    if (usableValuation) observeEquity(markedNetEquity(valued.success.account.value.equityMicros))
+                    if (usableValuation) observeEquity(equityAfterKnownCosts(valued.success.account.value.equityMicros))
                     else valuationFailureCount++
                     yield* recordPass({
                       ...pass.observation,
@@ -492,7 +516,7 @@ export const runBacktest = (
           )
           nextPollAtMs = schedule.nextPollAtMs
           const closingEquity = yield* broker.valuationAt(session.closeAt)
-          const closingNetEquity = markedNetEquity(closingEquity.equityMicros)
+          const closingNetEquity = equityAfterKnownCosts(closingEquity.equityMicros)
           if (closingEquity.valuationQualified) observeEquity(closingNetEquity)
           else valuationFailureCount++
           const reconciliation = yield* timing.run(runtime.reconcile)
@@ -517,10 +541,11 @@ export const runBacktest = (
             remainingPositionCount: state.ledger.positions.length,
             remainingOpenOrderCount: closingEquity.openOrderCount,
           })
-          const issues =
-            modelCosts.unresolvedCallCount === 0
-              ? assessed.issues
-              : [...assessed.issues, BacktestIssue.UnresolvedModelCost]
+          const issues = [
+            ...assessed.issues,
+            ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
+            ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
+          ]
           return {
             completion: issues.length === 0 ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
             issues,
@@ -541,13 +566,13 @@ export const runBacktest = (
     )
     const brokerState = yield* broker.snapshot
     const modelCosts = calculateReplayJevCosts(inferenceCalls, prepared.input.inference.costs)
-    const dataCostMicros = (
-      BigInt(prepared.input.allocatedDataCostPerSessionMicros) * BigInt(sessions.length)
-    ).toString()
+    const dataCostMicros =
+      allocatedDataCost === null ? null : (BigInt(allocatedDataCost) * BigInt(sessions.length)).toString()
     const executionPnl = brokerState.ledger.netRealizedPnlAfterCostsMicros
     const issues = [
       ...(modelCosts.unresolvedCallCount === 0 ? [] : [BacktestIssue.UnresolvedModelCost]),
       ...(executionPnl === null ? [BacktestIssue.UnresolvedExecutionCost] : []),
+      ...(allocatedDataCost === null ? [BacktestIssue.UnresolvedDataCost] : []),
     ]
     const complete = sessions.every((session) => session.completion === 'COMPLETE') && issues.length === 0
     // Consume and rehash any retained tail only after the final decision; it cannot affect execution inputs.
@@ -590,18 +615,27 @@ export const runBacktest = (
       SELECT row_to_json(fee)::text AS json FROM broker_fee_accounting AS fee
       WHERE account_id = ${broker.accountId} ORDER BY fee_date, activity_id
     `
+    const comparisonInput = backtestComparisonInput(prepared.input)
     const report = {
-      schemaVersion: 'bayn.backtest-report.v3' as const,
+      schemaVersion: 'bayn.backtest-report.v4' as const,
+      comparisonInput,
+      comparisonInputHash: yield* Effect.fromResult(canonicalHashV1Result(comparisonInput)),
+      jevInstructions: { document: jevInstructions, contentHash: prepared.input.jevInstructionsHash },
       evidenceMode: 'simulated-production-execution' as const,
       profitability: 'UNPROVEN' as const,
       completion: complete ? ('COMPLETE' as const) : ('INCOMPLETE' as const),
       executionEvidence: { orderCount: brokerState.orders.length, fillCount: brokerState.fills.length },
       reconciledExecutionPnlAfterCostsMicros: brokerState.ledger.netRealizedPnlAfterCostsMicros,
       reconciledNetPnlAfterCostsMicros:
-        complete && executionPnl !== null
+        complete && executionPnl !== null && dataCostMicros !== null
           ? (BigInt(executionPnl) - BigInt(modelCosts.knownCostMicros) - BigInt(dataCostMicros)).toString()
           : null,
-      inference: { definition: prepared.input.inference, costs: modelCosts, calls: inferenceCalls },
+      inference: {
+        definition: prepared.input.inference,
+        costs: modelCosts,
+        calls: inferenceCalls,
+        providerDispatchCount: boundedProvider.dispatchCount(),
+      },
       dataCostMicros,
       issues,
       runId: prepared.runId,

@@ -57,7 +57,7 @@ export const advancePositionProtection = (request: {
   Effect.gen(function* () {
     const { input, cycle, document, protocol, policy, reconciliation, capability } = request
     const target = document.strategyDecision
-    if (target?.schemaVersion !== 'bayn.jev-entry-target.v5' || Object.keys(target.exitPolicy.plans).length === 0)
+    if (target?.schemaVersion !== 'bayn.jev-entry-target.v6' || Object.keys(target.exitPolicy.plans).length === 0)
       return { _tag: 'Ready' } as const
     const plan = Object.values(target.exitPolicy.plans)[0]
     if (plan === undefined) return { _tag: 'Ready' } as const
@@ -190,7 +190,11 @@ export const advancePositionProtection = (request: {
       const order = open[0]
       if (order?.intentId === undefined || capability._tag === 'RecoveryOnly') return wait('PROTECTION_CANCEL_PENDING')
       const advanced = yield* capability.executionProgram
-        .cancelProtectionOrder(order.intentId, order.brokerOrderId)
+        .cancelProtectionOrder(
+          order.intentId,
+          order.brokerOrderId,
+          management._tag === 'Exit' ? management.target : undefined,
+        )
         .pipe(
           Effect.catchTag('BrokerMutationError', (cause) =>
             Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(

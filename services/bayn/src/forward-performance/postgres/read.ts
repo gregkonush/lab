@@ -68,7 +68,9 @@ export const readForwardPerformanceUnclosedCycleCount = (
       -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
       -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
       AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
+      -- A cycle can be materialized before its eventual authority activation. Its durable decision
+      -- or intent binding must keep unfinished work in the same generation as completed-cycle reads.
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
       -- A standing mandate may materialize the next cycle before its submission window opens. Ignore
       -- only that unopened, never-started cycle at this reconciliation boundary. A bound decision
       -- or intent is durable evidence; intents are also the root of mutation and execution facts.

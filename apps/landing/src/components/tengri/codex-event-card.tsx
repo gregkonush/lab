@@ -1,6 +1,15 @@
 'use client'
 
-import { ChevronRight, FileDiff, ListChecks, LoaderCircle, TerminalSquare, Wrench } from 'lucide-react'
+import {
+  BookOpen,
+  ChevronRight,
+  FileDiff,
+  ListChecks,
+  LoaderCircle,
+  Search,
+  TerminalSquare,
+  Wrench,
+} from 'lucide-react'
 import { memo, useRef, useState, type ReactNode } from 'react'
 import ReactMarkdown from 'react-markdown'
 import type { Components } from 'react-markdown'
@@ -11,6 +20,7 @@ import { cn } from '@/lib/utils'
 import type { TengriCodexEventKind } from '@/lib/tengri/types'
 import type { CodexApprovalDecision } from './codex-events'
 import { CodexCopyButton } from './codex-copy-button'
+import { codexActivityTitle } from './codex-activity'
 import {
   codexImageUrl,
   codexMessageAttachments,
@@ -22,6 +32,7 @@ import { WorkspaceFileLink, WorkspaceImage } from './workspace-file-link'
 
 type CodexEventCardProps = {
   agentId?: string
+  activityTitle?: string
   images?: readonly TengriCodexImage[]
   approvalDecisions?: readonly CodexApprovalDecision[]
   approvalId?: string
@@ -34,6 +45,7 @@ type CodexEventCardProps = {
 
 export const CodexEventCard = memo(function CodexEventCard({
   agentId,
+  activityTitle,
   images,
   approvalDecisions = ['approve-once', 'approve-session', 'deny'],
   approvalId,
@@ -172,21 +184,24 @@ export const CodexEventCard = memo(function CodexEventCard({
       'tool-output': { label: 'Output', icon: TerminalSquare },
     }[kind]
     const outputImages = kind === 'tool-output' || kind === 'tool-call' ? codexOutputImagePaths(text) : []
-    const Icon = presentation.icon
-    const preview = text.trim().split('\n')[0] || presentation.label
+    const title = codexActivityTitle(activityTitle ? 'tool-call' : kind, activityTitle || text)
+    const Icon =
+      kind === 'file-diff'
+        ? FileDiff
+        : { file: BookOpen, search: Search, terminal: TerminalSquare, tool: Wrench }[title.icon]
+    const preview = title.text
     return (
       <article aria-label={`Codex ${presentation.label.toLowerCase()}`} className="min-w-0 text-copy-14">
-        <details className="group overflow-hidden rounded-lg">
-          <summary className="flex min-h-8 cursor-pointer list-none items-center gap-2 rounded-lg px-1 py-1.5 text-zinc-400 outline-none marker:content-none transition-colors hover:bg-white/[0.03] hover:text-zinc-200 focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
+        <details className="group/activity-row min-w-0">
+          <summary className="flex min-h-6 cursor-pointer list-none items-center gap-2 rounded px-1 py-0.5 text-zinc-400 outline-none marker:content-none transition-colors hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-blue-400 motion-reduce:transition-none">
             <Icon className="size-3.5 shrink-0 opacity-80" aria-hidden="true" />
-            <span className="shrink-0 text-label-14">{presentation.label}</span>
+            <span className="min-w-0 truncate text-label-14">{preview}</span>
             <ChevronRight
-              className="size-3.5 shrink-0 transition-transform group-open:rotate-90 motion-reduce:transition-none"
+              className="size-3 shrink-0 opacity-0 transition-[opacity,transform] group-hover/activity-row:opacity-100 group-focus-within/activity-row:opacity-100 group-open/activity-row:rotate-90 group-open/activity-row:opacity-100 motion-reduce:transition-none"
               aria-hidden="true"
             />
-            <span className="min-w-0 truncate text-label-13-mono text-zinc-400">{preview}</span>
           </summary>
-          <pre className="mt-1 max-h-80 overflow-auto rounded-lg bg-zinc-900/40 px-3 py-3 text-copy-13-mono whitespace-pre-wrap break-words text-zinc-300">
+          <pre className="tengri-chat-scrollbar mt-1 mb-2 ml-6 max-h-80 overflow-auto rounded-md bg-zinc-900/40 px-3 py-2 text-copy-13-mono whitespace-pre text-zinc-300">
             {kind === 'file-diff'
               ? text.split('\n').map((line, index) => (
                   <span

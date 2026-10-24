@@ -1,5 +1,5 @@
 import { PgClient } from '@effect/sql-pg'
-import { Effect, Layer, Option, Schema } from 'effect'
+import { Effect, Layer, Option, Result, Schema } from 'effect'
 
 import { operationalError } from '../errors'
 import { CandidateObservationStore, type CandidateObservation } from '../observe-composition/candidate-observation'
@@ -10,16 +10,15 @@ import { reproduceJevCandidateObservation } from '../jev/observation'
 import { verifyJevPortfolioSources } from './jev-position-postgres'
 import { jevBehaviorHash } from '../jev/protocol'
 
-export const recordCandidateObservation = (sql: PgClient.PgClient, { contentHash, payload }: CandidateObservation) =>
+type ReproducedJevObservation = Result.Result.Success<ReturnType<typeof reproduceJevCandidateObservation>>
+
+const recordCandidateObservation = (
+  sql: PgClient.PgClient,
+  { contentHash, payload }: CandidateObservation,
+  reproduced: ReproducedJevObservation | undefined,
+) =>
   Effect.gen(function* () {
-    if (payload.schemaVersion === 'bayn.jev-observation.v1') {
-      const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(payload))
-      if (reproduced.schemaVersion !== 'bayn.jev-observation.v1' || reproduced.contentHash !== contentHash)
-        return yield* operationalError({
-          component: 'database',
-          operation: 'candidate-observation',
-          message: 'Jev observation does not reproduce its content hash',
-        })
+    if (reproduced !== undefined) {
       const parameterHash = yield* Effect.fromResult(canonicalHashV1Result(reproduced.protocol))
       const protocolHash = yield* Effect.fromResult(
         makeStrategyProtocolHashResult({
@@ -29,7 +28,7 @@ export const recordCandidateObservation = (sql: PgClient.PgClient, { contentHash
           parameterSchemaVersion: reproduced.protocol.schemaVersion,
         }),
       )
-      const state = payload.portfolio.brokerState
+      const state = reproduced.portfolio.brokerState
       const reconciliation = state.reconciliation
       yield* Schema.decodeUnknownEffect(
         Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
@@ -38,9 +37,9 @@ export const recordCandidateObservation = (sql: PgClient.PgClient, { contentHash
         yield* sql`
         SELECT EXISTS (
           SELECT 1 FROM autonomous_cycles AS cycle
-          JOIN authority_generations AS generation ON generation.generation_hash = ${payload.authorityGenerationHash}
+          JOIN authority_generations AS generation ON generation.generation_hash = ${reproduced.authorityGenerationHash}
           JOIN reconciliations AS evidence ON evidence.reconciliation_id = ${reconciliation.reconciliationId}
-          WHERE cycle.cycle_id = ${payload.cycleId} AND cycle.strategy_name = 'jev'
+          WHERE cycle.cycle_id = ${reproduced.cycleId} AND cycle.strategy_name = 'jev'
             AND cycle.account_id = ${state.account.accountId} AND cycle.strategy_protocol_hash = ${protocolHash}
             AND (generation.account_id IS NULL OR generation.account_id = cycle.account_id)
             AND (generation.strategy_parameter_hash IS NULL OR generation.strategy_parameter_hash = ${parameterHash})
@@ -51,7 +50,7 @@ export const recordCandidateObservation = (sql: PgClient.PgClient, { contentHash
         ) AS matches
       `,
       )
-      yield* verifyJevPortfolioSources(sql, payload.cycleId, payload.portfolio)
+      yield* verifyJevPortfolioSources(sql, reproduced.cycleId, reproduced.portfolio)
     }
     const inserted = yield* sql`
       INSERT INTO intraday_candidate_observations (content_hash, cycle_id, observed_at, payload)
@@ -82,6 +81,11 @@ export const recordCandidateObservation = (sql: PgClient.PgClient, { contentHash
       }),
     ),
   )
+
+export const recordReproducedJevObservation = (sql: PgClient.PgClient, source: ReproducedJevObservation) => {
+  const { snapshot, contentHash, ...payload } = source
+  return recordCandidateObservation(sql, { contentHash, payload: { ...payload, manifest: snapshot.manifest } }, source)
+}
 
 export const makeCandidateObservationStore = Effect.gen(function* () {
   const sql = yield* PgClient.PgClient
@@ -119,7 +123,25 @@ export const makeCandidateObservationStore = Effect.gen(function* () {
             operation: 'candidate-observation',
             message: 'Jev observations must commit before inference',
           })
-        return yield* recordCandidateObservation(sql, observation)
+        if (observation.payload.schemaVersion !== 'bayn.jev-observation.v1')
+          return yield* recordCandidateObservation(sql, observation, undefined)
+        const reproduced = yield* Effect.fromResult(reproduceJevCandidateObservation(observation.payload)).pipe(
+          Effect.mapError((cause) =>
+            operationalError({
+              component: 'database',
+              operation: 'candidate-observation',
+              message: 'Jev observation could not be reproduced before persistence',
+              cause,
+            }),
+          ),
+        )
+        if (reproduced.contentHash !== observation.contentHash)
+          return yield* operationalError({
+            component: 'database',
+            operation: 'candidate-observation',
+            message: 'Jev observation does not reproduce its content hash',
+          })
+        return yield* recordReproducedJevObservation(sql, reproduced)
       }),
   } satisfies CandidateObservationStore['Service']
 })

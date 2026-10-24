@@ -23,7 +23,7 @@ const baynRules = (): readonly MimirRule[] => {
   }
   const group = rules.groups.find(({ name }) => name === 'bayn-cycle-operations.rules')
   if (group === undefined) throw new Error('Bayn cycle operations rule group is missing')
-  return group.rules
+  return group.rules.filter((rule) => typeof rule.alert === 'string')
 }
 
 describe('Bayn cycle operations alert contract', () => {
@@ -33,6 +33,7 @@ describe('Bayn cycle operations alert contract', () => {
       'BaynMetricsUnavailable',
       'BaynStatusReplicaTargetMissed',
       'BaynEgressProxyReplicaTargetMissed',
+      'BaynExecutionWorkerObservationUnavailable',
       'BaynExecutionWorkerUnavailable',
       'BaynExecutionWorkerReplicaTargetMissed',
       'BaynExecutionControllerOverdue',
@@ -58,11 +59,19 @@ describe('Bayn cycle operations alert contract', () => {
     )
     expect(expressions.BaynStatusReplicaTargetMissed).toContain('kube_deployment_spec_replicas{')
     expect(expressions.BaynEgressProxyReplicaTargetMissed).toContain('deployment="bayn-egress-proxy"')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_replicaset_status_ready_replicas{')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('replicaset=~"bayn-execution-controller-.*"')
-    expect(expressions.BaynExecutionWorkerUnavailable).toContain('kube_restate_deployment_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerObservationUnavailable).toContain(
+      'absent(bayn:execution_worker_observed_ready_replicas{',
+    )
+    expect(expressions.BaynExecutionWorkerObservationUnavailable).toContain(
+      'restate_deployment="bayn-execution-controller"',
+    )
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('bayn:execution_worker_observed_ready_replicas{')
+    expect(expressions.BaynExecutionWorkerUnavailable).not.toContain('kube_replicaset_status_ready_replicas')
+    expect(expressions.BaynExecutionWorkerUnavailable).toContain('bayn:execution_worker_observed_desired_replicas{')
     expect(expressions.BaynExecutionWorkerUnavailable).toContain('restate_deployment="bayn-execution-controller"')
-    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('kube_restate_deployment_spec_replicas{')
+    expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain(
+      'bayn:execution_worker_observed_desired_replicas{',
+    )
     expect(expressions.BaynExecutionWorkerReplicaTargetMissed).toContain('> 1')
     expect(expressions.BaynExecutionControllerOverdue).toContain('bayn_execution_controller_active{')
     expect(expressions.BaynExecutionControllerOverdue).toContain(
@@ -143,7 +152,7 @@ describe('Bayn cycle operations alert contract', () => {
     expect(kubeStateMetricsSource).toContain('name: deployment_spec_replicas')
     expect(alloy).toContain('discovery.kubernetes "bayn_log_pods"')
     const baynLogDiscovery = /discovery\.kubernetes "bayn_log_pods" \{(.*?)\n\}/s.exec(alloy)?.[1]
-    expect(baynLogDiscovery).toContain('names = ["bayn", "bayn-model"]')
+    expect(baynLogDiscovery).toContain('names = ["bayn"]')
     expect(baynLogDiscovery).not.toContain('app.kubernetes.io/part-of')
     const baynContainerKeepRule =
       /source_labels = \["__meta_kubernetes_pod_container_name"\]\s+regex\s+=\s+"([^"]+)"/s.exec(alloy)?.[1]

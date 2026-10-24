@@ -29,7 +29,13 @@ describe('Tengri BFF action schema', () => {
     for (const action of [
       { action: 'create-thread', agentId: 'agent-test' },
       { action: 'resume-thread', agentId: 'agent-test', threadId: 'thread-test' },
-      { action: 'send-turn', agentId: 'agent-test', threadId: 'thread-test', text: 'Read the workspace' },
+      {
+        action: 'send-turn',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-test',
+        threadId: 'thread-test',
+        text: 'Read the workspace',
+      },
     ]) {
       expect(tengriActionSchema.safeParse({ ...action, model: 'gpt-6.1-sol', reasoningEffort: 'high' }).success).toBe(
         true,
@@ -146,6 +152,8 @@ describe('Tengri BFF action schema', () => {
       expect(
         tengriActionSchema.safeParse({
           action: 'resolve-approval',
+          runId: '11111111-1111-4111-8111-111111111111',
+          operationId: '22222222-2222-4222-8222-222222222222',
           agentId: 'agent-123',
           approvalId: 'approval-1',
           decision,
@@ -155,6 +163,8 @@ describe('Tengri BFF action schema', () => {
     expect(
       tengriActionSchema.safeParse({
         action: 'resolve-approval',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '22222222-2222-4222-8222-222222222222',
         agentId: 'agent-123',
         approvalId: 'approval-1',
         decision: 'always-approve',
@@ -311,12 +321,19 @@ describe('Tengri BFF action schema', () => {
   test('bounds Codex prompts by UTF-8 bytes', () => {
     const exact = '🙂'.repeat(MAX_CODEX_PROMPT_BYTES / 4)
     expect(
-      tengriActionSchema.safeParse({ action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: exact })
-        .success,
+      tengriActionSchema.safeParse({
+        action: 'send-turn',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        agentId: 'agent-123',
+        threadId: 'thread-1',
+        text: exact,
+      }).success,
     ).toBe(true)
     expect(
       tengriActionSchema.safeParse({
         action: 'steer-turn',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '11111111-1111-4111-8111-111111111111',
         agentId: 'agent-123',
         threadId: 'thread-1',
         turnId: 'turn-1',
@@ -344,12 +361,25 @@ describe('Tengri BFF action schema', () => {
 
 describe('Codex image inputs', () => {
   const png = { mediaType: 'image/png', data: Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]).toString('base64') }
-  const request = { action: 'send-turn', agentId: 'agent-123', threadId: 'thread-1', text: '' }
+  const request = {
+    action: 'send-turn',
+    operationId: '11111111-1111-4111-8111-111111111111',
+    agentId: 'agent-123',
+    threadId: 'thread-1',
+    text: '',
+  }
   test('accepts image-only and mixed text/image messages', () => {
     expect(tengriActionSchema.safeParse({ ...request, images: [png] }).success).toBe(true)
     expect(tengriActionSchema.safeParse({ ...request, text: 'Inspect this', images: [png] }).success).toBe(true)
     expect(
-      tengriActionSchema.safeParse({ ...request, action: 'steer-turn', turnId: 'turn-1', images: [png] }).success,
+      tengriActionSchema.safeParse({
+        ...request,
+        action: 'steer-turn',
+        runId: '11111111-1111-4111-8111-111111111111',
+        operationId: '11111111-1111-4111-8111-111111111111',
+        turnId: 'turn-1',
+        images: [png],
+      }).success,
     ).toBe(true)
     expect(tengriActionSchema.safeParse(request).success).toBe(false)
   })

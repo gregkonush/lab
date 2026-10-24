@@ -833,6 +833,8 @@ identityTest(
     cleanups.push(() => browser.close())
     const context = await browser.newContext({ ignoreHTTPSErrors: true })
     const webAuthnRequests: unknown[] = []
+    const registrations: unknown[] = []
+    await context.exposeFunction('recordRegistrationOptions', (options: unknown) => registrations.push(options))
     await context.exposeFunction('recordWebAuthnOptions', (options: unknown) => {
       webAuthnRequests.push(options)
     })
@@ -841,6 +843,19 @@ identityTest(
         throw new Error('prompt() is not supported.')
       }
       const get = navigator.credentials.get.bind(navigator.credentials)
+      const createCredential = navigator.credentials.create.bind(navigator.credentials)
+      navigator.credentials.create = async (options) => {
+        if (options?.publicKey) {
+          const record: unknown = Reflect.get(window, 'recordRegistrationOptions')
+          if (typeof record === 'function')
+            await record({
+              hints: Reflect.get(options.publicKey, 'hints'),
+              authenticatorSelection: options.publicKey.authenticatorSelection,
+              excludedCredentials: options.publicKey.excludeCredentials?.length ?? 0,
+            })
+        }
+        return createCredential(options)
+      }
       navigator.credentials.get = async (options) => {
         if (options?.publicKey) {
           const record: unknown = Reflect.get(window, 'recordWebAuthnOptions')
@@ -1417,7 +1432,7 @@ identityTest(
     ).rows[0]?.identity_subject
     const credentialIdentities = async () =>
       z
-        .array(z.object({ id: z.string(), type: z.string() }))
+        .array(z.object({ id: z.string(), type: z.string(), userLabel: z.string() }))
         .parse(await (await adminCall(`/users/${subjectBeforeFailover}/credentials`)).json())
     const passkeysBeforeFailover = await credentialIdentities()
     const keycloakFailoverStarted = Date.now()
@@ -1518,7 +1533,7 @@ identityTest(
     await browserExpect(secondPage.getByRole('button', { name: 'Sign out', exact: true })).toBeVisible()
     expect(platformWebAuthnRequests.length).toBeGreaterThan(0)
     for (const request of platformWebAuthnRequests)
-      expect(request).toEqual({ hints: ['client-device', 'security-key'], userVerification: 'discouraged' })
+      expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
     await secondPage.getByRole('button', { name: 'Sign out', exact: true }).click()
     await browserExpect(secondPage.getByRole('button', { name: 'Sign in with GitHub', exact: true })).toBeVisible()
     // The nonmember is a separate upstream identity, with no existing Keycloak SSO cookie.
@@ -1665,7 +1680,84 @@ identityTest(
     ).toBe('5')
     expect(webAuthnRequests.length).toBeGreaterThan(0)
     for (const request of webAuthnRequests)
-      expect(request).toEqual({ hints: ['security-key'], userVerification: 'discouraged' })
+      expect(request).toEqual({ hints: ['client-device', 'hybrid', 'security-key'], userVerification: 'discouraged' })
+    const credentialsBeforeAddition = await credentialIdentities()
+    await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    expect(await credentialIdentities()).toEqual(credentialsBeforeAddition)
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', { authenticatorId, enabled: false })
+    const { authenticatorId: platformAuthenticatorId } = await cdp.send('WebAuthn.addVirtualAuthenticator', {
+      options: {
+        protocol: 'ctap2',
+        transport: 'internal',
+        hasResidentKey: true,
+        hasUserVerification: true,
+        isUserVerified: true,
+        automaticPresenceSimulation: true,
+      },
+    })
+    await page.getByRole('button', { name: 'Create passkey', exact: true }).click()
+    await page.waitForURL(base + '/')
+    expect(await credentialIdentities()).toHaveLength(credentialsBeforeAddition.length + 1)
+    expect(await credentialIdentities()).toEqual(expect.arrayContaining(credentialsBeforeAddition))
+    const labels = (await credentialIdentities()).map((credential) => credential.userLabel)
+    expect(new Set(labels).size).toBe(labels.length)
+    expect(registrations.at(-1)).toEqual({
+      hints: ['client-device', 'hybrid', 'security-key'],
+      authenticatorSelection: { residentKey: 'required', requireResidentKey: true, userVerification: 'discouraged' },
+      excludedCredentials: credentialsBeforeAddition.length,
+    })
+    await cdp.send('WebAuthn.removeVirtualAuthenticator', { authenticatorId })
+    await page.getByRole('button', { name: 'Sign out', exact: true }).click()
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.getByRole('button', { name: 'Sign in with GitHub', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await browserExpect(page.getByText('Available Passkeys', { exact: true })).toHaveCount(0)
+    await browserExpect(page.getByText(/Passkey \(/)).toHaveCount(0)
+    await browserExpect(page.getByText('Internal', { exact: true })).toHaveCount(0)
+    await browserExpect(page.locator('#authn_select input[name="authn_use_chk"]')).toHaveCount(
+      credentialsBeforeAddition.length + 1,
+    )
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-two-passkeys.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: false,
+    })
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('button', { name: 'Check your passkey dialog', exact: true })).toBeDisabled()
+    if (themeScreenshots)
+      await page.screenshot({ path: path.join(themeScreenshots, 'verify-pending.png'), fullPage: true })
+    await cdp.send('WebAuthn.setAutomaticPresenceSimulation', {
+      authenticatorId: platformAuthenticatorId,
+      enabled: true,
+    })
+    await page.reload()
+    await browserExpect(page.getByRole('button', { name: 'Continue with passkey', exact: true })).toBeEnabled()
+    await page.locator('#authenticateWebAuthnButton').click()
+    await page.waitForURL(base + '/')
+    const phoneSession = (await context.cookies(base)).find((value) => value.name === '__Host-tengri-session')
+    const phoneIdentity = await getTengriIdentity(
+      new Headers({ cookie: `__Host-tengri-session=${phoneSession?.value}` }),
+    )
+    expect(phoneIdentity?.session.githubId).toBe('1')
+    expect(phoneIdentity?.session.humanId).toBe(humans[0]?.humanId)
+    const credentialsBeforeCancellation = await credentialIdentities()
+    await page.getByRole('button', { name: 'Add another passkey', exact: true }).click()
+    await page.getByRole('link', { name: 'GitHub fixture 1', exact: true }).click()
+    await browserExpect(page.locator('#authenticateWebAuthnButton')).toBeVisible()
+    await page.locator('#authenticateWebAuthnButton').click()
+    await browserExpect(page.getByRole('heading', { name: 'Set up your passkey', exact: true })).toBeVisible()
+    await page.getByRole('button', { name: 'Cancel', exact: true }).click()
+    await page.waitForURL(base + '/')
+    expect(await credentialIdentities()).toEqual(credentialsBeforeCancellation)
+    console.log(
+      'PASS: existing USB credential authorizes a second platform passkey; fresh mobile-sized login succeeds with the USB authenticator removed',
+    )
     console.log(
       'PASS: real GitHub broker mapping with duplicate emails, passkey enrollment and fresh step-up, PKCE callback, SPIFFE Ofz wire, admission denial receipts, browser membership/quota changes, minimum administrators, shared sessions, atomic cookie replacement, committed-establishment and self-demotion lost-reply recovery, request collision rejection, logout and HEAD/replay denial',
     )

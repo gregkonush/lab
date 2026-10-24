@@ -8,17 +8,20 @@ import {
   AssetExchange,
   AssetStatus,
   OrderCollection,
+  OrderSide as BrokerOrderSide,
   OrderStatus,
   OrderType as BrokerOrderType,
+  SortDirection,
   TimeInForce as BrokerTimeInForce,
 } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
+import { prepareAccounting } from '../accounting/domain'
 import { IntentState, OrderSide, OrderType, TimeInForce, type Intent } from '../execution/contracts'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { canonicalHashV1Result } from '../hash'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { makeReplayBroker, ReplayBrokerFailure, type ReplayBrokerConfig } from './broker'
-import { positionSnapshot } from '../broker/observations'
+import { fillObservation, positionSnapshot } from '../broker/observations'
 import { restoreReplayBrokerCheckpoint, type ReplayBrokerCheckpoint } from './broker-checkpoint'
 import { ReplayQuoteRejection } from './broker-execution-evidence'
 import { makeReplayJevTiming } from './jev-timing'
@@ -117,6 +120,54 @@ test('an equity-only replay account leaves crypto eligibility unknown', async ()
   const account = await run(setup().pipe(Effect.flatMap((broker) => broker.read.account)))
   expect(account.value.cryptoStatus).toBeNull()
   expect(account.value.nonMarginableBuyingPowerMicros).toBeNull()
+})
+
+test('same-millisecond round trips preserve fill accounting order across checkpoint restore', async () => {
+  await run(
+    Effect.gen(function* () {
+      const frozen = { ...config, assumptions: { ...config.assumptions, latencyMs: 0 } }
+      let broker = yield* setup(frozen)
+      yield* broker.mutation.submit(intent())
+      const bought = yield* broker.checkpoint
+      broker = yield* makeReplayBroker({
+        ...frozen,
+        restoreCheckpoint: { value: bought, expectedHash: bought.checkpointHash },
+      })
+      yield* broker.mutation.submit(
+        intent({
+          clientOrderId: 'same-millisecond-sell',
+          side: OrderSide.Sell,
+          limitPriceMicros: '99000000',
+          notionalLimitMicros: '495000000',
+        }),
+      )
+      const flat = yield* broker.checkpoint
+      expect(flat.state.ledger.positions).toEqual([])
+      expect(flat.state.fills.map((fill) => fill.transactionTime)).toEqual([observedAt, observedAt])
+      expect(
+        [...flat.state.fills].sort((a, b) => a.activityId.localeCompare(b.activityId)).map((fill) => fill.side),
+      ).toEqual([BrokerOrderSide.Buy, BrokerOrderSide.Sell])
+      const activities = yield* broker.read.fillActivities({ direction: SortDirection.Ascending })
+      const orders = yield* broker.read.orders()
+      let position = { quantityAtoms: '0', costMicros: '0' }
+      for (const activity of activities.value.items) {
+        const order = orders.value.find((value) => value.brokerOrderId === activity.brokerOrderId)
+        if (order === undefined) throw new Error('Fill order is missing')
+        const observation = Result.getOrThrow(fillObservation(activity, order, activities.evidence))
+        const prepared = Result.getOrThrow(prepareAccounting(observation.contentHash, observation.fill, position, 1))
+        position = {
+          quantityAtoms: (BigInt(position.quantityAtoms) + BigInt(prepared.transaction.quantityDeltaAtoms)).toString(),
+          costMicros: (BigInt(position.costMicros) + BigInt(prepared.transaction.costBasisDeltaMicros)).toString(),
+        }
+      }
+      expect(position).toEqual({ quantityAtoms: '0', costMicros: '0' })
+      const restored = yield* makeReplayBroker({
+        ...frozen,
+        restoreCheckpoint: { value: flat, expectedHash: flat.checkpointHash },
+      })
+      expect((yield* restored.snapshot).fills).toEqual(flat.state.fills)
+    }),
+  )
 })
 
 test('an equity DAY order remains open when its first arrival cannot fill', async () => {

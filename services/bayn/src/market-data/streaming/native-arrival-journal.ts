@@ -115,6 +115,7 @@ export const makeNativeArrivalJournal = (
       }
     })
     let reportedFailure = false
+    let closing = false
     const reportFailure = (cause: NativeArrivalCaptureError) =>
       Effect.sync(() => {
         fail(cause)
@@ -134,12 +135,26 @@ export const makeNativeArrivalJournal = (
           }),
         ),
       ),
-    ).pipe(Effect.catchTag('NativeArrivalCaptureError', reportFailure), Effect.forkScoped)
+    ).pipe(
+      Effect.catchTag('NativeArrivalCaptureError', reportFailure),
+      Effect.onExit((exit) =>
+        closing || state !== 'RECORDING'
+          ? Effect.void
+          : reportFailure(
+              new NativeArrivalCaptureError({
+                message: 'Native arrival writer stopped before owner shutdown',
+                cause: Exit.isFailure(exit) ? exit.cause : undefined,
+              }),
+            ),
+      ),
+      Effect.forkScoped,
+    )
     const ticker = yield* Effect.forever(Effect.sleep('1 second').pipe(Effect.andThen(buffer.withPermit(flush)))).pipe(
       Effect.forkScoped,
     )
     yield* Effect.addFinalizer((exit) =>
       Effect.gen(function* () {
+        closing = true
         yield* Fiber.interrupt(ticker)
         yield* Fiber.interrupt(worker)
         yield* drain

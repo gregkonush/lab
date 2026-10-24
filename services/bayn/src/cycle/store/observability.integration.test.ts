@@ -393,6 +393,78 @@ describePostgres('PostgreSQL intraday observability projection', () => {
 
   test.each([
     {
+      label: 'unsupported setup',
+      rejections: { 'BTC/USD': 'MODEL_SETUP_UNSUPPORTED' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    { label: 'wait', rejections: { 'BTC/USD': 'MODEL_WAIT' }, expected: 'JEV_MODEL_ABSTAINED' },
+    { label: 'avoid', rejections: { 'BTC/USD': 'MODEL_AVOID' }, expected: 'JEV_MODEL_ABSTAINED' },
+    {
+      label: 'funded setup abstention mixed with unfunded candidates',
+      rejections: { 'BTC/USD': 'MODEL_SETUP_UNSUPPORTED', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    {
+      label: 'wait mixed with unfunded candidates',
+      rejections: { 'BTC/USD': 'MODEL_WAIT', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_MODEL_ABSTAINED',
+    },
+    {
+      label: 'only genuinely unfunded candidates',
+      rejections: { 'BTC/USD': 'NO_FUNDED_CANDIDATES', 'ETH/USD': 'NO_FUNDED_CANDIDATES' },
+      expected: 'JEV_NO_FUNDED_CANDIDATES',
+    },
+    { label: 'unknown rejection', rejections: { 'BTC/USD': 'FUTURE_REJECTION' }, expected: null },
+    { label: 'null rejection', rejections: { 'BTC/USD': null }, expected: null },
+    {
+      label: 'unknown rejection mixed with known abstention',
+      rejections: { 'BTC/USD': 'FUTURE_REJECTION', 'ETH/USD': 'MODEL_WAIT' },
+      expected: null,
+    },
+    { label: 'no entry rejections', rejections: {}, expected: 'TARGETS_SATISFIED' },
+  ])('reports the retained no-trade reason honestly: $label', async ({ rejections, expected }) => {
+    const candidate = draft()
+    await runtime.runPromise(
+      Effect.gen(function* () {
+        const sql = yield* PgClient.PgClient
+        yield* (yield* CycleStore).acquire(candidate, acquiredAt)
+        yield* sql.withTransaction(
+          Effect.gen(function* () {
+            // Exercise the full production status reader with isolated retained-document projections.
+            yield* sql`CREATE TEMP TABLE autonomous_cycle_shadow_decisions (
+              cycle_id text, created_at timestamptz, document jsonb
+            ) ON COMMIT DROP`
+            const document = {
+              targetPlan: { status: 'NO_TRADE', reason: 'TARGETS_SATISFIED', targets: [] },
+              strategyDecision: { schemaVersion: 'bayn.jev-entry-target.v6', entryPlanRejections: rejections },
+              orderedIntentIds: [],
+              dispatchable: false,
+            }
+            yield* sql`INSERT INTO autonomous_cycle_shadow_decisions VALUES (
+              ${candidate.identity.cycleId}, ${activatedAt}, ${sql.json(document)}
+            )`
+            const projection = yield* (yield* CycleObservability).read(qualificationRunId, accountId)
+            expect(projection.execution).toMatchObject({
+              decision: {
+                targetPlanStatus: 'NO_TRADE',
+                targetPlanReason: expected,
+                targetCount: 0,
+                dispatchable: false,
+              },
+              intentCount: 0,
+              orderCount: 0,
+              fillCount: 0,
+            })
+            const retained = yield* sql<{ document: unknown }>`SELECT document FROM autonomous_cycle_shadow_decisions`
+            expect(retained[0]?.document).toEqual(document)
+          }),
+        )
+      }),
+    )
+  })
+
+  test.each([
+    {
       accepted: true,
       fillAt: '2026-08-28T14:32:00.800000000Z',
       brokerFillLatency: 800,

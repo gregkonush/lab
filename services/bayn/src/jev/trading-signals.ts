@@ -31,7 +31,7 @@ import { reproduceJevCandidateObservation } from './observation'
 import { JevPurpose, type JevPortfolio } from './portfolio'
 import type { JevProtocol } from './protocol'
 import { jevEntryEconomics } from './entry-economics'
-import { jevTradePlanQuestion } from './trade-plan-choices'
+import { jevEntrySetupQuestion, jevTradePlanQuestion } from './trade-plan-choices'
 
 const unavailable = (message: string) => Result.fail(new JevContractError({ message }))
 
@@ -368,6 +368,7 @@ const requestFromSnapshot = (
           ? jevManagementQuestions
           : {
               action: yield* jevTradePlanQuestion({ snapshot, symbol, economics, protocol: native.protocol }),
+              setup: jevEntrySetupQuestion,
             },
     })
   })

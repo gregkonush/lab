@@ -1,4 +1,4 @@
-import { controlExitDefinition } from './control-portfolio'
+import { ControlPolicy, controlExitDefinition } from './control-portfolio'
 import { equityMarketProfile } from '../jev/markets'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
@@ -38,11 +38,6 @@ import {
 import type { BacktestSourceManifest } from './source'
 import { signalStudyDefinition } from './signal-study'
 import { jevHistoryStartMs } from '../jev/observation-query'
-
-export enum RidgeControlPolicy {
-  Ridge = 'SIX_BAR_RIDGE_V1',
-  TrainingMean = 'SIX_BAR_TRAINING_MEAN_V1',
-}
 
 export const BoundRidgeInputSchema = Schema.Struct({
   artifact: SixBarRidgeArtifactSchema,
@@ -216,7 +211,7 @@ export const scorePinnedRidgeCandidates = (
   query: Pick<IntradaySnapshotQuery, 'sessionDate' | 'observedAt'>,
   candidates: readonly (typeof SixBarRidgeFeatureSchema.Type)[],
   requiredFeatureRowHashes: readonly string[],
-  policy: RidgeControlPolicy,
+  policy: ControlPolicy.Ridge | ControlPolicy.TrainingMean,
 ) =>
   Result.gen(function* () {
     const binding = {
@@ -257,7 +252,7 @@ export const scorePinnedRidgeCandidates = (
       )
     )
       return yield* Result.fail(fail('Ridge control candidates differ from their original verified extraction pins'))
-    if (policy === RidgeControlPolicy.TrainingMean)
+    if (policy === ControlPolicy.TrainingMean)
       return candidates
         .map(({ symbol }) => ({ symbol, scoreBps: bound.artifact.trainingTargetMeanBps }))
         .sort((left, right) => (left.symbol < right.symbol ? -1 : left.symbol > right.symbol ? 1 : 0))
@@ -268,7 +263,7 @@ export const selectBoundRidge = (
   cursor: HistoricalMarketCursor,
   query: IntradaySnapshotQuery,
   bound: BoundRidge,
-  policy: RidgeControlPolicy,
+  policy: ControlPolicy.Ridge | ControlPolicy.TrainingMean,
 ) =>
   Result.gen(function* () {
     if (

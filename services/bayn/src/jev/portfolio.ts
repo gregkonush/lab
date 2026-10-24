@@ -50,6 +50,7 @@ const Base = Schema.Union([
     exitPolicy: JevPositionExitPolicySchema,
     protectionIntentIds: Schema.Array(Sha256Schema).check(Schema.isUnique()),
     exitRequestedAt: Schema.NullOr(UtcInstantSchema),
+    profitExitRequested: Schema.Boolean,
     entryIntentIds: Schema.Array(Sha256Schema).check(Schema.isMinLength(1), Schema.isUnique()),
     entryFills: Schema.Array(FillSchema).check(Schema.isMinLength(1)),
     entryInventoryDebit: JevInventoryDebitSchema,
@@ -123,6 +124,8 @@ export const JevPortfolioSchema = Base.check(
       return issues
     }
     const fills = context.entryFills
+    if (context.profitExitRequested && context.exitRequestedAt === null)
+      issues.push({ path: ['profitExitRequested'], issue: 'requires a durable protection cancellation request' })
     const plan = context.exitPolicy.plans[position.symbol]
     if (
       plan === undefined ||

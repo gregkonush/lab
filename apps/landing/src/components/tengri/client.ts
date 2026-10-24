@@ -93,7 +93,11 @@ export async function runTengriAction<Result>(
   const abortFromCaller = () => controller.abort(options?.signal?.reason)
   options?.signal?.addEventListener('abort', abortFromCaller, { once: true })
   scope.active.set(controller, {
-    blocksLifecycle: action.action !== 'codex-models' && action.action !== 'resume-thread',
+    blocksLifecycle:
+      action.action !== 'codex-models' &&
+      action.action !== 'resume-thread' &&
+      action.action !== 'active-codex-run' &&
+      action.action !== 'codex-run',
   })
   notifyGuestOperationListeners(scope)
   try {
@@ -279,6 +283,7 @@ function requestFailure(payload: unknown, status: number, traceId?: string | nul
     ((status === 404 && record.code === 'conversation_not_found') ||
       (status === 409 && record.code === 'file_conflict') ||
       (status === 409 && record.code === 'lifecycle_superseded') ||
+      (status === 409 && record.code === 'control_not_dispatched') ||
       (status === 502 && record.code === 'model_catalog_invalid') ||
       (status === 502 && record.code === 'conversation_history_invalid') ||
       (status === 429 && record.code === 'capacity_full'))

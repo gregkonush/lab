@@ -167,11 +167,18 @@ pub fn scope_allows(scope: &ObservationScope, action: Action, target: &str) -> b
         Action::BrowserObserve => {
             target == "status" || (scope.browser_screenshot && target == "screenshot")
         }
-        Action::KubeStatusRead
-        | Action::KubeLogsRead
-        | Action::KubeEventsRead
-        | Action::ConnectorRead => {
+        Action::ConnectorRead if scope.connector_operations.is_empty() => {
             !target.is_empty() && target.len() <= 256 && !target.contains(['\0', '\n', '\r'])
+        }
+        Action::KubeStatusRead | Action::KubeLogsRead | Action::KubeEventsRead => {
+            !target.is_empty() && target.len() <= 256 && !target.contains(['\0', '\n', '\r'])
+        }
+        Action::ConnectorRead | Action::ConnectorInvoke => {
+            !target.is_empty()
+                && scope
+                    .connector_operations
+                    .iter()
+                    .any(|operation| operation == target)
         }
         _ => false,
     }
@@ -218,6 +225,14 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
         || scope.file_roots.len() > 16
         || scope.thread_ids.len() > 32
         || scope.terminal_ids.len() > 16
+        || scope.connector_operations.len() > 128
+        || scope.connector_operations.iter().any(|name| {
+            name.is_empty()
+                || name.len() > 128
+                || !name
+                    .bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        })
     {
         return Err(Status::invalid_argument(
             "bounded observation scope required",
@@ -241,6 +256,8 @@ pub fn validate_scope(actions: &[i32], scope: &ObservationScope) -> Result<(), S
     if actions.contains(&(Action::FilesObserve as i32)) && scope.file_roots.is_empty()
         || actions.contains(&(Action::CodexObserve as i32)) && scope.thread_ids.is_empty()
         || actions.contains(&(Action::TerminalObserve as i32)) && scope.terminal_ids.is_empty()
+        || actions.contains(&(Action::ConnectorInvoke as i32))
+            && scope.connector_operations.is_empty()
     {
         return Err(Status::invalid_argument(
             "content access requires an explicit scope",
@@ -450,6 +467,12 @@ pub async fn evaluate(
         resource,
         target,
     } = evaluation;
+    if matches!(
+        action,
+        Action::ConnectorCreate | Action::ConnectorManage | Action::ConnectorInvoke
+    ) {
+        policy::require_connectors()?;
+    }
     let kind = resource.validate_for(action)?;
     let actor = context
         .actor
@@ -481,7 +504,20 @@ pub async fn evaluate(
     let mut effective_scope = None;
     let mut checks = match actor.identity.as_ref() {
         Some(Identity::HumanId(_)) => {
-            if !matches!(peer, BFF_ID | CONTROLLER_ID) {
+            if !(matches!(peer, BFF_ID | CONTROLLER_ID)
+                || (peer == CONNECTOR_BROKER_ID
+                    && policy::connectors_enabled()
+                    && matches!(
+                        action,
+                        Action::PlatformAdmit
+                            | Action::ConnectorRead
+                            | Action::ConnectorInvoke
+                            | Action::ConnectorManage
+                            | Action::GrantsManage
+                            | Action::CodexControl
+                            | Action::WorkspacePolicyRead
+                    )))
+            {
                 return Err(Status::permission_denied("human caller denied"));
             }
             valid_until = valid_until.min(session(database, context, action, &state).await?);
@@ -508,10 +544,14 @@ pub async fn evaluate(
                 || grant.agent_id != subject
                 || grant.resource != *resource
                 || !grant.actions.contains(&(action as i32))
-                || !action.permission()?.diagnostic
+                || (!action.permission()?.diagnostic && action != Action::ConnectorInvoke)
                 || grant.expires_at_ms <= state.now_ms
                 || grant.recovery_generation != state.recovery_generation
                 || !scope_allows(&grant.scope, action, target)
+                || (matches!(action, Action::ConnectorRead | Action::ConnectorInvoke)
+                    && !grant.scope.connector_operations.is_empty()
+                    && (grant.scope.connector_runtime_epoch.is_empty()
+                        || grant.scope.connector_runtime_epoch != context.runtime_epoch))
             {
                 return Err(Status::permission_denied("access denied"));
             }
@@ -554,7 +594,7 @@ pub async fn evaluate(
             }
         }
         if allowed
-            && matches!(
+            && (matches!(
                 action,
                 Action::FilesObserve
                     | Action::FilesWrite
@@ -566,7 +606,11 @@ pub async fn evaluate(
                     | Action::BrowserControl
                     | Action::EditorOpen
                     | Action::PreviewAccess
-            )
+            ) || (matches!(action, Action::ConnectorRead | Action::ConnectorInvoke)
+                && effective_scope
+                    .as_ref()
+                    .is_some_and(|scope| !scope.connector_operations.is_empty())
+                && matches!(actor.identity, Some(Identity::AgentId(_)))))
         {
             let client = database
                 .pool
@@ -630,6 +674,12 @@ pub async fn check(
         .ok_or_else(|| Status::invalid_argument("resource required"))?;
     let action =
         Action::try_from(request.action).map_err(|_| Status::invalid_argument("unknown action"))?;
+    if matches!(
+        action,
+        Action::ConnectorCreate | Action::ConnectorManage | Action::ConnectorInvoke
+    ) {
+        policy::require_connectors()?;
+    }
     let result = evaluate(
         database,
         native,
@@ -760,6 +810,37 @@ pub fn workload_actor(peer: &str) -> Actor {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn legacy_observation_scope_keeps_its_stored_json_and_connector_semantics() {
+        let legacy = serde_json::json!({
+            "file_roots": ["/workspace/src"],
+            "thread_ids": [], "terminal_ids": [], "browser_screenshot": false,
+            "max_bytes": 1024, "max_items": 20
+        });
+        let scope: crate::proto::ObservationScope = serde_json::from_value(legacy.clone()).unwrap();
+        assert_eq!(serde_json::to_value(&scope).unwrap(), legacy);
+        super::validate_scope(&[crate::proto::Action::ConnectorRead as i32], &scope).unwrap();
+        assert!(super::scope_allows(
+            &scope,
+            crate::proto::Action::ConnectorRead,
+            "legacy-operation"
+        ));
+        let scoped = crate::proto::ObservationScope {
+            connector_operations: vec!["search".into()],
+            ..scope
+        };
+        assert!(super::scope_allows(
+            &scoped,
+            crate::proto::Action::ConnectorRead,
+            "search"
+        ));
+        assert!(!super::scope_allows(
+            &scoped,
+            crate::proto::Action::ConnectorRead,
+            "delete"
+        ));
+    }
+
     use super::*;
 
     #[test]
@@ -794,6 +875,8 @@ mod tests {
             browser_screenshot: false,
             max_bytes: 1024,
             max_items: 20,
+            connector_operations: vec![],
+            connector_runtime_epoch: String::new(),
         };
         validate_scope(&[], &approved).unwrap();
         for control in ['\n', '\r', '\u{1b}', '\u{7f}', '\u{85}'] {
@@ -822,6 +905,8 @@ mod tests {
             browser_screenshot: false,
             max_bytes: 65536,
             max_items: 100,
+            connector_operations: vec![],
+            connector_runtime_epoch: String::new(),
         };
         assert!(scope_allows(
             &scope,
