@@ -112,5 +112,5 @@ test('the live rejection warning carries cut reasons while healthy snapshots emi
       }),
     ).pipe(Effect.provide(Reactivity.layer), Effect.provide(Logger.layer([logger]))),
   )
-  expect(annotations[0]?.inputCut).toMatchObject({ reasons: ['BOOTSTRAP_OFFSETS_INCOMPLETE'] })
+  expect(annotations[0]?.['inputCut']).toMatchObject({ reasons: ['BOOTSTRAP_OFFSETS_INCOMPLETE'] })
 })
