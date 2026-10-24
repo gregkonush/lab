@@ -28,6 +28,7 @@ resources:
 - status-pdb.yaml
 - networkpolicy.yaml
 - jev-sealedsecret.yaml
+- openai-externalsecret.yaml
 - bayn-research-db-sealedsecret.yaml
 - bayn-research-authority-sealedsecret.yaml
 - research-worker.yaml
@@ -46,4 +47,4 @@ configMapGenerator:
 images:
 - name: bayn-main
   newName: registry.ide-newton.ts.net/lab/bayn
-  digest: sha256:73de13b93501b9b633ee6d3df6c49db12e8ad823053d3843f8eec08a30c394ed
+  digest: sha256:602892454cc3f7b84b855f6c673dd03fffba8ea6eade4107bc0748fc963c613d
