@@ -934,7 +934,10 @@ async fn creation_resource_counters_are_allowlisted_and_report_missing_files() {
         .unwrap();
     let counters = creation_resource_counters(&directory).await;
     assert_eq!(counters.as_object().unwrap().len(), 6);
-    assert_eq!(counters["memory.stat"]["value"], "pgfault 42\npgmajfault 7\n");
+    assert_eq!(
+        counters["memory.stat"]["value"],
+        "pgfault 42\npgmajfault 7\n"
+    );
     assert_eq!(counters["io.pressure"]["unavailable"]["kind"], "NotFound");
     assert!(counters.get("unrelated").is_none());
     fs::remove_dir_all(directory).await.unwrap();
@@ -946,7 +949,10 @@ async fn optional_counter_rejects_oversized_and_invalid_text_without_returning_c
         std::env::temp_dir().join(format!("tengri-bounded-counter-{}", uuid::Uuid::new_v4()));
     fs::write(&path, vec![b'x'; 65_536]).await.unwrap();
     assert_eq!(
-        optional_counter(&path).await["value"].as_str().unwrap().len(),
+        optional_counter(&path).await["value"]
+            .as_str()
+            .unwrap()
+            .len(),
         65_536
     );
     for content in [vec![b'x'; 65_537], vec![0xff]] {
