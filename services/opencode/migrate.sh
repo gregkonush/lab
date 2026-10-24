@@ -13,10 +13,11 @@ jq -e '.items | length == 0' "$evidence/old-pods.json" >/dev/null
 source_pod="$(kubectl --context "$context" -n bayn get pods -l job-name=opencode-research-state-export -o json | jq -er '.items | if length == 1 then .[0].metadata.name else error("expected one source") end')"
 target_pod="$(kubectl --context "$context" -n opencode get pods -l job-name=opencode-research-state-import -o json | jq -er '.items | if length == 1 then .[0].metadata.name else error("expected one target") end')"
 kubectl --context "$context" -n bayn exec -i "$source_pod" -- python - verify /source < "$root/services/opencode/migrate_state.py" > "$evidence/before.json"
+manifest_sha256="$(python3 -c 'import hashlib,json,sys; print(hashlib.sha256(json.dumps(json.load(open(sys.argv[1])),sort_keys=True).encode()).hexdigest())' "$evidence/before.json")"
 # Save the complete archive before importing; never import a failed source stream.
 kubectl --context "$context" -n bayn exec -i "$source_pod" -- python - export /source < "$root/services/opencode/migrate_state.py" > "$evidence/state.tar"
 sha256sum "$evidence/state.tar" > "$evidence/state.tar.sha256"
-kubectl --context "$context" -n opencode exec -i "$target_pod" -- python3 /app/opencode/migrate_state.py restore /data < "$evidence/state.tar" > "$evidence/restored.json"
+kubectl --context "$context" -n opencode exec -i "$target_pod" -- python3 /app/opencode/migrate_state.py restore /data --manifest-sha256 "$manifest_sha256" < "$evidence/state.tar" > "$evidence/restored.json"
 kubectl --context "$context" -n opencode rollout status deployment/opencode-research --timeout=120s
 kubectl --context "$context" -n opencode exec deploy/opencode-research -c research -- python3 /app/opencode/migrate_state.py verify /var/lib/bayn-opencode > "$evidence/after.json"
 python3 - "$evidence" <<'PY'

@@ -70,7 +70,7 @@ def export_state(root, stream):
             shutil.copyfileobj(archived, stream)
 
 
-def restore_state(destination, stream):
+def restore_state(destination, stream, expected_manifest_sha256):
     if (destination / "state").exists():
         raise ValueError("Refusing to overwrite an existing state directory")
     with tempfile.TemporaryDirectory(prefix=".import-", dir=destination) as temporary:
@@ -82,12 +82,17 @@ def restore_state(destination, stream):
         actual = inventory(staging / "state")
         if actual != expected:
             raise ValueError("Restored state differs from the source manifest")
+        manifest_sha256 = hashlib.sha256(
+            json.dumps(actual, sort_keys=True).encode()
+        ).hexdigest()
+        if manifest_sha256 != expected_manifest_sha256:
+            raise ValueError(
+                "Restored manifest does not match the frozen source identity"
+            )
         sqlite_check(staging / "state")
         marker = {
             "schemaVersion": "opencode.research-state-migration.v1",
-            "manifestSha256": hashlib.sha256(
-                json.dumps(actual, sort_keys=True).encode()
-            ).hexdigest(),
+            "manifestSha256": manifest_sha256,
             "files": len(actual),
         }
         (staging / "state" / ".migration-complete.json").write_text(json.dumps(marker))
@@ -99,12 +104,17 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=["export", "restore", "verify"])
     parser.add_argument("directory", type=Path)
+    parser.add_argument("--manifest-sha256")
     args = parser.parse_args()
     root = args.directory.resolve()
     if args.operation == "export":
         export_state(root, sys.stdout.buffer)
     elif args.operation == "restore":
-        restore_state(root, sys.stdin.buffer)
+        if args.manifest_sha256 is None:
+            parser.error(
+                "restore requires --manifest-sha256 from the quiesced source inventory"
+            )
+        restore_state(root, sys.stdin.buffer, args.manifest_sha256)
     else:
         sqlite_check(root)
         print(json.dumps(inventory(root), sort_keys=True))

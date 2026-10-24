@@ -14,7 +14,7 @@ trap cleanup EXIT
 # Kubernetes normally supplies this ownership through fsGroup.
 docker run --rm --network none --user 0:0 --entrypoint bash -v "$volume:/data" "$image_id" \
   -c 'mkdir -p /data/home /data/workspace/lab; chown -R 65532:65532 /data'
-container="$(docker run --detach --network none --read-only --tmpfs /tmp:rw,nosuid,nodev \
+container="$(docker run --detach --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
   --cap-drop ALL --security-opt no-new-privileges:true --memory 2g --cpus 2 \
   -v "$volume:/var/lib/opencode" -v "$volume:/workspace" \
   "$image_id" bash -c 'git init /workspace/lab >/dev/null; exec /bin/opencode-server')"
@@ -63,3 +63,18 @@ done
 test "$ready" = true
 docker exec "$container" bash -euc 'sha256sum -c /workspace/password.sha256; test -s /workspace/total.bundle.js; cd /workspace/lab; bun test total.test.js'
 printf '%s\n' 'OpenCode v2: authenticated server, preinstalled tools, real edit/test/build and restart persistence verified offline.'
+
+docker rm --force "$container" >/dev/null
+container="$(docker run --detach --network none --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
+  --tmpfs /var/lib/bayn-opencode:rw,nosuid,nodev,uid=65532,gid=65532 \
+  --cap-drop ALL --security-opt no-new-privileges:true --memory 1g --cpus 1 \
+  -e BAYN_PUBLIC_INFORMATION_PROXY=http://127.0.0.1:9 \
+  "$image_id" node /app/opencode/research.js)"
+ready=false
+for _ in {1..45}; do
+  if docker exec "$container" curl --fail --silent http://127.0.0.1:4096/readyz >/dev/null; then ready=true; break; fi
+  if [[ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]]; then break; fi
+  sleep 1
+done
+if [[ "$ready" != true ]]; then docker logs "$container" >&2; exit 1; fi
+printf '%s\n' 'Packaged bounded research gateway started its pinned native child offline.'

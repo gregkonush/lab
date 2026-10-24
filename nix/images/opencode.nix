@@ -26,8 +26,7 @@ let
     mkdir -p "$out/app/opencode" "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
     cp ${repoRoot}/services/opencode/migrate_state.py "$out/app/opencode/migrate_state.py"
-    mkdir -p "$out/etc" "$out/tmp" "$out/workspace" "$out/var/lib/opencode"
-    chmod 1777 "$out/tmp"
+    mkdir -p "$out/etc"
     printf 'opencode:x:65532:65532:OpenCode:/var/lib/opencode:/bin/bash\n' > "$out/etc/passwd"
     printf 'opencode:x:65532:\n' > "$out/etc/group"
   '';
@@ -36,6 +35,13 @@ in pkgs.dockerTools.buildLayeredImage {
   tag = "latest";
   maxLayers = 64;
   contents = [ tools start researchRoot root pkgs.cacert ];
+  extraCommands = ''
+    mkdir -p tmp workspace var/lib/opencode
+    chmod 1777 tmp
+  '';
+  fakeRootCommands = ''
+    chown 65532:65532 workspace var/lib/opencode
+  '';
   config = {
     User = "65532:65532";
     WorkingDir = "/workspace";

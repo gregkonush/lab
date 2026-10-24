@@ -1,3 +1,4 @@
+import hashlib
 import io
 import json
 from pathlib import Path
@@ -23,9 +24,12 @@ class StateMigrationTest(unittest.TestCase):
                 db.execute("INSERT INTO sessions VALUES ('ses_retained')")
             archive = io.BytesIO()
             before = inventory(source)
+            expected_sha256 = hashlib.sha256(
+                json.dumps(before, sort_keys=True).encode()
+            ).hexdigest()
             export_state(source, archive)
             archive.seek(0)
-            restore_state(target, archive)
+            restore_state(target, archive, expected_sha256)
             marker = json.loads(
                 (target / "state" / ".migration-complete.json").read_text()
             )
@@ -36,7 +40,7 @@ class StateMigrationTest(unittest.TestCase):
             self.assertEqual(inventory(source), before)
             archive.seek(0)
             with self.assertRaisesRegex(ValueError, "overwrite"):
-                restore_state(target, archive)
+                restore_state(target, archive, expected_sha256)
 
     def test_rejects_corruption_before_installing_state(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -52,8 +56,49 @@ class StateMigrationTest(unittest.TestCase):
                     output.addfile(entry, io.BytesIO(data))
             archive.seek(0)
             with self.assertRaisesRegex(ValueError, "differs"):
-                restore_state(target, archive)
+                restore_state(target, archive, "0" * 64)
             self.assertFalse((target / "state").exists())
+
+    def test_rejects_a_valid_archive_with_the_wrong_frozen_source_identity(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            target = Path(temporary) / "target"
+            source.mkdir()
+            target.mkdir()
+            (source / "claim.json").write_text("original")
+            archive = io.BytesIO()
+            export_state(source, archive)
+            archive.seek(0)
+            with self.assertRaisesRegex(ValueError, "frozen source"):
+                restore_state(target, archive, "0" * 64)
+            self.assertFalse((target / "state").exists())
+
+    def test_preserves_committed_sessions_in_a_retained_wal(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "source"
+            target = Path(temporary) / "target"
+            source.mkdir()
+            target.mkdir()
+            with sqlite3.connect(source / "sessions.sqlite") as db:
+                db.execute("PRAGMA journal_mode=WAL")
+                db.execute("CREATE TABLE sessions (id TEXT)")
+                db.execute("INSERT INTO sessions VALUES ('ses_in_wal')")
+                db.commit()
+                before = inventory(source)
+                self.assertIn("sessions.sqlite-wal", before)
+                expected_sha256 = hashlib.sha256(
+                    json.dumps(before, sort_keys=True).encode()
+                ).hexdigest()
+                archive = io.BytesIO()
+                export_state(source, archive)
+                archive.seek(0)
+                restore_state(target, archive, expected_sha256)
+                self.assertEqual(inventory(source), before)
+                with sqlite3.connect(target / "state" / "sessions.sqlite") as restored:
+                    self.assertEqual(
+                        restored.execute("SELECT id FROM sessions").fetchall(),
+                        [("ses_in_wal",)],
+                    )
 
     def test_rejects_path_traversal(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -64,7 +109,7 @@ class StateMigrationTest(unittest.TestCase):
                 output.addfile(entry, io.BytesIO(b"x"))
             archive.seek(0)
             with self.assertRaises(tarfile.FilterError):
-                restore_state(Path(temporary), archive)
+                restore_state(Path(temporary), archive, "0" * 64)
             self.assertFalse((Path(temporary) / "state").exists())
 
 

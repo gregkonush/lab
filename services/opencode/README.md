@@ -46,7 +46,9 @@ or external network access. Stream `migrate_state.py export` from the read-only
 source Job through authenticated `kubectl exec` to `migrate_state.py restore` in
 the destination Job, using shell `pipefail`. The source and destination manifests
 must match, SQLite quick checks must pass, and source files must be unchanged.
-Restore refuses an existing destination and rejects escaping archive entries.
+Restore binds the source inventory hash before activation, refuses an existing destination
+and rejects escaping archive entries. Use `bash services/opencode/migrate.sh <private-evidence-directory>`
+from the reviewed checkout after both migration Jobs are ready.
 The target gateway waits for the atomic `.migration-complete.json` marker before
 starting; failed or interrupted imports cannot silently create fresh sessions.
 Keep both archives and exact pre/post claim/session identities as delivery evidence.
