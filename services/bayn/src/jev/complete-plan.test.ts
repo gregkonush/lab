@@ -80,7 +80,7 @@ test('a fresh high still offers complete cost-valid hypothetical plans and expli
       BigInt(serialized.plan.acquisitionCostMicros),
     )
     expect(Number(serialized.plan.levels.profitLimitPriceMicros) / 1_000_000).toBeGreaterThan(
-      state.entryEconomics.breakEvenExitBidUsd,
+      state.entryEconomics.takeProfitBreakEvenLimitUsd,
     )
   }
 })

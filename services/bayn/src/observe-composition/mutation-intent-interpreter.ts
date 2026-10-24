@@ -27,6 +27,7 @@ import {
 } from '../execution/contracts'
 import { MutationStore, type MutationEvent } from '../execution/mutations/model'
 import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
+import { jevProfitTargetHoldingDeadlineAt, jevProfitTargetLimitFloors } from '../jev/exit'
 import { canonicalHashV1Result } from '../hash'
 import type { ReconciliationPassResult } from '../reconciler'
 import type { Policy } from '../risk'
@@ -208,6 +209,7 @@ const validateCurrentMutationExecutionTerms = (
   targetIntent: ExecutionDecisionDocument['targetPlan']['intentTargets'][number],
   target: ExecutionDecisionDocument['targetPlan']['targets'][number],
   riskBinding: ExecutionDecisionDocument['deltaRisk'][number],
+  minimumSellPriceMicros: bigint | undefined,
 ): Result.Result<void, CycleRunnerError> => {
   const pricing = deriveExecutionIntentPricing({
     symbol: targetIntent.symbol,
@@ -217,6 +219,7 @@ const validateCurrentMutationExecutionTerms = (
     quantityAtoms: BigInt(targetIntent.quantityAtoms),
     referencePriceMicros: BigInt(target.referencePriceMicros),
     limitSlippageBps: BigInt(limitSlippageBps),
+    ...(minimumSellPriceMicros === undefined ? {} : { minimumSellPriceMicros }),
   })
   if (Result.isFailure(pricing)) {
     return Result.fail(
@@ -584,7 +587,15 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
     if (!allowSubmit && !drainOpenOrders && uncommittedIntents.length > 0) {
       return { _tag: 'Wait', observedAt: recoveryObservedAt, waitReason: 'SUBMISSION_NOT_ALLOWED' }
     }
+    const profitTarget =
+      document.strategyDecision?.schemaVersion === 'bayn.jev-exit-target.v5' ? document.strategyDecision : undefined
+    const profitHoldingDeadlineAt = yield* Effect.fromResult(jevProfitTargetHoldingDeadlineAt(profitTarget)).pipe(
+      Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })),
+    )
     if (allowSubmit) {
+      const profitFloors = yield* Effect.fromResult(
+        jevProfitTargetLimitFloors(profitTarget, document.createdAt, document.targetPlan.targets),
+      ).pipe(Effect.mapError((cause) => mutationRunnerError({ message: cause.message, cause, failure: 'contract' })))
       for (const prepared of preparedIntents) {
         const requiresFreshSubmission =
           prepared.stored === undefined ||
@@ -596,6 +607,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
             prepared.targetIntent,
             prepared.target,
             prepared.riskBinding,
+            profitFloors[prepared.targetIntent.symbol],
           ),
         )
       }
@@ -754,6 +766,7 @@ export const prepareMutationIntent = <R, E, I extends MutationIntentInput, P ext
           if (observation._tag === 'StableOpen') {
             if (
               drainOpenOrders ||
+              (profitHoldingDeadlineAt !== undefined && facts.evaluatedAt >= profitHoldingDeadlineAt) ||
               (mutationPhase === 'ENTRY' && record.intent.side === OrderSide.Buy && hasOpenPosition) ||
               (allowSubmit &&
                 facts.evaluatedAt >=

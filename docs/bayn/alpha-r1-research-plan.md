@@ -1,6 +1,6 @@
 # Connect Alpha-R1 to Bayn research
 
-Historical factor-screening design. Active research now follows the [Jev Harness2 contract](harness2.md), with
+Historical factor-screening design. Active research now follows the [Jev optimization contract](jev-optimization.md), with
 a general instruction editor and native Jev evaluation. Alpha-R1 registrations remain immutable evidence and
 cannot be submitted for new inference. The implementation and serving identities below describe the retired plan.
 
