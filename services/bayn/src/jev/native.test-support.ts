@@ -1,8 +1,12 @@
+import { jevPositionExitPolicy } from './exit-policy'
+import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
+import { JevEntrySetup } from './trade-plan-choices'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
 import { equityMarketProfile } from './markets'
 import { exchangeSessions } from '../market-hours'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { IsoDateSchema } from '../schemas'
 
 import {
   AccountStatus,
@@ -15,8 +19,8 @@ import {
   type Position,
   type Order,
 } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
-import { reconciledStateHash } from '../reconciliation'
+import { canonicalHashV1Result } from '../hash'
+import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { streamingFixture, streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { makeJevObservation } from './observation'
@@ -47,21 +51,27 @@ export const nativeJevFixture = (
   cycleBindingId = 'a'.repeat(64),
   returns: Readonly<Record<string, number>> = { AAPL: 0.02, AMZN: 0.01 },
   calendar?: ReturnType<typeof streamingFixture>['query']['calendar'],
+  observedPriceChoices = true,
 ) => {
   const base = streamingFixture()
   const protocol = Result.getOrThrow(decodeJevProtocol(protocolDocument))
+  const selectedCalendar = calendar ?? base.query.calendar
+  const selectedDate = Schema.decodeUnknownSync(IsoDateSchema)(
+    calendar === undefined ? base.query.sessionDate : (exchangeSessions(calendar)[0]?.date ?? base.query.sessionDate),
+  )
   const end =
     Math.floor((Date.parse(observedAt ?? base.query.observedAt) - protocol.decisionDelaySeconds * 1000) / 60_000) *
     60_000
   const timedQuery = {
     ...base.query,
-    ...(calendar === undefined ? {} : { calendar }),
+    calendar: selectedCalendar,
+    sessionDate: selectedDate,
     ...(protocol.candidateEvidencePolicy === undefined
       ? {}
       : { candidateEvidencePolicy: protocol.candidateEvidencePolicy }),
     observedAt: observedAt ?? base.query.observedAt,
     rangeStartAt: new Date(
-      jevHistoryStartMs(base.query.calendar, base.query.sessionDate, end, protocol.lookbackMinutes),
+      jevHistoryStartMs(selectedCalendar, selectedDate, end, protocol.lookbackMinutes),
     ).toISOString(),
     rangeEndAt: new Date(end).toISOString(),
   }
@@ -85,11 +95,22 @@ export const nativeJevFixture = (
     query: snapshotQuery,
     snapshot,
   } = streamingFixtureFromRaw(
-    makeIntradayMomentumTestSnapshot(
-      protocol,
-      { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
-      returns,
-    ),
+    (() => {
+      const raw = makeIntradayMomentumTestSnapshot(
+        protocol,
+        { ...query, archiveWatermarks: base.archive.manifest.archiveWatermarks },
+        returns,
+      )
+      const firstMinute = raw.bars[0]?.eventAt
+      return {
+        ...raw,
+        bars: raw.bars.map((bar) =>
+          observedPriceChoices && bar.symbol !== 'SPY' && bar.eventAt === firstMinute
+            ? { ...bar, high: Math.max(bar.high, bar.open * 1.05), low: Math.min(bar.low, bar.open * 0.95) }
+            : bar,
+        ),
+      }
+    })(),
     query,
   )
   const at = snapshot.manifest.observedAt
@@ -173,7 +194,7 @@ export const nativeJevFixture = (
       accountId,
       expectedHash: stateHash,
       observedHash: stateHash,
-      contentHash: canonicalHashV1(material),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(material)),
       status: ReconciliationStatus.Exact,
       discrepancies: [],
       reconciledAt: at,
@@ -187,9 +208,45 @@ export const nativeJevFixture = (
             purpose,
             brokerState,
             entryDecisionHash: 'f'.repeat(64),
+            exitPolicy: (() => {
+              const economics = Result.getOrThrow(
+                jevEntryEconomics({
+                  protocol,
+                  symbol: 'AAPL',
+                  bidMicros: 102_000_000n,
+                  askMicros: 102_010_000n,
+                  capitalMicros: material.account.equityMicros,
+                }),
+              )
+              if (economics === null) throw new Error('Managed fixture requires a funded pre-entry plan')
+              const funded = Result.getOrThrow(
+                fundJevTradePlan({
+                  protocol,
+                  economics,
+                  levels: {
+                    schemaVersion: 'bayn.jev-strategy-exit-plan.v3',
+                    rule: 'model-selected-complete-plan',
+                    symbol: 'AAPL',
+                    sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
+                    sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
+                    maximumHoldingMinutes: protocol.maximumHoldingMinutes,
+                    maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
+                    stopPriceMicros: '99000000',
+                    stopLimitPriceMicros: '98910000',
+                    profitLimitPriceMicros: '105000000',
+                  },
+                }),
+              )
+              if (funded === null) throw new Error('Managed fixture requires funded model prices')
+              return jevPositionExitPolicy(protocol, { AAPL: funded.exitPlan })
+            })(),
             entryIntentIds: [intentId],
+            protectionIntentIds: [],
+            exitRequestedAt: null,
+            profitExitRequested: false,
             entryFills,
             entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
+            protectionDisposals: { quantityAtoms: '0', costBasisMicros: '0' },
           },
     ),
   )
@@ -206,7 +263,7 @@ export const nativeJevFixture = (
           makeStrategyProtocolHashResult({
             name: 'jev',
             behaviorHash: jevBehaviorHash,
-            parameterHash: canonicalHashV1(protocol),
+            parameterHash: Result.getOrThrow(canonicalHashV1Result(protocol)),
             parameterSchemaVersion: protocol.schemaVersion,
           }),
         ),
@@ -229,29 +286,31 @@ export const nativeJevFixture = (
   return { protocol, portfolio, observation, snapshot, cut, query: snapshotQuery, entryFills, draft, input }
 }
 
-export const nativeJevInference = (
-  input: unknown,
-  at: string,
-  action = 'enter',
-  probability = 0.8,
-  economics = 'supported',
-) => {
+export const nativeJevInference = (input: unknown, at: string, action = 'enter', probability = 0.8) => {
   const { request, requestHash } = Result.getOrThrow(prepareJevRequest(input))
   const answers: Record<string, JevResponse['answers'][string]> = {}
   for (const [key, question] of Object.entries(request.questions)) {
     if (question.type === 'noul') answers[key] = { type: 'noul', noul: 0.8 }
     else if (question.type === 'choice') {
       const choices = Object.keys(question.criteria)
-      const selected = key === 'action' ? action : key === 'net_economics' ? economics : choices[0]
+      const selected =
+        key === 'setup'
+          ? JevEntrySetup.Upward
+          : key === 'action' && action === 'enter'
+            ? (choices.find((choice) => choice.startsWith('plan_')) ?? 'wait')
+            : key === 'action'
+              ? action
+              : choices[0]
+      const choiceProbability = key === 'action' || key === 'setup' ? probability : 0.8
       if (selected === undefined || !choices.includes(selected)) throw new Error('Invalid fixture choice')
       answers[key] = {
         type: 'choice',
         choice: selected,
-        confidence: probability,
+        confidence: choiceProbability,
         probabilities: Object.fromEntries(
           choices.map((choice) => [
             choice,
-            choice === selected ? probability : (1 - probability) / (choices.length - 1),
+            choice === selected ? choiceProbability : (1 - choiceProbability) / (choices.length - 1),
           ]),
         ),
       }
@@ -268,16 +327,19 @@ export const nativeJevInference = (
   const response = Result.getOrThrow(
     decodeJevResponse(request, { model: request.model, answers, usage: { input_tokens: 100, output_tokens: 25 } }),
   )
-  return { requestHash, responseHash: canonicalHashV1(response), startedAt: at, completedAt: at, response }
+  return {
+    requestHash,
+    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+    startedAt: at,
+    completedAt: at,
+    response,
+  }
 }
 
 export const nativeJevDecisionEvidence = (
-  fixture: Omit<ReturnType<typeof nativeJevFixture>, 'snapshot'> & {
-    readonly snapshot: import('../market-data/streaming/snapshot').StreamingVerifiedMarketSnapshot
-  } = nativeJevFixture(),
+  fixture: Pick<ReturnType<typeof nativeJevFixture>, 'observation' | 'protocol'> = nativeJevFixture(),
   action = 'enter',
   probability = 0.8,
-  economics = 'supported',
 ) => {
   const observation = fixture.observation.payload
   const at = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -285,10 +347,10 @@ export const nativeJevDecisionEvidence = (
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + fixture.protocol.inferenceValidityMs).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
-  const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability, economics)
+  const batchResult = nativeJevBatchResult(batchPlan, at, () => action, probability)
   return { observation, batchPlan, batchResult, decidedAt: at }
 }
 
@@ -297,7 +359,6 @@ export const nativeJevBatchResult = (
   at: string,
   action: (symbol: string) => string = () => 'enter',
   probability = 0.8,
-  economics = 'supported',
 ) =>
   Result.getOrThrow(
     makeJevBatchResult(batchPlan, {
@@ -315,13 +376,7 @@ export const nativeJevBatchResult = (
             completedAt: at,
             outcome: {
               status: JevOutcome.Received,
-              inference: nativeJevInference(
-                candidate.request.request,
-                at,
-                action(candidate.symbol),
-                probability,
-                economics,
-              ),
+              inference: nativeJevInference(candidate.request.request, at, action(candidate.symbol), probability),
             },
           }),
         )

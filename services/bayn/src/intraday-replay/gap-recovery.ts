@@ -9,7 +9,7 @@ import { intradayInstantNanos } from '../market-data/intraday/time'
 import { SimulatedSnapshotSourceSchema } from '../market-data/streaming/evidence-schema'
 import type { HistoricalMarketCursor } from '../market-data/streaming/historical'
 import { discardedRejectionsOverlap, observedQuoteAt, topicPartitionKey } from '../market-data/streaming/projection'
-import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
+import { IsoDateSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { replayQuoteRejection, ReplayQuoteRejection } from './broker-execution-evidence'
 import { extractSixBarResearchObservation, SixBarResearchStatus, sixBarResearchDefinition } from './six-bar-features'
 
@@ -129,37 +129,27 @@ export enum GapRecoveryDecision {
   MarketFilter = 'MARKET_FILTER',
   InputsUnavailable = 'INPUTS_UNAVAILABLE',
 }
-export enum GapExitReason {
-  Stop = 'PROTECTIVE_STOP',
-  Close = 'CLOSE_WINDOW',
-}
-export enum GapExitAction {
-  Hold = 'HOLD',
-  Exit = 'EXIT',
-  Unavailable = 'UNAVAILABLE',
-  DeadlinePassed = 'DEADLINE_PASSED',
-}
 
 const originalSource = (cursor: HistoricalMarketCursor, atMs: number, sessionOpenMs: number) =>
   Result.gen(function* () {
     const source = yield* Schema.decodeUnknownResult(SimulatedSnapshotSourceSchema, strictParseOptions)(cursor.source)
+    const market = cursor.marketSources.find((value) => value.universeId === gapRecoveryDefinition.universeId)
     if (
+      market === undefined ||
+      (yield* canonicalHashV1Result(source.marketSources)) !== (yield* canonicalHashV1Result(cursor.marketSources)) ||
       source.deliveryModel.schemaVersion !== 'bayn.original-capture-arrivals.v1' ||
       source.runId !== cursor.runId ||
       cursor.projection.availabilityMode !== 'simulated' ||
-      source.featureTopic !== gapRecoveryDefinition.featureTopic ||
-      source.featureTopic !== cursor.universe.topics.features ||
-      source.technicalFeatureTopic !== cursor.universe.topics.technicalFeatures ||
+      market.topics.features !== gapRecoveryDefinition.featureTopic ||
       source.regeneratedFeaturesRecordedAtMs !== undefined ||
       source.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedFeaturesRecordedAtMs !== undefined ||
       cursor.regeneratedTechnicalFeaturesRecordedAtMs !== undefined ||
-      cursor.universe.universeId !== gapRecoveryDefinition.universeId ||
-      cursor.universe.universeSymbolHash !== gapRecoveryDefinition.universeSymbolHash ||
-      cursor.universe.symbols.join(',') !== universe.join(',') ||
+      market.universeId !== gapRecoveryDefinition.universeId ||
+      market.universeSymbolHash !== gapRecoveryDefinition.universeSymbolHash ||
+      market.symbols.join(',') !== universe.join(',') ||
       Object.entries(gapRecoveryDefinition.sourceTopics).some(
-        ([channel, topic]) =>
-          cursor.universe.topics[channel as keyof typeof gapRecoveryDefinition.sourceTopics] !== topic,
+        ([channel, topic]) => market.topics[channel as keyof typeof gapRecoveryDefinition.sourceTopics] !== topic,
       ) ||
       (cursor.lastArrival !== null &&
         (cursor.lastArrival.availableAtMs > atMs ||
@@ -424,66 +414,3 @@ export const decideGapRecovery = (
     }
     return { ...report, reportHash: yield* canonicalHashV1Result(report) }
   }).pipe(Result.mapError((cause) => failure('Gap recovery decision failed', cause)))
-
-const PositionSchema = Schema.Struct({
-  symbol: Schema.Literals(gapRecoveryDefinition.candidates),
-  firstFilledAt: UtcInstantSchema,
-  averageEntryPrice: Schema.Finite.check(Schema.isGreaterThan(0)),
-  pendingExit: Schema.NullOr(Schema.Enum(GapExitReason)),
-})
-
-export const decideGapRecoveryExit = (
-  cursor: HistoricalMarketCursor,
-  session: GapRecoverySession,
-  at: string,
-  rawPosition: unknown,
-) =>
-  Result.gen(function* () {
-    const observedAt = yield* Schema.decodeUnknownResult(UtcInstantSchema, strictParseOptions)(at)
-    const atMs = Date.parse(observedAt)
-    const position = yield* Schema.decodeUnknownResult(PositionSchema, strictParseOptions)(rawPosition)
-    const entryMs = Date.parse(position.firstFilledAt)
-    if (
-      entryMs < session.decisionAtMs ||
-      entryMs >= session.closeMs - gapRecoveryDefinition.flattenBeforeCloseMs ||
-      atMs < entryMs
-    )
-      return yield* Result.fail(failure('Gap position fill time or observation is outside the lifecycle'))
-    yield* originalSource(cursor, atMs, session.openMs)
-    const quote = yield* quoteObservation(cursor, position.symbol, atMs, session.openMs)
-    const fresh = quote.status === GapEndpointStatus.Available && quote.record !== null
-    let reason = position.pendingExit
-    if (reason === null && atMs >= session.closeMs - gapRecoveryDefinition.flattenBeforeCloseMs)
-      reason = GapExitReason.Close
-    if (reason === null && fresh && quote.record !== null) {
-      const bid = BigDecimal.fromNumberUnsafe(quote.record.value.bidPrice)
-      const price = BigDecimal.fromNumberUnsafe(position.averageEntryPrice)
-      if (
-        BigDecimal.isLessThanOrEqualTo(
-          BigDecimal.multiply(bid, BigDecimal.fromNumberUnsafe(10000)),
-          BigDecimal.multiply(price, BigDecimal.fromNumberUnsafe(9950)),
-        )
-      )
-        reason = GapExitReason.Stop
-    }
-    const action =
-      atMs >= session.closeMs
-        ? GapExitAction.DeadlinePassed
-        : reason !== null
-          ? GapExitAction.Exit
-          : fresh
-            ? GapExitAction.Hold
-            : GapExitAction.Unavailable
-    const outcome = {
-      schemaVersion: 'bayn.gap-recovery-exit.v1',
-      qualification: 'UNQUALIFIED',
-      observedAt,
-      position,
-      action,
-      reason,
-      pricingAvailable: fresh,
-      quote,
-      capitalAuthority: 'NONE',
-    }
-    return { ...outcome, evidenceHash: yield* canonicalHashV1Result(outcome) }
-  }).pipe(Result.mapError((cause) => failure('Gap recovery exit observation failed', cause)))

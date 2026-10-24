@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Result } from 'effect'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { parseInferenceCostArgs } from './inference-cost-command'
 import { researchReaderConfig } from './db/research-reader-config'
 import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
@@ -67,14 +67,14 @@ const row = (
                   status: JevOutcome.Failed,
                   failure: JevFailure.Response,
                   httpStatus: null,
-                  responseHash: canonicalHashV1(rejected),
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
                   rejectedResponse: rejected,
                 }
               : {
                   status: JevOutcome.Received,
                   inference: {
                     requestHash: request.requestHash,
-                    responseHash: canonicalHashV1(response),
+                    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
                     startedAt: request.observedAt,
                     completedAt: request.observedAt,
                     response,
@@ -129,7 +129,7 @@ describe('inference operating-cost evidence', () => {
         outcome: {
           ...receipt.outcome,
           rejectedResponse: responseFixture(),
-          responseHash: canonicalHashV1(responseFixture()),
+          responseHash: Result.getOrThrow(canonicalHashV1Result(responseFixture())),
         },
       },
     ]) {

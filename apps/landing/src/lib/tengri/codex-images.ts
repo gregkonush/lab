@@ -70,9 +70,8 @@ export function isWorkspaceImagePath(path: string): boolean {
 
 export function codexOutputImagePaths(text: string): string[] {
   const candidate = text.trim().replace(/^View image: /, '')
-  if (isWorkspaceImagePath(candidate)) return [candidate]
-  return [...text.matchAll(/!\[[^\]]*\]\(([^)]+)\)/g)]
-    .map((match) => match[1])
-    .filter(isWorkspaceImagePath)
-    .slice(0, MAX_CODEX_IMAGES)
+  // Tool output is plain text. Markdown examples in source, logs, or command
+  // arguments must not initiate image reads. Actual image outputs use a path;
+  // assistant Markdown images are handled by the Markdown renderer instead.
+  return isWorkspaceImagePath(candidate) ? [candidate] : []
 }

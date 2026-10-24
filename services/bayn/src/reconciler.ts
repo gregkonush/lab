@@ -1,6 +1,6 @@
 import { Context, Effect } from 'effect'
 
-import { BrokerRead } from './broker/alpaca'
+import { BrokerRead } from './broker/alpaca/model'
 import {
   AuthorityRestrictionStore,
   BrokerEventStore,

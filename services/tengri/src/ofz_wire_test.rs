@@ -281,12 +281,9 @@ async fn ofz_wire_runtime_lifecycle_and_authority() {
         }),
     )
     .await;
-    let mut principal = Principal {
-        owner_hash: human.clone(),
-        context: context.clone(),
-        recovery_generation: state.recovery_generation,
-        action: Action::WorkspaceCreate,
-    };
+    let mut principal = Principal::fixture(&human, "", Action::WorkspaceCreate);
+    principal.context = context.clone();
+    principal.recovery_generation = state.recovery_generation;
     let reserved = controller
         .reservation(&principal, &reservation_id)
         .await

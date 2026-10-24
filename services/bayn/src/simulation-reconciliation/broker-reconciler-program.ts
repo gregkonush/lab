@@ -1,6 +1,6 @@
 import { Effect } from 'effect'
 
-import type { BrokerReadShape } from '../broker/alpaca'
+import type { BrokerReadShape } from '../broker/alpaca/model'
 import type { ReconciliationPersistence } from '../db/execution-store'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { withObservedSpan, withObservedStage } from '../telemetry'

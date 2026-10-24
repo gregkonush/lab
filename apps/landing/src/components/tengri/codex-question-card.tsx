@@ -4,17 +4,20 @@ import { useId, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { z } from 'zod'
-import { runTengriAction } from './client'
+import { prepareCodexOperation, completeCodexOperation } from '@/lib/tengri/codex-operation'
+import { runTengriAction, TengriRequestError } from './client'
 import { codexQuestionResponse, type QuestionRequest } from './codex-question-model'
 import type { TengriCodexInputResponse } from '@/lib/tengri/codex-input'
 
 export function CodexQuestionCard({
   agentId,
+  runId,
   approvalId,
   request,
   onAnswered,
 }: {
   agentId: string
+  runId: string
   approvalId: string
   request: QuestionRequest
   onAnswered: () => void
@@ -67,12 +70,21 @@ export function CodexQuestionCard({
     defaultValues: Object.fromEntries(request.fields.map((_, index) => [`q${index}`, ''])),
   })
   async function respond(response: TengriCodexInputResponse) {
+    const key = `tengri-control:${runId}:${approvalId}`
+    let operationId: string | undefined
     setBusy(true)
     setError('')
     try {
-      await runTengriAction({ action: 'answer-questions', agentId, approvalId, response })
+      if (!runId)
+        throw new Error('This question has no durable run identity. Sleep the workspace before starting new work.')
+      const op = await prepareCodexOperation(key, response, '')
+      operationId = op.id
+      await runTengriAction({ action: 'answer-questions', agentId, runId, operationId: op.id, approvalId, response })
+      completeCodexOperation(key, op.id)
       onAnswered()
     } catch (cause) {
+      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId)
+        completeCodexOperation(key, operationId)
       setError(cause instanceof Error ? cause.message : 'The answer could not be sent.')
       setBusy(false)
     }

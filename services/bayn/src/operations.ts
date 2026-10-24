@@ -1,14 +1,13 @@
 import { Effect } from 'effect'
 import { isSqlError } from 'effect/sql/SqlError'
 
-import { CycleObservabilityError } from './cycle/store'
+import { CycleObservabilityError } from './cycle/store/observability'
 import { DatabaseError } from './db/database-error'
 import { operationalError, retryableOperationalError, type Component, type OperationalError } from './errors'
-import { Pipeable } from './pipeable'
 
 type DatabaseOperationFailure = DatabaseError | CycleObservabilityError
 
-const withinDeadlineDataFirst = <A, R>(
+export const withinDeadline = <A, R>(
   effect: Effect.Effect<A, OperationalError, R>,
   timeoutMs: number,
   component: Component,
@@ -28,16 +27,7 @@ const withinDeadlineDataFirst = <A, R>(
     }),
   )
 
-export const withinDeadline = Pipeable.generic<
-  <A, R>(
-    timeoutMs: number,
-    component: Component,
-    operation: string,
-  ) => (effect: Effect.Effect<A, OperationalError, R>) => Effect.Effect<A, OperationalError, R>,
-  typeof withinDeadlineDataFirst
->(4, withinDeadlineDataFirst)
-
-const databaseOperationDataFirst = <A, R>(
+export const databaseOperation = <A, R>(
   effect: Effect.Effect<A, DatabaseOperationFailure, R>,
   operation: string,
 ): Effect.Effect<A, OperationalError, R> =>
@@ -51,10 +41,3 @@ const databaseOperationDataFirst = <A, R>(
       return makeError({ component: 'database', operation, message: `PostgreSQL ${operation} failed`, cause })
     }),
   )
-
-export const databaseOperation = Pipeable.generic<
-  <A, R>(
-    operation: string,
-  ) => (effect: Effect.Effect<A, DatabaseOperationFailure, R>) => Effect.Effect<A, OperationalError, R>,
-  typeof databaseOperationDataFirst
->(2, databaseOperationDataFirst)

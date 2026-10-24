@@ -19,13 +19,13 @@ import {
   type Position,
   type Valuation,
 } from './execution/contracts'
+import { compareReconciliation } from './simulation-reconciliation/broker-compare'
 import {
-  compareReconciliation,
   reconciledStateHash,
   renderReconciliationDecisionError,
   type ReconciliationDecisionError,
   type ReconciliationSnapshot,
-} from './reconciliation'
+} from './simulation-reconciliation/broker-model'
 
 const successOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): A => Result.getOrThrow(result)
 const failureOf = <A>(result: Result.Result<A, ReconciliationDecisionError>): ReconciliationDecisionError => {
@@ -131,7 +131,14 @@ const snapshot = (overrides: Partial<ReconciliationSnapshot> = {}): Reconciliati
     },
   ],
   durableFills: [{ fillId: fill.fillId, brokerOrderId: fill.brokerOrderId, accounted: true }],
-  projectedPositions: [{ symbol: position.symbol, quantityAtoms: position.quantityAtoms, costBasisMicros: '90000000' }],
+  projectedPositions: [
+    {
+      costBasisAnchor: null,
+      symbol: position.symbol,
+      quantityAtoms: position.quantityAtoms,
+      costBasisMicros: '90000000',
+    },
+  ],
   expectedCashMicros: account.cashMicros,
   valuation,
   accountingHash: hash('5'),
@@ -315,7 +322,9 @@ describe('execution reconciliation', () => {
       compareReconciliation(
         snapshot({
           positions: [{ ...position, quantityAtoms: '500000000', averageEntryPriceMicros: '1', costBasisMicros: '1' }],
-          projectedPositions: [{ symbol: position.symbol, quantityAtoms: '500000000', costBasisMicros: '0' }],
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '500000000', costBasisMicros: '0' },
+          ],
         }),
       ),
     )
@@ -345,7 +354,9 @@ describe('execution reconciliation', () => {
     ]
     const input = snapshot({
       positions,
-      projectedPositions: [{ symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400000' }],
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400000' },
+      ],
     })
     expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
     for (const costBasisMicros of ['19761400021', '19761400023', '19761400100']) {
@@ -371,7 +382,9 @@ describe('execution reconciliation', () => {
       successOf(
         compareReconciliation({
           ...input,
-          projectedPositions: [{ symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400100' }],
+          projectedPositions: [
+            { costBasisAnchor: null, symbol: 'NVDA', quantityAtoms: '91000000000', costBasisMicros: '19761400100' },
+          ],
         }),
       ).discrepancies.some(({ identity }) => identity === 'NVDA:cost'),
     ).toBe(true)
@@ -395,7 +408,12 @@ describe('execution reconciliation', () => {
           const input = snapshot({
             positions: [observed],
             projectedPositions: [
-              { symbol: position.symbol, quantityAtoms: String(quantity), costBasisMicros: String(cost) },
+              {
+                costBasisAnchor: null,
+                symbol: position.symbol,
+                quantityAtoms: String(quantity),
+                costBasisMicros: String(cost),
+              },
             ],
           })
           expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
@@ -432,7 +450,9 @@ describe('execution reconciliation', () => {
           costBasisMicros: '301000000',
         },
       ],
-      projectedPositions: [{ symbol: position.symbol, quantityAtoms: '3000000000', costBasisMicros: '301000000' }],
+      projectedPositions: [
+        { costBasisAnchor: null, symbol: position.symbol, quantityAtoms: '3000000000', costBasisMicros: '301000000' },
+      ],
     })
     expect(successOf(compareReconciliation(input)).discrepancies).toEqual([])
     const drift = successOf(
@@ -470,7 +490,7 @@ describe('execution reconciliation', () => {
               costBasisMicros: '57896044618658097711785492504343953926124568782438874324533730092809',
             },
           ],
-          projectedPositions: [{ symbol: position.symbol, quantityAtoms, costBasisMicros: '0' }],
+          projectedPositions: [{ costBasisAnchor: null, symbol: position.symbol, quantityAtoms, costBasisMicros: '0' }],
         }),
       ),
     )

@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 
 import { Result } from 'effect'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { OrderSide, type Fill } from '../execution/contracts'
 import { brokerFeeLedgerPlan, prepareAccounting, rebuildAccountingLedger } from './domain'
 import type { AccountingFailure } from './failure'
@@ -274,7 +274,9 @@ describe('execution accounting', () => {
       ledgerPlanHash,
     }
     expect(
-      failureOf(rebuildAccountingLedger({ ...material, contentHash: canonicalHashV1(material) }, 7001)),
+      failureOf(
+        rebuildAccountingLedger({ ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }, 7001),
+      ),
     ).toMatchObject({
       _tag: 'AccountingLedgerPlanHashMismatch',
       transactionId: prepared.transaction.transactionId,

@@ -10,10 +10,11 @@ import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 
 import { constructStreamingSnapshot } from './snapshot'
+import { selectStreamingInputs } from './inputs'
 import { KafkaBootstrapTimestampPolicy } from './bootstrap'
 import type { KafkaProjectionCut } from './kafka'
 import { IntradaySnapshotPurpose, type IntradayQuote, type IntradaySnapshotQuery } from '../intraday/model'
-import { canonicalHashV1, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import { checkProperty } from '../../testing/property-test-support'
 import {
   captureKafkaTransport,
@@ -27,7 +28,6 @@ import {
   incorporateMarketRecord,
   incorporateRecordedMarketValue,
   observedQuoteAt,
-  selectStreamingSymbolInputs,
   type ObservedMarketValue,
 } from './projection'
 
@@ -97,7 +97,7 @@ const incorporate = (records: readonly KafkaMarketRecord[], available = end + 30
   )
 const raw = () => [...Array.from({ length: 30 }, (_, index) => barRecord(index)), quote, trade]
 const select = (state: ReturnType<typeof incorporate>, at = end + 3000) =>
-  selectStreamingSymbolInputs(state, 'AAPL', start, end, at)
+  selectStreamingInputs(state, { ...query, observedAt: new Date(at).toISOString() })
 
 describe('streaming raw and rolling feature projection', () => {
   test('other feature definitions neither reject nor authorize the selected observed-history contract', () => {
@@ -110,7 +110,7 @@ describe('streaming raw and rolling feature projection', () => {
     expect(Result.isFailure(select(unselected))).toBe(true)
     const selected = incorporateMarketRecord(unselected, { ...featureRecord, offset: '1' }, universe, end + 3000)
     expect(selected.rejections.size).toBe(0)
-    expect(Result.getOrThrow(select(selected)).feature.value.featureId).toBe(feature.featureId)
+    expect(Result.getOrThrow(select(selected)).featureReceipts[0]?.value.featureId).toBe(feature.featureId)
   })
 
   test('a malformed selected feature definition still rejects the whole cut', () => {
@@ -179,6 +179,23 @@ describe('streaming raw and rolling feature projection', () => {
 
             const history = state.quoteHistory.get('AAPL')
             if (history === undefined) throw new Error('missing accepted quote history')
+            const first = history[0]
+            if (first === undefined) throw new Error('missing first retained quote')
+            const source = {
+              topic: first.value.sourceTopic,
+              partition: first.value.sourcePartition,
+              offset: first.value.sourceOffset,
+              availableAtMs: first.availableAtMs,
+            }
+            expect(observedQuoteAt(state, 'AAPL', end + 5000, source)).toEqual(first)
+            expect(observedQuoteAt(state, 'AAPL', first.availableAtMs - 1, source)).toBeUndefined()
+            for (const mismatched of [
+              { ...source, topic: 'other.quote.topic' },
+              { ...source, partition: source.partition + 1 },
+              { ...source, offset: String(BigInt(source.offset) + 1_000_000n) },
+              { ...source, availableAtMs: source.availableAtMs + 1 },
+            ])
+              expect(observedQuoteAt(state, 'AAPL', end + 5000, mismatched)).toBeUndefined()
             Object.freeze(history)
             const duplicate = incorporateMarketRecord(state, latestRecord, universe, end + 4000)
             expect(duplicate).toBe(state)
@@ -294,7 +311,7 @@ describe('streaming raw and rolling feature projection', () => {
           value: JSON.stringify({
             ...feature,
             material,
-            featureId: canonicalHashV1(material),
+            featureId: Result.getOrThrow(canonicalHashV1Result(material)),
             computedAtMs: feature.computedAtMs + shiftMs,
           }),
         },
@@ -321,8 +338,12 @@ describe('streaming raw and rolling feature projection', () => {
       unmatchedFeatures: 1,
     })
     const joined = incorporate([...raw(), featureRecord], end + 5000)
-    const inputs = Result.getOrThrow(selectStreamingSymbolInputs(joined, 'AAPL', start, end, end + 5000))
-    expect(featureAvailabilityMeasurement(joined.epoch, inputs.feature)).toMatchObject({
+    const inputs = Result.getOrThrow(select(joined, end + 5000))
+    const arrival = joined.featureArrival
+    if (arrival === null) throw new Error('expected incorporated feature arrival')
+    const { recordHash: _recordHash, ...receipt } = arrival
+    expect(inputs.featureReceipts[0]).toEqual(receipt)
+    expect(featureAvailabilityMeasurement(joined.epoch, arrival)).toMatchObject({
       computedAtMs: feature.computedAtMs,
       availableAtMs: end + 5000,
       windowAvailabilityDelayMs: 5000,
@@ -343,9 +364,9 @@ describe('streaming raw and rolling feature projection', () => {
     for (let index = 0; index < 30; index++)
       state = incorporateMarketRecord(state, barRecord(index), universe, end + 3000)
     const inputs = Result.getOrThrow(select(state))
-    expect(inputs.feature.value.featureId).toBe(feature.featureId)
+    expect(inputs.featureReceipts[0]?.value.featureId).toBe(feature.featureId)
     expect(inputs.bars).toHaveLength(30)
-    expect(inputs.quote.askPrice).toBe(131)
+    expect(inputs.quotes[0]?.askPrice).toBe(131)
   })
 
   test('feature receipt controls eligibility independently of computation time', () => {
@@ -358,8 +379,8 @@ describe('streaming raw and rolling feature projection', () => {
     const first = Result.getOrThrow(select(incorporate([featureRecord, ...raw()])))
     const last = Result.getOrThrow(select(incorporate([...raw(), featureRecord])))
     expect(first.bars).toEqual(last.bars)
-    expect(first.feature.value).toEqual(last.feature.value)
-    expect(first.feature.sequence).not.toBe(last.feature.sequence)
+    expect(first.featureReceipts[0]?.value).toEqual(last.featureReceipts[0]?.value)
+    expect(first.featureReceipts[0]?.sequence).not.toBe(last.featureReceipts[0]?.sequence)
   })
 
   test('correction invalidates the old feature until its replacement arrives, and retries cannot reverse it', () => {
@@ -382,9 +403,9 @@ describe('streaming raw and rolling feature projection', () => {
       inputs,
       values: { ...feature.material.values, referencePriceMicros: '100500000' },
     }
-    const replacement = { ...feature, material, featureId: canonicalHashV1(material) }
+    const replacement = { ...feature, material, featureId: Result.getOrThrow(canonicalHashV1Result(material)) }
     const corrected = incorporateMarketRecord(initial, correctedRecord, universe, end + 4000)
-    expect(Result.getOrThrow(select(corrected, end + 3000)).feature.value.featureId).toBe(feature.featureId)
+    expect(Result.getOrThrow(select(corrected, end + 3000)).featureReceipts[0]?.value.featureId).toBe(feature.featureId)
     const previousCut = Result.getOrThrow(constructStreamingSnapshot(cutFor(corrected), query))
     expect(previousCut.bars.find((bar) => Date.parse(bar.eventAt) === start)?.open).toBe(100)
     expect(Result.isFailure(select(corrected, end + 4000))).toBe(true)
@@ -394,10 +415,14 @@ describe('streaming raw and rolling feature projection', () => {
       universe,
       end + 5000,
     )
-    expect(Result.getOrThrow(select(replaced, end + 5000)).feature.value.featureId).toBe(replacement.featureId)
+    expect(Result.getOrThrow(select(replaced, end + 5000)).featureReceipts[0]?.value.featureId).toBe(
+      replacement.featureId,
+    )
     const retried = incorporateMarketRecord(replaced, { ...featureRecord, offset: '2' }, universe, end + 6000)
-    expect(Result.getOrThrow(select(retried, end + 6000)).feature.value.featureId).toBe(replacement.featureId)
-    expect(Result.getOrThrow(select(initial)).feature.value.featureId).toBe(feature.featureId)
+    expect(Result.getOrThrow(select(retried, end + 6000)).featureReceipts[0]?.value.featureId).toBe(
+      replacement.featureId,
+    )
+    expect(Result.getOrThrow(select(initial)).featureReceipts[0]?.value.featureId).toBe(feature.featureId)
   })
 
   test('bounds bar revision history and rejects observations that need an evicted revision', () => {
@@ -443,7 +468,7 @@ describe('streaming raw and rolling feature projection', () => {
   test('duplicates preserve the original receipt and conflicting immutable payloads block the cut', () => {
     const initial = incorporate([...raw(), featureRecord])
     const duplicate = incorporateMarketRecord(initial, { ...featureRecord, offset: '1' }, universe, end + 4000)
-    expect(Result.getOrThrow(select(duplicate, end + 4000)).feature.availableAtMs).toBe(end + 3000)
+    expect(Result.getOrThrow(select(duplicate, end + 4000)).featureReceipts[0]?.availableAtMs).toBe(end + 3000)
     const conflict = incorporateMarketRecord(
       initial,
       { ...quote, value: quote.value.replace('"ap":131', '"ap":132') },
@@ -566,7 +591,7 @@ const calendarMaterial = withProviderSessions({
 })
 const query: IntradaySnapshotQuery = {
   sessionDate: '2026-09-11',
-  calendar: { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) },
+  calendar: { ...calendarMaterial, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)) },
   rangeStartAt: new Date(start).toISOString(),
   rangeEndAt: new Date(end).toISOString(),
   observedAt: new Date(end + 3000).toISOString(),
@@ -898,8 +923,8 @@ describe('verified streaming decision snapshot', () => {
     expect(snapshot.manifest.streaming.records).toHaveLength(32)
     expect(snapshot.manifest.streaming.features[0]?.value.featureId).toBe(feature.featureId)
     const { snapshotId, contentHash, ...material } = snapshot.manifest
-    expect(contentHash).toBe(canonicalHashV1(material))
-    expect(snapshotId).toBe(canonicalHashV1({ ...material, contentHash }))
+    expect(contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(material)))
+    expect(snapshotId).toBe(Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })))
   })
 
   test('selects quote state as of observation even when a newer quote is incorporated before the request executes', () => {
@@ -967,15 +992,15 @@ describe('explicit historical delivery model', () => {
       observedAtMs: end + 3000,
       events: [...raw(), regenerated].map((record) => ({ record, availableAtMs: end + 3000 })),
     }
-    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
-    expect(Result.getOrThrow(select(replay.projection)).feature.value.computedAtMs).toBe(recordedAtMs)
+    const replay = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
+    expect(Result.getOrThrow(select(replay.projection)).featureReceipts[0]?.value.computedAtMs).toBe(recordedAtMs)
     expect(replay.regeneratedFeatures?.runId).toBe('c'.repeat(64))
     expect(Result.isFailure(constructStreamingSnapshot(cutFor(replay.projection), query))).toBe(true)
     const live = incorporate([...raw(), regenerated])
     expect(Result.isFailure(select(live))).toBe(true)
     const { regeneratedFeatures: _regenerated, ...undeclared } = input
     expect(
-      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, universe)).projection)),
+      Result.isFailure(select(Result.getOrThrow(replayHistoricalMarketArrivals(undeclared, [universe])).projection)),
     ).toBe(true)
   })
 
@@ -994,11 +1019,11 @@ describe('explicit historical delivery model', () => {
         { record: featureRecord, availableAtMs: end + 5000 },
       ],
     }
-    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, universe))
+    const before = Result.getOrThrow(replayHistoricalMarketArrivals(input, [universe]))
     expect(before.evidenceMode).toBe('simulated-consumer-availability')
     expect(Result.isFailure(select(before.projection, end + 3000))).toBe(true)
-    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, universe))
-    expect(Result.getOrThrow(select(after.projection, end + 5000)).feature.value.computedAtMs).toBe(
+    const after = Result.getOrThrow(replayHistoricalMarketArrivals({ ...input, observedAtMs: end + 5000 }, [universe]))
+    expect(Result.getOrThrow(select(after.projection, end + 5000)).featureReceipts[0]?.value.computedAtMs).toBe(
       feature.computedAtMs,
     )
     expect(after.inputHash).not.toBe(before.inputHash)

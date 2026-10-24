@@ -5,7 +5,7 @@ import { intradayPerformanceDecisionRequest, intradayPerformanceSessionQuery } f
 import type { ForwardPerformanceIntradayMarketVolumeRequest } from './model'
 import { streamingFixture } from '../testing/streaming-market-fixture'
 import { IsoDateSchema } from '../schemas'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 
 const recordedIntradayCycles = [
   {
@@ -677,11 +677,14 @@ const recordedIntradayCycles = [
 
 export const completedIntradayCycles = recordedIntradayCycles.map((cycle) => {
   const { normalizedResponseHash: _calendarHash, ...calendarMaterial } = cycle.manifest.calendar
-  const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
+  const calendar = {
+    ...calendarMaterial,
+    normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
+  }
   const { snapshotId: _snapshotId, contentHash: _contentHash, ...original } = cycle.manifest
   const material = { ...original, calendar }
-  const hashed = { ...material, contentHash: canonicalHashV1(material) }
-  return { ...cycle, manifest: { ...hashed, snapshotId: canonicalHashV1(hashed) } }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  return { ...cycle, manifest: { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) } }
 })
 
 export const makeIntradayPerformanceFixture = () => {
@@ -745,8 +748,8 @@ export const makeStreamingPartitionPerformanceFixture = () => {
       },
     },
   }
-  const hashed = { ...material, contentHash: canonicalHashV1(material) }
-  const decisionManifest = { ...hashed, snapshotId: canonicalHashV1(hashed) }
+  const hashed = { ...material, contentHash: Result.getOrThrow(canonicalHashV1Result(material)) }
+  const decisionManifest = { ...hashed, snapshotId: Result.getOrThrow(canonicalHashV1Result(hashed)) }
   return {
     request: { ...request, decisionManifest, decisionSnapshotId: decisionManifest.snapshotId },
     archive: {

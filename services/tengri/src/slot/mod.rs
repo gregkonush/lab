@@ -20,7 +20,7 @@ use tokio::{
 };
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.6";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.8";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 

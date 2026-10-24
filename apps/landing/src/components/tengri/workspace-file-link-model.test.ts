@@ -2,6 +2,12 @@ import { describe, expect, test } from 'bun:test'
 import { parseWorkspaceFileLink } from './workspace-file-link-model'
 
 describe('workspace file links', () => {
+  test('preserves the canonical path used by signed file requests', () => {
+    const file = parseWorkspaceFileLink('/workspace/lab/README.md:2')
+    expect(file).not.toBeNull()
+    expect(file!.path).toBe('/workspace/lab/README.md')
+  })
+
   test('preserves absolute guest paths and preserves locations', () => {
     expect(parseWorkspaceFileLink('/workspace/lab/docs/tengri/ofz-implementation-status.md:177')).toEqual({
       path: '/workspace/lab/docs/tengri/ofz-implementation-status.md',

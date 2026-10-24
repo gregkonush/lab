@@ -9,8 +9,14 @@ import {
   sanitizeErrorEvent,
 } from './error-tracking'
 import { DiscrepancyKind, ReconciliationStatus, type Reconciliation } from './execution/contracts'
-import { CycleRunnerError } from './cycle/runner'
+import { CycleRunnerError } from './cycle/runner/model'
 import { observePass } from './observe-composition/decision-builder'
+import { makeNativeArrivalJournal } from './market-data/streaming/native-arrival-journal'
+import { NativeArrivalCaptureError } from './market-data/streaming/native-arrival'
+import {
+  nativeArrivalEpochFixture as epoch,
+  nativeArrivalObservationFixture as observation,
+} from './market-data/streaming/native-arrival.test-support'
 
 describe('GlitchTip error-only safety boundary', () => {
   afterAll(() => Sentry.close(0))
@@ -127,6 +133,53 @@ describe('GlitchTip error-only safety boundary', () => {
       flush.mockRestore()
     }
   })
+
+  test.each([false, true])(
+    'a native capture write failure reaches GlitchTip without interrupting retention finalization when SDK throws=%s',
+    async (sdkThrows) => {
+      initializeErrorTracking('bayn-test', {
+        BAYN_GLITCHTIP_DSN: 'http://591bd90be7b84b22856ec7c1bd456ec2@glitchtip-web.glitchtip.svc.cluster.local/1',
+      })
+      const capture = spyOn(Sentry, 'captureException').mockImplementation(() => {
+        if (sdkThrows) throw new Error('synthetic collector failure')
+        return 'f'.repeat(32)
+      })
+      const failure = new NativeArrivalCaptureError({
+        message: 'private retention failure',
+        cause: 'private input bytes',
+      })
+      let appends = 0
+      let finalized = false
+      try {
+        await Effect.runPromise(
+          Effect.scoped(
+            Effect.gen(function* () {
+              const journal = yield* makeNativeArrivalJournal(
+                epoch,
+                {
+                  begin: () => Effect.void,
+                  append: () => Effect.suspend(() => (++appends === 1 ? Effect.fail(failure) : Effect.void)),
+                  end: () =>
+                    Effect.sync(() => {
+                      finalized = true
+                    }),
+                },
+                { chunkBytes: 1, queueBytes: 1_500 },
+              )
+              yield* journal.observe(observation(1))
+              for (let turn = 0; turn < 20; turn++) yield* Effect.yieldNow
+              expect(journal.status().status).toBe('INCOMPLETE')
+            }),
+          ),
+        )
+        expect(capture).toHaveBeenCalledTimes(1)
+        expect(capture.mock.calls[0]?.[0]).toBe(failure)
+        expect(finalized).toBe(true)
+      } finally {
+        capture.mockRestore()
+      }
+    },
+  )
 
   test('redacts potentially sensitive exception data but retains frames', () => {
     const event = sanitizeErrorEvent({

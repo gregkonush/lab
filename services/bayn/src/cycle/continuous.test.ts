@@ -1,5 +1,5 @@
 import { withProviderSessions } from '../testing/market-calendar-fixture'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { CycleState, CycleTerminalReason } from './model'
 import {
   canRearmUnusedCycle,
@@ -155,7 +155,10 @@ test('an unused expired continuous lease rearms under the same approved contract
     timeZone: 'UTC' as const,
     sessions: [equitySession],
   })
-  const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
+  const calendar = {
+    ...calendarMaterial,
+    normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
+  }
   expect(canRearmUnusedCycle(cycle, candidate, calendar, equitySession, nextAt)).toBe(true)
   expect(nextIntradayEntryAttemptOrdinal(cycle, nextAt, next.entryCutoffAt, true)).toBe(2)
   expect(nextIntradayEntryAttemptOrdinal(cycle, '2026-10-12T14:31:59.999Z', next.entryCutoffAt, true)).toBeUndefined()

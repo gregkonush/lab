@@ -1,4 +1,4 @@
-import { expect, test, type WebSocket } from '@playwright/test'
+import { expect, test, type WebSocket as PlaywrightWebSocket } from '@playwright/test'
 import { codexModelFixtures } from './codex-models.fixture'
 
 test.afterEach(async ({ request }, testInfo) => {
@@ -23,7 +23,19 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
 }, testInfo) => {
   test.skip(process.env.TENGRI_EDITOR_BROWSER_FIXTURE !== '1', 'Run the real guest browser acceptance runner')
   test.setTimeout(240_000)
-  const sockets: WebSocket[] = []
+  const sockets: PlaywrightWebSocket[] = []
+  await page.addInitScript(() => {
+    const NativeWebSocket = window.WebSocket
+    let displaySocket: WebSocket | undefined
+    Object.defineProperty(window, '__tengriTestDisplaySocket', { get: () => displaySocket })
+    window.WebSocket = new Proxy(NativeWebSocket, {
+      construct(target, args) {
+        const socket = Reflect.construct(target, args) as WebSocket
+        if (new URL(String(args[0]), location.href).pathname === '/websockify') displaySocket = socket
+        return socket
+      },
+    })
+  })
   const errors: string[] = []
   const signOutActions: string[] = []
   let authenticated = true
@@ -90,7 +102,7 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
     if (action.action === 'browser-session') {
       if (action.renewal) automaticRenewals++
       const response = await request.get(
-        `http://127.0.0.1:33082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
+        `http://127.0.0.1:18082/_test/browser?window=${encodeURIComponent(action.windowId)}`,
         { timeout: 300_000 },
       )
       expect(response.ok()).toBeTruthy()
@@ -102,10 +114,10 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
         await route.fulfill({ status: 503, json: { error: 'Desktop preview sessions could not be revoked' } })
         return
       }
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke-desktop-previews')
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke-desktop-previews')
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'revoke-preview-session') {
-      const response = await request.post('http://127.0.0.1:33082/_test/revoke', { data: action })
+      const response = await request.post('http://127.0.0.1:18082/_test/revoke', { data: action })
       expect(response.ok()).toBeTruthy()
     } else if (action.action === 'list-files') result = { path: action.path, entries: [] }
     else if (action.action === 'codex-account')
@@ -179,6 +191,18 @@ test('shares a real persistent Chromium browser between the desktop and CUA @bro
   expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
   expect(establishedSockets.every((socket) => !socket.isClosed())).toBe(true)
   expect((await state()).loaded?.url).toBe(humanUrl)
+  expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
+  // A dropped display transport must retain the viewer document and the guest's unsent form input.
+  await frame.locator('#screen').evaluate(() => {
+    const socket = (window as Window & { __tengriTestDisplaySocket?: WebSocket }).__tengriTestDisplaySocket
+    if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error('The real display transport is not open')
+    socket.close(4000, 'Fixture transport restart')
+  })
+  await expect.poll(() => sockets.length).toBeGreaterThan(establishedSockets.length)
+  await expect(frame.locator('#screen')).toHaveAttribute('data-connected', 'true')
+  expect(await browserDocument?.evaluate((node) => node.isConnected)).toBe(true)
+  expect((await state()).loaded?.url).toBe(humanUrl)
+  expect((await state()).input?.message).toBe('Human input works')
   expect((await computer({ action: 'status' })).structuredContent.userControl).toBe(true)
   // Reconnect the display's keyboard without changing the guest's retained form focus.
   await canvas.focus()

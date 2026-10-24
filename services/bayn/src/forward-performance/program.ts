@@ -10,19 +10,16 @@ import { verifyAccountingReceipts, type ReconciliationAlgebraFailure } from '../
 import { verifyCashSettlement } from '../accounting/cash-settlement'
 import type { CanonicalJsonFailure } from '../hash'
 import { canonicalHashV1Result } from '../hash'
-import type { MarketDataSnapshot, SnapshotRequest } from '../market-data'
-import { makeMarketDataQueries } from '../market-data/queries'
+import type { MarketDataSnapshot, SnapshotRequest } from '../market-data/model'
+import { makeDailySnapshotQueries } from '../market-data/queries'
 import { decodeSnapshotRows, type SnapshotRows } from '../market-data/rows'
-import { verifyFinalizedSnapshot } from '../market-data-verification'
+import { verifyFinalizedSnapshot } from '../market-data/verification/snapshot'
 import type { BrokerIdentity } from '../broker/identity'
 import type { IsoDate } from '../schemas'
-import { makeForwardPerformanceReceipt, type ForwardPerformanceDomainFailure } from './domain'
+import type { ForwardPerformanceDomainFailure } from './domain'
 import { makeForwardPerformanceReport, type ForwardPerformanceReport } from './report'
-import {
-  readForwardPerformancePostgres,
-  type ForwardPerformancePostgresEvidence,
-  type ForwardPerformancePostgresError,
-} from './postgres'
+import { readForwardPerformancePostgres } from './postgres/read'
+import { type ForwardPerformancePostgresEvidence, type ForwardPerformancePostgresError } from './postgres/model'
 import {
   readForwardPerformanceLedger,
   type ForwardPerformanceLedgerEvidence,
@@ -37,14 +34,13 @@ import type {
   ForwardPerformanceExecutionEvidence,
   ForwardPerformanceMarketVolumeEvidence,
   ForwardPerformanceMarketVolumeRequest,
-  ForwardPerformanceReceipt,
   ForwardPerformanceEvidenceInput,
 } from './model'
 import { readForwardInferenceExpenses } from './inference-expenses'
 import type { InferenceCostError } from '../inference-costs'
 import { forwardPerformanceSnapshot } from './postgres/snapshot'
 import { postgresError } from './postgres/model'
-import { Pipeable } from '../pipeable'
+
 import {
   intradayPerformanceDecisionRequest,
   intradayPerformanceSessionQuery,
@@ -274,7 +270,7 @@ const projectForwardPerformanceMarketVolumeEvidence = (
   )
 }
 
-const makeForwardPerformanceMarketVolumeEvidenceDataFirst = (
+export const makeForwardPerformanceMarketVolumeEvidence = (
   request: ForwardPerformanceDailyMarketVolumeRequest,
   rows: ForwardPerformanceMarketSnapshotRows,
   evaluationStart: IsoDate,
@@ -284,11 +280,6 @@ const makeForwardPerformanceMarketVolumeEvidenceDataFirst = (
     ? Result.succeed(undefined)
     : projectForwardPerformanceMarketVolumeEvidence(request, verified, evaluationStart)
 }
-
-export const makeForwardPerformanceMarketVolumeEvidence = Pipeable.dual(
-  3,
-  makeForwardPerformanceMarketVolumeEvidenceDataFirst,
-)
 
 const requestGroupKey = (request: ForwardPerformanceDailyMarketVolumeRequest): string =>
   JSON.stringify([
@@ -337,7 +328,7 @@ const readIntradayPerformanceVolume = (request: ForwardPerformanceIntradayMarket
     return yield* Effect.fromResult(makeIntradayPerformanceVolumeEvidence(request, archiveRequest, rawBars))
   })
 
-const readForwardPerformanceMarketVolumeWithClientDataFirst = (
+export const readForwardPerformanceMarketVolumeWithClient = (
   config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<
@@ -362,17 +353,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
           if (request === undefined) return []
           const historicalSignal = config.historicalSignal
           if (historicalSignal === undefined) return yield* missingHistoricalMarketConfig()
-          const queries = makeMarketDataQueries(
-            sql,
-            { historicalSignal },
-            {
-              universeId: request.universeId,
-              universeSymbolHash: request.universeSymbolHash,
-              universe: request.symbols,
-              historyStart: request.requestedStart,
-              evaluationStart: historicalSignal.bounds.evaluationStart,
-            },
-          )
+          const queries = makeDailySnapshotQueries(sql)
           const candidateRows = yield* sql<Record<string, unknown>>`
             SELECT
               snapshot_id,
@@ -421,11 +402,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
           ) {
             return []
           }
-          const manifests = yield* queries.loadSnapshotPublicationManifest({
-            snapshotId: candidate.snapshot_id,
-            signalSessionDate: request.executionSessionDate,
-            signalCalendarVersion: request.calendarVersion,
-          })
+          const manifests = yield* queries.loadSnapshotPublicationManifest(candidate.snapshot_id)
           const decodedManifests = decodeSnapshotRows([], [], manifests)
           if (Result.isFailure(decodedManifests)) return []
           const manifest = decodedManifests.success.manifests[0]
@@ -484,12 +461,7 @@ const readForwardPerformanceMarketVolumeWithClientDataFirst = (
   )
 }
 
-export const readForwardPerformanceMarketVolumeWithClient = Pipeable.dual(
-  2,
-  readForwardPerformanceMarketVolumeWithClientDataFirst,
-)
-
-const readForwardPerformanceMarketVolumeDataFirst = (
+export const readForwardPerformanceMarketVolume = (
   config: Pick<ForwardPerformanceConfig, 'clickhouse' | 'historicalSignal' | 'operationTimeoutMs'>,
   requests: readonly ForwardPerformanceMarketVolumeRequest[],
 ): Effect.Effect<readonly ForwardPerformanceMarketVolumeEvidence[], ForwardPerformanceMarketVolumeError> => {
@@ -514,12 +486,10 @@ const readForwardPerformanceMarketVolumeDataFirst = (
   )
 }
 
-export const readForwardPerformanceMarketVolume = Pipeable.dual(2, readForwardPerformanceMarketVolumeDataFirst)
-
 const canonicalUnsigned = (value: string): bigint | undefined =>
   /^(?:0|[1-9][0-9]*)$/.test(value) ? BigInt(value) : undefined
 
-const bindForwardPerformanceTerminalReferencePricesDataFirst = (
+export const bindForwardPerformanceTerminalReferencePrices = (
   executionEvidence: readonly ForwardPerformanceExecutionEvidence[],
   marketVolumeEvidence: readonly ForwardPerformanceMarketVolumeEvidence[],
 ): Result.Result<readonly ForwardPerformanceExecutionEvidence[], CanonicalJsonFailure> => {
@@ -577,11 +547,6 @@ const bindForwardPerformanceTerminalReferencePricesDataFirst = (
     }),
   )
 }
-
-export const bindForwardPerformanceTerminalReferencePrices = Pipeable.dual(
-  2,
-  bindForwardPerformanceTerminalReferencePricesDataFirst,
-)
 
 const programError = (
   operation: ForwardPerformanceProgramError['operation'],
@@ -775,21 +740,6 @@ const readForwardPerformanceInput = (
     }
   })
 
-const runForwardPerformanceDataFirst = (
-  loadedConfig: ForwardPerformanceConfig,
-  readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
-  options: { readonly authorityGenerationHash?: string } = {},
-): Effect.Effect<ForwardPerformanceReceipt, ForwardPerformanceProgramError, PgClient.PgClient | Scope.Scope> =>
-  readForwardPerformanceInput(loadedConfig, readers, options).pipe(
-    Effect.flatMap((input) =>
-      Effect.fromResult(makeForwardPerformanceReceipt(input)).pipe(
-        Effect.mapError((cause) =>
-          programError('construct-receipt', 'forward-performance receipt construction failed', cause),
-        ),
-      ),
-    ),
-  )
-
 export const runForwardPerformanceReport = (
   loadedConfig: ForwardPerformanceConfig,
   readers: ForwardPerformanceReaders = liveForwardPerformanceReaders,
@@ -811,7 +761,9 @@ export const runForwardPerformanceReport = (
               options.writerFence,
             )
             .pipe(Effect.mapError((cause) => programError('ledger-read', cause.message, cause)))
-          return yield* Effect.fromResult(makeForwardPerformanceReport(input, expenses)).pipe(
+          return yield* Effect.fromResult(
+            makeForwardPerformanceReport(input, expenses, options.authorityGenerationHash),
+          ).pipe(
             Effect.mapError((cause) =>
               programError('construct-receipt', 'forward-performance report construction failed', cause),
             ),
@@ -826,14 +778,3 @@ export const runForwardPerformanceReport = (
         ),
       )
   })
-
-export const runForwardPerformance = Pipeable.by<
-  (
-    readers?: ForwardPerformanceReaders,
-    options?: { readonly authorityGenerationHash?: string },
-  ) => (loadedConfig: ForwardPerformanceConfig) => ReturnType<typeof runForwardPerformanceDataFirst>,
-  typeof runForwardPerformanceDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'runtimeMode' in arguments_[0],
-  runForwardPerformanceDataFirst,
-)

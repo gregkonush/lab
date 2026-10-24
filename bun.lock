@@ -747,7 +747,6 @@
       "version": "0.1.0",
       "dependencies": {
         "@aws-sdk/client-s3": "3.1042.0",
-        "@clickhouse/client": "1.23.1",
         "@effect/platform-node": "4.0.0",
         "@effect/sql-clickhouse": "4.0.0",
         "@effect/sql-pg": "4.0.0",
@@ -760,7 +759,6 @@
         "@restatedev/restate-sdk": "1.16.5",
         "@restatedev/restate-sdk-opentelemetry": "1.16.5",
         "@sentry/node": "11.8.0",
-        "@sentry/server-runtime-injection": "11.8.0",
         "effect": "4.0.0",
         "ml-matrix": "6.15.0",
         "redis": "6.3.0",

@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'eff
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { BrokerEnvironment } from '../execution/authority'
 import {
   AccountStatus,
@@ -13,13 +13,6 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
-  BrokerAccountPreflightError,
-  BrokerProvider,
-  BrokerSession,
-  BrokerSessionAcquisitionError,
-  BrokerSessionAcquisitionStage,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -27,17 +20,14 @@ import {
   PositionSide,
   SortDirection,
   TradeActivityType,
-  alpacaSandboxBaseUrl,
-  decodeBrokerConnection,
-  layer,
-  make,
-  makeProxyDispatcher,
   readPreflightTimeoutMs,
-  verifyReadAccess,
   type BrokerReadShape,
-  type BrokerConnection,
-} from './alpaca'
-import { parseProxyUrl } from './alpaca/http'
+} from './alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './alpaca/failures'
+import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/preflight'
+import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
+import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
+import { make, alpacaHttpLayer } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
@@ -277,7 +267,7 @@ describe('Alpaca paper reads', () => {
     expect(result.evidence).toEqual({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
       observedAt: '1970-01-01T00:00:00.000Z',
       rateLimit: {
         limit: '200',
@@ -304,7 +294,7 @@ describe('Alpaca paper reads', () => {
       expect(result.value.lastEquityMicros).toBe(previous)
       expect(result.value.cashMicros).toBe('-23140200000')
       expect(result.value.buyingPowerMicros).toBe('262113632000')
-      expect(result.evidence.contentHash).toBe(canonicalHashV1(raw))
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
     },
   )
 
@@ -373,12 +363,14 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
-      source: 'alpaca-v2-account-configurations',
-      method: 'GET',
-      path: '/v2/account/configurations',
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+        source: 'alpaca-v2-account-configurations',
+        method: 'GET',
+        path: '/v2/account/configurations',
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
       source: 'alpaca-v2-account-configurations',
@@ -388,12 +380,12 @@ describe('Alpaca paper reads', () => {
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:01.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountConfigurationResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountConfigurationResponse)),
       observedAt: '1970-01-01T00:00:01.000Z',
     })
     expect(requests.some(({ method }) => method === 'PATCH' || method === 'POST' || method === 'DELETE')).toBe(false)
@@ -413,7 +405,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -481,13 +473,15 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-asset-observation.v1',
-      source: 'alpaca-v2-asset',
-      method: 'GET',
-      path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
-      requestedSymbol,
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-asset-observation.v1',
+        source: 'alpaca-v2-asset',
+        method: 'GET',
+        path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
+        requestedSymbol,
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-asset-observation.v1',
       source: 'alpaca-v2-asset',
@@ -508,12 +502,12 @@ describe('Alpaca paper reads', () => {
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:02.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:02.000Z',
     })
     expect(requests.some(({ method }) => method === 'POST' || method === 'DELETE')).toBe(false)
@@ -568,7 +562,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
 
@@ -580,7 +574,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         message: 'asset lookup returned symbol MSFT, expected AAPL',
@@ -602,7 +596,7 @@ describe('Alpaca paper reads', () => {
       operation: 'asset-by-symbol',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -685,12 +679,12 @@ describe('Alpaca paper reads', () => {
     } as const
     expect(result.value).toEqual({
       ...normalized,
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
     })
   })
 
@@ -1074,7 +1068,7 @@ describe('Alpaca paper reads', () => {
       ]
       const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
       const result = await Effect.runPromise(withClient(client, (read) => read.positions))
-      expect(result.evidence.contentHash).toBe(canonicalHashV1(response))
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(response)))
       expect(result.value).toEqual([
         expect.objectContaining({
           symbol,
@@ -1328,6 +1322,7 @@ describe('Alpaca paper reads', () => {
       activity_type: 'CFEE',
       id: `20261015000000000::${orderId}`,
       date: '2026-10-15',
+      created_at: '2026-10-14T23:59:58.123456Z',
       net_amount: '-0.23',
       status: 'executed',
       description: 'Coin Pair Transaction Fee (USD)',
@@ -1349,10 +1344,11 @@ describe('Alpaca paper reads', () => {
       accountId,
       activityId: raw.id,
       date: raw.date,
+      sourceCreatedAt: '2026-10-14T23:59:58.123456000Z',
       netAmountMicros: '-230000',
     })
     expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
-    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(canonicalHashV1([raw]))
+    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([raw])))
   })
 
   test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
@@ -1568,7 +1564,7 @@ describe('Alpaca paper reads', () => {
       kind: BrokerReadErrorKind.InvalidResponse,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         tag: 'BrokerReadContractFailure',
@@ -1619,7 +1615,7 @@ describe('Alpaca paper reads', () => {
       status: 429,
       requestId: 'req-123',
       retryable: true,
-      contentHash: canonicalHashV1({ code: 42910000, message: 'slow down' }),
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 42910000, message: 'slow down' })),
     })
     expect(calls).toBe(2)
   })
@@ -1801,44 +1797,20 @@ describe('Alpaca paper reads', () => {
 })
 
 describe('Alpaca proxy lifecycle', () => {
-  test('parses only credential-free HTTP origins as a pure Result decision', () => {
-    const valid = parseProxyUrl('https://proxy.test:3128')
-    expect(Result.isSuccess(valid)).toBe(true)
-    if (Result.isSuccess(valid)) expect(valid.success.origin).toBe('https://proxy.test:3128')
-
-    for (const [proxyUrl, message] of [
-      ['not a URL', 'invalid Alpaca proxy configuration'],
-      ['socks5://proxy.test:1080', 'Alpaca proxy URL must use HTTP or HTTPS'],
-      ['http://user:secret@proxy.test:3128', 'Alpaca proxy credentials must not be embedded in the URL'],
-      ['http://proxy.test:3128/path', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128?route=paper', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128#paper', 'Alpaca proxy URL must contain only an origin'],
-    ] as const) {
-      const result = parseProxyUrl(proxyUrl)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure).toMatchObject({
-          kind: BrokerReadErrorKind.Configuration,
-          operation: 'proxy',
-          retryable: false,
-          message,
-        })
-      }
-    }
-  })
-
   test('keeps its Undici proxy dispatcher alive until the owning scope exits and releases it exactly once', async () => {
     let releases = 0
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* makeProxyDispatcher('http://proxy.test:3128', {
-            create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          })
+          yield* Layer.build(
+            alpacaHttpLayer(options, {
+              create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          )
           expect(releases).toBe(0)
           yield* Effect.yieldNow
           expect(releases).toBe(0)
@@ -1848,31 +1820,22 @@ describe('Alpaca proxy lifecycle', () => {
     expect(releases).toBe(1)
   })
 
-  test('fails before acquisition for unsafe proxy configuration', async () => {
-    const failure = await Effect.runPromise(
-      Effect.flip(Effect.scoped(makeProxyDispatcher('socks5://user:secret@proxy.test:1080'))),
-    )
-    expect(failure).toMatchObject({
-      kind: BrokerReadErrorKind.Configuration,
-      operation: 'proxy',
-      retryable: false,
-    })
-  })
-
   test('contains dispatcher construction failures in the typed acquisition channel', async () => {
     let releases = 0
     const failure = await Effect.runPromise(
       Effect.flip(
         Effect.scoped(
-          makeProxyDispatcher('http://proxy.test:3128', {
-            create: () => {
-              throw new Error('dispatcher construction failed')
-            },
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          }),
+          Layer.build(
+            alpacaHttpLayer(options, {
+              create: () => {
+                throw new Error('dispatcher construction failed')
+              },
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          ),
         ),
       ),
     )

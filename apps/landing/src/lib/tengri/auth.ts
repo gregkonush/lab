@@ -118,6 +118,7 @@ export async function handleTengriAuth(request: Request) {
     if (request.headers.get('host') !== env.base.host) throw new OfzError(403)
     switch (`${request.method} ${url.pathname}`) {
       case 'POST /api/auth/login':
+      case 'POST /api/auth/add-passkey':
       case 'POST /api/auth/step-up': {
         sameOrigin(request, env.base.origin)
         const state = randomBytes(32).toString('base64url')
@@ -148,6 +149,7 @@ export async function handleTengriAuth(request: Request) {
           prompt: 'login',
           max_age: '0',
         }).toString()
+        if (url.pathname === '/api/auth/add-passkey') authorize.searchParams.set('kc_action', 'webauthn-register')
         responseHeaders.append('Set-Cookie', setCookie(OAUTH_COOKIE, binding, 300))
         return Response.json({ url: authorize.href }, { headers: responseHeaders })
       }
@@ -224,7 +226,13 @@ export async function handleTengriAuth(request: Request) {
           : new OfzError(exhausted.success ? 429 : 503)
     if (failure.status >= 500) reportServerError(error, 'tengri.auth', failure.status)
     return Response.json(
-      { error: failure.message, auditReceiptId: failure.auditReceiptId },
+      {
+        error:
+          failure.status === 503 && !(error instanceof OfzError)
+            ? 'Sign-in is unavailable. Try again shortly.'
+            : failure.message,
+        auditReceiptId: failure.auditReceiptId,
+      },
       { status: failure.status, headers: responseHeaders },
     )
   }

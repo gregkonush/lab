@@ -93,6 +93,45 @@ describe('Accepted prompt retention', () => {
     expect([...result.acknowledged]).toEqual(['sent-1'])
     expect(result.pending).toEqual([])
   })
+
+  test.each([
+    { text: '', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 1 },
+    { text: 'Inspect these screenshots.', imageCount: 2 },
+  ])('reconciles structured live image inputs ($text, $imageCount images)', ({ text, imageCount }) => {
+    const paths = Array.from(
+      { length: imageCount },
+      (_, index) => `/workspace/.tengri-attachments/11111111-1111-4111-8111-${String(index).padStart(12, '0')}.png`,
+    )
+    const input = {
+      id: 'new-image',
+      type: 'userMessage',
+      content: [...(text ? [{ type: 'text', text }] : []), ...paths.map((path) => ({ type: 'localImage', path }))],
+    }
+    const live = {
+      ...event,
+      kind: 'user-message' as const,
+      method: 'item/completed',
+      itemId: input.id,
+      text,
+      rawJson: JSON.stringify({ params: { item: input } }),
+    }
+    const canonicalText = [text, ...paths.map((path) => `[Local image: ${path}]`)].filter(Boolean).join('\n')
+    expect(codexEventDisplayText(live)).toBe(canonicalText)
+    const imagePrompt = {
+      ...prompt,
+      text: [text, ...paths.map(() => '[Image]')].filter(Boolean).join('\n'),
+      images: paths.map(() => ({ mediaType: 'image/png' as const, data: 'iVBORw0KGgo=' })),
+    }
+    const canonical = { id: input.id, kind: live.kind, text: codexEventDisplayText(live) }
+    const { matches, pending, acknowledged } = reconcileSubmittedPrompts([canonical], [imagePrompt])
+    expect(pending).toEqual([])
+    expect([...acknowledged]).toEqual([imagePrompt.id])
+    expect(retainSubmittedPromptImages(imagePrompt, matches.get(imagePrompt.id))).toMatchObject({
+      text: canonicalText,
+      images: undefined,
+    })
+  })
 })
 
 describe('Codex event replay', () => {
@@ -134,6 +173,21 @@ describe('Codex event replay', () => {
     const started = { ...event, sequence: 8, kind: 'thread-state' as const, method: 'turn/started' }
     const next = appendCodexEvent([runtimeError, turnError, warning], started)
     expect(next).toEqual([turnError, warning, started])
+  })
+
+  test('clears a restart notice on initialized runtime recovery without starting a turn', () => {
+    const ready: TengriCodexEvent = {
+      ...runtimeError,
+      sequence: 8,
+      kind: 'thread-state',
+      method: 'tengri/runtimeReady',
+      text: '',
+    }
+    const turnError = { ...runtimeError, threadId: 'thread-1', turnId: 'turn-1' }
+    const warning = { ...runtimeError, kind: 'warning' as const }
+    expect(appendCodexEvent([runtimeError, turnError, warning], ready)).toEqual([turnError, warning, ready])
+    const laterError = { ...runtimeError, sequence: 9 }
+    expect(appendCodexEvent([laterError], ready)).toEqual([laterError, ready])
   })
 
   test('does not replay a runtime error older than a successful thread snapshot', () => {
@@ -1185,10 +1239,15 @@ describe('Codex thread restoration', () => {
       { id: 'assistant-1', kind: 'assistant-text', text: 'Done' },
       { id: 'plan-1', kind: 'plan', text: '- [x] Build it' },
       { id: 'reasoning-1', kind: 'reasoning-summary', text: 'Checked the result' },
-      { id: 'command-1', kind: 'tool-output', text: '12 pass' },
-      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)' },
+      { id: 'command-1', kind: 'tool-output', text: '12 pass', activityTitle: 'bun test' },
+      { id: 'command-2', kind: 'tool-output', text: 'Command completed (exit 0)', activityTitle: 'true' },
       { id: 'file-1', kind: 'file-diff', text: '+export {}' },
-      { id: 'mcp-1', kind: 'tool-output', text: '{\n  "id": "ENG-123",\n  "state": "Done"\n}' },
+      {
+        id: 'mcp-1',
+        kind: 'tool-output',
+        activityTitle: 'linear/get_issue',
+        text: 'linear/get_issue\n{\n  "id": "ENG-123",\n  "state": "Done"\n}',
+      },
       { id: 'search-1', kind: 'tool-call', text: 'Web search: Kata Firecracker' },
       {
         id: 'collab-1',
@@ -1312,4 +1371,72 @@ describe('Codex buffering equivalence', () => {
       }
     }
   })
+})
+
+test('app tools expose their arguments and structured result instead of generic transport text', () => {
+  const item = {
+    type: 'mcpToolCall',
+    server: 'codex_apps',
+    tool: 'github.create_branch',
+    arguments: { repository_full_name: 'proompteng/lab', branch_name: 'codex/ui' },
+  }
+  const call = {
+    ...event,
+    kind: 'tool-call' as const,
+    text: 'codex_apps/github.create_branch',
+    rawJson: JSON.stringify({ params: { item } }),
+  }
+  expect(codexEventDisplayText(call)).toBe(
+    'codex_apps/github.create_branch\n{\n  "repository_full_name": "proompteng/lab",\n  "branch_name": "codex/ui"\n}',
+  )
+  const completed = {
+    ...item,
+    result: { content: [{ type: 'text', text: 'Action completed.' }], structuredContent: { branch: 'codex/ui' } },
+  }
+  const output = {
+    ...call,
+    kind: 'tool-output' as const,
+    text: 'Action completed.',
+    rawJson: JSON.stringify({ params: { item: completed } }),
+  }
+  expect(codexEventDisplayText(output)).toContain('"branch": "codex/ui"')
+  const history = codexTranscriptFromThread(
+    JSON.stringify({ thread: { turns: [{ items: [{ ...completed, id: 'app-output' }] }] } }),
+  )
+  expect(history[0].text).toBe(codexEventDisplayText(output))
+})
+
+test('keeps status-only connector outcomes visible', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    for (const [status, expected] of [
+      ['completed', 'Command completed'],
+      ['failed', 'Command failed'],
+      ['declined', 'Command declined'],
+    ]) {
+      const output = {
+        ...event,
+        kind: 'tool-output' as const,
+        text: '',
+        rawJson: JSON.stringify({ params: { item: { type, status } } }),
+      }
+      expect(codexEventDisplayText(output)).toBe(expected)
+      expect(codexEventShouldRender(output, output.threadId, new Set(), 0)).toBe(true)
+    }
+  }
+})
+
+test('decodes complete JSON string connector results before adding tool labels', () => {
+  for (const type of ['mcpToolCall', 'dynamicToolCall']) {
+    const item = {
+      id: 'encoded-result',
+      type,
+      server: 'codex_apps',
+      tool: 'github.fetch',
+      result: JSON.stringify('First line\nSecond line'),
+    }
+    const output = { ...event, kind: 'tool-output' as const, text: '', rawJson: JSON.stringify({ params: { item } }) }
+    const expected = 'codex_apps/github.fetch\nFirst line\nSecond line'
+    expect(codexEventDisplayText(output)).toBe(expected)
+    expect(codexTranscriptFromThread(JSON.stringify({ thread: { turns: [{ items: [item] }] } }))[0].text).toBe(expected)
+  }
 })

@@ -24,6 +24,23 @@ pub struct Principal {
     pub context: RequestContext,
     pub recovery_generation: u64,
     pub action: Action,
+    #[serde(skip)]
+    verified_rpc_admission: bool,
+}
+
+impl Principal {
+    pub(crate) fn refresh_run_context(&mut self) -> Result<(), Status> {
+        self.context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        Ok(())
+    }
+
+    pub(crate) fn policy_context(&self) -> Result<RequestContext, Status> {
+        let mut context = self.context.clone();
+        if self.verified_rpc_admission {
+            context.deadline_unix_ms = ofz::now_ms()? + ofz::AUDITED_REQUEST_BUDGET_MS;
+        }
+        Ok(context)
+    }
 }
 
 #[cfg(test)]
@@ -33,6 +50,7 @@ impl Principal {
             owner_hash: owner_hash.into(),
             recovery_generation: 1,
             action,
+            verified_rpc_admission: false,
             context: RequestContext {
                 actor: Some(ofz::proto::Actor {
                     identity: Some(Identity::HumanId(owner_hash.into())),
@@ -119,6 +137,48 @@ fn parse_key(key: &str) -> anyhow::Result<[u8; 32]> {
 }
 
 impl Authenticator {
+    async fn signing_key(&self) -> Result<[u8; 32], Status> {
+        match &self.key {
+            SigningKey::Mounted(path) => parse_key(
+                &tokio::fs::read_to_string(path.as_ref())
+                    .await
+                    .map_err(|_| Status::unavailable("request key unavailable"))?,
+            )
+            .map_err(|_| Status::unavailable("request key unavailable")),
+            #[cfg(test)]
+            SigningKey::Fixture(key) => Ok(*key),
+        }
+    }
+
+    pub(crate) async fn seal_run(&self, domain: &str, payload: &[u8]) -> Result<String, Status> {
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.signing_key().await?)
+            .map_err(|_| Status::internal("invalid request key"))?;
+        mac.update(b"tengri.durable-run.v1\n");
+        mac.update(domain.as_bytes());
+        mac.update(b"\n");
+        mac.update(payload);
+        Ok(format!("{:x}", mac.finalize().into_bytes()))
+    }
+
+    pub(crate) async fn verify_run(
+        &self,
+        domain: &str,
+        payload: &[u8],
+        signature: &str,
+    ) -> Result<(), Status> {
+        let signature = decode_hex(signature)
+            .filter(|value| value.len() == 32)
+            .ok_or_else(|| Status::unauthenticated("invalid durable run signature"))?;
+        let mut mac = Hmac::<Sha256>::new_from_slice(&self.signing_key().await?)
+            .map_err(|_| Status::internal("invalid request key"))?;
+        mac.update(b"tengri.durable-run.v1\n");
+        mac.update(domain.as_bytes());
+        mac.update(b"\n");
+        mac.update(payload);
+        mac.verify_slice(&signature)
+            .map_err(|_| Status::unauthenticated("invalid durable run signature"))
+    }
+
     pub fn new(key_file: &Path, origin: String) -> anyhow::Result<Self> {
         let key = std::fs::read_to_string(key_file)?;
         parse_key(&key)?;
@@ -204,16 +264,7 @@ impl Authenticator {
             recovery_generation,
             &audience,
         );
-        let key = match &self.key {
-            SigningKey::Mounted(path) => parse_key(
-                &tokio::fs::read_to_string(path.as_ref())
-                    .await
-                    .map_err(|_| Status::unavailable("request key unavailable"))?,
-            )
-            .map_err(|_| Status::unavailable("request key unavailable"))?,
-            #[cfg(test)]
-            SigningKey::Fixture(key) => *key,
-        };
+        let key = self.signing_key().await?;
         let mut mac = Hmac::<Sha256>::new_from_slice(&key)
             .map_err(|_| Status::internal("invalid request key"))?;
         mac.update(payload.as_bytes());
@@ -251,6 +302,7 @@ impl Authenticator {
             context,
             recovery_generation,
             action,
+            verified_rpc_admission: true,
         })
     }
 }

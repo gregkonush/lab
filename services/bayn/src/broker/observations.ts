@@ -33,8 +33,7 @@ import {
   type Position as AlpacaPosition,
   type ReadEvidence,
   type ReadResult,
-} from './alpaca'
-import { Pipeable } from '../pipeable'
+} from './alpaca/model'
 
 const CommonEventInput = {
   broker: Schema.Literal(Broker.Alpaca),
@@ -203,6 +202,8 @@ const orderType = (value: AlpacaOrderType): Result.Result<OrderType, BrokerObser
       return Result.succeed(OrderType.Market)
     case AlpacaOrderType.Limit:
       return Result.succeed(OrderType.Limit)
+    case AlpacaOrderType.StopLimit:
+      return Result.succeed(OrderType.StopLimit)
     default:
       return fail({ _tag: 'UnsupportedOrderType', value })
   }
@@ -374,7 +375,7 @@ const duplicatePosition = (positions: readonly AlpacaPosition[]): BrokerObservat
   return duplicateSymbol === undefined ? undefined : { _tag: 'DuplicatePositionSymbol', symbol: duplicateSymbol.symbol }
 }
 
-const positionSnapshotDataFirst = (
+export const positionSnapshot = (
   accountId: string,
   result: ReadResult<readonly AlpacaPosition[]>,
 ): Result.Result<PositionSnapshotInput, BrokerObservationError> => {
@@ -400,8 +401,6 @@ const positionSnapshotDataFirst = (
           ),
         )
 }
-
-export const positionSnapshot = Pipeable.dual(2, positionSnapshotDataFirst)
 
 type ValidatedOrder = Omit<AlpacaOrder, 'updatedAt'> & {
   readonly updatedAt: string
@@ -439,7 +438,7 @@ const validateOrderShape = (
   )
 }
 
-const orderObservationDataFirst = (
+export const orderObservation = (
   value: AlpacaOrder,
   evidence: ReadEvidence,
   intentId?: string,
@@ -460,6 +459,9 @@ const orderObservationDataFirst = (
             accountId: validated.accountId,
             brokerOrderId: validated.brokerOrderId,
             clientOrderId: validated.clientOrderId,
+            ...(validated.parentBrokerOrderId === undefined
+              ? {}
+              : { parentBrokerOrderId: validated.parentBrokerOrderId }),
             ...(intentId === undefined ? {} : { intentId }),
             symbol: validated.symbol,
             side: side(validated.side),
@@ -469,6 +471,7 @@ const orderObservationDataFirst = (
             ...(validated.notionalMicros === undefined ? {} : { notionalMicros: validated.notionalMicros }),
             filledQuantityAtoms: validated.filledQuantityAtoms,
             ...(validated.limitPriceMicros === undefined ? {} : { limitPriceMicros: validated.limitPriceMicros }),
+            ...(validated.stopPriceMicros === undefined ? {} : { stopPriceMicros: validated.stopPriceMicros }),
             status,
             observedAt: validated.observedAt,
           }
@@ -496,15 +499,7 @@ const orderObservationDataFirst = (
     ),
   )
 
-export const orderObservation = Pipeable.by<
-  (evidence: ReadEvidence, intentId?: string) => (value: AlpacaOrder) => ReturnType<typeof orderObservationDataFirst>,
-  typeof orderObservationDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'brokerOrderId' in arguments_[0],
-  orderObservationDataFirst,
-)
-
-const fillObservationDataFirst = (
+export const fillObservation = (
   activity: FillActivity,
   order: AlpacaOrder,
   evidence: ReadEvidence,
@@ -564,18 +559,6 @@ const fillObservationDataFirst = (
         brokerOrderId: order.brokerOrderId,
       })
 }
-
-export const fillObservation = Pipeable.by<
-  (
-    order: AlpacaOrder,
-    evidence: ReadEvidence,
-    options?: { readonly intentId?: string; readonly feeMicros?: string },
-  ) => (activity: FillActivity) => ReturnType<typeof fillObservationDataFirst>,
-  typeof fillObservationDataFirst
->(
-  (arguments_) => typeof arguments_[0] === 'object' && arguments_[0] !== null && 'activityId' in arguments_[0],
-  fillObservationDataFirst,
-)
 
 export const renderBrokerObservationError = (error: BrokerObservationError): string => {
   switch (error._tag) {

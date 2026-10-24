@@ -35,8 +35,20 @@ describe('sent image references', () => {
 test('recognizes only workspace raster outputs for inline agent previews', () => {
   expect(codexOutputImagePaths('/workspace/chart.png')).toEqual(['/workspace/chart.png'])
   expect(codexOutputImagePaths('View image: /workspace/chart.png')).toEqual(['/workspace/chart.png'])
-  expect(codexOutputImagePaths('![Chart](/workspace/chart.png)')).toEqual(['/workspace/chart.png'])
+  expect(codexOutputImagePaths('![Chart](/workspace/chart.png)')).toEqual([])
   expect(codexOutputImagePaths('![Remote](https://example.com/chart.png)')).toEqual([])
   expect(isWorkspaceImagePath('/workspace/../private.png')).toBe(false)
   expect(isWorkspaceImagePath('/workspace/a.svg')).toBe(false)
+})
+
+test('does not turn Markdown examples inside command output into image reads', () => {
+  expect(
+    codexOutputImagePaths(`for (const failure of [
+  const text = '![Recovered diagram](/workspace/recovered-diagram.png)'
+]`),
+  ).toEqual([])
+  expect(
+    codexOutputImagePaths(`cat README.md
+![Example](/workspace/example.png)`),
+  ).toEqual([])
 })

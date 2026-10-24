@@ -28,8 +28,10 @@ const successful = {
   BAYN_RELEVANT: 'true',
   IMAGE_RELEVANT: 'false',
   PR_CHECKS_RESULT: 'success',
-  EFFECT_RESULT: 'success',
-  BROKER_RESULT: 'success',
+  GEPA_RESULT: 'success',
+  UNIT_RESULT: 'success',
+  ARCHIVE_RESULT: 'success',
+  LEDGER_RESULT: 'success',
   POSTGRES_RESULT: 'success',
   MARKET_DATA_REPLAY_RESULT: 'success',
   DEPENDENCY_INPUT_RESULT: 'success',
@@ -118,14 +120,32 @@ test('market-data fixture runs for Bayn changes and participates in the existing
   expect(replay['timeout-minutes']).toBeLessThanOrEqual(15)
   expect(required.needs).toContain('market-data-replay')
   expect(gate.env?.MARKET_DATA_REPLAY_RESULT).toBe('${{ needs.market-data-replay.result }}')
+  expect(required.needs).toContain('gepa')
+  expect(gate.env?.GEPA_RESULT).toBe('${{ needs.gepa.result }}')
+  for (const [job, result] of [
+    ['unit-tests', 'UNIT_RESULT'],
+    ['archive-integration', 'ARCHIVE_RESULT'],
+    ['ledger-integration', 'LEDGER_RESULT'],
+    ['postgres-integration', 'POSTGRES_RESULT'],
+  ] as const) {
+    expect(required.needs).toContain(job)
+    expect(gate.env?.[result]).toBe(`\${{ needs.${job}.result }}`)
+  }
 })
 
-test('a relevant change cannot pass without successful market-data replay acceptance', async () => {
+test.each([
+  'MARKET_DATA_REPLAY_RESULT',
+  'GEPA_RESULT',
+  'UNIT_RESULT',
+  'ARCHIVE_RESULT',
+  'LEDGER_RESULT',
+  'POSTGRES_RESULT',
+])('a relevant change cannot pass without successful %s', async (resultName) => {
   expect((await run({})).exit).toBe(0)
   for (const outcome of ['failure', 'cancelled', 'skipped', '']) {
-    const result = await run({ MARKET_DATA_REPLAY_RESULT: outcome })
+    const result = await run({ [resultName]: outcome })
     expect(result.exit).not.toBe(0)
-    expect(result.stderr).toContain('MARKET_DATA_REPLAY_RESULT must be success')
+    expect(result.stderr).toContain(`${resultName} must be success`)
   }
 })
 

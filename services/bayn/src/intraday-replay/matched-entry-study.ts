@@ -1,3 +1,4 @@
+import { controlExitDefinition } from './control-portfolio'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
 import { jevMarketForFeed } from '../jev/markets'
 import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
@@ -47,7 +48,7 @@ export enum MatchedRecommendation {
 }
 
 export const matchedEntryDefinition = {
-  schemaVersion: 'bayn.matched-entry-definition.v5',
+  schemaVersion: 'bayn.matched-entry-definition.v7',
   cryptoFees: cryptoTakerFeeSchedule,
   inventory:
     'bayn.jev-study-inventory.v1: complete native cycle and batch cut, including management and pending results.',
@@ -58,7 +59,7 @@ export const matchedEntryDefinition = {
   pollIntervalMs: 5000,
   rules: ['JEV_FILTERED', 'DELAYED_MOMENTUM', 'IMMEDIATE_MOMENTUM'],
   lifecycle:
-    'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp stop, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
+    'One IOC entry and persistent reducing IOC exits; same instrument-quantized budget, quotes, routing, fees, 50 bp price stop, 100 bp estimated execution-net profit target including adverse exit allowance, 15 minute maximum hold, five-minute equity close window; continuous markets retain elapsed holding deadlines across UTC dates. No model management.',
   comparison:
     'Immediate momentum starts at witnessed deterministic completion. Delayed momentum and Jev start at witnessed decision commitment. Selection is Jev minus delayed momentum; delay is delayed minus immediate; total is Jev minus immediate. Per-opportunity net micro-USD divided by the fixed budget. Include abstentions and unfilled entries as zero execution P&L; unknown model answers and unresolved lifecycles are missing, never zero.',
   costs:
@@ -75,7 +76,7 @@ export const matchedEntryDefinition = {
 } as const
 
 export const MatchedRegistrationSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.matched-entry-registration.v1'),
+  schemaVersion: Schema.Literal('bayn.matched-entry-registration.v2'),
   definitionHash: Sha256Schema,
   sourceRevision: SourceRevisionSchema,
   protocolHash: Sha256Schema,
@@ -469,14 +470,15 @@ export const runMatchedEntryStudy = (
       const protocol = batch.observation.protocol
       if (
         protocol.maximumHoldingMinutes !== 15 ||
-        protocol.protectiveStopBps !== 50 ||
+        controlExitDefinition.protectiveStopBps !== 50 ||
+        controlExitDefinition.profitTargetNetBps !== 100 ||
         protocol.flattenBeforeCloseMinutes !== 5
       )
         return yield* new SignalStudyFailure({ message: 'Matched lifecycle requires the frozen protective protocol' })
       if (!dates.includes(manifest.sessionDate))
         return yield* new SignalStudyFailure({ message: 'Observation outside registered sessions' })
       if (
-        manifest.schemaVersion === 'bayn.simulated-market-snapshot.v1' &&
+        manifest.schemaVersion === 'bayn.simulated-market-snapshot.v2' &&
         (manifest.streaming.runId !== input.study.runId || manifest.streaming.sourceManifestHash !== sourceHash)
       )
         return yield* new SignalStudyFailure({ message: 'Observation belongs to another source or run' })
@@ -597,7 +599,7 @@ export const runMatchedEntryStudy = (
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (
         decision.contentHash !== retained.decisionHash ||
-        native?.schemaVersion !== 'bayn.jev-entry-target.v1' ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v6' ||
         native.evidence.batchPlan.batchId !== batch.plan.batchId ||
         native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
         decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||
@@ -799,7 +801,7 @@ export const runMatchedEntryStudy = (
       }
     })
     const report = {
-      schemaVersion: 'bayn.matched-entry-study.v5',
+      schemaVersion: 'bayn.matched-entry-study.v7',
       definition: matchedEntryDefinition,
       definitionHash,
       registration,

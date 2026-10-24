@@ -1,5 +1,7 @@
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
-import { Result } from 'effect'
+import { Result, Schema } from 'effect'
+import { canonicalHashV1Result } from '../hash'
+import { nativePayloadCanonicalJson, nativeSourceContentHash } from '../market-data/native-json'
 
 import btc from '../market-data/features/fixtures/crypto-continuous-v2.json'
 import eth from '../market-data/features/fixtures/crypto-eth-continuous-v2.json'
@@ -25,6 +27,7 @@ export const cryptoMarketFixture = (
     readonly quoteSpreadBps?: number
     readonly quoteAskSize?: number
     readonly missingTradeSymbols?: readonly string[]
+    readonly observedPriceChoices?: boolean
   } = {},
 ) => {
   const fixtures = timing.firstMinute === true ? [btcFirst, ethFirst, solFirst] : [btc, eth, sol]
@@ -38,7 +41,29 @@ export const cryptoMarketFixture = (
   }
   let projection = emptyStreamingProjection('crypto-native')
   const positions = []
-  for (const [featurePartition, fixture] of fixtures.entries()) {
+  for (const [featurePartition, original] of fixtures.entries()) {
+    const fixture = structuredClone(original)
+    if (timing.observedPriceChoices === true) {
+      const record = fixture.records.at(-1)
+      const input = fixture.feature.material.inputs.at(-1)
+      if (record === undefined || input === undefined || record.offset !== input.sourceOffset)
+        throw new Error('Expected final crypto bar and source reference')
+      const envelope = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(JSON.parse(record.value))
+      const payload = Schema.decodeUnknownSync(Schema.Record(Schema.String, Schema.Unknown))(envelope['payload'])
+      record.value = JSON.stringify({ ...envelope, payload: { ...payload, h: 110, l: 95 } })
+      input.contentHash = nativeSourceContentHash(
+        ['alpaca', 'us', fixture.feature.material.symbol, 'bars', input.eventTimeNanos, input.ingestionTimeNanos],
+        Result.getOrThrow(nativePayloadCanonicalJson(record.value)),
+      )
+      fixture.feature.material.priceWindow.rangeHighPrice = '110'
+      fixture.feature.material.priceWindow.rangeLowPrice = '95'
+      fixture.feature.material.historyHash = fixture.feature.material.inputs.reduce(
+        (previous, reference) => Result.getOrThrow(canonicalHashV1Result([previous, reference])),
+        fixture.feature.material.historyPrefixHash,
+      )
+      fixture.feature.featureId = Result.getOrThrow(canonicalHashV1Result(fixture.feature.material))
+    }
+    fixtures[featurePartition] = fixture
     for (const record of fixture.records)
       projection = incorporateMarketRecord(projection, record, source, Date.parse(JSON.parse(record.value).ingestTs))
     projection = incorporateMarketRecord(

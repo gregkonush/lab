@@ -3,10 +3,7 @@ import { Result } from 'effect'
 import { quantityScale } from '../quantity'
 
 import { quantizeInstrumentPriceMicros } from '../broker/alpaca-price'
-import { instrumentMarket, MarketKind } from '../instruments'
-import { orderPriceBoundaryMicros, type OrderRequestError } from '../broker/alpaca-mutations'
-import type { ExecutionModel } from '../execution-model-contract'
-import { makeFillTerms, MICROS, type ExecutionModelFailure } from '../execution-model'
+import { instrumentMarket } from '../instruments'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
 
 export interface ExecutionIntentPricingInput {
@@ -16,8 +13,8 @@ export interface ExecutionIntentPricingInput {
   readonly timeInForce: TimeInForce
   readonly quantityAtoms: bigint
   readonly referencePriceMicros: bigint
-  readonly executionModel: ExecutionModel
   readonly limitSlippageBps: bigint
+  readonly minimumSellPriceMicros?: bigint
 }
 
 export interface ExecutionIntentPricing {
@@ -26,8 +23,6 @@ export interface ExecutionIntentPricing {
 }
 
 export type ExecutionIntentPricingFailure =
-  | ExecutionModelFailure
-  | OrderRequestError
   | {
       readonly _tag: 'UnsupportedExecutionTerms'
       readonly orderType: OrderType
@@ -35,7 +30,7 @@ export type ExecutionIntentPricingFailure =
     }
   | {
       readonly _tag: 'InvalidQuoteBoundIntent'
-      readonly reason: 'invalid-quantity-or-price' | 'fractional-quantity' | 'invalid-slippage'
+      readonly reason: 'invalid-quantity-or-price' | 'invalid-slippage' | 'invalid-sell-floor'
       readonly quantityAtoms: bigint
       readonly referencePriceMicros: bigint
     }
@@ -43,26 +38,6 @@ export type ExecutionIntentPricingFailure =
 export const deriveExecutionIntentPricing = (
   input: ExecutionIntentPricingInput,
 ): Result.Result<ExecutionIntentPricing, ExecutionIntentPricingFailure> => {
-  if (
-    input.orderType === OrderType.Market &&
-    input.timeInForce ===
-      (instrumentMarket(input.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)
-  ) {
-    return Result.map(
-      makeFillTerms(
-        input.side === OrderSide.Buy ? 'buy' : 'sell',
-        input.quantityAtoms,
-        input.referencePriceMicros,
-        input.executionModel,
-        MICROS,
-      ),
-      (terms) => ({
-        expectedExecutionPriceMicros: terms.fillPriceMicros,
-        notionalLimitMicros: terms.notionalMicros,
-      }),
-    )
-  }
-
   if (
     input.orderType !== OrderType.Limit ||
     input.timeInForce !== cashSpotLimitTimeInForce(instrumentMarket(input.symbol))
@@ -81,14 +56,6 @@ export const deriveExecutionIntentPricing = (
       referencePriceMicros: input.referencePriceMicros,
     })
   }
-  if (instrumentMarket(input.symbol) === MarketKind.Equity && input.quantityAtoms % quantityScale !== 0n) {
-    return Result.fail({
-      _tag: 'InvalidQuoteBoundIntent',
-      reason: 'fractional-quantity',
-      quantityAtoms: input.quantityAtoms,
-      referencePriceMicros: input.referencePriceMicros,
-    })
-  }
   if (input.limitSlippageBps < 0n || input.limitSlippageBps >= 10_000n) {
     return Result.fail({
       _tag: 'InvalidQuoteBoundIntent',
@@ -98,20 +65,32 @@ export const deriveExecutionIntentPricing = (
     })
   }
   const buy = input.side === OrderSide.Buy
+  if (input.minimumSellPriceMicros !== undefined && (buy || input.minimumSellPriceMicros <= 0n)) {
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-sell-floor',
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  }
   const boundary = input.referencePriceMicros * (10_000n + (buy ? input.limitSlippageBps : -input.limitSlippageBps))
-  const price =
-    input.limitSlippageBps === 0n
-      ? input.referencePriceMicros
-      : quantizeInstrumentPriceMicros(input.symbol, (boundary + (buy ? 0n : 9_999n)) / 10_000n, buy ? 'DOWN' : 'UP')
-  const roundUp = input.limitSlippageBps === 0n ? buy : !buy
-  const notionalLimitMicros = (input.quantityAtoms * price + (roundUp ? quantityScale - 1n : 0n)) / quantityScale
-  return Result.map(
-    orderPriceBoundaryMicros({
-      symbol: input.symbol,
-      side: input.side,
-      quantityAtoms: input.quantityAtoms.toString(),
-      notionalLimitMicros: notionalLimitMicros.toString(),
-    }),
-    (expectedExecutionPriceMicros) => ({ expectedExecutionPriceMicros, notionalLimitMicros }),
+  const quotePrice = quantizeInstrumentPriceMicros(
+    input.symbol,
+    (boundary + (buy ? 0n : 9_999n)) / 10_000n,
+    buy ? 'DOWN' : 'UP',
   )
+  const floor =
+    input.minimumSellPriceMicros === undefined
+      ? quotePrice
+      : quantizeInstrumentPriceMicros(input.symbol, input.minimumSellPriceMicros, 'UP')
+  const price = quotePrice < floor ? floor : quotePrice
+  const notionalLimitMicros = (input.quantityAtoms * price + (buy ? quantityScale - 1n : 0n)) / quantityScale
+  if (price <= 0n || notionalLimitMicros <= 0n)
+    return Result.fail({
+      _tag: 'InvalidQuoteBoundIntent',
+      reason: 'invalid-quantity-or-price',
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.referencePriceMicros,
+    })
+  return Result.succeed({ expectedExecutionPriceMicros: price, notionalLimitMicros })
 }

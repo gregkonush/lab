@@ -1,3 +1,4 @@
+import { codexToolText } from './codex-tool-text'
 import { codexMessageAttachments, type TengriCodexImage } from '@/lib/tengri/codex-images'
 import type { TengriCodexEvent, TengriCodexEventKind } from '@/lib/tengri/types'
 
@@ -37,6 +38,7 @@ export type CodexTranscriptItem = {
   >
   text: string
   eventSequence?: number
+  activityTitle?: string
 }
 
 export type CodexApprovalDecision = (typeof CODEX_APPROVAL_DECISION_ORDER)[number]
@@ -272,11 +274,38 @@ export function parseCodexEvent(data: string): TengriCodexEvent | null {
   }
 }
 
+export function codexEventActivityTitle(event: TengriCodexEvent) {
+  if (event.kind !== 'tool-call' && event.kind !== 'tool-output') return undefined
+  return codexItemActivityTitle(record(record(parseRawEvent(event.rawJson).params).item))
+}
+
+function codexItemActivityTitle(item: Record<string, unknown>): string | undefined {
+  if (item.type === 'commandExecution') return commandText(item.command) || undefined
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+    const name = [string(item.server) || string(item.namespace), string(item.tool)].filter(Boolean).join('/')
+    const input = item.arguments ?? item.input
+    const args = typeof input === 'string' ? record(parseRawEvent(input)) : record(input)
+    const target =
+      string(args.branch_name) ||
+      string(args.path) ||
+      (typeof args.pr_number === 'number' ? `#${args.pr_number}` : '') ||
+      string(args.url) ||
+      string(args.repository_full_name)
+    return name ? [name, target && target.replace(/\s+/g, ' ').slice(0, 160)].filter(Boolean).join(' · ') : undefined
+  }
+  return undefined
+}
+
 export function codexEventDisplayText(event: TengriCodexEvent) {
   if (isRawReasoningDelta(event)) return ''
   const raw = parseRawEvent(event.rawJson)
   const params = record(raw.params)
   const item = record(params.item)
+
+  if (event.kind === 'user-message' && item.type === 'userMessage' && Array.isArray(item.content)) {
+    const text = item.content.map(userInputText).filter(Boolean).join('\n')
+    if (text) return text
+  }
 
   if (event.kind === 'approval') {
     const text = approvalDisplayText(params, event.text)
@@ -286,11 +315,19 @@ export function codexEventDisplayText(event: TengriCodexEvent) {
   }
   if (event.kind === 'usage') return usageDisplayText(params) || event.text
 
+  if (item.type === 'mcpToolCall' || item.type === 'dynamicToolCall') {
+    if (event.kind === 'tool-call') return codexToolText(toolCallText(item) || event.text)
+    if (event.kind === 'tool-output')
+      return codexToolText(
+        toolResultText(item) || event.text || commandStatusText(string(item.status), number(item.exitCode)),
+      )
+  }
+
   const eventText =
     event.kind === 'tool-output' && isCommandExecutionEvent(event, item)
       ? decodeMaybeBase64Text(event.text)
       : event.text
-  if (eventText) return eventText
+  if (eventText) return event.kind === 'tool-output' ? codexToolText(eventText) : eventText
   if (event.kind === 'tool-call') return toolCallText(item)
   if (event.kind === 'tool-output') {
     return toolResultText(item) || commandStatusText(string(item.status), number(item.exitCode))
@@ -357,6 +394,7 @@ export function codexEventIsRuntimeError(event: TengriCodexEvent) {
 
 export function codexEventConfirmsRuntimeReady(event: TengriCodexEvent) {
   return (
+    event.method === 'tengri/runtimeReady' ||
     (event.method === 'turn/started' && Boolean(event.turnId)) ||
     (event.method === 'thread/started' && Boolean(event.threadId))
   )
@@ -529,6 +567,8 @@ export function codexTranscriptFromThread(
         const item = record(itemValue)
         const transcriptItem = transcriptItemFromCodex(string(item.id), string(item.type), item)
         if (transcriptItem && !seen.has(transcriptItem.id)) {
+          const activityTitle = codexItemActivityTitle(item)
+          if (activityTitle) transcriptItem.activityTitle = activityTitle
           if (Object.hasOwn(itemEventSequences, transcriptItem.id)) {
             transcriptItem.eventSequence = itemEventSequences[transcriptItem.id]
           }
@@ -558,7 +598,7 @@ function transcriptItemFromCodex(id: string, type: string, item: Record<string, 
     return transcript(id, 'reasoning-summary', summary || content)
   }
   if (type === 'commandExecution') {
-    const output = decodeMaybeBase64Text(string(item.aggregatedOutput))
+    const output = codexToolText(decodeMaybeBase64Text(string(item.aggregatedOutput)))
     if (output) return transcript(id, 'tool-output', output)
     const status = commandStatusText(string(item.status), number(item.exitCode))
     if (status) return transcript(id, 'tool-output', status)
@@ -790,7 +830,8 @@ function toolCallText(item: Record<string, unknown>) {
   const server = string(item.server)
   const namespace = string(item.namespace)
   const tool = string(item.tool)
-  return [server || namespace, tool].filter(Boolean).join('/') || string(item.command)
+  const name = [server || namespace, tool].filter(Boolean).join('/') || string(item.command)
+  return [name, prettyJson(item.arguments ?? item.input)].filter(Boolean).join('\n')
 }
 
 function collaborationText(item: Record<string, unknown>) {
@@ -838,7 +879,10 @@ function toolResultText(item: Record<string, unknown>) {
   const content = contentItemsText(result.content)
   const structured = prettyJson(result.structuredContent ?? result.structured_content)
   const rawResult = typeof resultValue === 'string' ? resultValue : ''
-  return [dynamic, content, structured, rawResult].filter(Boolean).join('\n')
+  const output = [dynamic, content, structured, rawResult].filter(Boolean).join('\n')
+  if (!output) return ''
+  const name = [string(item.server) || string(item.namespace), string(item.tool)].filter(Boolean).join('/')
+  return [name, codexToolText(output)].filter(Boolean).join('\n')
 }
 
 function contentItemsText(value: unknown) {

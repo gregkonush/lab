@@ -56,6 +56,9 @@ function runtimeAgent(id: unknown) {
 }
 let ofzServer: grpc.Server
 let receivedCommandDeadline = 0
+let receivedCreateDeadline = 0
+const receivedTerminalDeadlines = new Map<string, number>()
+let ofzDatabaseClockOffsetMs = 0
 const lifecycleReceipts = new Map<string, Record<string, unknown>>()
 const lifecycleHashes = new Map<string, Buffer>()
 let lifecycleVersion = 10
@@ -88,6 +91,8 @@ let server: grpc.Server
 let receivedMetadata: grpc.Metadata | undefined
 let receivedRequest: Record<string, unknown> | undefined
 let receiverAudience = '77777777-7777-4777-8777-777777777777'
+let receiverGuestApiProtocolVersion = 7
+let fileWriteCalls = 0
 let terminalRequestStarted: (() => void) | null = null
 let terminalRequestCancelled: (() => void) | null = null
 let editorRequestStarted: (() => void) | null = null
@@ -155,6 +160,11 @@ beforeAll(async () => {
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
       receivedCommandDeadline = Number(call.getDeadline())
+      const context = call.request.context as { deadlineUnixMs: string }
+      if (Number(context.deadlineUnixMs) > Date.now() - ofzDatabaseClockOffsetMs + 30_000) {
+        callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'invalid command deadline'), null)
+        return
+      }
       const id = String(call.request.operationId)
       if (call.request.reserveWorkspace && reservationFailure) {
         reservationFailure.operationIds.push(id)
@@ -217,7 +227,7 @@ beforeAll(async () => {
       _call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
-      callback(null, { audience: receiverAudience })
+      callback(null, { audience: receiverAudience, guestApiProtocolVersion: receiverGuestApiProtocolVersion })
     },
     issueEditorSession(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -276,6 +286,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      receivedCreateDeadline = Number(call.getDeadline())
       receivedMetadata = call.metadata
       receivedRequest = call.request
       if (call.request.displayName === 'Expired reservation') {
@@ -343,6 +354,48 @@ beforeAll(async () => {
       if (id === 'internal-failure')
         callback(serviceError(grpc.status.INTERNAL, 'pod 10.244.1.42 failed at an internal URL'), null)
       else callback(null, runtimeAgent(id))
+    },
+    terminateTerminal(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('termination', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, {})
+    },
+    issueTerminalTicket(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedTerminalDeadlines.set('ticket', Number(call.getDeadline()))
+      if (call.request.terminalId === 'terminal-compound-cancel') {
+        terminalRequestStarted?.()
+        const timer = setTimeout(
+          () => callback(serviceError(grpc.status.DEADLINE_EXCEEDED, 'terminal request was not cancelled'), null),
+          1_000,
+        )
+        call.on('cancelled', () => {
+          clearTimeout(timer)
+          terminalRequestCancelled?.()
+        })
+        return
+      }
+      callback(null, {
+        websocketUrl: 'wss://tengri.example/v1/terminal/ws',
+        ticket: 'fixture-ticket',
+        expiresAt: '2026-10-18T12:00:00Z',
+      })
     },
     createTerminal(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
@@ -413,12 +466,52 @@ beforeAll(async () => {
     ) {
       receivedMetadata = call.metadata
       receivedRequest = call.request
-      callback(null, { id: 'turn-selected', threadId: call.request.threadId })
+      callback(null, {
+        runId: call.request.operationId,
+        agentId: call.request.agentId,
+        threadId: call.request.threadId,
+        stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+      })
+    },
+    getActiveCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(
+        null,
+        call.request.id === 'agent-empty'
+          ? {}
+          : {
+              runId: '11111111-1111-4111-8111-111111111111',
+              agentId: call.request.id,
+              threadId: 'thread-selected',
+              stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+            },
+      )
+    },
+    getCodexRun(
+      call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
+      callback: grpc.sendUnaryData<Record<string, unknown>>,
+    ) {
+      receivedMetadata = call.metadata
+      receivedRequest = call.request
+      callback(null, {
+        runId: call.request.runId,
+        agentId: call.request.agentId,
+        threadId: 'thread-selected',
+        stateJson: JSON.stringify({ phase: 'running', turnId: 'turn-selected' }),
+      })
     },
     steerCodexInput(
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      if (call.request.text === 'not-dispatched') {
+        callback(serviceError(grpc.status.FAILED_PRECONDITION, 'Codex control was not dispatched'), null)
+        return
+      }
       receivedMetadata = call.metadata
       receivedRequest = call.request
       callback(null, { id: 'turn-selected', threadId: call.request.threadId })
@@ -460,6 +553,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      receivedRequest = call.request
       if (
         String(call.request.path).startsWith('/workspace/.tengri-attachments/') ||
         call.request.path === '/workspace/chart.png'
@@ -506,6 +600,7 @@ beforeAll(async () => {
       call: grpc.ServerUnaryCall<Record<string, unknown>, Record<string, unknown>>,
       callback: grpc.sendUnaryData<Record<string, unknown>>,
     ) {
+      fileWriteCalls += 1
       receivedRequest = call.request
       receivedMetadata = call.metadata
       if (call.request.expectedRevision === '0'.repeat(64)) {
@@ -563,7 +658,7 @@ beforeAll(async () => {
         kind: 'FILE_EVENT_KIND_RESET',
         path: String(call.request.path),
       })
-      if (call.request.path === '/renewal') renewingFileWatch = call
+      if (call.request.path === '/workspace/renewal') renewingFileWatch = call
       else call.end()
     },
     resolveCodexApproval(
@@ -577,7 +672,7 @@ beforeAll(async () => {
       receivedRequest = call.request
       const threadId = String(call.request.threadId)
       if (threadId === 'missing-conversation') {
-        call.emit('error', serviceError(grpc.status.NOT_FOUND, '{"error":"Codex conversation could not be found"}\n'))
+        call.emit('error', serviceError(grpc.status.NOT_FOUND, 'Codex conversation could not be found'))
         return
       }
       if (threadId === 'missing-resource') {
@@ -588,7 +683,7 @@ beforeAll(async () => {
         return
       }
       if (threadId === 'unavailable-conversation') {
-        call.emit('error', serviceError(grpc.status.UNAVAILABLE, '{"error":"Codex conversation could not be found"}'))
+        call.emit('error', serviceError(grpc.status.UNAVAILABLE, 'Codex conversation could not be found'))
         return
       }
       call.write({
@@ -658,6 +753,33 @@ afterAll(async () => {
 })
 
 describe('Tengri gRPC BFF transport', () => {
+  test('identifies a recorded control that was rejected before native dispatch', async () => {
+    const { steerCodexTurn } = await import('./grpc')
+    expect(
+      await rejection(
+        steerCodexTurn(
+          identity,
+          'agent-test',
+          'thread-selected',
+          'turn-selected',
+          '22222222-2222-4222-8222-222222222222',
+          '11111111-1111-4111-8111-111111111111',
+          'not-dispatched',
+        ),
+      ),
+    ).toMatchObject({ status: 409, code: 'control_not_dispatched' })
+  })
+  test('recovers the server-owned active run and distinguishes an empty workspace', async () => {
+    const { getActiveCodexRun } = await import('./grpc')
+    expect(await getActiveCodexRun(identity, 'agent-test')).toEqual({
+      runId: '11111111-1111-4111-8111-111111111111',
+      agentId: 'agent-test',
+      threadId: 'thread-selected',
+      state: { phase: 'running', turnId: 'turn-selected' },
+    })
+    expect(receivedRequest).toEqual({ id: 'agent-test' })
+    expect(await getActiveCodexRun(identity, 'agent-empty')).toBeNull()
+  })
   test('reads the current receiver audience for every request and rejects malformed bindings before submission', async () => {
     const { listCodexModels } = await import('./grpc')
     try {
@@ -677,9 +799,27 @@ describe('Tengri gRPC BFF transport', () => {
       receiverAudience = '77777777-7777-4777-8777-777777777777'
     }
   })
+  test('refuses incompatible controllers before sending canonical file writes', async () => {
+    const { writeFile } = await import('./grpc')
+    const before = fileWriteCalls
+    try {
+      for (const version of [0, 4, 5, 6, 8]) {
+        receiverGuestApiProtocolVersion = version
+        expect(
+          await rejection(writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')),
+        ).toMatchObject({ status: 503 })
+        expect(fileWriteCalls).toBe(before)
+      }
+    } finally {
+      receiverGuestApiProtocolVersion = 7
+    }
+    await writeFile(identity, 'agent-test', '/workspace/main.ts', 'protected', 'missing')
+    expect(fileWriteCalls).toBe(before + 1)
+  })
+
   test('renews the client certificate while an existing signed stream stays open', async () => {
     const { listCodexModels, watchFiles } = await import('./grpc')
-    const watch = await watchFiles(identity, 'agent-test', '/renewal')
+    const watch = await watchFiles(identity, 'agent-test', '/workspace/renewal')
     const first = await new Promise<Record<string, unknown>>((resolve, reject) => {
       watch.once('data', resolve)
       watch.once('error', reject)
@@ -699,7 +839,7 @@ describe('Tengri gRPC BFF transport', () => {
       watch.once('data', resolve)
       watch.once('error', reject)
     })
-    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/renewal' })
+    renewingFileWatch?.write({ sequence: '2', kind: 'FILE_EVENT_KIND_RESET', path: '/workspace/renewal' })
     expect((await next).sequence).toBe('2')
     watch.cancel()
     before?.close()
@@ -724,6 +864,7 @@ describe('Tengri gRPC BFF transport', () => {
     })
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', cursor: 'models-2' })
     expect(metadataContext().actor?.identity).toEqual({ case: 'humanId', value: identity.session.humanId })
+    expect(metadataContext().deadlineUnixMs).toBeLessThanOrEqual(BigInt(Date.now() - 250 + 5000))
     expect(await rejection(listCodexModels(identity, 'broken-catalog'))).toMatchObject({
       message: 'The guest returned an invalid Codex model catalog',
     })
@@ -737,7 +878,14 @@ describe('Tengri gRPC BFF transport', () => {
     } satisfies import('./codex-models').TengriCodexOptions
     await createCodexThread(identity, 'agent-test', options)
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', ...options })
-    await sendCodexTurn(identity, 'agent-test', 'thread-selected', 'Read the workspace', options)
+    await sendCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      '11111111-1111-4111-8111-111111111111',
+      'Read the workspace',
+      options,
+    )
     expect(receivedRequest).toMatchObject({ agentId: 'agent-test', threadId: 'thread-selected', ...options })
   })
 
@@ -745,14 +893,31 @@ describe('Tengri gRPC BFF transport', () => {
     const { sendCodexTurn, steerCodexTurn } = await import('./grpc')
     const content = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0])
     const images = [{ mediaType: 'image/png' as const, data: content.toString('base64') }]
-    await sendCodexTurn(identity, 'agent-test', 'thread-selected', '', {}, images)
+    await sendCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      '11111111-1111-4111-8111-111111111111',
+      '',
+      {},
+      images,
+    )
     expect(receivedRequest).toMatchObject({
       agentId: 'agent-test',
       text: '',
       images: [{ mediaType: 'image/png', content }],
     })
     expect(metadataContext().actor?.identity).toEqual({ case: 'humanId', value: identity.session.humanId })
-    await steerCodexTurn(identity, 'agent-test', 'thread-selected', 'turn-selected', 'Inspect this', images)
+    await steerCodexTurn(
+      identity,
+      'agent-test',
+      'thread-selected',
+      'turn-selected',
+      '22222222-2222-4222-8222-222222222222',
+      '11111111-1111-4111-8111-111111111111',
+      'Inspect this',
+      images,
+    )
     expect(receivedRequest).toMatchObject({
       turnId: 'turn-selected',
       text: 'Inspect this',
@@ -922,11 +1087,73 @@ describe('Tengri gRPC BFF transport', () => {
     }
   })
 
+  test('keeps compound terminal calls within the shared guest-operation budget', async () => {
+    const { terminateTerminal, issueTerminalTicket } = await import('./grpc')
+    const started = Date.now()
+    await terminateTerminal(identity, 'agent-test', 'terminal-test')
+    const ticket = await issueTerminalTicket(identity, 'agent-test', 'terminal-test')
+    expect(ticket.ticket).toBe('fixture-ticket')
+    for (const method of ['termination', 'ticket']) {
+      expect(receivedTerminalDeadlines.get(method)).toBeGreaterThanOrEqual(started + 2 * 30_000)
+      expect(receivedTerminalDeadlines.get(method)).toBeLessThanOrEqual(Date.now() + 130_000)
+    }
+  })
+
+  test.each(['terminateTerminal', 'issueTerminalTicket'] as const)(
+    'cancels compound terminal RPC %s when its HTTP request aborts',
+    async (method) => {
+      const client = await import('./grpc')
+      const started = new Promise<void>((resolve) => {
+        terminalRequestStarted = resolve
+      })
+      const cancelled = new Promise<void>((resolve) => {
+        terminalRequestCancelled = resolve
+      })
+      const controller = new AbortController()
+      const pending = client[method](identity, 'agent-test', 'terminal-compound-cancel', controller.signal).catch(
+        (error: unknown) => error,
+      )
+      try {
+        await started
+        controller.abort()
+        const result = await Promise.race([
+          pending,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal cancellation timed out')), 300),
+          ),
+        ])
+        expect(result).toMatchObject({ name: 'AbortError', message: 'Tengri request was canceled' })
+        await Promise.race([
+          cancelled,
+          new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('Terminal RPC was not cancelled')), 1_000),
+          ),
+        ])
+      } finally {
+        terminalRequestStarted = null
+        terminalRequestCancelled = null
+      }
+    },
+  )
+
+  test('creates a workspace when the Ofz database clock trails the BFF by one second', async () => {
+    const { createAgent } = await import('./grpc')
+    ofzDatabaseClockOffsetMs = 1000
+    try {
+      expect(await createAgent(identity, 'Tengri', randomUUID())).toMatchObject({ id: 'agent-test', phase: 'ready' })
+    } finally {
+      ofzDatabaseClockOffsetMs = 0
+    }
+  })
+
   test('reserves capacity before creation and starts the enrolled UID with a durable Ofz command', async () => {
     const { createAgent } = await import('./grpc')
     const before = lifecycleReceipts.size
     const operationId = randomUUID()
+    const started = Date.now()
     const agent = await createAgent(identity, 'Tengri', operationId)
+    expect(receivedCreateDeadline).toBeGreaterThanOrEqual(started + 4 * 30_000)
+    expect(receivedCreateDeadline).toBeLessThanOrEqual(Date.now() + 130_000)
     expect(receivedRequest).toEqual({ displayName: 'Tengri', reservationId: operationId })
     expect(agent).toMatchObject({ id: 'agent-test', uid: workspaceUid, phase: 'ready', displayName: 'Tengri' })
     expect(agent.runtimeEpoch).toMatch(/^[0-9a-f-]{36}$/)
@@ -1017,7 +1244,7 @@ describe('Tengri gRPC BFF transport', () => {
     const { resumeAgent } = await import('./grpc')
     const started = Date.now()
     expect((await resumeAgent(identity, 'agent-test', workspaceUid, randomUUID())).id).toBe('agent-test')
-    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 5000)
+    expect(receivedCommandDeadline).toBeLessThanOrEqual(Date.now() + 30_000)
     expect(receivedCommandDeadline).toBeGreaterThan(started)
   })
 
@@ -1184,8 +1411,12 @@ describe('Tengri gRPC BFF transport', () => {
     const { readCodexAttachment, readWorkspaceImage } = await import('./grpc')
     const prefix = '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111'
     const image = await readCodexAttachment(identity, 'agent-test', `${prefix}.png`)
+    expect(receivedRequest).toMatchObject({
+      path: '/workspace/.tengri-attachments/11111111-1111-4111-8111-111111111111.png',
+    })
     expect(image.mediaType).toBe('image/png')
     expect((await readWorkspaceImage(identity, 'agent-test', '/workspace/chart.png')).mediaType).toBe('image/png')
+    expect(receivedRequest).toMatchObject({ path: '/workspace/chart.png' })
     expect(await rejection(readWorkspaceImage(identity, 'agent-test', '/etc/private.png'))).toMatchObject({
       status: 400,
     })
@@ -1501,7 +1732,14 @@ describe('Tengri gRPC BFF transport', () => {
   test('sends validated user answers separately from approval decisions', async () => {
     const { answerCodexQuestions } = await import('./grpc')
     const response = { answers: { environment: { answers: ['Staging'] } } }
-    await answerCodexQuestions(identity, 'agent-test', 'question-1', response)
+    await answerCodexQuestions(
+      identity,
+      'agent-test',
+      'question-1',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      response,
+    )
     if (!receivedRequest) throw new Error('The question response did not reach the gRPC server')
     expect(receivedRequest.agentId).toBe('agent-test')
     expect(receivedRequest.approvalId).toBe('question-1')
@@ -1512,18 +1750,36 @@ describe('Tengri gRPC BFF transport', () => {
   test('preserves structured command approval decisions across gRPC', async () => {
     const { resolveCodexApproval } = await import('./grpc')
 
-    await resolveCodexApproval(identity, 'agent-test', 'approval-1', 'approve-exec-policy-amendment')
+    await resolveCodexApproval(
+      identity,
+      'agent-test',
+      'approval-1',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      'approve-exec-policy-amendment',
+    )
     expect(receivedRequest).toEqual({
       agentId: 'agent-test',
       approvalId: 'approval-1',
+      runId: '11111111-1111-4111-8111-111111111111',
+      operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_EXEC_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
     })
 
-    await resolveCodexApproval(identity, 'agent-test', 'approval-2', 'approve-network-policy-amendment')
+    await resolveCodexApproval(
+      identity,
+      'agent-test',
+      'approval-2',
+      '11111111-1111-4111-8111-111111111111',
+      '22222222-2222-4222-8222-222222222222',
+      'approve-network-policy-amendment',
+    )
     expect(receivedRequest).toEqual({
       agentId: 'agent-test',
       approvalId: 'approval-2',
+      runId: '11111111-1111-4111-8111-111111111111',
+      operationId: '22222222-2222-4222-8222-222222222222',
       decision: 'CODEX_APPROVAL_DECISION_APPROVE_NETWORK_POLICY_AMENDMENT',
       responseJson: Buffer.alloc(0),
     })

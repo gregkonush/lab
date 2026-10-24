@@ -1,8 +1,8 @@
 import { Effect, Result, Schema } from 'effect'
 import { IsoDateSchema } from '../schemas'
-import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca'
+import { OrderCollection, type Account, type Position, type Order, type BrokerReadShape } from '../broker/alpaca/model'
 import { normalizeAssetResult } from '../broker/alpaca/normalizers'
-import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca'
+import { AssetClass, AssetExchange, AssetStatus } from '../broker/alpaca/model'
 import { AccountStatus, Authority, KillState, ReconciliationStatus } from './contracts'
 import type { CachedBrokerState } from './broker-state-cache'
 

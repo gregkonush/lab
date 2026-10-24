@@ -8,7 +8,7 @@ import { SnapshotManifestFields } from './market-data/streaming/manifest-schema'
 import { diagnoseStreamingInputs } from './market-data/streaming/inputs'
 import { SymbolSchema, strictParseOptions } from './schemas'
 import { verifyIntradaySnapshotQuery } from './market-data/intraday/verification'
-import type { IntradaySnapshotQuery } from './market-data'
+import type { IntradaySnapshotQuery } from './market-data/intraday/model'
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 

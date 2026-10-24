@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Effect } from 'effect'
 import { AuthenticationError, AuthorizationError, ConnectionError, SqlError } from 'effect/sql/SqlError'
 
-import { CycleObservabilityError } from './cycle/store'
+import { CycleObservabilityError } from './cycle/store/observability'
 import { DatabaseError } from './db/database-error'
 import { databaseOperation } from './operations'
 

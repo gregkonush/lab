@@ -6,8 +6,8 @@ import { Authority } from '../../execution/contracts'
 import { strictParseOptions } from '../../schemas'
 import { AuthorityGenerationRow } from './rows'
 
-describe('execution-store row compatibility', () => {
-  test.each(['v8', 'v9'])('reads immutable Jev %s authority history during a hard cutover', (version) => {
+describe('execution-store retained authority history', () => {
+  test.each(['v8', 'v9', 'v10', 'v11'])('reads immutable Jev %s authority history during a hard cutover', (version) => {
     expect(
       Result.isSuccess(
         Schema.decodeUnknownResult(

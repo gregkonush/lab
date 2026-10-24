@@ -245,11 +245,15 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
-    rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
-        .await?;
+    rpc.write_file(
+        "/workspace/continuity.txt",
+        b"private-home-continuity",
+        "missing",
+    )
+    .await?;
     stage("files");
     let terminal = rpc
-        .create_terminal("fixture-terminal-continuity", "/", 80, 24)
+        .create_terminal("fixture-terminal-continuity", "/workspace", 80, 24)
         .await?
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
@@ -264,7 +268,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     let (_, file, _) = tokio::try_join!(
         rpc.verify_identity("33333333-3333-4333-8333-333333333333"),
-        rpc.read_file("/continuity.txt"),
+        rpc.read_file("/workspace/continuity.txt"),
         rpc.codex_call("model/list", json!({})),
     )?;
     ensure!(
@@ -292,7 +296,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         );
     }
     rpc.write_file(
-        "/kvm-admin.sh",
+        "/workspace/kvm-admin.sh",
         &fs::read("/fixture/test-guest-admin.sh").await?,
         "missing",
     )
@@ -341,6 +345,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO before:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory before: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
         let started = Instant::now();
         let stage = |name: &str| {
             eprintln!(
@@ -355,7 +369,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         rpc.verify_identity("33333333-3333-4333-8333-333333333333")
             .await?;
         ensure!(
-            rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
+            rpc.read_file("/workspace/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
         );
         stage("files");
@@ -373,6 +387,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             "real KVM resume {} CPU after:\n{}",
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
+        );
+        eprintln!(
+            "real KVM resume {} IO after:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory after: {}",
+            index + 1,
+            cgroup_memory().await?
         );
     }
     let rpc = guest(&identity, &claim, &token, database.clone())?;
@@ -399,16 +423,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
     client.lifecycle("stop", &claim, fence).await?;
-    timings.sort_by(f64::total_cmp);
-    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
-    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
+    let mut sorted_timings = timings.clone();
+    sorted_timings.sort_by(f64::total_cmp);
+    let p95 = (samples >= 50).then(|| sorted_timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(sorted_timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
         "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
         "cpuMax":cpu_max.trim(),
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
-        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
+        "resumeP50Ms":sorted_timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":sorted_timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
         "browserStarted":true,"browserComputerToolInstalled":true,
@@ -570,7 +595,10 @@ struct TerminalProbe {
 
 impl TerminalProbe {
     async fn open(rpc: &RpcClient, name: &str) -> anyhow::Result<Self> {
-        let terminal = rpc.create_terminal(name, "/", 100, 30).await?.session;
+        let terminal = rpc
+            .create_terminal(name, "/workspace", 100, 30)
+            .await?
+            .session;
         let (sender, receiver) = mpsc::channel(4);
         sender
             .send(proto::TerminalInput {
@@ -696,16 +724,68 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
     let cpu_before = fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?;
     let io_before = optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await;
+    let memory_before = cgroup_memory().await?;
+    let memory_pressure_before =
+        optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await;
+    let vmm_tasks = vmm_diagnostic_tasks().await?;
+    let diagnostic_started = Instant::now();
+    let stop_diagnostics = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop_diagnostics.clone();
+    let diagnostics = tokio::spawn(async move {
+        let mut samples = Vec::new();
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let _ = tokio::time::timeout(Duration::from_secs(12), async {
+            for _ in 0..240 {
+                interval.tick().await;
+                if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+                let mut tasks = Vec::new();
+                for path in &vmm_tasks {
+                    tasks.push(json!({
+                        "tid":path.file_name().unwrap().to_string_lossy(),
+                        "stat":optional_counter(&path.join("stat")).await,
+                        "schedstat":optional_counter(&path.join("schedstat")).await,
+                        "wait":optional_counter(&path.join("wchan")).await,
+                    }));
+                }
+                samples.push(json!({
+                    "atMs":at_ms,"collectedInMs":diagnostic_started.elapsed().as_secs_f64()*1000.0-at_ms,
+                    "tasks":tasks,
+                }));
+            }
+        })
+        .await;
+        samples
+    });
     terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
     terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
     let mut heartbeats = Vec::with_capacity(50);
+    let mut heartbeat_windows = Vec::with_capacity(50);
     let mut peak_workers = 0;
     for _ in 0..50 {
-        heartbeats.push(terminal.ping().await?.as_secs_f64() * 1000.0);
+        let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+        let duration_ms = terminal.ping().await?.as_secs_f64() * 1000.0;
+        heartbeats.push(duration_ms);
+        heartbeat_windows.push(json!({"atMs":at_ms,"durationMs":duration_ms}));
         peak_workers = peak_workers.max(uring_workers().await?);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     terminal.marker(b"\x1eTENGRI_IO_END_124\x1f").await?;
+    stop_diagnostics.store(true, std::sync::atomic::Ordering::Relaxed);
+    let samples = diagnostics.await.context("VMM diagnostic task failed")?;
+    fs::write(
+        "/work/io-responsiveness.json",
+        serde_json::to_vec(&json!({
+            "heartbeats":heartbeat_windows,"samples":samples,"memoryBefore":memory_before,
+            "memoryAfter":cgroup_memory().await?,"memoryPressureBefore":memory_pressure_before,
+            "memoryPressureAfter":optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await,
+            "schedulerStatsEnabled":optional_counter(Path::new("/proc/sys/kernel/sched_schedstats")).await,
+        }))?,
+    )
+    .await?;
     heartbeats.sort_by(f64::total_cmp);
     let p95_ms = heartbeats[47];
     let pids_limit = fs::read_to_string("/sys/fs/cgroup/pids.max").await?;
@@ -745,6 +825,42 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
         })
         .await?;
     Ok(responsiveness)
+}
+
+async fn vmm_diagnostic_tasks() -> anyhow::Result<Vec<PathBuf>> {
+    let mut processes = fs::read_dir("/proc").await?;
+    while let Some(process) = processes.next_entry().await? {
+        if process
+            .file_name()
+            .to_string_lossy()
+            .parse::<u32>()
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(command) = fs::read(process.path().join("cmdline")).await else {
+            continue;
+        };
+        if !command.starts_with(b"/usr/local/bin/firecracker\0") {
+            continue;
+        }
+        let mut selected = Vec::new();
+        let mut tasks = fs::read_dir(process.path().join("task")).await?;
+        while let Some(task) = tasks.next_entry().await? {
+            let Ok(name) = fs::read_to_string(task.path().join("comm")).await else {
+                continue;
+            };
+            if task.file_name() == process.file_name() || name.starts_with("fc_vcpu") {
+                selected.push(task.path());
+            }
+        }
+        ensure!(
+            selected.len() == 5,
+            "expected one VMM main thread and four vCPUs"
+        );
+        return Ok(selected);
+    }
+    anyhow::bail!("awake guest has no Firecracker process")
 }
 
 async fn optional_counter(path: &Path) -> serde_json::Value {
@@ -856,7 +972,18 @@ async fn cgroup_memory() -> anyhow::Result<serde_json::Value> {
     for line in status.lines() {
         let mut fields = line.split_whitespace();
         let key = fields.next().context("empty cgroup counter")?;
-        if ["anon", "file", "file_dirty", "file_writeback"].contains(&key) {
+        if [
+            "anon",
+            "file",
+            "file_dirty",
+            "file_writeback",
+            "pgfault",
+            "pgmajfault",
+            "pgscan",
+            "pgsteal",
+        ]
+        .contains(&key)
+        {
             values.insert(
                 key.into(),
                 json!(

@@ -20,17 +20,17 @@ import { planAccountingReceipt } from '../db/execution-store/decisions'
 import { BrokerAccess, noCapitalAuthority } from '../execution/authority'
 import type { WriterFenceService } from '../execution/writer-fence'
 import { DiscrepancyKind, OrderSide, type Fill } from '../execution/contracts'
-import { canonicalHashV1, sha256 } from '../hash'
-import { readForwardPerformancePostgres } from './postgres'
+import { sha256, canonicalHashV1Result } from '../hash'
+import { readForwardPerformancePostgres } from './postgres/read'
 import {
   bindForwardPerformanceTerminalReferencePrices,
   makeForwardPerformanceMarketVolumeEvidence,
   readForwardPerformanceMarketVolume,
   readForwardPerformanceMarketVolumeWithClient,
-  runForwardPerformance,
   runForwardPerformanceReport,
   type ForwardPerformanceReaders,
 } from './program'
+import { ForwardPerformanceScopeKind } from './report'
 import type { ForwardPerformanceCashYieldEvidence, ForwardPerformanceMarketVolumeRequest } from './model'
 import { coinActivity, coinRoundTrip } from './coin-fee-episodes.test-support'
 
@@ -308,22 +308,24 @@ const marketBarMaterial = [
     publication_asof: '2026-07-20',
   },
 ] as const
-const marketBarsContentHash = canonicalHashV1(marketBarMaterial)
-const marketSessionsContentHash = canonicalHashV1(marketSessionMaterial)
-const marketSnapshotId = canonicalHashV1({
-  schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-  provider: 'alpaca',
-  feed: 'sip',
-  adjustment: 'all',
-  calendarVersion: 'fixture-calendar-v1',
-  requestedStart: '2026-07-19',
-  publicationAsOf: '2026-07-20',
-  symbols: marketSymbols,
-  barsContentHash: marketBarsContentHash,
-  sessionsContentHash: marketSessionsContentHash,
-  universeId: 'cross-asset-taa-v1',
-  universeSymbolHash: marketUniverseSymbolHash,
-})
+const marketBarsContentHash = Result.getOrThrow(canonicalHashV1Result(marketBarMaterial))
+const marketSessionsContentHash = Result.getOrThrow(canonicalHashV1Result(marketSessionMaterial))
+const marketSnapshotId = Result.getOrThrow(
+  canonicalHashV1Result({
+    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+    provider: 'alpaca',
+    feed: 'sip',
+    adjustment: 'all',
+    calendarVersion: 'fixture-calendar-v1',
+    requestedStart: '2026-07-19',
+    publicationAsOf: '2026-07-20',
+    symbols: marketSymbols,
+    barsContentHash: marketBarsContentHash,
+    sessionsContentHash: marketSessionsContentHash,
+    universeId: 'cross-asset-taa-v1',
+    universeSymbolHash: marketUniverseSymbolHash,
+  }),
+)
 const marketVolumeRequest: ForwardPerformanceMarketVolumeRequest = {
   ...marketVolumeRequestBase,
 }
@@ -356,7 +358,7 @@ const marketSnapshotRows = {
   manifests: [
     {
       ...marketManifestMaterial,
-      manifest_content_hash: canonicalHashV1(marketManifestMaterial),
+      manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
     },
   ],
 }
@@ -365,21 +367,23 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
   const bars = marketBarMaterial.map((bar) =>
     bar.session_date === '2026-07-20' ? { ...bar, adjusted_close: close, adjusted_volume: volume } : bar,
   )
-  const barsContentHash = canonicalHashV1(bars)
-  const snapshotId = canonicalHashV1({
-    schemaVersion: 'signal.adjusted-daily-snapshot.v2',
-    provider: 'alpaca',
-    feed: 'sip',
-    adjustment: 'all',
-    calendarVersion: 'fixture-calendar-v1',
-    requestedStart: '2026-07-19',
-    publicationAsOf: '2026-07-20',
-    symbols: marketSymbols,
-    barsContentHash,
-    sessionsContentHash: marketSessionsContentHash,
-    universeId: 'cross-asset-taa-v1',
-    universeSymbolHash: marketUniverseSymbolHash,
-  })
+  const barsContentHash = Result.getOrThrow(canonicalHashV1Result(bars))
+  const snapshotId = Result.getOrThrow(
+    canonicalHashV1Result({
+      schemaVersion: 'signal.adjusted-daily-snapshot.v2',
+      provider: 'alpaca',
+      feed: 'sip',
+      adjustment: 'all',
+      calendarVersion: 'fixture-calendar-v1',
+      requestedStart: '2026-07-19',
+      publicationAsOf: '2026-07-20',
+      symbols: marketSymbols,
+      barsContentHash,
+      sessionsContentHash: marketSessionsContentHash,
+      universeId: 'cross-asset-taa-v1',
+      universeSymbolHash: marketUniverseSymbolHash,
+    }),
+  )
   const manifestMaterial = {
     ...marketManifestMaterial,
     snapshot_id: snapshotId,
@@ -394,7 +398,7 @@ const makeMarketSnapshotRevision = (close: string, volume: string, finalizedAt: 
       manifests: [
         {
           ...manifestMaterial,
-          manifest_content_hash: canonicalHashV1(manifestMaterial),
+          manifest_content_hash: Result.getOrThrow(canonicalHashV1Result(manifestMaterial)),
         },
       ],
     },
@@ -483,7 +487,7 @@ describe('forward performance read program', () => {
       quantityAtoms: '123456789000',
       closePriceMicros: '103000000',
       snapshotId: marketSnapshotId,
-      manifestContentHash: canonicalHashV1(marketManifestMaterial),
+      manifestContentHash: Result.getOrThrow(canonicalHashV1Result(marketManifestMaterial)),
       barsContentHash: marketBarsContentHash,
       finalizedAt: '2026-07-20T21:05:00.000Z',
       requestedStart: '2026-07-19',
@@ -708,132 +712,155 @@ describe('forward performance read program', () => {
     })
   })
 
-  test('executes only read-only PostgreSQL statements and never treats zero activity as profitable', async () => {
-    const observation: SqlObservation = { statements: [] }
-    const sql = makeReadOnlySql(observation)
-    let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
-    let expenseWriterFence: WriterFenceService | undefined
-    const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
-    const readers: ForwardPerformanceReaders = {
-      inferenceExpenses: (_config, _sql, _accountId, _generation, fence) => {
-        expenseWriterFence = fence
-        return Effect.succeed([])
-      },
-      postgres: readForwardPerformancePostgres,
-      marketVolume: () => Effect.succeed([]),
-      ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
-        observedCashYieldEvidence = cashYieldEvidence
-        return Effect.succeed({
-          totals: {
-            realizedGainMicros: '0',
-            cashSettlementRoundingMicros: '0',
-            realizedLossMicros: '0',
-            brokerExecutionFeesMicros: '0',
-            otherChargedCostsMicros: '0',
-            cashYieldMicros: '0',
-          },
-          ledgerExact: true,
-          missingLedgerAccountCount: 0,
-          openPositionCount: 0,
-          cashYieldEvidenceRequired: true,
-        })
-      },
-    }
+  test.each([undefined, hash('9')])(
+    'binds empty report scope %s across read-only and fenced evaluation',
+    async (authorityGenerationHash) => {
+      const observation: SqlObservation = { statements: [] }
+      const sql = makeReadOnlySql(observation)
+      let observedCashYieldEvidence: ForwardPerformanceCashYieldEvidence | undefined
+      let expenseWriterFence: WriterFenceService | undefined
+      let postgresGeneration: string | undefined
+      let expenseGeneration: string | undefined
+      const writerFence: WriterFenceService = { check: Effect.void, transaction: (effect) => effect }
+      const readers: ForwardPerformanceReaders = {
+        inferenceExpenses: (_config, _sql, _accountId, generation, fence) => {
+          expenseWriterFence = fence
+          expenseGeneration = generation
+          return Effect.succeed([])
+        },
+        postgres: (client, accountId, generation, fence) => {
+          postgresGeneration = generation
+          return readForwardPerformancePostgres(client, accountId, generation, fence)
+        },
+        marketVolume: () => Effect.succeed([]),
+        ledger: (_config, _accountId, _plans, cashYieldEvidence) => {
+          observedCashYieldEvidence = cashYieldEvidence
+          return Effect.succeed({
+            totals: {
+              realizedGainMicros: '0',
+              cashSettlementRoundingMicros: '0',
+              realizedLossMicros: '0',
+              brokerExecutionFeesMicros: '0',
+              otherChargedCostsMicros: '0',
+              cashYieldMicros: '0',
+            },
+            ledgerExact: true,
+            missingLedgerAccountCount: 0,
+            openPositionCount: 0,
+            cashYieldEvidenceRequired: true,
+          })
+        },
+      }
 
-    const { historicalSignal: _historicalSignal, ...nativeConfig } = config
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(nativeConfig, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
-    )
-    const report = await Effect.runPromise(
-      Effect.scoped(
-        runForwardPerformanceReport(nativeConfig, readers, { writerFence }).pipe(
-          Effect.provideService(PgClient.PgClient, sql),
+      const { historicalSignal: _historicalSignal, ...nativeConfig } = config
+      const options = authorityGenerationHash === undefined ? {} : { authorityGenerationHash }
+      const report = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(nativeConfig, readers, options).pipe(
+            Effect.provideService(PgClient.PgClient, sql),
+          ),
         ),
-      ),
-    )
-    expect(report.schemaVersion).toBe('bayn.forward-performance-report.v3')
-    expect(expenseWriterFence).toBe(writerFence)
-    expect(report.receipt).toEqual(receipt)
-    expect(report.positionEpisodes.status).toBe('UNDETERMINED')
-    expect(report.receipt).not.toHaveProperty('positionEpisodes')
+      )
+      const { receipt } = report
+      expect(expenseWriterFence).toBeUndefined()
+      const fencedReport = await Effect.runPromise(
+        Effect.scoped(
+          runForwardPerformanceReport(nativeConfig, readers, { ...options, writerFence }).pipe(
+            Effect.provideService(PgClient.PgClient, sql),
+          ),
+        ),
+      )
+      expect(report.schemaVersion).toBe('bayn.forward-performance-report.v5')
+      expect(postgresGeneration).toBe(authorityGenerationHash)
+      expect(expenseGeneration).toBe(authorityGenerationHash)
+      expect(report.scope).toEqual(
+        authorityGenerationHash === undefined
+          ? { kind: ForwardPerformanceScopeKind.Account }
+          : { kind: ForwardPerformanceScopeKind.AuthorityGeneration, authorityGenerationHash },
+      )
+      expect(expenseWriterFence).toBe(writerFence)
+      expect(fencedReport).toEqual(report)
+      expect(report.positionEpisodes.status).toBe('UNDETERMINED')
+      expect(report.receipt).not.toHaveProperty('positionEpisodes')
 
-    expect(observation.statements.length).toBeGreaterThan(8)
-    expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
-    expect(
-      observation.statements.filter((statement) =>
-        /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|DROP|LOCK)\b/i.test(statement),
-      ),
-    ).toEqual([])
-    expect(
-      observation.statements.some((statement) =>
-        statement.includes('JOIN autonomous_cycle_shadow_decisions AS decision'),
-      ),
-    ).toBe(true)
-    expect(
-      observation.statements.some((statement) =>
-        statement.includes(
-          "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')",
+      expect(observation.statements.length).toBeGreaterThan(8)
+      expect(observation.statements[0]).toBe('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY')
+      expect(
+        observation.statements.filter((statement) =>
+          /\b(?:INSERT|UPDATE|DELETE|TRUNCATE|ALTER|CREATE|DROP|LOCK)\b/i.test(statement),
         ),
-      ),
-    ).toBe(true)
-    const cashYieldStatement = observation.statements.find((statement) =>
-      statement.includes('AS pre_window_accounted_cash_delta_micros'),
-    )
-    expect(cashYieldStatement).toContain(
-      'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
-    )
-    expect(
-      observation.statements.some(
-        (statement) =>
-          statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
-          statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
-      ),
-    ).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
-    expect(observation.statements.some((statement) => statement.includes('FROM fills AS fill'))).toBe(true)
-    expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
-    expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
-    expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
-    expect(receipt.evidence.reasonCodes).toContain('CASH_YIELD_EVIDENCE_GAP')
-    expect(receipt.profitability).toBe('UNDETERMINED')
-    expect(receipt.executionQuality).toMatchObject({
-      status: 'NOT_ELIGIBLE',
-      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
-    })
-    expect(receipt.observedCapacity).toMatchObject({
-      status: 'NOT_ELIGIBLE',
-      reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
-    })
-    expect(receipt.window).toMatchObject({
-      reconciliationStatus: 'DISCREPANCY',
-      cashYieldAdjustedExact: false,
-    })
-    expect(observedCashYieldEvidence).toEqual({
-      schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
-      reconciliationId: hash('a'),
-      reconciliationContentHash: hash('b'),
-      reconciledAt: '2026-07-20T21:01:00.000Z',
-      baselineAccountEventId: hash('1'),
-      baselineObservedAt: '2026-07-19T13:00:00.000Z',
-      baselineCashMicros: '1000',
-      baselineCashReportingOffsetMicros: '0',
-      openingAccountEventId: hash('c'),
-      openingObservedAt: '2026-07-20T13:00:00.000Z',
-      openingCashMicros: '1000',
-      openingCashReportingOffsetMicros: '0',
-      openingCashReportingQuantumMicros: '1',
-      preWindowAccountedCashDeltaMicros: '0',
-      preWindowCashResidualMicros: '0',
-      closingAccountEventId: hash('d'),
-      closingObservedAt: '2026-07-20T21:00:00.000Z',
-      closingCashMicros: '1200',
-      closingCashReportingOffsetMicros: '0',
-      closingCashReportingQuantumMicros: '1',
-      accountedCashDeltaMicros: '0',
-      cashYieldMicros: '200',
-    })
-  })
+      ).toEqual([])
+      expect(
+        observation.statements.some((statement) =>
+          statement.includes('JOIN autonomous_cycle_shadow_decisions AS decision'),
+        ),
+      ).toBe(true)
+      expect(
+        observation.statements.some((statement) =>
+          statement.includes(
+            "decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')",
+          ),
+        ),
+      ).toBe(true)
+      const cashYieldStatement = observation.statements.find((statement) =>
+        statement.includes('AS pre_window_accounted_cash_delta_micros'),
+      )
+      expect(cashYieldStatement).toContain(
+        'baseline_snapshot AS ( SELECT opening_snapshot.event_id, opening_snapshot.observed_at, opening_snapshot.cash_micros FROM opening_snapshot',
+      )
+      expect(
+        observation.statements.some(
+          (statement) =>
+            statement.includes('JOIN autonomous_cycle_paper_closures AS closure') &&
+            statement.includes('JOIN autonomous_cycle_paper_close_replans AS replan'),
+        ),
+      ).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM intents AS intent'))).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM orders AS observed_order'))).toBe(true)
+      expect(observation.statements.some((statement) => statement.includes('FROM fills AS fill'))).toBe(true)
+      expect(receipt.evidence.status).toBe('INSUFFICIENT_EVIDENCE')
+      expect(receipt.evidence.reasonCodes).toContain('ZERO_COMPLETED_EXECUTIONS')
+      expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
+      expect(receipt.evidence.reasonCodes).toContain('CASH_YIELD_EVIDENCE_GAP')
+      expect(receipt.profitability).toBe('UNDETERMINED')
+      expect(receipt.executionQuality).toMatchObject({
+        status: 'NOT_ELIGIBLE',
+        reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      })
+      expect(receipt.observedCapacity).toMatchObject({
+        status: 'NOT_ELIGIBLE',
+        reasonCodes: ['ZERO_COMPLETED_EXECUTIONS'],
+      })
+      expect(receipt.window).toMatchObject({
+        reconciliationStatus: 'DISCREPANCY',
+        cashYieldAdjustedExact: false,
+      })
+      expect(observedCashYieldEvidence).toEqual({
+        schemaVersion: 'bayn.forward-performance-cash-yield-evidence.v3',
+        reconciliationId: hash('a'),
+        reconciliationContentHash: hash('b'),
+        reconciledAt: '2026-07-20T21:01:00.000Z',
+        baselineAccountEventId: hash('1'),
+        baselineObservedAt: '2026-07-19T13:00:00.000Z',
+        baselineCashMicros: '1000',
+        baselineCashReportingOffsetMicros: '0',
+        openingAccountEventId: hash('c'),
+        openingObservedAt: '2026-07-20T13:00:00.000Z',
+        openingCashMicros: '1000',
+        openingCashReportingOffsetMicros: '0',
+        openingCashReportingQuantumMicros: '1',
+        preWindowAccountedCashDeltaMicros: '0',
+        preWindowCashResidualMicros: '0',
+        closingAccountEventId: hash('d'),
+        closingObservedAt: '2026-07-20T21:00:00.000Z',
+        closingCashMicros: '1200',
+        closingCashReportingOffsetMicros: '0',
+        closingCashReportingQuantumMicros: '1',
+        accountedCashDeltaMicros: '0',
+        cashYieldMicros: '200',
+      })
+    },
+  )
 
   test.each([
     { includeCashCorrection: false, exactCashSource: true },
@@ -885,7 +912,7 @@ describe('forward performance read program', () => {
         cryptoCashFee: true as const,
         netAmountMicros: '-200000',
       }
-      const contentHash = canonicalHashV1({ schemaVersion: 'bayn.broker-fee.v1', ...data })
+      const contentHash = Result.getOrThrow(canonicalHashV1Result({ schemaVersion: 'bayn.broker-fee.v1', ...data }))
       const originalPlan = brokerFeeLedgerPlan(accountId, data.activityId, '10000', 7001)
       const correction = success(
         prepareFeeMatchCorrection(
@@ -998,7 +1025,7 @@ describe('forward performance read program', () => {
       Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
     expect(report.positionEpisodes).toMatchObject({
-      schemaVersion: 'bayn.position-episode-evidence.v3',
+      schemaVersion: 'bayn.position-episode-evidence.v4',
       status: 'MEASURED',
       completedCount: 0,
       crossScopeCount: 1,
@@ -1094,7 +1121,9 @@ describe('forward performance read program', () => {
     expect(
       observation.statements.some(
         (statement) =>
-          statement.includes("scoped_decision.schema_version = 'bayn.paper-cycle-decision.v1'") &&
+          statement.includes(
+            "scoped_decision.schema_version IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')",
+          ) &&
           statement.includes("scoped_decision.document #>> '{bindings,authorityGenerationHash}'") &&
           statement.includes('scoped_intent.authority_generation_hash = scope_generation.generation_hash'),
       ),
@@ -1189,8 +1218,8 @@ describe('forward performance read program', () => {
         }),
     }
 
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    const { receipt } = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(receipt.evidence.reasonCodes).toContain('NON_EXACT_RECONCILIATION')
@@ -1392,8 +1421,8 @@ describe('forward performance read program', () => {
       },
     }
 
-    const receipt = await Effect.runPromise(
-      Effect.scoped(runForwardPerformance(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
+    const { receipt } = await Effect.runPromise(
+      Effect.scoped(runForwardPerformanceReport(config, readers).pipe(Effect.provideService(PgClient.PgClient, sql))),
     )
 
     expect(receipt.schemaVersion).toBe('bayn.forward-performance-receipt.v4')
@@ -1418,9 +1447,9 @@ describe('forward performance read program', () => {
         decimal: '0.100000000000',
       },
     })
-    const withLaterFeeEvidence = await Effect.runPromise(
+    const { receipt: withLaterFeeEvidence } = await Effect.runPromise(
       Effect.scoped(
-        runForwardPerformance(config, {
+        runForwardPerformanceReport(config, {
           ...readers,
           postgres: (...args) =>
             readers

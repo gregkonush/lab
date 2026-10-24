@@ -60,6 +60,7 @@ const earlyNixImageApps = new Set([
   'jangar',
   'oirat',
   'olden',
+  'opencode',
   'proompteng',
   'sag',
   'symphony',
@@ -84,6 +85,7 @@ const appToNixAttr = new Map<string, string>([
   ['jangar', 'jangar-image'],
   ['oirat', 'oirat-image'],
   ['olden', 'olden-image'],
+  ['opencode', 'opencode-image'],
   ['proompteng', 'proompteng-image'],
   ['sag', 'sag-image'],
   ['symphony', 'symphony-image'],
@@ -117,9 +119,9 @@ const appToDeployScriptPath = new Map<string, string>([
 
 const appToWorkflowPaths = new Map<string, string[]>([
   ['ofz', ['.github/workflows/ofz.yaml', 'argocd/applications/kargo']],
-  ['bayn-model', ['.github/workflows/bayn-model-images.yml', 'argocd/applications/kargo']],
   ['devbox', ['.github/workflows/codex-devbox.yml', 'argocd/applications/kargo']],
   ['bayn', ['.github/workflows/bayn-build-push.yml', 'argocd/applications/kargo']],
+  ['opencode', ['.github/workflows/opencode-build-push.yml', 'argocd/applications/kargo']],
   ['tengri', ['.github/workflows/tengri-images.yml', 'argocd/applications/kargo']],
   ['symphony-jangar', ['.github/workflows/symphony-build-push.yaml']],
   ['symphony-torghut', ['.github/workflows/symphony-build-push.yaml']],
@@ -167,16 +169,6 @@ const kargoImageApps = new Map<string, KargoImageContract>([
       reason: 'The Ofz API and audit exporter share one verified CI image promoted by Kargo',
       repositories: ['registry.ide-newton.ts.net/lab/ofz'],
       workflowPaths: ['.github/workflows/ofz.yaml', 'argocd/applications/kargo'],
-    },
-  ],
-  [
-    'bayn-model',
-    {
-      kind: 'promotion-template',
-      bootstrapReferences: ['registry.ide-newton.ts.net/lab/bayn-model:unpromoted'],
-      reason: 'The locked financial model provisioner is built and signed in CI, then promoted by Kargo',
-      repositories: ['registry.ide-newton.ts.net/lab/bayn-model'],
-      workflowPaths: ['.github/workflows/bayn-model-images.yml', 'argocd/applications/kargo'],
     },
   ],
   [

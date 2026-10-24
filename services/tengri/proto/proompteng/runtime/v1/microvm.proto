@@ -27,11 +27,14 @@ service MicroVMControlPlane {
 
   rpc GetCodexAccount(GetCodexAccountRequest) returns (CodexAccount);
   rpc ListCodexModels(ListCodexModelsRequest) returns (CodexModels);
+  rpc ConnectorAgent(ConnectorAgentRequest) returns (CodexModels);
   rpc GetCodexLogin(GetCodexLoginRequest) returns (CodexLogin);
   rpc StartCodexLogin(StartCodexLoginRequest) returns (CodexLogin);
   rpc CreateCodexThread(CreateCodexThreadRequest) returns (CodexThread);
   rpc ResumeCodexThread(ResumeCodexThreadRequest) returns (stream CodexHistoryPage);
-  rpc SendCodexInput(SendCodexInputRequest) returns (CodexTurn);
+  rpc SendCodexInput(SendCodexInputRequest) returns (CodexRun);
+  rpc GetCodexRun(GetCodexRunRequest) returns (CodexRun);
+  rpc GetActiveCodexRun(GetAgentRequest) returns (CodexRun);
   rpc SteerCodexInput(SteerCodexInputRequest) returns (CodexTurn);
   rpc InterruptCodexTurn(InterruptCodexTurnRequest) returns (Empty);
   rpc ResolveCodexApproval(ResolveCodexApprovalRequest) returns (Empty);
@@ -45,7 +48,10 @@ service MicroVMControlPlane {
 }
 
 message Empty {}
-message RequestAudience { string audience = 1; }
+message RequestAudience {
+  string audience = 1;
+  uint32 guest_api_protocol_version = 2;
+}
 enum CodexHistoryPart {
   CODEX_HISTORY_PART_UNSPECIFIED = 0;
   CODEX_HISTORY_PART_THREAD = 1;
@@ -115,6 +121,7 @@ message UpdatePowerSettingsRequest {
 
 message CreateAgentRequest { string display_name = 1; string reservation_id = 2; }
 message ListAgentsRequest {}
+message ConnectorAgentRequest { string agent_id = 1; string action = 2; string raw_json = 3; }
 message ListAgentsResponse { repeated Agent agents = 1; }
 message GetAgentRequest { string id = 1; }
 message WatchAgentRequest { string id = 1; }
@@ -226,10 +233,11 @@ message SendCodexInputRequest {
   string model = 4;
   string reasoning_effort = 5;
   repeated CodexImage images = 6;
+  string operation_id = 7;
 }
 message CodexImage { string media_type = 1; bytes content = 2; }
-message SteerCodexInputRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; repeated CodexImage images = 5; }
-message InterruptCodexTurnRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; }
+message SteerCodexInputRequest { string agent_id = 1; string thread_id = 2; string turn_id = 3; string text = 4; repeated CodexImage images = 5; string operation_id = 6; string run_id = 7; }
+message InterruptCodexTurnRequest { string agent_id = 1; reserved 2, 3; reserved "thread_id", "turn_id"; string run_id = 4; string operation_id = 5; }
 message WatchCodexEventsRequest { string agent_id = 1; uint64 after_sequence = 2; }
 
 enum CodexApprovalDecision {
@@ -246,6 +254,8 @@ message ResolveCodexApprovalRequest {
   string approval_id = 2;
   CodexApprovalDecision decision = 3;
   bytes response_json = 4;
+  string run_id = 5;
+  string operation_id = 6;
 }
 
 message CodexAccount {
@@ -270,6 +280,8 @@ message CodexThread {
   map<string, uint64> item_event_sequences = 4;
 }
 message CodexTurn { string id = 1; string thread_id = 2; string raw_json = 3; }
+message GetCodexRunRequest { string agent_id = 1; string run_id = 2; }
+message CodexRun { string run_id = 1; string agent_id = 2; string thread_id = 3; string state_json = 4; }
 
 enum CodexEventKind {
   CODEX_EVENT_KIND_UNSPECIFIED = 0;

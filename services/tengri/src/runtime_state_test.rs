@@ -354,7 +354,7 @@ async fn runtime_shared_state_one_use_redemption_is_atomic_across_replicas() {
         .await
         .unwrap();
     let mut connections = Vec::new();
-    for _ in 0..12 {
+    for _ in 0..database.pool.status().max_size {
         connections.push(database.connection().await.unwrap());
     }
     let started = tokio::time::Instant::now();

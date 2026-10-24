@@ -99,7 +99,7 @@ impl WorkspaceAuthorization {
         epoch: &str,
         target: &str,
     ) -> Result<WorkspaceAccess, Status> {
-        let mut context = principal.context.clone();
+        let mut context = principal.policy_context()?;
         if context.workspace_uid.is_empty() && principal.action == Action::WorkspaceMetadataRead {
             context.workspace_uid = uid.into();
         }
@@ -151,6 +151,24 @@ impl WorkspaceAuthorization {
             Self::Ofz(client) => client.reservation(principal, id).await,
             #[cfg(test)]
             _ => Err(Status::unavailable("reservation fixture must provide Ofz")),
+        }
+    }
+
+    pub(crate) async fn removal_complete(&self, uid: &str) -> Result<bool, Status> {
+        match self {
+            Self::Ofz(client) => {
+                let state = match client.workspace_state(uid).await {
+                    Ok(state) => state,
+                    Err(error) if error.code() == tonic::Code::NotFound => return Ok(false),
+                    Err(error) => return Err(error),
+                };
+                Ok(state.workspace_uid == uid
+                    && state.state == "removed"
+                    && !state.running
+                    && !state.runtime_allowed)
+            }
+            #[cfg(test)]
+            _ => Ok(false),
         }
     }
 
@@ -491,17 +509,19 @@ impl WorkspaceAccess {
             WorkspaceAuthorization::Ofz(client) => {
                 let mut receipt = self.receipt.lock().await;
                 let mut context = self.context.clone();
-                let decision_deadline = ofz::now_ms()?
+                let now = ofz::now_ms()?;
+                if receipt.is_empty() && context.deadline_unix_ms <= now {
+                    return Err(Status::deadline_exceeded(
+                        "workspace authorization submission expired",
+                    ));
+                }
+                let decision_deadline = now
                     + if receipt.is_empty() {
                         ofz::AUDITED_REQUEST_BUDGET_MS
                     } else {
                         2000
                     };
-                context.deadline_unix_ms = if receipt.is_empty() {
-                    self.context.deadline_unix_ms.min(decision_deadline)
-                } else {
-                    decision_deadline
-                };
+                context.deadline_unix_ms = decision_deadline;
                 let decision = client
                     .check(
                         context.clone(),

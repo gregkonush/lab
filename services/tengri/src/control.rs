@@ -26,6 +26,7 @@ const MIGRATIONS: &[(i32, &[u8])] = &[
         6,
         include_bytes!("../migrations/0006_preview_lease_identity.sql"),
     ),
+    (7, include_bytes!("../migrations/0007_ephemeral_oauth.sql")),
 ];
 
 #[derive(Clone)]
@@ -119,8 +120,17 @@ impl Database {
             .build()
         };
         let coordination = pool(2)?;
-        let pool = pool(if role == "tengri_controller" { 12 } else { 2 })?;
+        let pool = pool(if role == "tengri_controller" { 8 } else { 2 })?;
         Ok(Self { pool, coordination })
+    }
+
+    pub fn into_run_worker(self) -> Self {
+        self.pool.close();
+        self.coordination.resize(1);
+        Self {
+            pool: self.coordination.clone(),
+            coordination: self.coordination,
+        }
     }
 
     #[cfg(test)]

@@ -1,3 +1,14 @@
+import fundedPlanCoverageMigration from '../../migrations/0141_funded_plan_coverage'
+import executableProfitLimitsMigration from '../../migrations/0143_executable_profit_limits'
+import economicTradePlansMigration from '../../migrations/0140_economic_trade_plans'
+import setupAndPlanMigration from '../../migrations/0137_setup_and_plan'
+import completePlanChoiceMigration from '../../migrations/0133_complete_plan_choice'
+import modelSelectedTradePlanMigration from '../../migrations/0131_model_selected_trade_plan'
+import strategyNativeProtectionMigration from '../../migrations/0128_strategy_native_protection'
+import entryBoundExitsMigration from '../../migrations/0126_entry_bound_exits'
+import marketManagementJudgmentMigration from '../../migrations/0125_market_management_judgment'
+import focusedJevJudgmentsMigration from '../../migrations/0124_focused_jev_judgments'
+import setupActionProtocolMigration from '../../migrations/0123_setup_action_protocol'
 import completedBarBenchmarksMigration from '../../migrations/0118_completed_bar_benchmarks'
 import costSupportedEntryMigration from '../../migrations/0116_cost_supported_entry'
 import equityHoursMigration from '../../migrations/0113_extended_equity_hours'
@@ -13,6 +24,10 @@ import { baynTestPostgresUrl } from '../test-environment.test-support'
 import { migrationLoader } from './migrations'
 import { PostgresClientLive } from './postgres-client'
 import { postgresMigrations } from './postgres-migrations'
+import { BrokerEnvironment, BrokerProvider, makeBrokerIdentity } from '../broker/identity'
+import { Authority } from '../execution/contracts'
+import { makeAuthorityPostgres } from './execution-store/authority-shared'
+import { makeObserveAuthorityInterpreter } from './execution-store/observe-authority'
 
 const testUrl = baynTestPostgresUrl ?? 'postgresql://bayn:bayn@127.0.0.1:5432/bayn_test'
 const describePostgres = baynTestPostgresUrl === undefined ? describe.skip : describe
@@ -25,6 +40,42 @@ const makeRuntime = () =>
   )
 
 for (const { label, id, protocol, migration } of [
+  {
+    label: 'executable-profit-limits',
+    id: 143,
+    protocol: 'bayn.jev.protocol.v20',
+    migration: executableProfitLimitsMigration,
+  },
+  { label: 'funded-plan-coverage', id: 141, protocol: 'bayn.jev.protocol.v19', migration: fundedPlanCoverageMigration },
+  { label: 'economic-trade-plans', id: 140, protocol: 'bayn.jev.protocol.v18', migration: economicTradePlansMigration },
+  { label: 'setup-and-plan', id: 137, protocol: 'bayn.jev.protocol.v17', migration: setupAndPlanMigration },
+  { label: 'complete-plan-choice', id: 133, protocol: 'bayn.jev.protocol.v16', migration: completePlanChoiceMigration },
+  {
+    label: 'model-selected-trade-plan',
+    id: 131,
+    protocol: 'bayn.jev.protocol.v15',
+    migration: modelSelectedTradePlanMigration,
+  },
+  {
+    label: 'strategy-native-protection',
+    id: 128,
+    protocol: 'bayn.jev.protocol.v14',
+    migration: strategyNativeProtectionMigration,
+  },
+  { label: 'jev-native-exits', id: 126, protocol: 'bayn.jev.protocol.v13', migration: entryBoundExitsMigration },
+  {
+    label: 'jev-market-management',
+    id: 125,
+    protocol: 'bayn.jev.protocol.v12',
+    migration: marketManagementJudgmentMigration,
+  },
+  {
+    label: 'jev-focused-judgments',
+    id: 124,
+    protocol: 'bayn.jev.protocol.v11',
+    migration: focusedJevJudgmentsMigration,
+  },
+  { label: 'jev-setup-action', id: 123, protocol: 'bayn.jev.protocol.v10', migration: setupActionProtocolMigration },
   { label: 'available-history', id: 108, protocol: 'bayn.jev.protocol.v4', migration: availableHistoryMigration },
   { label: 'capital-sizing', id: 109, protocol: 'bayn.jev.protocol.v5', migration: capitalSizingMigration },
   { label: 'model-action', id: 111, protocol: 'bayn.jev.protocol.v6', migration: modelActionMigration },
@@ -82,6 +133,142 @@ for (const { label, id, protocol, migration } of [
         }),
       )
     })
+
+    if (id === 124 || id === 125 || id === 131 || id === 133 || id === 137 || id === 140 || id === 141 || id === 143) {
+      const retired =
+        id === 143
+          ? {
+              protocol: 'bayn.jev.protocol.v19' as const,
+              behavior: '4ab0406516dfd12e7c664834a9bc1f2fc2c07c512f9802e55b664cda963a1b52',
+              parameters: '367f0cf235989e329c4974efd073db219e1efa4424fe0138c7a0eafb252c5fa2',
+              protocolHash: 'faa9278528a758e00138e32486df84662e38443191aa8154ed75354daa1110b0',
+            }
+          : id === 141
+            ? {
+                protocol: 'bayn.jev.protocol.v18' as const,
+                behavior: '8669593548424d848e8bcd2157eec5e571e9f7595315c9aea0c0ab56e214fc3b',
+                parameters: '167b5258319906743909ed89d6bb8fec7a01e4a134825cc64aa30d65a229f3be',
+                protocolHash: '03d49555af1590514bd756099f8da95495faad7645a00b4081532edf4bf0793a',
+              }
+            : id === 140
+              ? {
+                  protocol: 'bayn.jev.protocol.v17' as const,
+                  behavior: 'f390ffe05a26895a4422f18cc91750ba9fab94af69bdca8f6ab809bae2338180',
+                  parameters: '8319dc5fe813b2eaefc8c1ff2e9dffdde7ddab1ba2b23f1eb51e6c34a7cea25e',
+                  protocolHash: '682b20d9eb4e18b5f0f5d5ab8ff9f76460ab5870c3ee2c2b0c7b477154d72d21',
+                }
+              : id === 137
+                ? {
+                    protocol: 'bayn.jev.protocol.v16' as const,
+                    behavior: '118da7b475784ce63cb8d6636c0d469857ee36e2c7d8305e2d400f9aa47d548c',
+                    parameters: '6dab28f7282460dcb9fc4551a8b6f287066ab08959e726074a2bf8e00167f8a9',
+                    protocolHash: '762778f6dc4e902c85e606b0ae3c4619fcc05169b0a058248b2ea2f4eac08e86',
+                  }
+                : id === 133
+                  ? {
+                      protocol: 'bayn.jev.protocol.v15' as const,
+                      behavior: '55e0d13466d967a71e7e669021ae3dd21eb2f481a32c3de0d33bc14895ff6ccf',
+                      parameters: '563596394b61aa4b68494f1854ecfc2cbeca8ead692f91a4f9b2d200ffd0ac5d',
+                      protocolHash: '358241b51b40e89e43d2a0ccee695ff673ffd2ad02dd4f1c7652c8b0cbda8c59',
+                    }
+                  : id === 131
+                    ? {
+                        protocol: 'bayn.jev.protocol.v14' as const,
+                        behavior: '9e6afa3accf9cb27c0ea4c00fe315aaeb70748229a668f48c57d02bce6beee29',
+                        parameters: '7cf76109bc5301a4eabef41f4cf37ea531b3bb87c6b5246d74970262398936de',
+                        protocolHash: 'f0060fa9df52e2a63e1c1adea08549f0c8cfdac94c8a406f621e307b4081f14e',
+                      }
+                    : id === 125
+                      ? {
+                          protocol: 'bayn.jev.protocol.v11' as const,
+                          behavior: '1eb508ec119456b8ee73a0afc02b8f4dfd27728f236ca82db452c8a22c0a52af',
+                          parameters: '3db1ac0d7c5fa34c8efd8f24b7bb8e72f2b4482033ebd2e1514862a27c4519f6',
+                          protocolHash: '9688c8a626ae692b63462fd77cab6eeea84c3d5f2f5dce1eb7005ad87a2f0af7',
+                        }
+                      : {
+                          protocol: 'bayn.jev.protocol.v10' as const,
+                          behavior: '1a5721bc72a1dbc8e13fdc4eb27c04ad019a8ca6f6f398e4e55fd2d0c4b2ae31',
+                          parameters: '6d4123a92405af4b112d7fa7dfeb1709b0937c6406aad61ebf9cf727eac4490b',
+                          protocolHash: '48c1b3b1897155193973865716e23486d6d15295359e348371936c9ab4a9221d',
+                        }
+      test('recovers the retained prior authority through native OBSERVE after cutover', async () => {
+        await runtime.runPromise(
+          Effect.gen(function* () {
+            const sql = yield* PgClient.PgClient
+            const broker = Result.getOrThrow(
+              makeBrokerIdentity({
+                schemaVersion: 'bayn.broker-identity.v2',
+                provider: BrokerProvider.Alpaca,
+                environment: BrokerEnvironment.Sandbox,
+                accountId: 'paper-cutover',
+              }),
+            )
+            const authority = makeAuthorityPostgres(sql)
+            const observe = makeObserveAuthorityInterpreter(sql, authority, broker)
+            const ensure = observe.ensureAuthorityGeneration
+            if (ensure === undefined) return yield* Effect.die(new Error('Native authority interpreter is unavailable'))
+            const original = 'a'.repeat(64),
+              retained = 'b'.repeat(64),
+              successor = 'c'.repeat(64)
+            const reconciliation = 'd'.repeat(64),
+              content = 'e'.repeat(64)
+            yield* ensure({ generationHash: original, maximum: Authority.Observe })
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at) VALUES(${'f'.repeat(64)},'bayn.paper-position-snapshot.v1',${broker.accountId},${'6'.repeat(64)},${'7'.repeat(64)},0,clock_timestamp())`
+            yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,
+              expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+              VALUES(${reconciliation},'bayn.paper-reconciliation.v1',${broker.accountId},${content},${content},
+                ${content},'EXACT','[]'::jsonb,clock_timestamp())`
+            yield* sql`INSERT INTO authority_generations(generation_hash,schema_version,activation_schema_version,
+              previous_generation_hash,maximum,authority_version,broker_identity_schema_version,broker_identity_hash,
+              broker_provider,broker_environment,activation_source_revision,activation_image_repository,
+              activation_image_digest,strategy_name,strategy_behavior_hash,strategy_parameter_hash,
+              strategy_parameter_schema_version,account_id,risk_policy_hash,proof_plan_hash,reconciliation_id,
+              reconciliation_content_hash,research_plan_hash,strategy_protocol_hash,activated_at)
+              VALUES(${retained},'bayn.authority-generation-history.v1','bayn.paper-authority-generation.v3',
+                ${original},'PAPER',2,${broker.schemaVersion},${broker.identityHash},${broker.provider},${broker.environment},
+                ${'1'.repeat(40)},'registry.example/bayn',${`sha256:${'2'.repeat(64)}`},'jev',
+                ${retired.behavior},${retired.parameters},${retired.protocol},${broker.accountId},${'3'.repeat(64)},${'4'.repeat(64)},${reconciliation},
+                ${content},${'5'.repeat(64)},${retired.protocolHash},clock_timestamp())`
+            yield* sql`UPDATE authority_state SET generation_hash=${retained},maximum='PAPER',effective='PAPER',
+              kill_state='CLEAR',reason=NULL,version=2,updated_at=(SELECT activated_at FROM authority_generations WHERE generation_hash=${retained}) WHERE singleton`
+            yield* sql.withTransaction(migration)
+            expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
+              retired.protocol,
+            )
+            const staleRecovery = yield* ensure({ generationHash: successor, maximum: Authority.Observe }).pipe(
+              Effect.result,
+            )
+            expect(Result.isFailure(staleRecovery)).toBe(true)
+            yield* sql`INSERT INTO position_snapshots(snapshot_id,schema_version,account_id,source_hash,content_hash,position_count,observed_at) VALUES(${'8'.repeat(64)},'bayn.paper-position-snapshot.v1',${broker.accountId},${'9'.repeat(64)},${'0'.repeat(64)},0,clock_timestamp())`
+            yield* sql`INSERT INTO reconciliations(reconciliation_id,schema_version,account_id,
+              expected_hash,observed_hash,content_hash,status,discrepancies,reconciled_at)
+              VALUES(${'9'.repeat(64)},'bayn.paper-reconciliation.v1',${broker.accountId},${content},${content},
+                ${content},'EXACT','[]'::jsonb,clock_timestamp())`
+            const recovered = yield* ensure({ generationHash: successor, maximum: Authority.Observe })
+            expect(recovered).toMatchObject({
+              generationHash: successor,
+              maximum: Authority.Observe,
+              effective: Authority.Observe,
+              kill: 'CLEAR',
+            })
+            expect((yield* authority.readGeneration(retained))[0]?.strategy_parameter_schema_version).toBe(
+              retired.protocol,
+            )
+            const retiredWrite = yield* sql
+              .withTransaction(
+                sql`INSERT INTO authority_generations SELECT (jsonb_populate_record(NULL::authority_generations, to_jsonb(history) || jsonb_build_object('generation_hash',${'f'.repeat(64)}::text,'authority_version',999))).* FROM authority_generations history WHERE generation_hash=${retained}`,
+              )
+              .pipe(Effect.result)
+            expect(Result.isFailure(retiredWrite)).toBe(true)
+            if (Result.isFailure(retiredWrite))
+              expect(retiredWrite.failure.reason.cause).toMatchObject({
+                code: '23514',
+                constraint: expect.stringContaining('authority_generations_strategy_'),
+              })
+          }),
+        )
+      })
+    }
 
     if (id === 113) {
       test('upgrades an already-recorded equity-hours migration to native limit completion', async () => {
@@ -213,6 +400,7 @@ for (const { label, id, protocol, migration } of [
                 ${effective === 'PAPER' ? 'CLEAR' : 'ACTIVE'},${reason},1,clock_timestamp())`
                   yield* sql`INSERT INTO reconciliations (account_id,status,reconciled_at,reconciliation_id)
                 VALUES ('paper-cutover',${status},clock_timestamp(),${'b'.repeat(64)})`
+                  if (id >= 137) yield* sql`ALTER TABLE authority_generations ADD COLUMN maximum text DEFAULT 'PAPER'`
                   const result = yield* sql.withTransaction(migration).pipe(Effect.result)
                   if (succeeds) yield* Effect.fromResult(result)
                   expect(Result.isSuccess(result)).toBe(succeeds)

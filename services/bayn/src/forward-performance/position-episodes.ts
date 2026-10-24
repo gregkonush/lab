@@ -2,9 +2,11 @@ import { Result, Schema } from 'effect'
 
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import { instrumentMarket, MarketKind } from '../instruments'
+import { FeeReadEvidenceSchema } from '../accounting/broker-fees'
 import type { AccountingTransaction } from '../accounting/schema'
-import { NonNegativeIntegerSchema, Sha256Schema } from '../schemas'
+import { IsoDateSchema, NonNegativeIntegerSchema, Sha256Schema } from '../schemas'
 import type { ForwardPerformanceEvidenceInput } from './model'
+import { PositionOutcomeSchema, PositionSymbolOutcomesSchema, summarizePositionOutcomes } from './position-outcomes'
 
 export enum PositionEpisodeReason {
   HistoryUnavailable = 'HISTORY_UNAVAILABLE',
@@ -16,7 +18,7 @@ export enum PositionEpisodeReason {
   AmbiguousFeeOrder = 'AMBIGUOUS_FEE_ORDER',
 }
 
-const schemaVersion = 'bayn.position-episode-evidence.v3'
+const schemaVersion = 'bayn.position-episode-evidence.v4'
 
 export const PositionEpisodeEvidenceSchema = Schema.Union([
   Schema.Struct({
@@ -26,6 +28,8 @@ export const PositionEpisodeEvidenceSchema = Schema.Union([
     completedCount: NonNegativeIntegerSchema,
     openCount: NonNegativeIntegerSchema,
     crossScopeCount: NonNegativeIntegerSchema,
+    completed: Schema.Array(PositionOutcomeSchema),
+    bySymbol: Schema.Array(PositionSymbolOutcomesSchema),
   }),
   Schema.Struct({
     schemaVersion: Schema.Literal(schemaVersion),
@@ -42,6 +46,7 @@ interface PositionEpisode {
   readonly openedAt: string
   readonly touchesScope: boolean
   readonly whollyInScope: boolean
+  readonly trades: readonly AccountingTransaction[]
 }
 
 type CoinAccrual = NonNullable<ForwardPerformanceEvidenceInput['accountFeeAccruals']>[number]
@@ -177,7 +182,9 @@ export const measurePositionEpisodes = (
     for (const accrual of input.accountFeeAccruals ?? []) {
       const data = accrual.data
       if (data.kind !== 'COIN') continue
+      const settlementDate = Schema.decodeUnknownResult(IsoDateSchema)(accrual.settlement_date)
       if (
+        Result.isFailure(settlementDate) ||
         data.accountId !== input.account.accountId ||
         !accrual.posted ||
         accrualIds.has(accrual.accrual_id) ||
@@ -201,6 +208,7 @@ export const measurePositionEpisodes = (
           trade.symbol !== data.symbol ||
           trade.quantityAtoms !== source.quantityAtoms ||
           trade.priceAtoms !== source.priceAtoms ||
+          trade.occurredAt.slice(0, 10) !== settlementDate.success ||
           trade.occurredAt > data.observedAt
         )
           return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
@@ -210,7 +218,7 @@ export const measurePositionEpisodes = (
       if (sidesByInstant.has(instant) || feeInstants.has(instant))
         return unavailable(PositionEpisodeReason.AmbiguousFeeOrder, evidenceHash)
       feeInstants.add(instant)
-      const cohort = feeCohort(data.symbol, data.date)
+      const cohort = feeCohort(data.symbol, settlementDate.success)
       matchedByCohort.set(cohort, (matchedByCohort.get(cohort) ?? 0n) + BigInt(accrual.matched_coin_quantity_atoms))
       events.push({ kind: 'COIN_FEE', occurredAt: data.observedAt, accrual })
     }
@@ -219,20 +227,22 @@ export const measurePositionEpisodes = (
     for (const fee of input.accountBrokerFees ?? []) {
       const coin = fee.data.coinDebit
       if (coin === undefined) continue
+      const readEvidence = Schema.decodeUnknownResult(FeeReadEvidenceSchema)(fee.read_evidence)
       if (
+        Result.isFailure(readEvidence) ||
         fee.data.accountId !== input.account.accountId ||
         !fee.posted ||
         activityIds.has(fee.data.activityId) ||
-        fee.read_evidence.observedAt > accountCut ||
+        readEvidence.success.observedAt > accountCut ||
         !/^[1-9][0-9]*$/.test(coin.quantityAtoms)
       )
         return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       activityIds.add(fee.data.activityId)
-      const cohort = feeCohort(coin.symbol, fee.data.date)
+      const cohort = feeCohort(coin.symbol, readEvidence.success.sourceCreatedAt?.slice(0, 10) ?? fee.data.date)
       activitiesByCohort.set(cohort, (activitiesByCohort.get(cohort) ?? 0n) + BigInt(coin.quantityAtoms))
     }
     for (const cohort of new Set([...matchedByCohort.keys(), ...activitiesByCohort.keys()])) {
-      // Receipts settle accrued debits; their trading date supplies no individual fee timestamp.
+      // Source-day receipts settle accrual cohorts without supplying individual fee event times.
       // An unmatched activity cannot be assigned to an episode, even if its account total is known.
       const matched = matchedByCohort.get(cohort) ?? 0n
       const received = activitiesByCohort.get(cohort) ?? 0n
@@ -241,6 +251,7 @@ export const measurePositionEpisodes = (
     }
 
     const positions = new Map<string, PositionEpisode>()
+    const completed: AccountingTransaction[][] = []
     let completedCount = 0
     let crossScopeCount = 0
     for (const event of events.sort((a, b) =>
@@ -268,10 +279,13 @@ export const measurePositionEpisodes = (
       if (quantity < 0n) return unavailable(PositionEpisodeReason.InvalidHistory, evidenceHash)
       const touchesScope = (previous?.touchesScope ?? false) || selected
       const whollyInScope = (previous?.whollyInScope ?? true) && selected
+      const trades = [...(previous?.trades ?? []), transaction]
       if (quantity === 0n) {
         if (touchesScope) {
-          if (whollyInScope) completedCount += 1
-          else crossScopeCount += 1
+          if (whollyInScope) {
+            completedCount += 1
+            completed.push(trades)
+          } else crossScopeCount += 1
         }
         positions.delete(transaction.symbol)
       } else
@@ -280,6 +294,7 @@ export const measurePositionEpisodes = (
           openedAt: previous?.openedAt ?? transaction.occurredAt,
           touchesScope,
           whollyInScope,
+          trades,
         })
     }
     const positionCounts = input.accountPositionCounts
@@ -295,5 +310,13 @@ export const measurePositionEpisodes = (
       openCount += 1
       if (!position.whollyInScope) crossScopeCount += 1
     }
-    return { schemaVersion, status: 'MEASURED', evidenceHash, completedCount, openCount, crossScopeCount }
+    return {
+      schemaVersion,
+      status: 'MEASURED',
+      evidenceHash,
+      completedCount,
+      openCount,
+      crossScopeCount,
+      ...summarizePositionOutcomes(completed, input),
+    }
   })

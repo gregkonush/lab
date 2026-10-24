@@ -88,8 +88,6 @@ export const tradingWindow = (
   )
 }
 
-export const marketHoursHash = (hours: MarketHours) => canonicalHashV1Result(hours)
-
 /** Continuous data has no exchange-session closing boundary. The observation is its finite upper bound. */
 export const snapshotMarketCloseAt = (
   hours: MarketHours,

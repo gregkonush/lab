@@ -4,7 +4,7 @@ import { Clock, Effect, Layer, Logger, References } from 'effect'
 import { HttpClient } from 'effect/http'
 import { TestClock } from 'effect/testing'
 
-import type { ApplicationPlanFor } from '../app'
+import type { ApplicationPlan } from '../app'
 import * as actualHttp from '../broker/alpaca/http'
 import * as actualSession from '../broker/alpaca/session'
 import * as actualCapture from '../broker/alpaca/snapshot-cache'
@@ -101,7 +101,7 @@ const polls = await Effect.runPromise(
           alpaca: { expectedAccountId: privateDetail },
           build: { sourceRevision: 'b'.repeat(40) },
         },
-      } as unknown as ApplicationPlanFor<'AutonomousService'>)
+      } as unknown as ApplicationPlan)
       const polls = []
       for (const failure of failures) {
         currentFailure = failure

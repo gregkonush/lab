@@ -1,7 +1,7 @@
 import { Context, Data, Effect } from 'effect'
 
 import type { BrokerEventInput, FillEventInput, PositionSnapshotInput, ValuationInput } from '../../broker/observations'
-import type { RuntimeConfig } from '../../config'
+import type { RuntimeConfig } from '../../config/model'
 import type {
   AccountingReceipt,
   Authority,

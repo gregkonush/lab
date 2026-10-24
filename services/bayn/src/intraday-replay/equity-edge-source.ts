@@ -1,7 +1,7 @@
 import { DateTime, Result, Schema } from 'effect'
 
 import { MarketCalendarResponseSchema } from '../broker/alpaca/model'
-import { canonicalHashV1, sha256 } from '../hash'
+import { canonicalHashV1Result, sha256 } from '../hash'
 import {
   IsoDateSchema,
   Sha256Schema,
@@ -142,7 +142,7 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         start: input.calendar.start,
         end: input.calendar.end,
       }) ||
-      canonicalHashV1(header.data) !== input.calendar.expectedHash ||
+      (yield* canonicalHashV1Result(header.data)) !== input.calendar.expectedHash ||
       header.data.some((day) => day.date < input.calendar.start || day.date > input.calendar.end)
     )
       return yield* Result.fail(
@@ -270,7 +270,7 @@ export const decodeEquityEdgeSource = (text: string, input: typeof EquityEdgeInp
         paginationEvidence: 'OBSERVED_REQUEST_AND_RESPONSE_TOKEN_CHAIN',
         feed: end.feed,
         adjustment: end.adjustment,
-        calendarHash: canonicalHashV1(days),
+        calendarHash: yield* canonicalHashV1Result(days),
         calendarEvidenceHash: input.calendar.expectedHash,
         calendarRequest: { start: input.calendar.start, end: input.calendar.end },
         sourceCoverage: 'RECONSTRUCTED_HISTORICAL_BARS',

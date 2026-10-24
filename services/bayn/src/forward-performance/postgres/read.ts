@@ -4,7 +4,7 @@ import { Effect, Schema } from 'effect'
 import type { WriterFenceService } from '../../execution/writer-fence'
 import { forwardPerformanceSnapshot } from './snapshot'
 import { readStoredFeeAccruals } from '../../db/fee-accruals'
-import { readCashReportingOffsets } from './cash-reporting'
+import { readCashReportingOffsets, readUnaccountedCashSettlementCount } from './cash-reporting'
 import { StoredCashSettlementSchema } from '../../accounting/cash-settlement'
 import { reportedCashMicros } from '../../broker/alpaca/cash-reporting'
 import { StoredFeeSchema, brokerFeeCashDeltaMicros } from '../../accounting/broker-fees'
@@ -16,7 +16,7 @@ import type {
   ForwardPerformanceStrategyEvidence,
   ForwardPerformanceTransactionEvidence,
 } from '../model'
-import { Pipeable } from '../../pipeable'
+
 import {
   ForwardPerformancePostgresError,
   ReconciliationRow,
@@ -47,7 +47,7 @@ import {
 import { ledgerReceiptQuery, ledgerTransactionQuery, receiptQuery, transactionQuery } from './queries'
 import { executionEvidenceFromRows, marketVolumeRequestsFromRows, verifyPerformanceDecisions } from './projection'
 
-export const readForwardPerformanceUnclosedCycleCountDataFirst = (
+export const readForwardPerformanceUnclosedCycleCount = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -68,7 +68,9 @@ export const readForwardPerformanceUnclosedCycleCountDataFirst = (
       -- A terminally blocked execution cycle is terminal evidence of an incomplete generation.
       -- Count it as unclosed so an earlier successful cycle cannot produce a sufficient receipt.
       AND cycle.state IN ('PENDING', 'ACTIVE', 'BLOCKED')
-      AND ${generationScope(sql, accountId, authorityGenerationHash, 'unclosed-cycle')}
+      -- A cycle can be materialized before its eventual authority activation. Its durable decision
+      -- or intent binding must keep unfinished work in the same generation as completed-cycle reads.
+      AND ${generationScope(sql, accountId, authorityGenerationHash, 'cycle')}
       -- A standing mandate may materialize the next cycle before its submission window opens. Ignore
       -- only that unopened, never-started cycle at this reconciliation boundary. A bound decision
       -- or intent is durable evidence; intents are also the root of mutation and execution facts.
@@ -183,7 +185,7 @@ export const readForwardPerformanceStrategyRows = (
       AND scope_generation.account_id = cycle.account_id
       AND scope_generation.research_plan_hash = cycle.qualification_run_id
       AND scope_generation.strategy_protocol_hash = cycle.strategy_protocol_hash
-      AND (${durableCycleGenerationBinding(sql)})
+      AND (${durableCycleGenerationBinding(sql, authorityGenerationHash)})
     WHERE ${authorityGenerationHash === undefined ? true : sql`scope_generation.generation_hash = ${authorityGenerationHash}`}
   )
   SELECT * FROM qualified_strategy
@@ -191,7 +193,7 @@ export const readForwardPerformanceStrategyRows = (
   SELECT * FROM research_strategy
 `.pipe(Effect.flatMap(decodeStrategy))
 
-export const readForwardPerformancePostgresDataFirst = (
+export const readForwardPerformancePostgres = (
   sql: PgClient.PgClient,
   accountId: string,
   authorityGenerationHash?: string,
@@ -445,18 +447,11 @@ export const readForwardPerformancePostgresDataFirst = (
             AND (data->>'occurredAt')::timestamptz<=${accountReconciledAt ?? null}::timestamptz
           ORDER BY transaction_id COLLATE "C"
         `.pipe(Effect.flatMap(Schema.decodeUnknownEffect(Schema.Array(StoredCashSettlementSchema), strictParseOptions)))
-        const [unaccountedCashSettlements] = yield* sql`
-          SELECT count(*)::integer AS count FROM accounting_transactions t
-          WHERE t.account_id=${accountId} AND t.occurred_at<=${accountReconciledAt ?? null}::timestamptz
-            AND mod(t.cash_delta_micros,(
-              SELECT reporting.quantum_micros FROM account_cash_reporting reporting
-              JOIN account_snapshots a ON a.event_id=reporting.account_event_id
-              JOIN broker_events e ON e.event_id=a.event_id
-              WHERE a.account_id=t.account_id AND e.observed_at<=${accountReconciledAt ?? null}::timestamptz
-              ORDER BY e.observed_at DESC,e.source_sequence DESC LIMIT 1))<>0
-            AND NOT EXISTS(SELECT 1 FROM broker_cash_settlements s WHERE s.transaction_id=t.transaction_id
-              AND s.posted_at<=${accountReconciledAt ?? null}::timestamptz)
-        `.pipe(Effect.flatMap(decodeCount))
+        const unaccountedCashSettlements = yield* readUnaccountedCashSettlementCount(
+          sql,
+          accountId,
+          accountReconciledAt,
+        )
         const receiptRows = yield* receiptQuery(sql, accountId, authorityGenerationHash).pipe(
           Effect.flatMap(decodeReceipts),
         )
@@ -489,7 +484,7 @@ export const readForwardPerformancePostgresDataFirst = (
             JOIN autonomous_cycle_shadow_decisions AS decision
               ON decision.cycle_id = cycle.cycle_id
               AND decision.decision_hash = cycle.decision_hash
-            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1')
+            WHERE decision.schema_version IN ('bayn.observe-shadow-decision.v1', 'bayn.paper-cycle-decision.v1', 'bayn.observe-shadow-decision.v2', 'bayn.paper-cycle-decision.v2')
             UNION ALL
             SELECT
               cycle.cycle_id,
@@ -498,7 +493,7 @@ export const readForwardPerformancePostgresDataFirst = (
               (closure.document ->> 'createdAt')::timestamptz AS created_at
             FROM autonomous_cycles AS cycle
             JOIN autonomous_cycle_paper_closures AS closure ON closure.cycle_id = cycle.cycle_id
-            WHERE closure.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+            WHERE closure.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
             UNION ALL
             SELECT
               cycle.cycle_id,
@@ -507,7 +502,7 @@ export const readForwardPerformancePostgresDataFirst = (
               (replan.document ->> 'createdAt')::timestamptz AS created_at
             FROM autonomous_cycles AS cycle
             JOIN autonomous_cycle_paper_close_replans AS replan ON replan.cycle_id = cycle.cycle_id
-            WHERE replan.document #>> '{document,schemaVersion}' = 'bayn.paper-cycle-decision.v1'
+            WHERE replan.document #>> '{document,schemaVersion}' IN ('bayn.paper-cycle-decision.v1', 'bayn.paper-cycle-decision.v2')
           ) AS decision_rows
           JOIN autonomous_cycles AS cycle ON cycle.cycle_id = decision_rows.cycle_id
           CROSS JOIN latest_reconciliation
@@ -713,7 +708,7 @@ export const readForwardPerformancePostgresDataFirst = (
             COALESCE(generation.qualification_image_digest, generation.activation_image_digest)
         `.pipe(Effect.flatMap(decodeDurableExecutions))
 
-        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCountDataFirst(
+        const unclosedCycleCount = yield* readForwardPerformanceUnclosedCycleCount(
           sql,
           accountId,
           authorityGenerationHash,
@@ -990,7 +985,7 @@ export const readForwardPerformancePostgresDataFirst = (
               }),
           brokerFeeAccrualRecords,
           cashSettlementRecords,
-          unaccountedCashSettlementCount: unaccountedCashSettlements.count,
+          unaccountedCashSettlementCount: unaccountedCashSettlements,
           brokerFeeRecords: brokerFeeRows.map(
             ({
               includes_generation: _owned,
@@ -1058,12 +1053,3 @@ export const readForwardPerformancePostgresDataFirst = (
       }),
     )
     .pipe(Effect.mapError(postgresError))
-
-export const readForwardPerformancePostgres = Pipeable.by<
-  (
-    accountId: string,
-    authorityGenerationHash?: string,
-    writerFence?: WriterFenceService,
-  ) => (sql: PgClient.PgClient) => ReturnType<typeof readForwardPerformancePostgresDataFirst>,
-  typeof readForwardPerformancePostgresDataFirst
->((arguments_) => typeof arguments_[0] !== 'string', readForwardPerformancePostgresDataFirst)

@@ -71,11 +71,11 @@ export function useDesktopPreview({
       const transient =
         cause instanceof TypeError ||
         (cause instanceof TengriRequestError && (cause.status === 408 || cause.status === 429 || cause.status >= 500))
-      if (transient && failures < 2) {
-        schedule(1000 * 2 ** failures++)
-      } else {
-        setError(cause instanceof Error ? cause.message : 'Workspace connection failed')
+      if (transient) {
+        schedule(Math.min(30_000, 1000 * 2 ** Math.min(failures++, 5)))
+        if (failures < 3) return
       }
+      setError(cause instanceof Error ? cause.message : 'Workspace connection failed')
     }
     async function start(ensureRunning = false) {
       if (disposed || inFlight || pendingNonce) return

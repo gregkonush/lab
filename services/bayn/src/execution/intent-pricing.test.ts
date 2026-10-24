@@ -1,10 +1,10 @@
 import { instrumentMarket } from '../instruments'
-import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations'
+import { orderRequestBody, orderPriceBoundaryMicros } from '../broker/alpaca-mutations/decisions'
 import { describe, expect, test } from 'bun:test'
 
 import { Result } from 'effect'
 
-import { defaultExecutionModel } from '../execution-model'
+import { intradayExecutionModel } from '../strategy/intraday-market'
 import { simulateIntradayReplayExecution } from '../intraday-replay/execution-core'
 import { intradayMomentumExecutionModel } from '../strategy/intraday-momentum/protocol'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
@@ -17,12 +17,74 @@ const input = {
   timeInForce: TimeInForce.Day,
   quantityAtoms: 2000000000n,
   referencePriceMicros: 100_000_000n,
-  executionModel: defaultExecutionModel,
+  executionModel: intradayExecutionModel,
   limitSlippageBps: 0n,
 } as const
 
+test.each(['AAPL', 'BTC/USD', 'ETH/USD', 'SOL/USD'])(
+  '%s take-profit limits retain their minimum sell price when the quote changes',
+  (symbol) => {
+    const terms = {
+      symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.Limit,
+      timeInForce: symbol.includes('/') ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
+      quantityAtoms: 2_000_000_000n,
+      limitSlippageBps: 10n,
+    }
+    for (const referencePriceMicros of [100_210_000n, 99_000_000n]) {
+      const pricing = Result.getOrThrow(
+        deriveExecutionIntentPricing({
+          ...terms,
+          referencePriceMicros,
+          minimumSellPriceMicros: 100_210_000n,
+        }),
+      )
+      expect(pricing.expectedExecutionPriceMicros).toBe(100_210_000n)
+      const request = Result.getOrThrow(
+        orderRequestBody({
+          ...terms,
+          quantityAtoms: String(terms.quantityAtoms),
+          clientOrderId: 'b1_' + 'A'.repeat(43),
+          limitPriceMicros: String(pricing.expectedExecutionPriceMicros),
+          notionalLimitMicros: String(pricing.notionalLimitMicros),
+        }),
+      )
+      expect(request.limit_price).toBe('100.21')
+      expect(request).toMatchObject({ side: 'sell' })
+    }
+    const favorable = { ...terms, referencePriceMicros: 101_000_000n }
+    expect(
+      Result.getOrThrow(deriveExecutionIntentPricing({ ...favorable, minimumSellPriceMicros: 100_210_000n })),
+    ).toEqual(Result.getOrThrow(deriveExecutionIntentPricing(favorable)))
+  },
+)
+
+test('a sell floor cannot be nonpositive or attached to a buy', () => {
+  for (const minimumSellPriceMicros of [0n, -1n])
+    expect(
+      Result.isFailure(
+        deriveExecutionIntentPricing({
+          ...input,
+          side: OrderSide.Sell,
+          orderType: OrderType.Limit,
+          minimumSellPriceMicros,
+        }),
+      ),
+    ).toBe(true)
+  expect(
+    Result.isFailure(
+      deriveExecutionIntentPricing({
+        ...input,
+        orderType: OrderType.Limit,
+        minimumSellPriceMicros: 100_000_000n,
+      }),
+    ),
+  ).toBe(true)
+})
+
 describe('execution intent pricing', () => {
-  test('keeps an NVDA IOC marketable after the observed submission price move without exceeding the risk cap', () => {
+  test('keeps an NVDA limit marketable after the observed submission price move without exceeding the risk cap', () => {
     for (const [reference, expectedLimit, arrivalAsk] of [
       [215_410_000n, 215_620_000n, 215_490_000n],
       [215_660_000n, 215_870_000n, 215_720_000n],
@@ -35,7 +97,6 @@ describe('execution intent pricing', () => {
           quantityAtoms: 46000000000n,
           referencePriceMicros: reference,
           limitSlippageBps: 10n,
-          executionModel: intradayMomentumExecutionModel,
         }),
       )
       expect(pricing.expectedExecutionPriceMicros).toBe(expectedLimit)
@@ -58,14 +119,14 @@ describe('execution intent pricing', () => {
             assumptions: { slippageBps: 0, availableLiquidityPpm: 1_000_000 },
           }),
         )
-      expect(simulate(reference)).toMatchObject({ status: 'canceled', filledQuantityAtoms: 0n })
+      expect(simulate(reference)).toMatchObject({ status: 'unfilled', filledQuantityAtoms: 0n })
       expect(simulate(pricing.expectedExecutionPriceMicros)).toMatchObject({
         status: 'filled',
         filledQuantityAtoms: 46000000000n,
         fillPriceMicros: arrivalAsk,
       })
       expect(simulate(pricing.expectedExecutionPriceMicros, expectedLimit + 10_000n)).toMatchObject({
-        status: 'canceled',
+        status: 'unfilled',
         filledQuantityAtoms: 0n,
       })
     }
@@ -115,7 +176,7 @@ describe('execution intent pricing', () => {
           assumptions: { slippageBps, availableLiquidityPpm },
         }),
       )
-    expect(simulate(reference, 1)).toMatchObject({ status: 'canceled', filledQuantityAtoms: 0n })
+    expect(simulate(reference, 1)).toMatchObject({ status: 'unfilled', filledQuantityAtoms: 0n })
     expect(simulate(pricing.expectedExecutionPriceMicros, 1)).toMatchObject({
       status: 'filled',
       filledQuantityAtoms: quantity,
@@ -125,19 +186,20 @@ describe('execution intent pricing', () => {
       status: 'filled',
       filledQuantityAtoms: 34000000000n,
       fillPriceMicros: 289_150_000n,
-      unfilledRemainder: 'canceled',
+      remainingQuantityAtoms: 34000000000n,
     })
     expect(simulate(pricing.expectedExecutionPriceMicros, 11)).toMatchObject({
-      status: 'canceled',
+      status: 'unfilled',
       filledQuantityAtoms: 0n,
     })
   })
 
-  test('preserves the legacy adverse MARKET/DAY execution model', () => {
+  test('rejects retired MARKET/DAY pricing', () => {
     expect(deriveExecutionIntentPricing(input)).toEqual(
-      Result.succeed({
-        expectedExecutionPriceMicros: 100_050_000n,
-        notionalLimitMicros: 200_100_000n,
+      Result.fail({
+        _tag: 'UnsupportedExecutionTerms',
+        orderType: OrderType.Market,
+        timeInForce: TimeInForce.Day,
       }),
     )
   })
@@ -159,7 +221,7 @@ describe('execution intent pricing', () => {
     )
   })
 
-  test('rejects fractional LIMIT/IOC quantities and every unsupported term pair', () => {
+  test('allows fractional LIMIT/DAY quantities and rejects unsupported term pairs', () => {
     for (const limitSlippageBps of [-1n, 10_000n]) {
       expect(
         deriveExecutionIntentPricing({
@@ -177,7 +239,7 @@ describe('execution intent pricing', () => {
         timeInForce: TimeInForce.Day,
         quantityAtoms: 1500000000n,
       }),
-    ).toMatchObject(Result.fail({ _tag: 'InvalidQuoteBoundIntent', reason: 'fractional-quantity' }))
+    ).toMatchObject(Result.succeed({ expectedExecutionPriceMicros: 100_000_000n, notionalLimitMicros: 150_000_000n }))
     expect(
       deriveExecutionIntentPricing({
         ...input,
@@ -207,7 +269,6 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
           timeInForce: TimeInForce.ImmediateOrCancel,
           quantityAtoms: 31_234_567n,
           referencePriceMicros: reference,
-          executionModel: intradayMomentumExecutionModel,
           limitSlippageBps: 10n,
         }),
       )
@@ -219,6 +280,7 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         clientOrderId: 'b1_' + 'A'.repeat(43),
         quantityAtoms: '31234567',
         notionalLimitMicros: terms.notionalLimitMicros.toString(),
+        limitPriceMicros: terms.expectedExecutionPriceMicros.toString(),
       }
       const body = Result.getOrThrow(orderRequestBody(intent))
       expect(body).toMatchObject({ symbol, qty: '0.031234567', type: 'limit', time_in_force: 'ioc' })
@@ -235,7 +297,8 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
         ...input,
         symbol,
         side: OrderSide.Sell,
-        timeInForce: TimeInForce.GoodUntilCanceled,
+        orderType: OrderType.Limit,
+        timeInForce: TimeInForce.ImmediateOrCancel,
         quantityAtoms: 31_234_567n,
       }),
     )

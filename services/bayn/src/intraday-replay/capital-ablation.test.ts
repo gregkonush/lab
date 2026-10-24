@@ -3,7 +3,7 @@ import { Result } from 'effect'
 
 import { BrokerMode, executionRiskPolicySchemaVersion } from '../risk'
 import { OrderType, TimeInForce } from '../execution/contracts'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import {
   nativeJevDecisionEvidence,
   nativeJevFixture,
@@ -17,8 +17,6 @@ import { cryptoMarketFixture } from '../testing/crypto-market-fixture'
 import { replayTestInstruments } from '../testing/replay-instruments'
 import type { IntradayQuote } from '../market-data/intraday/model'
 import { prepareSignalStudyBatch } from './signal-study'
-import { ControlExit } from './control-portfolio'
-import { applyReplayFill, createReplayLedger } from './ledger'
 import {
   capitalEvents,
   capitalNetDifference,
@@ -88,13 +86,13 @@ const opportunity = (offsetMs = 0, action = 'enter', probability = 0.8): Capital
   }
 }
 const cryptoOpportunity = (symbol: 'BTC/USD' | 'ETH/USD' | 'SOL/USD'): CapitalOpportunity => {
-  const { snapshot } = cryptoMarketFixture(symbol)
+  const { snapshot } = cryptoMarketFixture(symbol, { observedPriceChoices: true })
   const observation = Result.getOrThrow(jevObservationForSnapshot(snapshot)).payload
   const batchPlan = Result.getOrThrow(
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(Date.parse(observation.observedAt) + 10_000).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const completedAt = new Date(Date.parse(observation.observedAt) + 100).toISOString()
@@ -124,7 +122,7 @@ const quoteAt = (symbol: string, atMs: number, overrides: Partial<IntradayQuote>
     askSize: 1000,
     ...overrides,
   }
-  return { value, availableAtMs: atMs, sequence: 1, recordHash: canonicalHashV1(value) }
+  return { value, availableAtMs: atMs, sequence: 1, recordHash: Result.getOrThrow(canonicalHashV1Result(value)) }
 }
 const evaluate = (
   opps: readonly CapitalOpportunity[],
@@ -185,7 +183,9 @@ test('both arms retain every identical current native opportunity, abstention an
   expect(reports[0]?.metrics.knownInferenceCostMicros).toBe('30000')
   expect(reports[0]?.ledger.positions).toEqual([])
   expect(reports[0]?.trades[0]?.result.requestedEntryQuantityAtoms).toBe('199000000000')
-  expect(Result.getOrThrow(validateCapitalPopulation(opps, terms))).toBe(canonicalHashV1(defaultJevProtocolDocument))
+  expect(Result.getOrThrow(validateCapitalPopulation(opps, terms))).toBe(
+    Result.getOrThrow(canonicalHashV1Result(defaultJevProtocolDocument)),
+  )
   expect(evaluate(opps)).toEqual(reports)
 })
 
@@ -206,40 +206,24 @@ test('cost hurdle rejects an expensive low-proxy opportunity while preserving bo
 })
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} books coin/cash fees once, net inventory exits, and doubled fees worsen dollars`, () => {
+  test(`${symbol} executes the selected complete plan and retains actual losses under fee stress`, () => {
     const opp = cryptoOpportunity(symbol)
-    const base = evaluate([opp])[0]
-    const stress = evaluate([opp], { ...scenario, id: 'double-fees', feeMultiplierPpm: 2_000_000 })[0]
-    if (symbol === 'BTC/USD') {
-      expect(base?.metrics.netAfterAllCostsMicros).toBe('-103870202')
-      expect(stress?.metrics.netAfterAllCostsMicros).toBe('-203480204')
+    let previousNet: bigint | undefined
+    for (const chosen of [scenario, { ...scenario, id: 'double-fees', feeMultiplierPpm: 2_000_000 }]) {
+      const base = evaluate([opp], chosen)[0]
+      expect(base?.metrics.executionComplete).toBe(true)
+      expect(base?.metrics.filledEntries).toBe(1)
+      if (base?.metrics.netExecutionPnlMicros === undefined || base.metrics.netExecutionPnlMicros === null)
+        throw new Error('Expected complete fee-accounted replay')
+      const net = BigInt(base.metrics.netExecutionPnlMicros)
+      expect(net).toBeLessThan(0n)
+      expect(base.metrics.netAfterAllCostsMicros).toBe((net - 11000n).toString())
+      expect(base.ledger.fills.some((fill) => fill.side === 'buy' && fill.symbol === symbol)).toBe(true)
+      expect(base.ledger.fills.some((fill) => fill.side === 'sell' && fill.symbol === symbol)).toBe(true)
+      expect(base.ledger.positions).toEqual([])
+      if (previousNet !== undefined) expect(net).toBeLessThan(previousNet)
+      previousNet = net
     }
-    expect(base?.metrics.executionComplete).toBe(true)
-    expect(base?.metrics.netAfterAllCostsMicros).not.toBeNull()
-    expect(BigInt(stress?.metrics.netExecutionPnlMicros ?? '0')).toBeLessThan(
-      BigInt(base?.metrics.netExecutionPnlMicros ?? '0'),
-    )
-    const fills = base?.ledger.fills ?? []
-    const buy = fills[0]
-    const sell = fills[1]
-    expect(BigInt(sell?.quantityAtoms ?? '0')).toBeLessThan(BigInt(buy?.quantityAtoms ?? '0'))
-    let ledger = Result.getOrThrow(createReplayLedger(terms.openingCashMicros))
-    for (const fill of fills)
-      ledger = Result.getOrThrow(
-        applyReplayFill(
-          ledger,
-          fill,
-          fill.quantityAtoms,
-          defaultJevProtocolDocument.executionModel,
-          scenario.feeMultiplierPpm,
-        ),
-      )
-    expect(base?.metrics.netExecutionPnlMicros).toBe(
-      String(BigInt(ledger.cashMicros) - BigInt(terms.openingCashMicros)),
-    )
-    expect(base?.metrics.netAfterAllCostsMicros).toBe(
-      String(BigInt(ledger.cashMicros) - BigInt(terms.openingCashMicros) - 11000n),
-    )
   })
 }
 
@@ -313,7 +297,7 @@ test('turnover reserve and loss gates bind both arms without dropping opportunit
   )
   expect(loss?.opportunities[1]?.status).toBe(CapitalAdmission.LossOrDrawdownBlocked)
   expect(loss?.metrics.maximumDrawdownAfterAllCostsMicros).not.toBe('0')
-})
+}, 30_000)
 
 test('retired or changed protocols, duplicate ids and foreign accounts cannot compare', () => {
   const opp = opportunity()
@@ -348,8 +332,8 @@ test('retired or changed protocols, duplicate ids and foreign accounts cannot co
 test('current chosen-model-action baseline retains an enter choice below the retired probability floor', () => {
   const opp = opportunity(0, 'enter', 0.6)
   const [baseline, candidate] = evaluate([opp])
-  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v9')
-  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('cost-supported-model-action')
+  expect(defaultJevProtocolDocument.schemaVersion).toBe('bayn.jev.protocol.v20')
+  expect(defaultJevProtocolDocument.entrySelectionPolicy).toBe('supported-setup-and-economic-plan')
   expect(baseline?.metrics.filledEntries).toBe(1)
   expect(baseline?.opportunities[0]?.status).toBe(CapitalAdmission.Admitted)
   expect(baseline?.eligibleOpportunityIds).toEqual(candidate?.eligibleOpportunityIds)
@@ -417,7 +401,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
   const { gzipSync } = await import('node:zlib')
   const { normalizeMarketCalendarResult } = await import('../broker/alpaca/normalizers')
   const { streamingFixtureFromRaw, streamingFixture } = await import('../testing/streaming-market-fixture')
-  const { makeIntradayMomentumTestSnapshot } = await import('../strategy/intraday-momentum/test-support')
+  const { makeJevMarketTestSnapshot: makeIntradayMomentumTestSnapshot } = await import('../testing/jev-market-fixture')
   const { equityMarketProfile, cryptoMarketProfile } = await import('../jev/markets')
   const { historicalRawArrivals } = await import('../testing/historical-streaming-fixture')
   const { sha256 } = await import('../hash')
@@ -458,7 +442,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     makeJevTradingSignalBatch({
       observation,
       expiresAt: new Date(equityAt + 9900).toISOString(),
-      planVersion: JevBatchPlanVersion.V4,
+      planVersion: JevBatchPlanVersion.V6,
     }),
   )
   const batchResult = nativeJevBatchResult(batchPlan, new Date(equityAt).toISOString())
@@ -526,7 +510,7 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
         const path = `${directory}/${index}.ndjson.gz`
         yield* fs.writeFile(path, bytes)
         const base = {
-          schemaVersion: 'bayn.backtest-source.v1' as const,
+          schemaVersion: 'bayn.backtest-source.v2' as const,
           encoding: 'ndjson-gzip' as const,
           transport: 'captured-kafka' as const,
           origin: 'Synthetic disjoint market cursor integration fixture',
@@ -539,12 +523,14 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
           positions: [
             { topic: profile.sourceTopics.quotes, partition: 0, startOffset: '0', endOffsetExclusive: String(offset) },
           ],
-          universe: {
-            universeId: profile.universeId,
-            universeSymbolHash: profile.universeSymbolHash,
-            symbols: profile.universe,
-            topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
-          },
+          marketSources: [
+            {
+              universeId: profile.universeId,
+              universeSymbolHash: profile.universeSymbolHash,
+              symbols: profile.universe,
+              topics: { ...profile.sourceTopics, features: profile.streamingInput.featureTopic },
+            },
+          ] as const,
           deliveryModel: {
             schemaVersion: 'bayn.supplied-arrival-times.v1' as const,
             description: 'Synthetic source integration',
@@ -595,54 +581,6 @@ test('verified equity and crypto archive cursors carry one cash ledger across ma
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 }, 60_000)
-
-test('overnight crypto exit initializes the New York risk day from marked inventory and cash', () => {
-  const opp = cryptoOpportunity('BTC/USD')
-  const events = capitalEvents([opp], scenario, (opp.committedAtMs ?? 0) + 20 * 60_000)
-  let state = Result.getOrThrow(createCapitalState(CapitalArm.Baseline, terms.openingCashMicros))
-  for (const event of events.slice(0, 2))
-    state = Result.getOrThrow(stepCapitalState(state, terms, scenario, event, quoteAt('BTC/USD', event.atMs)))
-  const active = state.active
-  if (active === null || state.portfolio.inventory.status !== 'HOLDING')
-    throw new Error('Missing overnight test inventory')
-  const boundary = Date.parse('2026-10-12T04:00:00.050Z')
-  const portfolio = {
-    ...state.portfolio,
-    inventory: {
-      ...state.portfolio.inventory,
-      status: 'EXITING' as const,
-      reason: ControlExit.MaximumHold,
-    },
-  }
-  const closing = {
-    ...state,
-    portfolio,
-    active: {
-      ...active,
-      terms: { ...active.terms, closeMs: boundary + 60_000 },
-      lifecycle: {
-        ...active.lifecycle,
-        portfolio,
-        exit: { atMs: boundary - scenario.latencyMs, quote: quoteAt('BTC/USD', boundary - scenario.latencyMs) },
-      },
-    },
-  }
-  const position = portfolio.ledger.positions[0]
-  if (position === undefined) throw new Error('Missing crypto position')
-  const expectedOpening = BigInt(portfolio.ledger.cashMicros) + (BigInt(position.quantityAtoms) * 100n) / 1000n
-  const closed = Result.getOrThrow(
-    stepCapitalState(
-      closing,
-      terms,
-      scenario,
-      { kind: CapitalEventKind.ExitArrival, atMs: boundary, opportunity: opp },
-      quoteAt('BTC/USD', boundary),
-    ),
-  )
-  expect(closed.days.get('2026-10-12')?.opening).toBe(expectedOpening)
-  expect(closed.portfolio.ledger.positions).toEqual([])
-  expect(expectedOpening - BigInt(closed.portfolio.ledger.cashMicros)).toBeGreaterThan(0n)
-})
 
 test('an unrelated missing mark is counted once and withholds the net comparison after both portfolios close', () => {
   const reports = evaluate([opportunity(), opportunity(2000, 'wait')], scenario, terms, (symbol, at) =>

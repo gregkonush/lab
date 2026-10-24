@@ -3,15 +3,10 @@ import { observedBrokerState } from './observed-snapshot'
 import { describe, expect, test } from 'bun:test'
 import type { PgClient } from '@effect/sql-pg'
 import { Option, Clock, ConfigProvider, Deferred, Effect, Fiber, Logger, Ref, Result, Exit } from 'effect'
-import {
-  BrokerObservations,
-  decodeObservedBrokerSnapshot,
-  observedBrokerSnapshotHash,
-  validateObservedBrokerSnapshot,
-} from './observed-snapshot'
+import { BrokerObservations, decodeObservedBrokerSnapshot, validateObservedBrokerSnapshot } from './observed-snapshot'
 import { TestClock } from 'effect/testing'
 
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { checkHealth } from '../../health/program'
 import { makeBrokerObservationStore } from '../../db/broker-observations'
 import { config as runtimeConfig, readyState } from '../../testing/runtime-fixtures'
@@ -61,7 +56,7 @@ const fixture = (
         evidence: {
           requestId: `request-${operation}-${calls.length}`,
           status: 200,
-          contentHash: canonicalHashV1(observed),
+          contentHash: Result.getOrThrow(canonicalHashV1Result(observed)),
           observedAt: at,
         },
       }
@@ -272,13 +267,16 @@ describe('durable broker observations', () => {
     await run(
       Effect.gen(function* () {
         const value = yield* captureBrokerObservation(source.read, yield* currentUtcInstant, 15_000)
-        let payload: unknown = { snapshotHash: observedBrokerSnapshotHash(value), state: observedBrokerState(value) }
-        let snapshotHash = canonicalHashV1(payload)
+        let payload: unknown = {
+          snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          state: observedBrokerState(value),
+        }
+        let snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
         let queries = 0
         const sql = (() =>
           Effect.sync(() => {
             queries += 1
-            return [{ state_hash: snapshotHash, snapshot_hash: observedBrokerSnapshotHash(value) }]
+            return [{ state_hash: snapshotHash, snapshot_hash: Result.getOrThrow(canonicalHashV1Result(value)) }]
           })) as unknown as PgClient.PgClient
         const store = makeBrokerObservationStore(
           sql,
@@ -304,12 +302,15 @@ describe('durable broker observations', () => {
         expect(changed?.readAvailable).toBe(false)
         expect(changed?.error).toContain('content hash changed')
         expect(queries).toBe(2)
-        payload = { snapshotHash: observedBrokerSnapshotHash(value), state: { snapshot: { account: {} } } }
-        snapshotHash = canonicalHashV1(payload)
+        payload = {
+          snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)),
+          state: { snapshot: { account: {} } },
+        }
+        snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
         expect((yield* healthPass(projected))?.readAvailable).toBe(false)
         expect(queries).toBe(3)
-        payload = { snapshotHash: observedBrokerSnapshotHash(value), state: observedBrokerState(value) }
-        snapshotHash = canonicalHashV1(payload)
+        payload = { snapshotHash: Result.getOrThrow(canonicalHashV1Result(value)), state: observedBrokerState(value) }
+        snapshotHash = Result.getOrThrow(canonicalHashV1Result(payload))
         expect((yield* healthPass(projected))?.readAvailable).toBe(true)
         yield* TestClock.adjust(60_001)
         const expired = yield* healthPass(projected)

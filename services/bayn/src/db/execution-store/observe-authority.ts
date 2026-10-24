@@ -42,7 +42,6 @@ import {
   decodeEnsureAuthorityGenerationInput,
   type AuthorityGenerationRow,
 } from './rows'
-import { Pipeable } from '../../pipeable'
 
 export const LEGACY_AUTONOMOUS_OBSERVE_GENERATION_HASH =
   'd290539ec85334d8ce267f98919c139cb382068101042d69b5433832136dc063'
@@ -69,7 +68,7 @@ const legacyAutonomousObserveCompatible = (history: AuthorityGenerationRow, conf
   configured.provider === BrokerProvider.Alpaca &&
   configured.environment === BrokerEnvironment.Sandbox
 
-const validateObserveGenerationBrokerIdentityReplayDataFirst = (
+export const validateObserveGenerationBrokerIdentityReplay = (
   history: AuthorityGenerationRow,
   configured: BrokerIdentity | undefined,
 ): Result.Result<void, ObserveGenerationBrokerIdentityFailure> => {
@@ -120,12 +119,7 @@ const validateObserveGenerationBrokerIdentityReplayDataFirst = (
       })
 }
 
-export const validateObserveGenerationBrokerIdentityReplay = Pipeable.dual(
-  2,
-  validateObserveGenerationBrokerIdentityReplayDataFirst,
-)
-
-const makeObserveAuthorityInterpreterDataFirst = (
+export const makeObserveAuthorityInterpreter = (
   sql: PgClient.PgClient,
   authority: AuthorityPostgres,
   brokerIdentity: BrokerIdentity | undefined,
@@ -599,5 +593,3 @@ const makeObserveAuthorityInterpreterDataFirst = (
     readAuthorityGenerationLineage,
   }
 }
-
-export const makeObserveAuthorityInterpreter = Pipeable.dual(3, makeObserveAuthorityInterpreterDataFirst)

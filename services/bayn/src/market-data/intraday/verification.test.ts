@@ -6,7 +6,7 @@ import { IntradayCandidateEvidencePolicy } from './model'
 import { describe, expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import { canonicalHashV1, sha256 } from '../../hash'
+import { sha256, canonicalHashV1Result } from '../../hash'
 import {
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
@@ -28,7 +28,10 @@ const calendarMaterial = withProviderSessions({
   timeZone: 'UTC' as const,
   sessions: [{ date: '2026-08-18', openAt: '2026-08-18T13:30:00.000Z', closeAt: '2026-08-18T20:00:00.000Z' }],
 })
-const calendar = { ...calendarMaterial, normalizedResponseHash: canonicalHashV1(calendarMaterial) }
+const calendar = {
+  ...calendarMaterial,
+  normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendarMaterial)),
+}
 
 const request: IntradaySnapshotRequest & { readonly calendar: MarketCalendarObservation } = {
   sessionDate: '2026-08-18',
@@ -505,12 +508,15 @@ describe('immutable intraday market snapshot', () => {
     if (firstBar === undefined) throw new Error('bar fixture is incomplete')
     const bars = Object.freeze([firstBar, firstBar, ...verified.bars.slice(2)])
     const { contentHash: _contentHash, snapshotId: _snapshotId, ...boundMaterial } = verified.manifest
-    const material = Object.freeze({ ...boundMaterial, barsContentHash: canonicalHashV1(bars) })
-    const contentHash = canonicalHashV1(material)
+    const material = Object.freeze({
+      ...boundMaterial,
+      barsContentHash: Result.getOrThrow(canonicalHashV1Result(bars)),
+    })
+    const contentHash = Result.getOrThrow(canonicalHashV1Result(material))
     const manifest = Object.freeze({
       ...material,
       contentHash,
-      snapshotId: canonicalHashV1({ ...material, contentHash }),
+      snapshotId: Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })),
     })
     const selfRehashed: IntradayMarketSnapshot = Object.freeze({ ...verified, bars, manifest })
 
@@ -533,15 +539,15 @@ describe('immutable intraday market snapshot', () => {
     }
     const forgedCalendar = Object.freeze({
       ...forgedCalendarMaterial,
-      normalizedResponseHash: canonicalHashV1(forgedCalendarMaterial),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(forgedCalendarMaterial)),
     })
     const { contentHash: _contentHash, snapshotId: _snapshotId, ...boundMaterial } = verified.manifest
     const material = Object.freeze({ ...boundMaterial, calendar: forgedCalendar })
-    const contentHash = canonicalHashV1(material)
+    const contentHash = Result.getOrThrow(canonicalHashV1Result(material))
     const manifest = Object.freeze({
       ...material,
       contentHash,
-      snapshotId: canonicalHashV1({ ...material, contentHash }),
+      snapshotId: Result.getOrThrow(canonicalHashV1Result({ ...material, contentHash })),
     })
     const selfRehashed: IntradayMarketSnapshot = Object.freeze({ ...verified, manifest })
 
@@ -758,7 +764,7 @@ describe('immutable intraday market snapshot', () => {
     }
     const premarketCalendar = {
       ...premarketMaterial,
-      normalizedResponseHash: canonicalHashV1(premarketMaterial),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(premarketMaterial)),
     }
     expect(
       error(
@@ -788,7 +794,10 @@ describe('immutable intraday market snapshot', () => {
         verifyIntradaySnapshotRequest({
           ...request,
           sessionDate: '2026-08-22',
-          calendar: { ...weekendMaterial, normalizedResponseHash: canonicalHashV1(weekendMaterial) },
+          calendar: {
+            ...weekendMaterial,
+            normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(weekendMaterial)),
+          },
           rangeStartAt: '2026-08-22T13:30:00.000Z',
           rangeEndAt: '2026-08-22T13:35:00.000Z',
           observedAt: '2026-08-22T13:35:30.000Z',
@@ -809,7 +818,10 @@ describe('immutable intraday market snapshot', () => {
     expect(
       verifyIntradaySnapshotRequest({
         ...request,
-        calendar: { ...earlyCloseMaterial, normalizedResponseHash: canonicalHashV1(earlyCloseMaterial) },
+        calendar: {
+          ...earlyCloseMaterial,
+          normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(earlyCloseMaterial)),
+        },
         rangeStartAt: '2026-08-18T17:55:00.000Z',
         rangeEndAt: '2026-08-18T18:00:00.000Z',
         observedAt: '2026-08-18T18:15:00.000Z',

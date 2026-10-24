@@ -1,7 +1,7 @@
 import { Data, Effect, Schema } from 'effect'
 import { SqlClient } from 'effect/sql'
 import { quantityToDecimal } from '../src/quantity'
-import { canonicalHashV1 } from '../src/hash'
+import { canonicalHashV1Result } from '../src/hash'
 import { AccountingTransactionRowSchema, accountingTransactionFromRow } from '../src/db/accounting-rows'
 
 class CashSpotCutoverError extends Data.TaggedError('CashSpotCutoverError')<{ readonly message: string }> {}
@@ -113,7 +113,7 @@ export default Effect.gen(function* () {
   const transactions = yield* Schema.decodeUnknownEffect(Schema.Array(AccountingTransactionRowSchema))(transactionRows)
   for (const row of transactions) {
     const { contentHash: _original, ...material } = accountingTransactionFromRow(row)
-    yield* sql`UPDATE accounting_transactions SET content_hash = ${canonicalHashV1(material)} WHERE transaction_id = ${row.transaction_id}`
+    yield* sql`UPDATE accounting_transactions SET content_hash = ${yield* Effect.fromResult(canonicalHashV1Result(material))} WHERE transaction_id = ${row.transaction_id}`
   }
   const fillRows = yield* sql<Record<string, unknown>>`
     SELECT f.event_id, f.account_id, f.fill_id, f.broker_order_id, f.client_order_id, f.intent_id, f.symbol, f.side,
@@ -155,11 +155,13 @@ export default Effect.gen(function* () {
       feeMicros: row.fee_micros,
       occurredAt: row.occurred_at,
     }
-    const hash = canonicalHashV1({
-      schemaVersion: 'bayn.fill-source.v2',
-      fill,
-      brokerTransactionTime: row.source_timestamp,
-    })
+    const hash = yield* Effect.fromResult(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.fill-source.v2',
+        fill,
+        brokerTransactionTime: row.source_timestamp,
+      }),
+    )
     yield* sql`UPDATE broker_events SET normalized_content_hash = ${hash} WHERE event_id = ${row.event_id}`
   }
   yield* sql`ALTER TABLE mutation_events ADD COLUMN request_body jsonb`
@@ -206,11 +208,13 @@ export default Effect.gen(function* () {
       ...(row.limit_price_micros === null ? {} : { limitPriceMicros: row.limit_price_micros }),
       status: row.status,
     }
-    const hash = canonicalHashV1({
-      schemaVersion: 'bayn.order-source.v3',
-      order,
-      brokerUpdatedAt: row.source_event_id.slice(`order:${row.broker_order_id}:`.length),
-    })
+    const hash = yield* Effect.fromResult(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.order-source.v3',
+        order,
+        brokerUpdatedAt: row.source_event_id.slice(`order:${row.broker_order_id}:`.length),
+      }),
+    )
     yield* sql`UPDATE broker_events SET normalized_content_hash = ${hash} WHERE event_id = ${row.event_id}`
     if (row.intent_id !== null) {
       const requestBody = {
@@ -226,7 +230,7 @@ export default Effect.gen(function* () {
           ? {}
           : { limit_price: quantityToDecimal(BigInt(row.limit_price_micros) * 1000n) }),
       }
-      const requestHash = canonicalHashV1(requestBody)
+      const requestHash = yield* Effect.fromResult(canonicalHashV1Result(requestBody))
       const recorded = yield* sql<{
         request_hash: string
       }>`SELECT request_hash FROM mutation_events WHERE intent_id = ${row.intent_id} AND event_type = 'SUBMIT_STARTED'`

@@ -6,8 +6,57 @@ import { deriveExecutionIntentPricing } from '../execution/intent-pricing'
 import { cashSpotLimitTimeInForce } from '../execution/order-terms'
 import { instrumentMarket } from '../instruments'
 import { calculateSessionFees } from '../strategy/execution-model/fees'
-import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
+import {
+  jevBreakEvenExitBid,
+  jevBreakEvenExitLimitPrice,
+  jevExitLimitValue,
+  jevLiquidationValue,
+} from './liquidation-economics'
 import { defaultJevProtocolDocument } from './protocol'
+
+test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
+  '%s take-profit break-even uses its actual limit and preserves exit fees',
+  (symbol) => {
+    const input = { protocol: defaultJevProtocolDocument, symbol, quantityAtoms: 100_000_000_000n }
+    const acquisitionCostMicros = 10_000_000_000n
+    const limit = Result.getOrThrow(
+      jevBreakEvenExitLimitPrice({ ...input, acquisitionCostMicros, upperLimitPriceMicros: 200_000_000n }),
+    )
+    const value = Result.getOrThrow(jevExitLimitValue({ ...input, limitPriceMicros: limit }))
+    const proceeds = (limit * input.quantityAtoms) / 1_000_000_000n
+    const fees = Result.getOrThrow(
+      calculateSessionFees(
+        [{ symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceeds }],
+        input.protocol.executionModel,
+        1_000_000n,
+      ),
+    )
+    expect(value.proceedsMicros).toBe(proceeds)
+    expect(value.netMicros).toBe(proceeds - fees.cashMicros)
+    expect(value.conservativeNetMicros).toBeLessThanOrEqual(value.netMicros)
+    expect(value.conservativeNetMicros).toBeGreaterThanOrEqual(acquisitionCostMicros)
+    expect(
+      Result.getOrThrow(jevExitLimitValue({ ...input, limitPriceMicros: limit - 1n })).conservativeNetMicros,
+    ).toBeLessThan(acquisitionCostMicros)
+    expect(
+      Result.getOrThrow(jevBreakEvenExitBid({ ...input, acquisitionCostMicros, upperBidMicros: 200_000_000n })),
+    ).toBeGreaterThan(limit)
+  },
+)
+
+test('an exit limit rejects a nonpositive price or quantity', () => {
+  for (const [limitPriceMicros, quantityAtoms] of [
+    [0n, 1n],
+    [1n, 0n],
+    [1n, -1n],
+  ]) {
+    expect(
+      Result.isFailure(
+        jevExitLimitValue({ protocol: defaultJevProtocolDocument, symbol: 'NVDA', limitPriceMicros, quantityAtoms }),
+      ),
+    ).toBe(true)
+  }
+})
 
 test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
   '%s break-even is the conservative market bid funds a native bounded sell across fee rounding steps',
@@ -28,7 +77,6 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
           timeInForce: cashSpotLimitTimeInForce(instrumentMarket(symbol)),
           quantityAtoms,
           referencePriceMicros: bidMicros,
-          executionModel: protocol.executionModel,
           limitSlippageBps: 10n,
         }),
       )
@@ -86,7 +134,7 @@ test('a cent-rounded fee jump above the break-even bid remains funded', () => {
   const acquisitionCostMicros = 128_059_041_016n
   const input = { protocol, symbol: 'BTC/USD', quantityAtoms }
   expect(Result.getOrThrow(jevLiquidationValue({ ...input, bidMicros: 2_160_947_485n })).netMicros).toBe(
-    acquisitionCostMicros - 898n,
+    acquisitionCostMicros - 957n,
   )
   const bid = Result.getOrThrow(
     jevBreakEvenExitBid({ ...input, acquisitionCostMicros, upperBidMicros: 4_300_000_000n }),
@@ -108,19 +156,18 @@ test('the conservative cash floor remains monotone across an actual cent fee jum
   expect(after.conservativeNetMicros).toBeLessThanOrEqual(after.netMicros)
 })
 
-test('fractional equity liquidation uses the existing native MARKET/DAY pricing', () => {
+test('fractional equity liquidation uses the same explicit LIMIT/DAY pricing', () => {
   const protocol = defaultJevProtocolDocument
   const input = { protocol, symbol: 'NVDA', quantityAtoms: 250_000_000n, bidMicros: 100_000_000n }
   const pricing = Result.getOrThrow(
     deriveExecutionIntentPricing({
       symbol: input.symbol,
       side: OrderSide.Sell,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: input.quantityAtoms,
       referencePriceMicros: input.bidMicros,
-      executionModel: protocol.executionModel,
-      limitSlippageBps: 0n,
+      limitSlippageBps: BigInt(protocol.maximumEntryLimitSlippageBps),
     }),
   )
   expect(Result.getOrThrow(jevLiquidationValue(input)).proceedsMicros).toBe(pricing.notionalLimitMicros)

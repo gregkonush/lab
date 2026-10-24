@@ -8,7 +8,6 @@ import {
   observedBrokerState,
   validateObservedBrokerState,
   decodeObservedBrokerSnapshot,
-  observedBrokerSnapshotHash,
   observationUnavailable,
   validateObservedBrokerSnapshot,
   type BrokerObservationTicket,
@@ -17,7 +16,7 @@ import {
 import { BrokerReadError, BrokerReadErrorKind } from '../broker/alpaca/failures'
 import { mutationConsistencyDelayMs } from '../broker/alpaca/model'
 import { currentUtcInstant } from '../time'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { ValkeyCache } from '../valkey-cache'
 import { withObservedStage } from '../telemetry'
 import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
@@ -87,14 +86,18 @@ export const makeBrokerObservationStore = (
       ),
     )
   const payloadKey = (kind: 'snapshot' | 'state', hash: string) =>
-    `bayn:broker:${kind}:${canonicalHashV1({ accountId, sourceRevision, hash })}`
+    Result.map(
+      canonicalHashV1Result({ accountId, sourceRevision, hash }),
+      (keyHash) => `bayn:broker:${kind}:${keyHash}`,
+    )
   const readPayload = <A>(kind: 'snapshot' | 'state', hash: string, schema: Schema.Codec<A, unknown>) =>
     Effect.gen(function* () {
-      const encoded = yield* cache.get(payloadKey(kind, hash))
+      const key = yield* Effect.fromResult(payloadKey(kind, hash))
+      const encoded = yield* cache.get(key)
       if (Option.isNone(encoded))
         return yield* observationUnavailable('Required Valkey broker materialization is absent')
       const value = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(schema), strictParseOptions)(encoded.value)
-      if (canonicalHashV1(value) !== hash)
+      if ((yield* Effect.fromResult(canonicalHashV1Result(value))) !== hash)
         return yield* observationUnavailable('Valkey broker materialization content hash changed')
       yield* Metric.update(
         materializationBytes.pipe(Metric.withAttributes({ namespace: 'bayn', kind })),
@@ -207,9 +210,9 @@ export const makeBrokerObservationStore = (
         yield* validateObservedBrokerSnapshot(value, accountId, yield* currentUtcInstant, maximumAgeMs)
         if (value.startedAt !== ticket.startedAt)
           return yield* observationUnavailable('Broker poll start does not match its durable ticket')
-        const snapshotHash = observedBrokerSnapshotHash(value)
+        const snapshotHash = yield* Effect.fromResult(canonicalHashV1Result(value))
         const state = { snapshotHash, state: observedBrokerState(value) }
-        const stateHash = canonicalHashV1(state)
+        const stateHash = yield* Effect.fromResult(canonicalHashV1Result(state))
         const ttlMs = Math.floor(maximumAgeMs - (Date.parse(yield* currentUtcInstant) - Date.parse(value.observedAt)))
         const snapshotJson = JSON.stringify(value)
         const stateJson = JSON.stringify(state)
@@ -218,10 +221,12 @@ export const makeBrokerObservationStore = (
           'bayn.broker.state_bytes': Buffer.byteLength(stateJson),
         })
         // Publish acknowledged immutable payloads before exposing their durable fenced references.
+        const snapshotKey = yield* Effect.fromResult(payloadKey('snapshot', snapshotHash))
+        const stateKey = yield* Effect.fromResult(payloadKey('state', stateHash))
         yield* Effect.all(
           [
-            cache.put({ key: payloadKey('snapshot', snapshotHash), value: snapshotJson, ttlMs }),
-            cache.put({ key: payloadKey('state', stateHash), value: stateJson, ttlMs }),
+            cache.put({ key: snapshotKey, value: snapshotJson, ttlMs }),
+            cache.put({ key: stateKey, value: stateJson, ttlMs }),
           ],
           { concurrency: 2 },
         )
@@ -314,7 +319,13 @@ export const makeBrokerObservationStore = (
           )
       `.pipe(Effect.flatMap(decodeProjectionRows))
           if (awaiting.length === 0)
-            return yield* observationUnavailable('Broker observation is unavailable or invalidated by a mutation')
+            return yield* new BrokerReadError({
+              operation: 'preflight',
+              kind: BrokerReadErrorKind.Timeout,
+              retryable: true,
+              observationFailure: 'NO_ADMISSIBLE_CUT',
+              message: 'Broker observation is unavailable or invalidated by a mutation',
+            })
           const pending = awaiting[0]
           if (pending === undefined) return yield* observationUnavailable('Broker observation metadata is absent')
           return { ...pending, pending: true }
@@ -359,7 +370,17 @@ export const makeBrokerObservationStore = (
         return validated
       }),
     )
-  return { activate, begin, publish, failed, invalidate, read, readState: readState(null), readForSubmit: readState }
+  return {
+    activate,
+    begin,
+    publish,
+    failed,
+    interrupt: recoverUnfinished,
+    invalidate,
+    read,
+    readState: readState(null),
+    readForSubmit: readState,
+  }
 }
 
 export const BrokerObservationsLive = (accountId: string, sourceRevision: string, maximumAgeMs: number) =>

@@ -66,46 +66,66 @@ export const decodeInstrument = (input: {
     return { symbol: input.symbol, market, minimumQuantityAtoms, quantityIncrementAtoms, priceIncrementAtoms }
   })
 
-export const instrumentOrderQuantity = (instrument: Instrument, requested: bigint): bigint =>
-  (requested / instrument.quantityIncrementAtoms) * instrument.quantityIncrementAtoms
+export const instrumentQuantityTerms = (instrument: Instrument, fractionable: boolean) =>
+  instrument.market === MarketKind.Equity && fractionable
+    ? { minimumQuantityAtoms: 1n, quantityIncrementAtoms: 1n }
+    : {
+        minimumQuantityAtoms: instrument.minimumQuantityAtoms,
+        quantityIncrementAtoms: instrument.quantityIncrementAtoms,
+      }
 
 export const validateInstrumentOrder = (
   instrument: Instrument,
   order: {
     readonly symbol: string
+    readonly side: string
     readonly quantityAtoms: string
     readonly orderType: string
     readonly timeInForce: string
   },
-  terms: { readonly closeOnly: boolean; readonly fractionable: boolean; readonly limitPriceAtoms?: bigint },
+  terms: {
+    readonly closeOnly: boolean
+    readonly fractionable: boolean
+    readonly limitPriceAtoms?: bigint
+    readonly stopPriceAtoms?: bigint
+  },
 ): Result.Result<void, InstrumentError> => {
   const invalid = (message: string) => Result.fail(new InstrumentError({ symbol: order.symbol, message }))
   if (instrument.symbol !== order.symbol) return invalid('broker instrument differs from the order symbol')
   const quantity = BigInt(order.quantityAtoms)
-  const increment =
-    instrument.market === MarketKind.Equity && order.orderType === 'MARKET' && terms.fractionable
-      ? 1n
-      : instrument.quantityIncrementAtoms
+  const quantityTerms = instrumentQuantityTerms(instrument, terms.fractionable)
+  const increment = quantityTerms.quantityIncrementAtoms
   if (
     quantity <= 0n ||
     quantity % increment !== 0n ||
-    (!terms.closeOnly &&
-      quantity <
-        (instrument.market === MarketKind.Equity && order.orderType === 'MARKET' && terms.fractionable
-          ? 1n
-          : instrument.minimumQuantityAtoms))
+    (!terms.closeOnly && quantity < quantityTerms.minimumQuantityAtoms)
   )
     return invalid('order quantity violates broker minimum or increment')
+  const protectiveStop =
+    instrument.market === MarketKind.Crypto &&
+    terms.closeOnly &&
+    order.side === 'SELL' &&
+    order.orderType === 'STOP_LIMIT' &&
+    order.timeInForce === 'GTC'
   const validOrder =
-    (order.orderType === 'LIMIT' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'IOC' : 'DAY')) ||
-    (order.orderType === 'MARKET' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'GTC' : 'DAY'))
+    protectiveStop ||
+    (order.orderType === 'LIMIT' && order.timeInForce === (instrument.market === MarketKind.Crypto ? 'IOC' : 'DAY'))
   if (!validOrder) return invalid('order type and duration are unsupported for this instrument')
   if (
-    order.orderType === 'LIMIT' &&
-    (terms.limitPriceAtoms === undefined ||
-      terms.limitPriceAtoms <= 0n ||
-      terms.limitPriceAtoms % instrument.priceIncrementAtoms !== 0n)
+    terms.limitPriceAtoms === undefined ||
+    terms.limitPriceAtoms <= 0n ||
+    terms.limitPriceAtoms % instrument.priceIncrementAtoms !== 0n
   )
     return invalid('order price violates the broker increment')
+  if (
+    protectiveStop &&
+    (terms.stopPriceAtoms === undefined ||
+      terms.stopPriceAtoms <= 0n ||
+      terms.stopPriceAtoms % instrument.priceIncrementAtoms !== 0n ||
+      terms.limitPriceAtoms > terms.stopPriceAtoms)
+  )
+    return invalid('protective stop requires a broker-aligned stop at or above its sell limit')
+  if (!protectiveStop && terms.stopPriceAtoms !== undefined)
+    return invalid('ordinary limit orders cannot carry a standalone stop price')
   return Result.succeed(undefined)
 }

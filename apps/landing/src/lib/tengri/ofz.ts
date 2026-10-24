@@ -112,7 +112,7 @@ export async function ofzCall<I extends DescMessage, O extends DescMessage>(
       (value) => fromBinary(method.output, value),
       request,
       metadata,
-      { deadline: Date.now() + (renewal ? 2000 : 5000) },
+      { deadline: Date.now() + (renewal ? 2000 : 30_000) },
       (error, value) => {
         signal?.removeEventListener('abort', cancel)
         if (error) {

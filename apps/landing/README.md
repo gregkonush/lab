@@ -3,7 +3,9 @@
 This app expects the shared Convex backend in `packages/backend`.
 
 Deployment: changes under `apps/landing/**` (or `packages/design/**`) merged to `main` trigger the main-branch image
-build. Kargo discovers the immutable image, creates Freight, and automatically promotes the `proompteng` Stage; Kargo
+build. The web image participates in the coordinated Ofz → Tengri → Proompteng release: matching source revisions
+and schemas must pass all image and runtime qualification gates before promotion. A successful web build alone
+does not establish deployment. Kargo discovers the immutable image set, creates Freight, and promotes the `proompteng` Stage; Kargo
 writes the exact source commit, digest, and build/provenance metadata to `kargo/proompteng` without a pull request, and
 Argo tracks that branch through sync/health. No Image Updater, SHA manifest bump, release branch, or deployment PR is
 required. See [`docs/release-automation.md`](../../docs/release-automation.md) for the common delivery contract and
@@ -41,6 +43,13 @@ The server-only BFF uses the dedicated Keycloak GitHub broker with PKCE S256 and
 verifies the signed numeric GitHub identity, active platform membership and authentication level before returning an
 opaque eight-hour session. Its hash and thirty-minute idle deadline live in shared SQL. Every request inspects that
 session through exact SPIFFE mTLS. The browser never receives Kubernetes credentials or a guest bootstrap token.
+
+The BFF's SQL pool serves only OAuth attempt creation and consumption. Five-minute attempts use one shared unlogged
+PostgreSQL table, so sign-in does not wait for WAL or synchronous replication. Consumption remains atomic across BFF
+replicas. A database crash or failover discards unfinished attempts and requires a fresh sign-in; it cannot authorize
+a session. Sessions, policies, audits, replay protection, and capabilities remain durable. The BFF keeps its two-second
+query deadline, verified database TLS, and existing attempt expiry and capacity limits.
+
 `/access` and Settings → Access administer typed policies, quotas, scoped diagnostic grants and immutable receipts.
 Workspace Viewers receive metadata only by default. Owners can explicitly approve selected file roots, conversation
 and terminal IDs, screenshots and response budgets. Changing the workspace, collaborator, role or enabled state resets
@@ -89,8 +98,12 @@ An explicit symbol fallback preserves monospace columns for glyphs Geist Mono do
 The Codex view uses a near-black canvas, quiet zinc typography, and blue for primary actions. User messages sit on the
 right with a soft background; agent responses stay on the left without speaker headings. A left conversation sidebar (~240–260px) lists
 browser-local conversations for the agent (newest first) with an active highlight and **New** control; the active
-thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. You can start or
-switch conversations while another response runs. Text and image drafts, along with prompts waiting for their server
+thread id remains `tengri-thread:${agentId}` while the list lives in `tengri-conversations:${agentId}`. Saved history
+loads behind a message-shaped skeleton instead of flashing the empty-conversation suggestions. The animation respects
+reduced motion, and failures show the existing recovery controls. You can start or
+switch conversations while another response runs or its submission is pending. Late thread creation and send replies
+cannot replace the selected conversation or its draft; Stop remains bound to the selected conversation's run.
+Text and image drafts, along with prompts waiting for their server
 echo, remain with their conversation while the chat view stays open. Switching keeps sidebar rows in place, restores
 the selected history, and focuses the composer when recovery completes. Pending approvals stay with their conversation,
 including requests received while another conversation is selected; server resolutions and completed turns clear
@@ -111,7 +124,9 @@ from this tab or another tab with a newer timestamp;
 ordinary selection preserves row order. The header is
 thin, with status as muted micro text (Ready / Working / Approval needed / Reconnecting). The header and composer have
 no horizontal divider. The composer uses a soft rounded surface with model/reasoning controls beside a circular
-send/stop button. Composer height updates before paint, preserves scrolling within long drafts, and
+send/stop button. Approval, model, and reasoning selectors share the same trigger and menu styles.
+New selections use GPT-6.1 Sol with explicit High reasoning. Stored native-default selections reset to High; explicit
+supported reasoning choices remain selectable. Composer height updates before paint, preserves scrolling within long drafts, and
 observes width changes without restarting the observer on each keystroke. The empty state is a short line plus text-link
 starters. Commands, output, diffs, and reasoning summaries expand from compact rows without outlined cards. Approvals
 use a soft surface with a muted label and Approve / Deny actions. Accepted prompts stay in the transcript while waiting
@@ -128,7 +143,11 @@ Images are stored in the retained workspace under
 `/workspace/.tengri-attachments` and passed to Codex as local image inputs. Keep that folder to retain images referenced
 by saved conversations.
 
-Active turns show a quiet Thinking… label. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
+Consecutive tools appear in compact, collapsible groups. Each row keeps its command or connector action and target;
+expanding it shows arguments and results. Terminal output removes ANSI controls and decodes JSON string wrappers while
+preserving columns. Conversation and tool-output scrollbars use a thin thumb with a transparent track.
+
+Submitted messages and active turns share the same quiet Thinking animation. Usage shows the remaining weekly percentage and rounds credits up to a whole number. The
 dock uses one flat zinc surface without backdrop blur or a bright top edge. Its surface and icons magnify, with labels
 appearing without an opacity animation. Responses support Markdown tables, task lists, and code blocks with copy feedback. Fenced `mermaid`
 blocks render as flowchart, sequence, and class diagrams and update as responses stream. Other diagram types and
@@ -162,6 +181,13 @@ the Deployment directly.
 Code keeps recoverable drafts scoped to the GitHub owner and agent creation identity. File reads include a SHA-256
 revision; saves require that base revision and verify the returned revision. A competing API save returns a conflict
 and preserves the local draft.
+
+Finder, chat file links, image attachments, terminal working directories, and the Code bridge use canonical
+`/workspace` paths. The signed request retains that path until the guest validates it and resolves it inside the
+retained home. The BFF requires guest API version 7 in the controller's authenticated audience response before
+signing a request. The controller verifies that version in the guest's identity response before forwarding operations.
+Mixed release versions fail closed. The older virtual file
+namespace is removed; upgrade retained guests with a fenced cold replacement before verifying this release.
 
 Draft storage never evicts another unsaved edit to make room. When browser storage is unavailable or full, Tengri
 keeps a temporary recovery copy and exposes a download on the desktop and lifecycle screens. A page-unload warning
@@ -246,6 +272,17 @@ workspace and automatically resolves advertised action confirmations while the c
 native multi-question requests, supported primitive MCP forms and HTTPS URL confirmations render answer controls.
 The signed guest response contract keeps typed answers separate from action decisions. Failed submissions preserve
 the form for retry, and failed auto-approvals expose manual controls without an automatic retry loop.
+Resolved approvals and answers stay retired for the open workspace, including across conversation changes. Older
+run-status snapshots and replayed events cannot restore them. Automatic attempts also remain recorded across
+navigation, so a failed automatic attempt requires a manual retry or an explicit approval-mode change.
+
+Chat shows Starting, Connecting, Reconnecting and Stopping while a durable run changes state. Internal run reasons
+stay out of these activity labels. Brief event-stream or run-status interruptions retry quietly. A connection warning
+appears after three seconds of continuous interruption and clears after recovery. Authentication and permission
+failures keep their original errors. A follow-up confirmed undispatched because its previous turn finished waits for
+that exact run's terminal state, then submits the message once with a fresh operation identity. Uncertain dispatches
+retain their original identity. An approval confirmed undispatched after its exact run finishes is removed without
+approving another turn.
 
 Accepted messages sent during a running turn remain visible through streaming and replay recovery. Live echoes
 suppress duplicates; only a matching item in saved history retires the local accepted copy.
@@ -254,11 +291,19 @@ Local `/workspace/...` links in agent messages open file tabs above the conversa
 and switching back to Chat preserves the draft and running conversation. Markdown renders in the file tab; Source
 shows numbered lines and highlights an optional `:line:column` or `#LlineCcolumn` reference. Other text files show source.
 File reads use the authenticated file API, with loading, retry, and bounded previews. Web links still open externally.
+Use the pin button in a file preview to keep the file in **Pinned** in the conversation sidebar. Pins retain an
+optional line and column and remain available after closing their tabs. Open a pin to restore that location, or
+unpin it without closing the preview. Each window restores its own tabs and selected view after reload; workspace
+pins are shared across windows. Selecting a conversation returns to Chat without closing resource tabs.
+Tabs and pins each retain up to 20 files. Persistence contains validated `/workspace` paths and locations only,
+with no file contents or credentials. Restored inactive tabs do not read files until selected. Deleting the workspace
+clears its resource metadata along with its conversation state.
 Sent image attachments appear in user messages, including restored history. Agent replies render local workspace
 PNG, JPEG and WebP images inline; generated-image tool outputs with saved workspace paths also show thumbnails.
 Local image links can open image file tabs. Retained image reads use the authenticated,
 owner-authorized file contract, validate raster signatures and size, and disable caching. Missing images show an
 unavailable placeholder. Arbitrary remote Markdown images remain disabled.
+Command output stays plain text: Markdown image examples in printed source or logs do not trigger image reads.
 
 Finder's **Open in Code** sends a file-opening request through the owner-scoped gateway to a small guest extension using
 VS Code's public API. The extension reports dirty tabs and uses native save/discard/cancel dialogs when closing a window.
@@ -289,7 +334,7 @@ and SpiceDB fixture, migrates the shared runtime database and supplies separate 
 and verifies the pinned upstream release, starts real Nanoagent and Tengri gateway fixtures, and drives the actual workbench
 through Chromium. Set `OFZ_FIXTURE_SSH` to use the authorized remote Docker host for the database. Provisioning and identity
 are local fixtures; editor files, terminals, WebSockets, cookie exchange, and CSP use their production implementations.
-Ports 8080, 13338, 3143, 33082, 33083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
+Ports 8080, 13338, 3143, 18082, 18083, and 3443 must be free. Logs are retained under `/tmp/tengri-vscode.*`.
 The local TLS proxy and isolated test certificate exercise secure cookies, WebSockets, and the production CSP without
 weakening application policy. To test an existing production build, set `TENGRI_EDITOR_NEXT_MODE=start`.
 Docker browser fixtures reset their disposable Chromium profile for each run and retain the installed engine cache.
@@ -302,3 +347,11 @@ configuration contains only the ingest DSN and immutable release. See the
 [Tengri observability contract](../../services/tengri/README.md#error-reporting-and-request-traces) for privacy,
 network policy, rollout and actual collector verification. The landing test command includes SDK export, envelope
 validation, stream limits and content-scrubbing checks.
+
+Chat file links display absolute `/workspace/...` guest paths and translate them to workspace-relative file API
+paths for text and image reads. Switching file tabs retains loaded contents and the Source/Rendered view without
+refetching; reopening an existing file preserves tab order. A failed inline image offers an explicit retry.
+
+Desktop preview startup and lease renewal keep retrying transient network, timeout, rate-limit and server failures,
+with a maximum 30-second backoff. Authentication and authorization failures stop retries. The Chrome display
+reconnects its own transport without reloading the retained browser document.

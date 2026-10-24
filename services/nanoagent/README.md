@@ -1,5 +1,11 @@
 # Nanoagent guest API
 
+The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Its connector handlers require the exact server-side setting
+`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
+identity files or changing Codex configuration. Packaging the client does not
+install a connector or change normal conversation startup.
+
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
 proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact
@@ -42,6 +48,10 @@ within one second. The shell and PTY survive in the snapshot; restore does not f
 Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
 a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
+The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
+backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
+failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -62,7 +72,14 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
+requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+for file operations, file events, and terminal working directories. The BFF
+requires that version in the controller's existing authenticated audience response before signing a request. The signed
+target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
+directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
+are rejected. The request-signature contract remains version 4. Old guests fail the identity check before file
+operations and need a fenced cold replacement on their existing retained home. Guest control is
 gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
 HTTP discovery, negotiation, or fallback. Controller and guest artifacts must come from the same validated release.
 
@@ -101,13 +118,40 @@ time are revalidated, and the signal is sent through that descriptor so PID reus
 development hosts retain process-group cleanup when Linux process identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
-ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence
+ready, and restarts failed processes with bounded backoff. Successful initialization publishes a replayable
+`tengri/runtimeReady` event with the process generation. A new process has not loaded retained conversations. When
+`turn/start` receives the exact native `thread not found` rejection, Nanoagent resumes that same conversation and
+repeats the unaccepted operation once, fenced to the rejecting process generation. Other errors and uncertain
+dispatches are never retried this way. The stable operation receipt still prevents duplicate accepted turns.
+The chat clears earlier restart notices on this event,
+without requiring another user turn. Its authenticated `GetInfo` metadata reports whether Codex
+is working across any conversation and the monotonic time since work ended. Starts and steering remain active while
+awaiting a response even if the caller disconnects; turn/status notifications and process generations settle work state.
+Pending approvals also inhibit automatic sleep. No event subscriber is required, and metadata probes do not reset the
+idle timer. Incomplete work state is reported as unavailable so Tengri defers automatic sleep. Every Codex call response includes the event sequence
 captured atomically when its app-server response is received, so thread snapshots can be reconciled with independently
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
+start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
+such as `agents_shell` from the default tool set. Native shell, file editing, Git, and repository setup run inside
+the guest's retained `/workspace`. The explicitly configured Tengri browser and Relay MCP servers remain separate
+from the ChatGPT app catalog. This default is not a network sandbox; the guest administrator retains full guest access.
+
+Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
+from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
+inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
+confirms their absence. Earlier turns' intentional background commands remain running. Cleanup retries stay bound
+to the accepting generation. Missing ownership or an ended generation requires reconciliation and never authorizes
+cleanup against a replacement process. Terminal receipt version 2 records `processesStopped: true` only after this
+confirmation; old receipts and unconfirmed interrupted history cannot release a durable run's workspace or sleep pin.
+
 Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
-requests. `ResolveCodexApproval.response_json` delivers explicit answers using the same generation-fenced reply path.
+requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
+generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive
+an approval card after process replacement.
 The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
 replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
 Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.
@@ -208,7 +252,7 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,

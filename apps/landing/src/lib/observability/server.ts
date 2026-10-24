@@ -9,13 +9,14 @@ import { glitchTipDsn, sanitizeErrorEvent } from './errors'
 
 let initialized = false
 let provider: NodeTracerProvider | undefined
+const EXPORT_TIMEOUT_MS = 10_000
 
 export function initializeObservability() {
   if (initialized) return
   const release = process.env.APP_SOURCE_REVISION || 'development'
   const endpoint = process.env.OTEL_EXPORTER_OTLP_TRACES_ENDPOINT
   if (endpoint) {
-    const batch = new BatchSpanProcessor(new OTLPTraceExporter({ url: endpoint, timeoutMillis: 3_000 }))
+    const batch = new BatchSpanProcessor(new OTLPTraceExporter({ url: endpoint, timeoutMillis: EXPORT_TIMEOUT_MS }))
     provider = new NodeTracerProvider({
       resource: resourceFromAttributes({
         'service.name': 'tengri-bff',
@@ -129,5 +130,5 @@ export function injectTrace(set: (key: string, value: string) => void) {
 }
 
 export async function flushObservability() {
-  await Promise.all([provider?.forceFlush(), Sentry.flush(3_000)])
+  await Promise.all([provider?.forceFlush(), Sentry.flush(EXPORT_TIMEOUT_MS)])
 }

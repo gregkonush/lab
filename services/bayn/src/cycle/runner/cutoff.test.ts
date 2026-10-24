@@ -1,25 +1,36 @@
 import { expect, test } from 'bun:test'
-import { Effect, Option, Result } from 'effect'
+import { Cause, Effect, Exit, Option, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 
-import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca'
-import { canonicalHashV1 } from '../../hash'
+import { BrokerRead, type BrokerReadShape } from '../../broker/alpaca/model'
+import { canonicalHashV1Result } from '../../hash'
 import { nativeJevFixture } from '../../jev/native.test-support'
 import { executionMarketDataBinding } from '../../observe-composition/intraday-market-data'
 import { makeObserveShadowDecisionDocument } from '../../shadow-decision-contract'
-import { TargetPlanReason, TargetPlanStatus } from '../../target-planner'
+import { TargetPlanReason, TargetPlanStatus } from '../../target-planner/index'
 import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
-import { selectCycleRecovery } from '../recovery'
-import { CycleStore, type CycleStoreShape } from '../store'
+import { selectCycleRecovery } from './recovery-selection'
+import { CycleStore, CycleStoreError, type CycleStoreShape } from '../store/model'
 import { decideBlock, decideDecisionBinding, makeInitialCycle } from '../store/decisions'
 import { discoverAutonomousCyclePass, runAutonomousCyclePass } from './program'
 
 const cutoffAt = '2026-09-04T19:55:00.000Z'
 const beforeCutoff = '2026-09-04T19:54:59.000Z'
 
-test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
-  'a decision started before cutoff and bound at %s releases its unused admission after cooldown',
-  async (bindAt) => {
+test.each(
+  [cutoffAt, '2026-09-04T19:55:00.001Z'].flatMap((bindAt) =>
+    [
+      { expiresDuringBinding: false, rollbackFailure: undefined },
+      { expiresDuringBinding: true, rollbackFailure: undefined },
+      ...(['query', 'defect', 'interruption'] as const).map((rollbackFailure) => ({
+        expiresDuringBinding: true,
+        rollbackFailure,
+      })),
+    ].map((mode) => ({ bindAt, ...mode })),
+  ),
+)(
+  'binding at $bindAt preserves expiry and rollback outcomes (database expiry=$expiresDuringBinding, rollback=$rollbackFailure)',
+  async ({ bindAt, expiresDuringBinding, rollbackFailure }) => {
     const native = nativeJevFixture(undefined, beforeCutoff)
     const cycle = { ...makeInitialCycle(native.draft, beforeCutoff), state: CycleState.Active, stateVersion: 2 }
     expect(cycle.window.submissionCutoffAt).toBe(cutoffAt)
@@ -45,7 +56,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     }
     const document = Result.getOrThrow(
       makeObserveShadowDecisionDocument({
-        schemaVersion: 'bayn.observe-shadow-decision.v1',
+        schemaVersion: 'bayn.observe-shadow-decision.v2',
         mode: 'OBSERVE',
         dispatchable: false,
         bindings: {
@@ -63,7 +74,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           reconciliationId: '5'.repeat(64),
           reconciliationHash: '6'.repeat(64),
         },
-        targetPlan: { ...targetMaterial, outputHash: canonicalHashV1(targetMaterial) },
+        targetPlan: { ...targetMaterial, outputHash: Result.getOrThrow(canonicalHashV1Result(targetMaterial)) },
         deltaRisk: [],
         createdAt: beforeCutoff,
         submissionCutoffAt: cutoffAt,
@@ -109,13 +120,44 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     let latest: AutonomousCycle = cycle
     let acquisitions = 0
     const operations: string[] = []
+    const expired = Cause.fail(
+      new CycleStoreError({
+        operation: 'bind-decision',
+        failure: 'entry-expired',
+        persistenceFailure: 'constraint',
+        message: 'entry admission expired in PostgreSQL',
+      }),
+    )
+    const cleanup =
+      rollbackFailure === undefined
+        ? undefined
+        : rollbackFailure === 'query'
+          ? Cause.fail(
+              new CycleStoreError({ operation: 'bind-decision', failure: 'query', message: 'rollback failed' }),
+            )
+          : rollbackFailure === 'defect'
+            ? Cause.die(new Error('rollback defect'))
+            : Cause.interrupt()
     const store: CycleStoreShape = {
       read: forbidden,
       readOldestUnfinished: forbidden,
-      bindSnapshot: forbidden,
       activate: forbidden,
       finish: forbidden,
-      block: forbidden,
+      block: (_id, reason, observedAt) =>
+        Effect.sync(() => {
+          expect(reason).toBe(CycleTerminalReason.UnusedEntryExpired)
+          expect(observedAt).toBe(bindAt)
+          operations.push('expire')
+          latest = {
+            ...cycle,
+            state: CycleState.Blocked,
+            stateVersion: 3,
+            terminalReason: reason,
+            terminalAt: observedAt,
+            updatedAt: observedAt,
+          }
+          return { cycle: latest, changed: true }
+        }),
       readAuthoritySlot: () => Effect.sync(() => Option.some(latest)),
       readDecisionDocument: () => Effect.succeed(Option.none()),
       acquire: (draft, observedAt) =>
@@ -125,22 +167,32 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           return { cycle: latest, created: true }
         }),
       bindDecision: (_id, input, observedAt) =>
-        Effect.sync(() => {
-          operations.push('bind')
-          expect(observedAt).toBe(bindAt)
-          const decision = Result.getOrThrow(decideDecisionBinding(cycle, input, observedAt, []))
-          if (decision._tag !== 'Block') throw new Error('late decision must not bind')
-          expect(Result.getOrThrow(decideBlock(cycle, decision.reason, observedAt))._tag).toBe('Persist')
-          latest = {
-            ...cycle,
-            state: CycleState.Blocked,
-            stateVersion: 3,
-            terminalReason: decision.reason,
-            terminalAt: observedAt,
-            updatedAt: observedAt,
-          }
-          return { cycle: latest, changed: true }
-        }),
+        expiresDuringBinding
+          ? TestClock.setTime(Date.parse(bindAt)).pipe(
+              Effect.andThen(
+                Effect.sync(() => {
+                  operations.push('bind')
+                  expect(observedAt).toBe(beforeCutoff)
+                }),
+              ),
+              Effect.andThen(Effect.failCause(cleanup === undefined ? expired : Cause.combine(expired, cleanup))),
+            )
+          : Effect.sync(() => {
+              operations.push('bind')
+              expect(observedAt).toBe(bindAt)
+              const decision = Result.getOrThrow(decideDecisionBinding(cycle, input, observedAt, []))
+              if (decision._tag !== 'Block') throw new Error('late decision must not bind')
+              expect(Result.getOrThrow(decideBlock(cycle, decision.reason, observedAt))._tag).toBe('Persist')
+              latest = {
+                ...cycle,
+                state: CycleState.Blocked,
+                stateVersion: 3,
+                terminalReason: decision.reason,
+                terminalAt: observedAt,
+                updatedAt: observedAt,
+              }
+              return { cycle: latest, changed: true }
+            }),
     }
     if (cycle.identity.executionPolicy.schemaVersion !== 'bayn.autonomous-cycle-execution-policy.v3')
       throw new Error('expected current execution policy')
@@ -157,7 +209,7 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
           return document
         }),
       buildDecisionEvidence: () =>
-        TestClock.setTime(Date.parse(bindAt)).pipe(
+        TestClock.setTime(Date.parse(expiresDuringBinding ? beforeCutoff : bindAt)).pipe(
           Effect.andThen(
             Effect.sync(() => {
               operations.push('verify')
@@ -169,6 +221,17 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
     await Effect.runPromise(
       Effect.gen(function* () {
         yield* TestClock.setTime(Date.parse(beforeCutoff))
+        if (rollbackFailure !== undefined) {
+          const result = yield* runAutonomousCyclePass(context, cycle).pipe(Effect.exit)
+          expect(Exit.isFailure(result)).toBe(true)
+          if (Exit.isSuccess(result)) throw new Error('rollback failure must not become normal expiry')
+          expect(result.cause.reasons).toHaveLength(2)
+          expect(result.cause.reasons[1]?._tag).toBe(
+            rollbackFailure === 'query' ? 'Fail' : rollbackFailure === 'defect' ? 'Die' : 'Interrupt',
+          )
+          expect(latest).toBe(cycle)
+          return
+        }
         const result = yield* runAutonomousCyclePass(context, cycle)
         expect(result).toMatchObject({
           outcome: 'RECOVERED',
@@ -204,7 +267,11 @@ test.each([cutoffAt, '2026-09-04T19:55:00.001Z'])(
         Effect.provide(TestClock.layer()),
       ),
     )
-    expect(operations).toEqual(['build', 'verify', 'bind'])
-    expect(acquisitions).toBe(1)
+    expect(operations).toEqual(
+      expiresDuringBinding && rollbackFailure === undefined
+        ? ['build', 'verify', 'bind', 'expire']
+        : ['build', 'verify', 'bind'],
+    )
+    expect(acquisitions).toBe(rollbackFailure === undefined ? 1 : 0)
   },
 )

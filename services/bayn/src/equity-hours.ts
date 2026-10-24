@@ -1,8 +1,13 @@
 import { Data, DateTime, Result } from 'effect'
 
 export const equityDataHours = Object.freeze({ feed: 'iex', openMinute: 8 * 60, closeMinute: 17 * 60 })
-export const equityFeatureSessionPolicy = 'alpaca.iex-clock-segments.new-york.v2'
 const timeZone = 'America/New_York'
+const clockFormatter = new Intl.DateTimeFormat('en-US', {
+  timeZone,
+  hourCycle: 'h23',
+  hour: '2-digit',
+  minute: '2-digit',
+})
 
 export class EquityHoursError extends Data.TaggedError('EquityHoursError')<{
   readonly message: string
@@ -73,8 +78,24 @@ export const equityFeatureSegmentStartMs = (instantMs: number): number => {
 }
 
 export const equityClockSession = (instant: string): 'pre' | 'regular' | 'post' | null => {
-  const parts = DateTime.toParts(DateTime.makeZonedUnsafe(instant, { timeZone }))
-  const minute = parts.hour * 60 + parts.minute
+  // Keep Effect's parsing and zoned range checks, without decomposing an entire local date for every quote.
+  const zoned = DateTime.makeZonedUnsafe(instant, { timeZone })
+  const parts = clockFormatter.formatToParts(DateTime.toEpochMillis(zoned))
+  const hour = Number(parts.find((part) => part.type === 'hour')?.value)
+  const wallMinute = Number(parts.find((part) => part.type === 'minute')?.value)
+  const validParts =
+    Number.isInteger(hour) &&
+    hour >= 0 &&
+    hour < 24 &&
+    Number.isInteger(wallMinute) &&
+    wallMinute >= 0 &&
+    wallMinute < 60
+  const minute = validParts
+    ? hour * 60 + wallMinute
+    : (() => {
+        const original = DateTime.toParts(zoned)
+        return original.hour * 60 + original.minute
+      })()
   return minute < equityDataHours.openMinute || minute >= equityDataHours.closeMinute
     ? null
     : minute < 9 * 60 + 30

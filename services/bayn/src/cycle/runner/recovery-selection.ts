@@ -1,6 +1,6 @@
 import { Result } from 'effect'
 
-import { CycleState, CycleTerminalReason, isIntradayAutonomousCycle, type AutonomousCycle } from '../model'
+import { CycleState, CycleTerminalReason, type AutonomousCycle } from '../model'
 import { isTerminalCycleState } from '../transitions'
 import { hasExpiredUnusedEntryAdmission } from '../entry-admission'
 import { selectBoundDecision } from './recovery-decision-binding'
@@ -44,15 +44,6 @@ const validateRecoveryCycleContext = (
           cycleId: cycle.identity.cycleId,
           state: cycle.state,
         },
-      }),
-    )
-  }
-  if (!isIntradayAutonomousCycle(cycle)) {
-    return Result.fail(
-      selectRecoveryFailure({
-        reason: 'state-evidence',
-        message: 'retired strategy cycles are not executable after the intraday cutover',
-        facts: { cycleId: cycle.identity.cycleId, schemaVersion: cycle.schemaVersion },
       }),
     )
   }

@@ -3,7 +3,7 @@ import { Data, Result, Schema } from 'effect'
 import { canonicalHashV1Result } from '../hash'
 import { hashLedgerPlanResult, type LedgerPlan } from '../ledger-plan'
 import { PositiveMicrosSchema, UnsignedMicrosSchema } from '../execution/contracts'
-import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema } from '../schemas'
+import { Sha256Schema, StrictNonEmptyStringSchema, UtcInstantSchema, UtcOrderTimestampSchema } from '../schemas'
 import { brokerFeeLedgerPlan, coinFeeLedgerPlan } from './domain'
 
 export const FeeReadEvidenceSchema = Schema.Struct({
@@ -11,7 +11,14 @@ export const FeeReadEvidenceSchema = Schema.Struct({
   status: Schema.Literal(200),
   contentHash: Sha256Schema,
   observedAt: UtcInstantSchema,
-})
+  sourceCreatedAt: Schema.optionalKey(UtcOrderTimestampSchema),
+}).check(
+  Schema.makeFilter(
+    (evidence) =>
+      evidence.sourceCreatedAt === undefined ||
+      evidence.sourceCreatedAt <= `${evidence.observedAt.slice(0, -1)}000000Z`,
+  ),
+)
 export const FeeMatchCorrectionDataSchema = Schema.Struct({
   schemaVersion: Schema.Literals(['bayn.fee-match-correction.v1', 'bayn.fee-match-correction.v2']),
   accountId: StrictNonEmptyStringSchema,
@@ -142,7 +149,10 @@ export const verifyBrokerFeeRecord = (
       planHash !== record.ledger_plan_hash ||
       record.tigerbeetle_cluster_id !== identity.clusterId.toString() ||
       record.tigerbeetle_ledger !== identity.ledger ||
-      record.data.date > record.read_evidence.observedAt.slice(0, 10)
+      record.data.date > record.read_evidence.observedAt.slice(0, 10) ||
+      (record.read_evidence.sourceCreatedAt !== undefined &&
+        ((record.data.coinDebit === undefined && record.data.cryptoCashFee !== true) ||
+          record.read_evidence.sourceCreatedAt > `${record.read_evidence.observedAt.slice(0, -1)}000000Z`))
     )
       return yield* Result.fail(
         new BrokerFeeEvidenceError({
@@ -196,12 +206,17 @@ const feeDateFormatter = new Intl.DateTimeFormat('en-CA', {
   day: '2-digit',
 })
 
-/** Alpaca supplies a trading date, not a fee settlement timestamp. */
 export const brokerFeePredatesOpeningCash = (
-  fee: { readonly date: string; readonly cryptoCashFee?: true; readonly coinDebit?: unknown },
+  fee: {
+    readonly date: string
+    readonly cryptoCashFee?: true
+    readonly coinDebit?: unknown
+    readonly sourceCreatedAt?: string
+  },
   openingObservedAt: string,
-): boolean =>
-  fee.date <
-  (fee.cryptoCashFee === true || fee.coinDebit !== undefined
-    ? openingObservedAt.slice(0, 10)
-    : feeDateFormatter.format(new Date(openingObservedAt)))
+): boolean => {
+  const crypto = fee.cryptoCashFee === true || fee.coinDebit !== undefined
+  if (crypto && fee.sourceCreatedAt !== undefined)
+    return fee.sourceCreatedAt < `${openingObservedAt.slice(0, -1)}000000Z`
+  return fee.date < (crypto ? openingObservedAt.slice(0, 10) : feeDateFormatter.format(new Date(openingObservedAt)))
+}

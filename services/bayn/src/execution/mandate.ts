@@ -11,7 +11,6 @@ export const QualificationBindingSchema = Schema.Struct({
   lockId: Sha256Schema,
   resultHash: Sha256Schema,
 })
-export type QualificationBinding = typeof QualificationBindingSchema.Type
 
 export const QualifiedCapitalGrantSchema = Schema.TaggedStruct('Qualified', {
   qualification: QualificationBindingSchema,
@@ -305,6 +304,13 @@ export const decideExecutionMandateAuthority = (
     facts.effective === 'OBSERVE' &&
     facts.kill === 'ACTIVE' &&
     facts.generationHash !== facts.sourceGenerationHash
+  if (
+    isRestrictedPaperAuthority &&
+    facts.reason === strategyProtocolCutoverRestrictionReason &&
+    !facts.currentGenerationMatchesRequest
+  ) {
+    return Result.succeed({ _tag: 'Rearm' })
+  }
   if (isRestrictedPaperAuthority && facts.reason === reconciliationIncompleteRestrictionReason) {
     return Result.succeed({ _tag: 'Rearm' })
   }

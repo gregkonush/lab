@@ -14,7 +14,6 @@ import {
 } from '../execution/contracts'
 import { canonicalHashV1Result, type CanonicalHashFailure } from '../hash'
 import type { IsoDate } from '../schemas'
-import { Pipeable } from '../pipeable'
 
 export interface IntentExpectation {
   readonly intentId: string
@@ -26,6 +25,8 @@ export interface IntentExpectation {
   readonly submittedQuantityAtoms?: string
   readonly submittedNotionalMicros?: string
   readonly submittedLimitPriceMicros?: string
+  readonly submittedStopPriceMicros?: string
+  readonly parentBrokerOrderId?: string
   readonly timeInForce: Order['timeInForce']
   readonly quantityAtoms: string
   readonly state: IntentState
@@ -45,6 +46,7 @@ export interface ProjectedPosition {
   readonly symbol: string
   readonly quantityAtoms: string
   readonly costBasisMicros: string
+  readonly costBasisAnchor: { readonly priceAtomsNumerator: string; readonly priceAtomsDenominator: string } | null
 }
 
 export interface ReconciliationSnapshot {
@@ -236,7 +238,7 @@ export const canonicalHash = (input: ReconciliationCanonicalHashInput): Reconcil
 export const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const canonicalIntegerPattern = /^(?:0|-?[1-9][0-9]*)$/
 
-const integerDataFirst = (
+export const integer = (
   source: ReconciliationIntegerSource,
   identity: string,
   value: string,
@@ -244,8 +246,6 @@ const integerDataFirst = (
   canonicalIntegerPattern.test(value)
     ? Result.succeed(BigInt(value))
     : fail({ _tag: 'InvalidInteger', source, identity, value })
-
-export const integer = Pipeable.dual(3, integerDataFirst)
 
 export const reconciledStateHash = (state: ReconciledStateMaterial): ReconciliationDecision<string> =>
   pipe(
@@ -272,7 +272,7 @@ export const reconciledStateHash = (state: ReconciledStateMaterial): Reconciliat
     ),
   )
 
-const instantDataFirst = (
+export const instant = (
   field: ReconciliationInstantField,
   identity: string,
   value: string,
@@ -283,9 +283,7 @@ const instantDataFirst = (
     : fail({ _tag: 'InvalidInstant', field, identity, value })
 }
 
-export const instant = Pipeable.dual(3, instantDataFirst)
-
-const indexUniqueDataFirst = <A>(
+export const indexUnique = <A>(
   values: readonly A[],
   identity: (value: A) => string,
   collection: ReconciliationIdentityCollection,
@@ -303,14 +301,6 @@ const indexUniqueDataFirst = <A>(
       ),
     Result.succeed(HashMap.empty()),
   )
-
-export const indexUnique = Pipeable.generic<
-  <A>(
-    identity: (value: A) => string,
-    collection: ReconciliationIdentityCollection,
-  ) => (values: readonly A[]) => ReconciliationDecision<HashMap.HashMap<string, A>>,
-  typeof indexUniqueDataFirst
->(3, indexUniqueDataFirst)
 
 const discrepancy = (
   accountId: string,
@@ -339,7 +329,7 @@ const discrepancy = (
         ),
       )
 
-const compareValueDataFirst = (
+export const compareValue = (
   accountId: string,
   kind: DiscrepancyKind,
   identity: string,
@@ -352,8 +342,6 @@ const compareValueDataFirst = (
         discrepancy(accountId, kind, identity, expected, observed),
         Result.map((value) => [value]),
       )
-
-export const compareValue = Pipeable.dual(5, compareValueDataFirst)
 
 export const renderReconciliationDecisionError = (error: ReconciliationDecisionError): string => {
   switch (error._tag) {

@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/proompteng/lab/services/nanoagent/internal/guestauth"
 	pb "github.com/proompteng/lab/services/nanoagent/internal/guestpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -18,7 +17,7 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-const guestProtocolVersion = guestauth.ProtocolVersion
+const guestProtocolVersion = 7
 const maxGuestRPCBytes = 10 << 20
 
 type guestRPCServer struct {
@@ -113,7 +112,11 @@ func protoTerminal(session terminalSessionView) *pb.TerminalSession {
 }
 
 func (server *guestRPCServer) GetInfo(context.Context, *pb.Empty) (*pb.GuestInfo, error) {
-	return &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}, nil
+	info := &pb.GuestInfo{MicrovmId: server.api.evidence.MicroVMID, ProtocolVersion: guestProtocolVersion}
+	if server.api.codex != nil {
+		info.CodexActivity = server.api.codex.activitySnapshot()
+	}
+	return info, nil
 }
 func (server *guestRPCServer) OpenBrowser(ctx context.Context, _ *pb.Empty) (*pb.Browser, error) {
 	if server.api.browser == nil {
@@ -269,6 +272,19 @@ func (server *guestRPCServer) CodexCall(ctx context.Context, req *pb.CodexReques
 	}
 	result, err := server.api.codex.call(ctx, req.Method, req.ParamsJson)
 	if err != nil {
+		if errors.Is(err, errCodexOperationRejected) {
+			failure, detailErr := status.New(codes.InvalidArgument, errCodexOperationRejected.Error()).WithDetails(&pb.OperationFailure{CodexOperationRejected: true})
+			if detailErr != nil {
+				return nil, status.Error(codes.Internal, "encode Codex rejection")
+			}
+			return nil, failure.Err()
+		}
+		if errors.Is(err, errCodexOperationConflict) {
+			return nil, status.Error(codes.AlreadyExists, errCodexOperationConflict.Error())
+		}
+		if errors.Is(err, errCodexOperationUnknown) {
+			return nil, status.Error(codes.FailedPrecondition, errCodexOperationUnknown.Error())
+		}
 		if isMissingCodexConversation(req.Method, req.ParamsJson, err) {
 			return nil, status.Error(codes.NotFound, codexConversationNotFoundMessage)
 		}
@@ -285,27 +301,6 @@ func (server *guestRPCServer) CodexLogin(context.Context, *pb.Empty) (*pb.CodexL
 	}
 	result := server.api.codex.loginSnapshot()
 	return &pb.CodexLoginState{Active: result.Active, ResultJson: result.Result, StartedAt: result.StartedAt}, nil
-}
-func (server *guestRPCServer) ResolveCodexApproval(ctx context.Context, req *pb.CodexApproval) (*pb.Empty, error) {
-	if server.api.codex == nil {
-		return nil, status.Error(codes.Unavailable, "Codex app-server is disabled")
-	}
-	var resolveErr error
-	if len(req.ResponseJson) > 0 {
-		if req.Decision != "" {
-			return nil, status.Error(codes.InvalidArgument, "question responses cannot carry an approval decision")
-		}
-		resolveErr = server.api.codex.resolveInput(ctx, req.ApprovalId, req.ResponseJson)
-	} else {
-		resolveErr = server.api.codex.resolveApproval(ctx, req.ApprovalId, req.Decision)
-	}
-	if err := resolveErr; err != nil {
-		if ctx.Err() != nil {
-			return nil, status.FromContextError(ctx.Err()).Err()
-		}
-		return nil, status.Error(codes.NotFound, err.Error())
-	}
-	return &pb.Empty{}, nil
 }
 func (server *guestRPCServer) WatchCodexEvents(req *pb.CodexWatch, stream grpc.ServerStreamingServer[pb.CodexEvent]) error {
 	if server.api.codex == nil {

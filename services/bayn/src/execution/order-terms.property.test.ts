@@ -7,7 +7,7 @@ import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { instrumentMarket, MarketKind } from '../instruments'
 import { checkProperty } from '../testing/property-test-support'
 import { OrderSide, OrderType, TimeInForce } from './contracts'
-import { cashSpotClosingOrderType, cashSpotLimitTimeInForce } from './order-terms'
+import { cashSpotLimitTimeInForce } from './order-terms'
 
 test('property: one limit encoder binds asset duration, exact price and extended-hours eligibility', () => {
   checkProperty(
@@ -27,7 +27,8 @@ test('property: one limit encoder binds asset duration, exact price and extended
           orderType: OrderType.Limit,
           timeInForce: cashSpotLimitTimeInForce(market),
           quantityAtoms: String(quantity),
-          notionalLimitMicros: String((quantity * price) / 1_000_000_000n),
+          notionalLimitMicros: String((quantity * price + (side === OrderSide.Buy ? 999999999n : 0n)) / 1_000_000_000n),
+          limitPriceMicros: price.toString(),
           clientOrderId: 'b1_' + 'A'.repeat(43),
         }
         const request = Result.getOrThrow(orderRequestBody(intent))
@@ -49,7 +50,7 @@ test('property: one limit encoder binds asset duration, exact price and extended
   )
 })
 
-test('property: fractional equity closes retain native MARKET/DAY encoding and crypto retains LIMIT/IOC', () => {
+test('property: fractional closes retain one explicit LIMIT price and the native asset duration', () => {
   checkProperty(
     'cash-spot-fractional-close-terms',
     fc.property(
@@ -58,23 +59,24 @@ test('property: fractional equity closes retain native MARKET/DAY encoding and c
       (symbol, fraction) => {
         const market = instrumentMarket(symbol)
         const quantity = 1_000_000_000n + fraction
-        const orderType = cashSpotClosingOrderType(market, quantity)
+        const price = 100_010_000n
         const request = Result.getOrThrow(
           orderRequestBody({
             symbol,
             side: OrderSide.Sell,
-            orderType,
-            timeInForce: orderType === OrderType.Market ? TimeInForce.Day : cashSpotLimitTimeInForce(market),
+            orderType: OrderType.Limit,
+            timeInForce: cashSpotLimitTimeInForce(market),
             quantityAtoms: quantity.toString(),
-            notionalLimitMicros: '1000000000',
+            notionalLimitMicros: ((quantity * price) / 1000000000n).toString(),
+            limitPriceMicros: price.toString(),
             clientOrderId: 'b1_' + 'A'.repeat(43),
           }),
         )
-        expect(request.type).toBe(market === MarketKind.Equity ? BrokerOrderType.Market : BrokerOrderType.Limit)
+        expect(request.type).toBe(BrokerOrderType.Limit)
         expect(request.time_in_force).toBe(
           market === MarketKind.Equity ? BrokerTimeInForce.Day : BrokerTimeInForce.ImmediateOrCancel,
         )
-        expect(request.extended_hours).not.toBe(true)
+        expect(request.extended_hours).toBe(market === MarketKind.Equity)
         expect(Math.round(Number(request.qty) * 1_000_000_000)).toBe(Number(quantity))
       },
     ),

@@ -8,7 +8,7 @@ import { normalizeMarketCalendarResult } from '../broker/alpaca/normalizers'
 import { EntryTurnoverPolicy } from '../execution/turnover-reserve'
 import { canonicalHashV1Result } from '../hash'
 import { observedQuoteAt } from '../market-data/streaming/projection'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import {
   PositiveMicrosSchema,
   Sha256Schema,
@@ -60,6 +60,8 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(RidgeTrainingInputSchema, strictParseOptions)(raw)
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
+    if (dataCostMicros === null) return yield* Result.fail(fail('Net training labels require a priced data allocation'))
     const firstDate = input.calendar[0]?.date,
       lastDate = input.calendar.at(-1)?.date
     if (firstDate === undefined || lastDate === undefined) return yield* Result.fail(fail('Training calendar is empty'))
@@ -79,7 +81,7 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
       !Number.isSafeInteger(Number(input.allocationBudgetMicros)) ||
       prepared.input.cadence.pollIntervalMs > 60_000 ||
       prepared.input.assumptions.latencyMs > 60_000 ||
-      training.length !== prepared.sessions.length ||
+      training.length !== prepared.brokerSessions.length ||
       evaluation === undefined ||
       declaredStart < 0 ||
       declaredEnd < declaredStart ||
@@ -87,7 +89,7 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
       declaredCalendar.some((session, index) => session.date !== input.sessions[index]?.date) ||
       JSON.stringify(prepared.input.calendar) !== JSON.stringify(trainingCalendar) ||
       training.some((session, index) => {
-        const actual = prepared.sessions[index]
+        const actual = prepared.brokerSessions[index]
         return (
           actual === undefined ||
           session.date !== actual.date ||
@@ -126,13 +128,13 @@ export const prepareRidgeTraining = (raw: unknown, receipt: BacktestSourceReceip
           'Training requires original source, exact fixed candidates, causal whole-session partitions and pinned calendar',
         ),
       )
-    return { input, prepared, calendar }
+    return { input, prepared, calendar, dataCostMicros }
   })
 
 export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: BacktestSourceReceipt) =>
   Effect.gen(function* () {
-    const { input, prepared, calendar } = yield* Effect.fromResult(prepareRidgeTraining(raw, receipt))
-    const risk = yield* loadQuoteBoundExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
+    const { input, prepared, calendar, dataCostMicros } = yield* Effect.fromResult(prepareRidgeTraining(raw, receipt))
+    const risk = yield* loadExecutionRiskPolicy(prepared.identity.accountId, equityMarketProfile.universe)
     const executionLabelDefinition = ridgeExecutionLabelDefinition(
       {
         protocol: prepared.protocol,
@@ -183,7 +185,7 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
             peakNetEquityMicros: prepared.input.openingCashMicros,
             accruedExternalCostMicros: '0',
           }
-          for (const [index, session] of prepared.sessions.entries()) {
+          for (const [index, session] of prepared.brokerSessions.entries()) {
             const result = yield* runControlSession({
               policy: ControlPolicy.FixedCandidateTraining,
               training: {
@@ -202,7 +204,7 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
               session,
               calendar,
               openingCapital: capital,
-              dataCostMicros: prepared.input.allocatedDataCostPerSessionMicros,
+              dataCostMicros,
               targetWeight: 1,
               management: null,
               decisionLatencyMs: input.decisionLatencyMs,
@@ -218,7 +220,7 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
             })
             chain.sessions.push(result)
             if (result.ledger.positions.length !== 0) {
-              chain.skippedSessionDates = prepared.sessions.slice(index + 1).map((value) => value.date)
+              chain.skippedSessionDates = prepared.brokerSessions.slice(index + 1).map((value) => value.date)
               break
             }
             capital = result.closingCapital
@@ -228,7 +230,7 @@ export const runRidgeTraining = (raw: unknown, arrivalsPath: string, receipt: Ba
       )
       if (Result.isFailure(outcome)) {
         chain.failure = yield* Effect.fromResult(failureDetails(outcome.failure))
-        chain.skippedSessionDates = prepared.sessions.slice(chain.sessions.length).map((value) => value.date)
+        chain.skippedSessionDates = prepared.brokerSessions.slice(chain.sessions.length).map((value) => value.date)
       }
     }
     const rows: (typeof SixBarRidgeTrainingRowSchema.Type)[] = []

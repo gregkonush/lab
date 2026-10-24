@@ -5,9 +5,8 @@ import { Result, Schema } from 'effect'
 import fc from 'fast-check'
 import { checkProperty } from './testing/property-test-support'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { deriveExecutionIntentPricing } from './execution/intent-pricing'
-import { intradayExecutionModel } from './strategy/intraday-market'
 import {
   AccountStatus,
   Authority,
@@ -26,9 +25,10 @@ import {
   type Intent,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import { utcInstantFromEpochMillis } from './time'
 import {
+  accountLossMicros,
   BrokerMode,
   EvaluationSchema,
   Gate,
@@ -47,6 +47,31 @@ import {
 import { strictParseOptions } from './schemas'
 
 const evaluatedAt = '2026-07-21T19:30:00.000Z'
+
+test('property: absolute account loss limits retain micro-dollar precision after capital translations', () => {
+  checkProperty(
+    'account-loss-capital-translation',
+    fc.property(
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 25n }),
+      fc.bigInt({ min: 0n, max: 10n ** 15n }),
+      (equity, addition, loss) => {
+        const original = accountLossMicros({
+          accountEquityMicros: equity,
+          dayStartEquityMicros: equity + loss,
+          peakEquityMicros: equity + loss + 1n,
+        })
+        const translated = accountLossMicros({
+          accountEquityMicros: equity + addition,
+          dayStartEquityMicros: equity + addition + loss,
+          peakEquityMicros: equity + addition + loss + 1n,
+        })
+        expect(translated).toEqual(original)
+        expect(original.drawdownMicros - original.dailyLossMicros).toBe(1n)
+      },
+    ),
+  )
+})
 const observedAt = '2026-07-21T19:29:30.000Z'
 const hash = (character: string): string => character.repeat(64)
 
@@ -87,7 +112,7 @@ type ExecutionSession = State['executionSession']
 type ExecutionSessionWithoutHash = Omit<ExecutionSession, 'bindingHash'>
 const rehashExecutionSession = (material: ExecutionSessionWithoutHash): ExecutionSession => ({
   ...material,
-  bindingHash: canonicalHashV1(material),
+  bindingHash: Result.getOrThrow(canonicalHashV1Result(material)),
 })
 const changeExecutionWindow = (
   binding: ExecutionSession,
@@ -106,12 +131,12 @@ const changeExecutionWindow = (
 
 const makePolicy = (overrides: Partial<Policy> = {}): Policy =>
   decodePolicy({
-    schemaVersion: 'bayn.paper-risk-policy.v2',
+    schemaVersion: 'bayn.execution-risk-policy.v4',
     accountId: 'paper-account-1',
     brokerMode: BrokerMode.Execution,
     allowedSymbols: ['AMD', 'NVDA'],
-    allowedOrderTypes: [OrderType.Market],
-    allowedTimeInForce: [TimeInForce.Day, TimeInForce.GoodUntilCanceled],
+    allowedOrderTypes: [OrderType.Limit],
+    allowedTimeInForce: [TimeInForce.Day, TimeInForce.ImmediateOrCancel],
     maxOrderNotionalMicros: '100000000',
     maxSymbolExposureMicros: '200000000',
     maxGrossExposureMicros: '300000000',
@@ -193,7 +218,7 @@ const baseState = (): State => {
   const executionSession = rehashExecutionSession({
     schemaVersion: 'bayn.execution-session-binding.v3',
     planningBrokerState: { observedAt, contentHash: reconciledStateHashValue },
-    calendar: { ...calendar, normalizedResponseHash: canonicalHashV1(calendar) },
+    calendar: { ...calendar, normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(calendar)) },
     executionSession: calendar.sessions[0],
     submissionOpenAt: observedAt,
     submissionCutoffAt: '2026-07-21T20:00:00.000Z',
@@ -281,31 +306,43 @@ const makeState = (overrides: Partial<State> = {}): State => {
   })
 }
 
-const makeIntent = (overrides: Partial<Intent> = {}): Intent =>
-  decodeIntent({
-    schemaVersion: 'bayn.paper-intent.v3',
+const makeIntent = (overrides: Partial<Intent> = {}): Intent => {
+  const value = {
+    schemaVersion: 'bayn.execution-intent.v5',
     intentId: hash('6'),
     authorityGenerationHash: hash('4'),
     strategyName: 'risk-balanced-trend',
     cycleId: hash('7'),
     decisionHash: hash('8'),
-    policyHash: canonicalHashV1(makePolicy()),
+    policyHash: Result.getOrThrow(canonicalHashV1Result(makePolicy())),
     accountId: 'paper-account-1',
     clientOrderId: 'risk-test-order-1',
     symbol: 'NVDA',
     side: OrderSide.Buy,
-    orderType: OrderType.Market,
+    orderType: OrderType.Limit,
     timeInForce: TimeInForce.Day,
     quantityAtoms: '1000000000',
     notionalLimitMicros: '100000000',
+    limitPriceMicros: '100000000',
     state: IntentState.Planned,
     createdAt: '2026-07-21T19:29:45.000Z',
     ...overrides,
+  }
+  return decodeIntent({
+    ...value,
+    notionalLimitMicros:
+      overrides.notionalLimitMicros ??
+      (
+        (BigInt(value.quantityAtoms) * BigInt(value.limitPriceMicros) +
+          (value.side === OrderSide.Buy ? 999999999n : 0n)) /
+        1000000000n
+      ).toString(),
   })
+}
 
 const makeReferenceIntent = (): ReferenceIntent => {
   const { authorityGenerationHash: _, ...intent } = makeIntent()
-  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.paper-intent.v2' })
+  return decodeReferenceIntent({ ...intent, schemaVersion: 'bayn.reference-intent.v4' })
 }
 
 const evaluateSuccess = (
@@ -412,13 +449,13 @@ describe('entry risk properties', () => {
         const policy = makePolicy({ maxOrderNotionalMicros: String(notional) })
         const intent = makeIntent({
           quantityAtoms: String(BigInt(quantity) * 1000n),
-          policyHash: canonicalHashV1(policy),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
         const stricter = makePolicy({ maxOrderNotionalMicros: String(notional - 1n) })
         expectBlocked(
           Reason.OrderNotionalExceeded,
-          { ...intent, policyHash: canonicalHashV1(stricter) },
+          { ...intent, policyHash: Result.getOrThrow(canonicalHashV1Result(stricter)) },
           state,
           stricter,
         )
@@ -454,20 +491,32 @@ describe('bounded execution risk', () => {
     ).toThrow()
   })
 
-  test('uses the execution-model half-up notional at the intent and mutation boundary', () => {
-    const intent = makeIntent({ quantityAtoms: '1000', notionalLimitMicros: '100' })
-    const state = makeState({
-      expectedExecutionPriceMicros: '100000001',
-      referencePriceMicros: '100000000',
+  test('rounds fractional spending outward at the intent and order limit boundary', () => {
+    const intent = makeIntent({ quantityAtoms: '1000000001' })
+    const state = makeState({ account: { ...baseState().account, buyingPowerMicros: '100000001' } })
+    const policy = makePolicy({
+      maxOrderNotionalMicros: '100000001',
+      maxSymbolExposureMicros: '200000001',
+      maxGrossExposureMicros: '300000001',
+      maxNetExposureMicros: '300000001',
+      maxDailyTradedNotionalMicros: '200000001',
     })
-    const result = evaluateSuccess(intent, state, makePolicy())
+    const result = evaluateSuccess(intent, state, policy)
 
-    expect(result.metrics.orderNotionalMicros).toBe('100')
-    expect(result.decision.reasonCodes).not.toContain(Reason.IntentNotionalExceeded)
+    expect(intent.notionalLimitMicros).toBe('100000001')
+    expect(result.metrics.orderNotionalMicros).toBe('100000001')
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+    expectBlocked(
+      Reason.OrderNotionalExceeded,
+      intent,
+      state,
+      makePolicy({ ...policy, maxOrderNotionalMicros: '100000000' }),
+    )
+    expect(() => makeIntent({ ...intent, notionalLimitMicros: '100000000' })).toThrow()
   })
 
   test('strictly decodes complete policy and coherent state', () => {
-    expect(makePolicy().schemaVersion).toBe('bayn.paper-risk-policy.v2')
+    expect(makePolicy().schemaVersion).toBe('bayn.execution-risk-policy.v4')
     expect(makeState().schemaVersion).toBe('bayn.paper-risk-state.v2')
 
     const rawPolicy = { ...makePolicy() }
@@ -477,7 +526,9 @@ describe('bounded execution risk', () => {
     expect(() => decodePolicy({ ...rawPolicy, brokerMode: 'LIVE' })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['NVDA', 'AMD'] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedSymbols: ['AMD', 'AMD'] })).toThrow()
-    expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] })).toThrow()
+    expect(decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Limit] }).allowedOrderTypes).toEqual([
+      OrderType.Limit,
+    ])
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Limit] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, allowedOrderTypes: [OrderType.Market, OrderType.Market] })).toThrow()
     expect(() => decodePolicy({ ...rawPolicy, maxOrderNotionalMicros: '01' })).toThrow()
@@ -565,7 +616,7 @@ describe('bounded execution risk', () => {
       ...current,
       decision: {
         ...legacyDecisionMaterial,
-        decisionId: canonicalHashV1(legacyDecisionMaterial),
+        decisionId: Result.getOrThrow(canonicalHashV1Result(legacyDecisionMaterial)),
       },
       gates: current.gates.map((gate) =>
         gate.name === Gate.Authority ? { ...gate, reason: Reason.LegacyAuthorityNotGranted } : gate,
@@ -590,8 +641,8 @@ describe('bounded execution risk', () => {
       inputHash: first.input.inputHash,
       decisionId: first.decision.decisionId,
     }).toEqual({
-      inputHash: '0a6bc0427f2310c85cbd7423509ee55f8a897b0ca5e8cf969c24fdba595ab9ea',
-      decisionId: '166eb82ca9798803dd7fa5d05d4481189162e457a16baa36f5a2df6380ed9443',
+      inputHash: 'acb60a82ba11b214095ff908f3668cb6cd6a1f94923e8e54c26c7442d1604092',
+      decisionId: '6069b135c81daf3f3f3bb25f6dba37f57412d04c97f16a119114f3a8729a2c83',
     })
     expect(first.input.freshUntil).toBe('2026-07-21T19:30:30.000Z')
     expect(first.metrics).toEqual({
@@ -610,26 +661,30 @@ describe('bounded execution risk', () => {
 
   test('approves quote-bound LIMIT/IOC only when the policy explicitly allows both terms', () => {
     const limitIntent = makeIntent({
+      symbol: 'BTC/USD',
       orderType: OrderType.Limit,
       timeInForce: TimeInForce.ImmediateOrCancel,
     })
     const policy = decodePolicy({
       ...makePolicy(),
       schemaVersion: executionRiskPolicySchemaVersion,
+      allowedSymbols: ['AMD', 'BTC/USD', 'NVDA'],
       allowedOrderTypes: [OrderType.Limit],
       allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
     })
 
-    expect(evaluateSuccess(limitIntent, makeState(), policy).decision.outcome).toBe(RiskOutcome.Approved)
+    expect(evaluateSuccess(limitIntent, makeState({ marketDataSymbol: 'BTC/USD' }), policy).decision.outcome).toBe(
+      RiskOutcome.Approved,
+    )
     expect(() => decodePolicy({ ...policy, schemaVersion: 'bayn.paper-risk-policy.v2' })).toThrow()
   })
 
-  test('admits MARKET/DAY only for an exact exposure-reducing close', () => {
+  test('uses the same LIMIT/DAY allowlist for fractional closes and ordinary orders', () => {
     const policy = decodePolicy({
       ...makePolicy(),
       schemaVersion: executionRiskPolicySchemaVersion,
       allowedOrderTypes: [OrderType.Limit],
-      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+      allowedTimeInForce: [TimeInForce.Day],
     })
     const positions = baseState().positions.map((position) =>
       position.symbol === 'NVDA'
@@ -647,24 +702,27 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Sell,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '500000000',
       notionalLimitMicros: '50000000',
     })
 
     expect(evaluateSuccess(intent, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
-    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+    expect(evaluateSuccess(intent, makeState({ positions }), policy).decision.outcome).toBe(RiskOutcome.Approved)
+    const excludedDuration = makePolicy({ ...policy, allowedTimeInForce: [TimeInForce.ImmediateOrCancel] })
+    expectBlocked(Reason.TimeInForceNotAllowed, intent, state, excludedDuration)
+    expectBlocked(Reason.TimeInForceNotAllowed, intent, makeState({ positions }), excludedDuration)
   })
 
-  test('admits an exact MARKET/DAY buy-to-cover only in close-only mode', () => {
+  test('admits an exact LIMIT/DAY buy-to-cover only in close-only mode', () => {
     const policy = decodePolicy({
       ...makePolicy(),
       schemaVersion: executionRiskPolicySchemaVersion,
       allowedOrderTypes: [OrderType.Limit],
-      allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+      allowedTimeInForce: [TimeInForce.Day],
     })
     const positions = baseState().positions.map((position) =>
       position.symbol === 'NVDA'
@@ -682,9 +740,9 @@ describe('bounded execution risk', () => {
       closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
     })
     const intent = makeIntent({
-      policyHash: canonicalHashV1(policy),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
       side: OrderSide.Buy,
-      orderType: OrderType.Market,
+      orderType: OrderType.Limit,
       timeInForce: TimeInForce.Day,
       quantityAtoms: '500000000',
       notionalLimitMicros: '50000000',
@@ -693,20 +751,20 @@ describe('bounded execution risk', () => {
     const cover = evaluateSuccess(intent, state, policy)
     expect(cover.decision.outcome).toBe(RiskOutcome.Approved)
     expect(cover.gates.find((gate) => gate.name === Gate.LongOnly)?.passed).toBe(true)
-    expectBlocked(Reason.OrderTypeNotAllowed, intent, makeState({ positions }), policy)
+    expectBlocked(Reason.ShortPositionNotAllowed, intent, makeState({ positions }), policy)
   })
 
   test.each(['BTC/USD', 'ETH/USD', 'SOL/USD', 'NVDA'])(
-    'allows the broker-supported MARKET duration only for a reducing %s close',
+    'enforces the native LIMIT duration and price for a fractional %s close',
     (symbol) => {
       const crypto = symbol.includes('/')
-      const supportedDuration = crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day
-      const unsupportedDuration = crypto ? TimeInForce.Day : TimeInForce.GoodUntilCanceled
+      const supportedDuration = crypto ? TimeInForce.ImmediateOrCancel : TimeInForce.Day
+      const unsupportedDuration = crypto ? TimeInForce.Day : TimeInForce.ImmediateOrCancel
       const policy = makePolicy({
         schemaVersion: executionRiskPolicySchemaVersion,
         allowedSymbols: ['AMD', symbol],
         allowedOrderTypes: [OrderType.Limit],
-        allowedTimeInForce: [TimeInForce.ImmediateOrCancel],
+        allowedTimeInForce: [supportedDuration],
         maxOrderNotionalMicros: '200000000',
       })
       const positions = baseState().positions.map((position) =>
@@ -721,22 +779,18 @@ describe('bounded execution risk', () => {
         closeOnlyExpiresAt: '2026-07-21T19:31:00.000Z',
       })
       const close = makeIntent({
-        policyHash: canonicalHashV1(policy),
+        policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         symbol,
         side: OrderSide.Sell,
-        orderType: OrderType.Market,
+        orderType: OrderType.Limit,
         timeInForce: supportedDuration,
         quantityAtoms: '1000000001',
-        notionalLimitMicros: '100000001',
+        notionalLimitMicros: '100000000',
       })
       expect(evaluateSuccess(close, state, policy).decision.outcome).toBe(RiskOutcome.Approved)
-      expectBlocked(
-        Reason.OrderTypeNotAllowed,
-        makeIntent({ ...close, timeInForce: unsupportedDuration }),
-        state,
-        policy,
-      )
-      expectBlocked(Reason.OrderTypeNotAllowed, close, makeState({ ...state, closeOnly: false }), policy)
+      expect(() => makeIntent({ ...close, timeInForce: unsupportedDuration })).toThrow()
+      expect(() => decodeIntent({ ...close, timeInForce: TimeInForce.GoodUntilCanceled })).toThrow()
+      expectBlocked(Reason.DailyTradedNotionalExceeded, close, makeState({ ...state, closeOnly: false }), policy)
     },
   )
 
@@ -861,6 +915,7 @@ describe('bounded execution risk', () => {
     const intent = makeIntent({
       side: OrderSide.Sell,
       quantityAtoms: '1000000000',
+      limitPriceMicros: '150000000',
       notionalLimitMicros: '150000000',
     })
     const closeOnlyState = makeState({
@@ -885,7 +940,12 @@ describe('bounded execution risk', () => {
     )
 
     const oversell = evaluateSuccess(
-      makeIntent({ side: OrderSide.Sell, quantityAtoms: '2000000000', notionalLimitMicros: '300000000' }),
+      makeIntent({
+        side: OrderSide.Sell,
+        quantityAtoms: '2000000000',
+        limitPriceMicros: '150000000',
+        notionalLimitMicros: '300000000',
+      }),
       closeOnlyState,
       makePolicy({ maxDailyTradedNotionalMicros: '400000000' }),
     )
@@ -924,8 +984,8 @@ describe('bounded execution risk', () => {
   })
 
   test('blocks one micro beyond every money and exposure limit', () => {
+    expect(() => makeIntent({ notionalLimitMicros: '99999999' })).toThrow()
     const cases: readonly [Reason, Intent, State, Policy][] = [
-      [Reason.IntentNotionalExceeded, makeIntent({ notionalLimitMicros: '99999999' }), makeState(), makePolicy()],
       [Reason.OrderNotionalExceeded, makeIntent(), makeState(), makePolicy({ maxOrderNotionalMicros: '99999999' })],
       [
         Reason.BuyingPowerExceeded,
@@ -955,7 +1015,7 @@ describe('bounded execution risk', () => {
       account: { ...baseState().account, buyingPowerMicros: '101000000' },
       expectedExecutionPriceMicros: '101000000',
     })
-    const slippageIntent = makeIntent({ notionalLimitMicros: '101000000' })
+    const slippageIntent = makeIntent({ limitPriceMicros: '101000000', notionalLimitMicros: '101000000' })
     const slippagePolicy = makePolicy({
       maxOrderNotionalMicros: '101000000',
       maxSymbolExposureMicros: '201000000',
@@ -1002,7 +1062,7 @@ describe('bounded execution risk', () => {
       referencePriceMicros: '200000000',
       expectedExecutionPriceMicros: '200000000',
     })
-    const intent = makeIntent({ notionalLimitMicros: '200000000' })
+    const intent = makeIntent({ limitPriceMicros: '200000000', notionalLimitMicros: '200000000' })
     const policy = makePolicy({
       maxOrderNotionalMicros: '200000000',
       maxSymbolExposureMicros: '400000000',
@@ -1042,7 +1102,7 @@ describe('bounded execution risk', () => {
       referencePriceMicros: '200000000',
       expectedExecutionPriceMicros: '198000000',
     })
-    const intent = makeIntent({ side: OrderSide.Sell, notionalLimitMicros: '198000000' })
+    const intent = makeIntent({ side: OrderSide.Sell, limitPriceMicros: '198000000', notionalLimitMicros: '198000000' })
     const policy = makePolicy({
       maxOrderNotionalMicros: '198000000',
       maxSymbolExposureMicros: '400000000',
@@ -1088,7 +1148,12 @@ describe('bounded execution risk', () => {
       referencePriceMicros: '49100000',
       expectedExecutionPriceMicros: '49100000',
     })
-    const intent = makeIntent({ side: OrderSide.Sell, quantityAtoms: '1000', notionalLimitMicros: '50' })
+    const intent = makeIntent({
+      side: OrderSide.Sell,
+      quantityAtoms: '1000',
+      limitPriceMicros: '49100000',
+      notionalLimitMicros: '49',
+    })
     const result = evaluateSuccess(intent, state, makePolicy())
 
     expect(result.metrics.postTradeSymbolExposureMicros).toBe('-99')
@@ -1110,12 +1175,17 @@ describe('bounded execution risk', () => {
     )
     expectBlocked(Reason.SymbolNotAllowed, makeIntent(), makeState(), makePolicy({ allowedSymbols: ['AMD'] }))
     expectBlocked(Reason.MarketDataSymbolMismatch, makeIntent(), makeState({ marketDataSymbol: 'AMD' }), makePolicy())
-    expectBlocked(Reason.OrderTypeNotAllowed, makeIntent({ orderType: OrderType.Limit }), makeState(), makePolicy())
+    expect(
+      evaluate({ intent: { ...makeIntent(), orderType: OrderType.Market }, state: makeState(), policy: makePolicy() }),
+    ).toMatchObject({
+      _tag: 'Failure',
+      failure: { operation: 'decode-input', reason: 'intent' },
+    })
     expectBlocked(
       Reason.TimeInForceNotAllowed,
       makeIntent(),
       makeState(),
-      makePolicy({ allowedTimeInForce: [TimeInForce.GoodUntilCanceled] }),
+      makePolicy({ allowedTimeInForce: [TimeInForce.ImmediateOrCancel] }),
     )
     expectBlocked(
       Reason.IntentNotPlanned,
@@ -1435,6 +1505,75 @@ test('rejects entry quotes from after the bound pricing observation and invalid 
   expect(() => makeState({ entryQuote: { eventAt: state.marketDataObservedAt, maximumAgeMs: 0 } })).toThrow()
 })
 
+test.each([OrderType.Limit, OrderType.StopLimit])(
+  'fractional %s protection retains the exact minimum sell proceeds',
+  (orderType) => {
+    const quantityAtoms = 41_753_408_340n
+    const limitPriceMicros = 104_177_219n
+    const stopPriceMicros = 104_281_500n
+    const notionalFloor = (quantityAtoms * limitPriceMicros) / 1_000_000_000n
+    const marketValue = (quantityAtoms * stopPriceMicros + 999_999_999n) / 1_000_000_000n
+    const timeInForce =
+      orderType === OrderType.StopLimit ? TimeInForce.GoodUntilCanceled : TimeInForce.ImmediateOrCancel
+    const policy = makePolicy({
+      schemaVersion: executionRiskPolicySchemaVersion,
+      allowedSymbols: ['SOL/USD'],
+      allowedOrderTypes: [orderType],
+      allowedTimeInForce: [timeInForce],
+    })
+    const intent = makeIntent({
+      symbol: 'SOL/USD',
+      side: OrderSide.Sell,
+      orderType,
+      timeInForce,
+      quantityAtoms: quantityAtoms.toString(),
+      limitPriceMicros: limitPriceMicros.toString(),
+      notionalLimitMicros: notionalFloor.toString(),
+      policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
+      ...(orderType === OrderType.StopLimit
+        ? {
+            protection: {
+              _tag: 'StopLimit',
+              stopPriceMicros: stopPriceMicros.toString(),
+              entryDecisionHash: hash('8'),
+            },
+          }
+        : {}),
+    })
+    const base = makeState()
+    const position = base.positions[0]
+    if (position === undefined) throw new Error('position fixture required')
+    const equityMicros = (BigInt(base.account.cashMicros) + marketValue).toString()
+    const state = makeState({
+      account: { ...base.account, equityMicros },
+      positions: [
+        {
+          ...position,
+          symbol: 'SOL/USD',
+          quantityAtoms: quantityAtoms.toString(),
+          costBasisMicros: marketValue.toString(),
+          averageEntryPriceMicros: stopPriceMicros.toString(),
+          marketPriceMicros: stopPriceMicros.toString(),
+          marketValueMicros: marketValue.toString(),
+          unrealizedPnlMicros: '0',
+        },
+      ],
+      marketDataSymbol: 'SOL/USD',
+      referencePriceMicros: stopPriceMicros.toString(),
+      expectedExecutionPriceMicros: limitPriceMicros.toString(),
+      dayStartEquityMicros: equityMicros,
+      peakEquityMicros: equityMicros,
+      closeOnly: true,
+      closeOnlyExpiresAt: '2026-07-21T19:35:00.000Z',
+    })
+    const result = evaluateSuccess(intent, state, policy)
+    expect(notionalFloor).toBe(4_349_753_964n)
+    expect(result.metrics.orderNotionalMicros).toBe('4349753965')
+    expect(result.gates.find((gate) => gate.name === Gate.IntentNotional)?.passed).toBe(true)
+    expect(result.decision.outcome).toBe(RiskOutcome.Approved)
+  },
+)
+
 test('property: fractional LIMIT buys honor a spending ceiling and sells honor a proceeds floor', () => {
   checkProperty(
     'fractional-limit-notional',
@@ -1454,7 +1593,6 @@ test('property: fractional LIMIT buys honor a spending ceiling and sells honor a
             limitSlippageBps: BigInt(slippage),
             orderType: OrderType.Limit,
             timeInForce: TimeInForce.ImmediateOrCancel,
-            executionModel: intradayExecutionModel,
           }),
         )
         const policy = makePolicy({
@@ -1470,7 +1608,8 @@ test('property: fractional LIMIT buys honor a spending ceiling and sells honor a
           side,
           quantityAtoms: String(quantity),
           notionalLimitMicros: String(pricing.notionalLimitMicros),
-          policyHash: canonicalHashV1(policy),
+          limitPriceMicros: String(pricing.expectedExecutionPriceMicros),
+          policyHash: Result.getOrThrow(canonicalHashV1Result(policy)),
         })
         const state = makeState({
           marketDataSymbol: symbol,
@@ -1486,12 +1625,12 @@ test('property: fractional LIMIT buys honor a spending ceiling and sells honor a
             : pricing.expectedExecutionPriceMicros > 1_000_000n
               ? pricing.expectedExecutionPriceMicros - 1_000_000n
               : 1n
-        const rejected = evaluateSuccess(
+        const rejected = evaluate({
           intent,
-          makeState({ ...state, expectedExecutionPriceMicros: wrongPrice.toString() }),
+          state: makeState({ ...state, expectedExecutionPriceMicros: wrongPrice.toString() }),
           policy,
-        )
-        expect(rejected.gates.find((gate) => gate.name === Gate.IntentNotional)?.passed).toBe(false)
+        })
+        expect(rejected).toMatchObject(Result.fail({ operation: 'decode-input', reason: 'intent' }))
       },
     ),
   )
