@@ -529,6 +529,10 @@ func (files *fileWatcher) rememberCompletedRenameLocked(completed completedFileR
 	if files.finishCompletedRenameLocked(completed.generation, completed) {
 		return
 	}
+	if completed.fenceDirectory != "" {
+		// The watched destination supplies an ordered fence even when delivery is delayed.
+		return
+	}
 	time.AfterFunc(files.renameFenceTimeout(), func() {
 		files.expireCompletedRename(completed.generation)
 	})
@@ -583,7 +587,7 @@ func (files *fileWatcher) expireCompletedRename(generation uint64) {
 	files.mu.Lock()
 	defer files.mu.Unlock()
 	completed, found := files.completedRenames[generation]
-	if !found {
+	if !found || completed.fenceDirectory != "" {
 		return
 	}
 	delete(files.completedRenames, generation)

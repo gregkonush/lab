@@ -418,6 +418,51 @@ func TestFileWatcherCorrelatesRawAndPairedRenameInEitherOrder(t *testing.T) {
 	}
 }
 
+func TestFileWatcherKeepsOrderedRenameFencePastFallbackDeadline(t *testing.T) {
+	t.Parallel()
+	workspace, err := newWorkspace(t.TempDir())
+	if err != nil {
+		t.Fatalf("new workspace: %v", err)
+	}
+	defer workspace.close()
+	files := &fileWatcher{
+		workspace:     workspace,
+		subscriptions: make(map[uint64]fileSubscription),
+	}
+	id, events, err := files.subscribe(0, "/workspace", "")
+	if err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+	defer files.unsubscribe(id)
+	source := filepath.Join(workspace.realRoot, "source.txt")
+	destination := filepath.Join(workspace.realRoot, "destination.txt")
+	generation, err := files.beginPairedRename(source, destination)
+	if err != nil {
+		t.Fatalf("begin paired rename: %v", err)
+	}
+	files.publishPairedRename(source, generation, fileEvent{Path: "/workspace/destination.txt"})
+	if event := <-events; event.Kind != "renamed" {
+		t.Fatalf("paired event = %#v, want renamed", event)
+	}
+
+	// The kernel's ordered rename echoes can be queued longer than the fallback deadline.
+	files.expireCompletedRename(generation)
+	files.handle(fsnotify.Event{Name: source, Op: fsnotify.Rename})
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	select {
+	case extra := <-events:
+		t.Fatalf("delayed rename echo escaped its ordered fence: %#v", extra)
+	default:
+	}
+	if len(files.completedRenames) != 0 {
+		t.Fatalf("completed fence remained after both ordered echoes: %#v", files.completedRenames)
+	}
+	files.handle(fsnotify.Event{Name: destination, Op: fsnotify.Create})
+	if event := <-events; event.Kind != "created" || event.Path != "/workspace/destination.txt" {
+		t.Fatalf("next generation event = %#v, want created", event)
+	}
+}
+
 func TestFileWatcherPublishesObservedRawRenameWhenPairedRenameIsCanceled(t *testing.T) {
 	t.Parallel()
 	home := t.TempDir()
