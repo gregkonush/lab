@@ -135,6 +135,8 @@ export const makeReplayJevTiming = (input: {
           }),
           () =>
             Effect.gen(function* () {
+              const failed = yield* Ref.get(failure)
+              if (failed !== undefined) return yield* failed
               const prepared = yield* Effect.fromResult(prepareJevRequest(raw)).pipe(
                 Effect.mapError((cause) => new ReplayBrokerFailure({ message: 'Invalid replay Jev request', cause })),
               )
@@ -162,6 +164,14 @@ export const makeReplayJevTiming = (input: {
                   }
                   // Retain paid responses before advancing deadlines can interrupt their native evaluation.
                   yield* input.retain(call)
+                  if (call.outcome.status === 'FAILED' && call.outcome.httpStatus === 402)
+                    yield* Ref.set(
+                      failure,
+                      new ReplayBrokerFailure({
+                        message: 'Jev replay stopped after HTTP 402 payment required',
+                        cause: Exit.isFailure(exit) ? exit.cause : undefined,
+                      }),
+                    )
                   return { exit, providerCompletedAt }
                 }),
               )

@@ -19,7 +19,7 @@ metadata:
     app.kubernetes.io/name: bayn-opencode
     app.kubernetes.io/part-of: bayn
 spec:
-  replicas: 1
+  replicas: 0
   revisionHistoryLimit: 2
   strategy:
     type: Recreate

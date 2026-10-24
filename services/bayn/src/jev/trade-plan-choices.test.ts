@@ -55,14 +55,16 @@ const plansForRange = (
 
 test.each([0, 0.1, 0.25])('a %s USD observed range retains a fee-covering hypothetical plan', (range) => {
   const { plans, question, economics } = plansForRange(range)
-  expect(economics.breakEvenExitBidUsd).toBeGreaterThan(100.5)
+  expect(economics.takeProfitBreakEvenLimitUsd).toBeGreaterThan(100.5)
   expect(plans.length).toBeGreaterThan(0)
   expect(Object.keys(question.criteria)).toContain('wait')
   expect(Object.keys(question.criteria)).toContain('avoid')
   for (const plan of plans) {
     expect(BigInt(plan.estimatedTargetNetMicros)).toBeGreaterThan(BigInt(plan.acquisitionCostMicros))
     expect(BigInt(plan.estimatedStopNetMicros)).toBeLessThan(BigInt(plan.acquisitionCostMicros))
-    expect(Number(plan.levels.profitLimitPriceMicros) / 1_000_000).toBeGreaterThanOrEqual(economics.breakEvenExitBidUsd)
+    expect(Number(plan.levels.profitLimitPriceMicros) / 1_000_000).toBeGreaterThanOrEqual(
+      economics.takeProfitBreakEvenLimitUsd,
+    )
     expect(plan.levels.maximumHoldingMinutes).toBe(15)
   }
 })
