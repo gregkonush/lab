@@ -26,13 +26,33 @@ providers need their own credentials or credits; a catalog entry does not grant
 access or make paid inference free. Provider credentials are stored only in the
 personal home. No personal provider credentials are mounted into Bayn research.
 
-The server creates a private 256-bit password once. Use native pairing from an
-administrator-controlled pod session to connect the browser; do not print the
-password in logs, commit it or place it in a URL. Unauthenticated requests to the
+The server creates a private 256-bit password once. Run `bash services/opencode/pair.sh`
+from an administrator's checkout to create a one-time browser link. The helper
+uses the deployed server's authenticated `/api/pair` endpoint. The password stays
+inside the pod, and the printed link expires after five minutes. Paste the link
+into the browser's **Connect to a server** screen. Keep both the password and
+pairing links out of logs and commits. Unauthenticated requests to the
 server API and pairing endpoint must fail. Tailnet membership and the scoped
 Ingress NetworkPolicy provide a separate network boundary; Funnel is disabled.
 
-## Research state migration
+## Connect ChatGPT from a remote browser
+
+1. In **Settings > Providers**, connect **OpenAI > Sign in with ChatGPT** and
+   complete the OpenAI account verification in your browser.
+2. When OpenAI returns to a localhost callback page, copy its complete address.
+   Run `bash services/opencode/complete-chatgpt-login.sh` from an administrator's
+   checkout and paste it into the hidden prompt. Keep this URL out of chat,
+   shell history and logs.
+3. Return to OpenCode and confirm **ChatGPT connected** before selecting a model.
+
+The [pinned upstream provider](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/plugin/provider/chatgpt.ts)
+binds a random loopback callback inside the pod. The helper verifies that the port
+belongs to the deployed OpenCode process, then delivers the callback to it.
+Native OpenCode retains state, PKCE, client identity and ID-token verification.
+Credentials remain in the personal PVC. **Codex device code (legacy)** is also
+available when you prefer a sign-in without a loopback browser callback.
+
+## Retained research state
 
 Bayn's bounded research gateway moves to `opencode-research` within this
 application. It retains its pinned CLI, read-only agent, one-call relay,
@@ -43,26 +63,28 @@ source revisions. The HTTP source attestation must match the response's server
 revision, while model/configuration/request/stream/cost/timing evidence still
 passes the existing verifier. A server revision cannot be relabeled as the worker.
 
-The migration must run after GitOps scales the old writer to zero **and no old
-pod remains, including terminating pods**. Retain the original protected PVC.
-Reviewed source/restore Jobs use a frozen, previously qualified helper image, so
-automatic image promotions cannot mutate their immutable pod templates. They run
-the exact reviewed migration script supplied by the operator, recording its revision
-and hash. Jobs mount only the old/new research PVCs, with no tokens
-or external network access. Stream `migrate_state.py export` from the read-only
-source Job through authenticated `kubectl exec` to `migrate_state.py restore` in
-the destination Job, using shell `pipefail`. The source and destination manifests
-must match, SQLite quick checks must pass, and source files must be unchanged.
-Restore binds the source inventory hash before activation, refuses an existing destination
-and rejects escaping archive entries. Use `bash services/opencode/migrate.sh <private-evidence-directory>`
-from the reviewed checkout after both migration Jobs are ready.
-The target gateway waits for the atomic `.migration-complete.json` marker before
-starting; failed or interrupted imports cannot silently create fresh sessions.
-Keep both archives and exact pre/post claim/session identities as delivery evidence.
-Remove temporary Jobs only after proof. Roll back before new requests by restoring
-the old committed configuration and its untouched PVC. After new requests, stop
-both writers and migrate the latest state back with the same checks first; never
-activate two writers for one study or retry an already claimed financial attempt.
+The protected `bayn/bayn-opencode-state` PVC retains the original volume as
+recovery evidence. No active workload mounts it. The temporary migration Jobs and
+old gateway Deployment, Service and NetworkPolicy are retired after the verified
+transfer. The gateway continues to use `/var/lib/bayn-opencode` within its separate
+`opencode-research-state` PVC so native paths and the frozen configuration stay valid.
+
+The one-time migration implementation is retained in [PR #15336](https://github.com/proompteng/lab/pull/15336).
+It stops the original writer before export, verifies the source PVC identity,
+binds the archive to a frozen inventory hash and checks every restored byte and
+SQLite database before activation. `migrate_state.py` retains the offline archive
+verification and restore functions. Restore refuses an existing destination and
+rejects escaping paths and unsafe links. The target waits for the atomic
+`.migration-complete.json` marker before starting.
+
+[Migration proof](migration-proof.json) records the archive and frozen inventory
+hashes, source and target PVC identities, and the retained session and claim counts.
+The private archive contains the source bytes and remains outside the repository.
+
+Keep the private migration archive and pre/post native session and claim identities
+with the delivery evidence. Before recovery, stop the active writer. After any new
+requests, migrate the latest state with the same checks before changing writers.
+Never activate two writers for one study or retry an already claimed financial attempt.
 
 Image delivery is reviewed main -> immutable `lab/opencode` publication ->
 Warehouse/Stage `opencode` in `lab-delivery` -> `kargo/opencode` -> Argo. The Stage
