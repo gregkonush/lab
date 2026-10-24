@@ -44,7 +44,7 @@ for _ in {1..45}; do
 done
 if [[ "$ready" != true ]]; then docker logs "$container" >&2; exit 1; fi
 docker exec "$container" bash -euc '
-for tool in opencode node bun go python3 uv ruby git gh nix kubectl helm kustomize kubeconform tofu buf make cc cmake rustc cargo rustfmt cargo-clippy ruff ssh sqlite3 docker buildctl jq rg; do
+for tool in opencode node bun go python3 uv ruby git gh nix kubectl helm kustomize kubeconform tofu buf make cc cmake rustc cargo rustfmt cargo-clippy ruff lua protoc promtool alloy ssh sqlite3 docker buildctl jq rg; do
   command -v "$tool" >/dev/null
 done
 cd /workspace/lab

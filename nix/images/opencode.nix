@@ -1,5 +1,6 @@
 { pkgs, lib, repoRoot, repoRevision ? "dirty", bun, nodejs, ciToolchain }:
 let
+  validation = import ./opencode-validation-tools.nix { inherit pkgs; };
   cli = import ./opencode-cli.nix { inherit pkgs lib; };
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
   depsHash = import ./bayn-deps-hash.nix;
@@ -9,7 +10,7 @@ let
       "bun build services/bayn/src/opencode-command.ts --target=node --format=esm --packages=bundle --outfile=research.js"
     ];
     runtimeInstallPhase = ''
-      mkdir -p "$out/app/opencode" "$out/usr/bin"
+      mkdir -p "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
       cp "$TMPDIR/work/research.js" "$out/app/opencode/research.js"
       printf '{"type":"module"}\n' > "$out/app/opencode/package.json"
@@ -17,15 +18,14 @@ let
   };
   tools = pkgs.buildEnv {
     name = "opencode-development-tools";
-    paths = [ ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy pkgs.ruff ];
+    paths = [ ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy pkgs.ruff pkgs.lua5_4 pkgs.protobuf validation.promtool validation.alloy ];
     pathsToLink = [ "/bin" ];
     ignoreCollisions = true;
   };
   start = pkgs.writeShellScriptBin "opencode-server" (builtins.readFile (repoRoot + "/services/opencode/start.sh"));
   root = pkgs.runCommand "opencode-root" { } ''
-    mkdir -p "$out/app/opencode" "$out/usr/bin"
+    mkdir -p "$out/usr/bin"
     ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
-    cp ${repoRoot}/services/opencode/migrate_state.py "$out/app/opencode/migrate_state.py"
     mkdir -p "$out/etc"
     printf 'opencode:x:65532:65532:OpenCode:/var/lib/opencode:/bin/bash\n' > "$out/etc/passwd"
     printf 'opencode:x:65532:\n' > "$out/etc/group"

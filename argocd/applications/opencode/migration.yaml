@@ -30,8 +30,9 @@ spec:
           type: RuntimeDefault
       containers:
         - name: import
-          image: opencode-main
-          command: [bash, -c, 'until test -s /data/state/.migration-complete.json; do sleep 5; done']
+          # Frozen helper from the already qualified Bayn release; not a promotion input.
+          image: registry.ide-newton.ts.net/lab/bayn@sha256:dc282c860fb41a56da60fce455530dabd534c4874ef8400bad7968c72ebede32
+          command: [bash, -c, 'until test -f /tmp/import-complete; do sleep 5; done']
           resources:
             requests:
               cpu: 100m

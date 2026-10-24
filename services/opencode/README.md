@@ -3,7 +3,8 @@
 The `opencode` Argo Application owns namespace `opencode`. Its native OpenCode
 2.1.3 server runs at https://opencode.ide-newton.ts.net through a private Tailscale
 Ingress. The image includes the same pinned `ciToolchain` as lab development,
-plus a compiler, Rust, SSH, SQLite and an init process. There is no Docker daemon
+plus a compiler, Rust/Clippy/Rustfmt, Ruff, Lua, Protobuf, SSH, SQLite, the CI-pinned
+Promtool/Alloy validators and an init process. There is no Docker daemon
 or Kubernetes service-account token in the development container. Docker/buildkit
 clients need a separately authorized remote engine; installing clients grants no
 cluster or registry authority.
@@ -44,7 +45,10 @@ passes the existing verifier. A server revision cannot be relabeled as the worke
 
 The migration must run after GitOps scales the old writer to zero **and no old
 pod remains, including terminating pods**. Retain the original protected PVC.
-Reviewed source/restore Jobs mount only the old/new research PVCs, with no tokens
+Reviewed source/restore Jobs use a frozen, previously qualified helper image, so
+automatic image promotions cannot mutate their immutable pod templates. They run
+the exact reviewed migration script supplied by the operator, recording its revision
+and hash. Jobs mount only the old/new research PVCs, with no tokens
 or external network access. Stream `migrate_state.py export` from the read-only
 source Job through authenticated `kubectl exec` to `migrate_state.py restore` in
 the destination Job, using shell `pipefail`. The source and destination manifests
