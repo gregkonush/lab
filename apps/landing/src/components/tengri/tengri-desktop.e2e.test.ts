@@ -2904,6 +2904,79 @@ test('does not replace the selected conversation when a background thread creati
   await expect(composer).toHaveValue('Unrelated new conversation draft')
 })
 
+for (const destination of ['selected', 'existing', 'new'] as const) {
+  test(`preserves drafts after thread creation rejects while ${destination}`, async ({ page }) => {
+    await mockTengri(page)
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        'tengri-conversations:microvm-ada',
+        JSON.stringify([{ id: 'thread-existing', title: 'Existing', updatedAt: 1 }]),
+      ),
+    )
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let creating = false
+    let rejectCreation = true
+    await page.route('**/api/tengri', async (route) => {
+      if (
+        route.request().method() !== 'POST' ||
+        route.request().postDataJSON().action !== 'create-thread' ||
+        !rejectCreation
+      )
+        return route.fallback()
+      creating = true
+      await held
+      return route.fulfill({ status: 503, json: { error: 'Creation failed for this test' } })
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const sidebar = chat.getByTestId('agent-conversation-sidebar')
+    const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+    await expect(composer).toBeEnabled()
+    await composer.fill('Original unsent message')
+    await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    try {
+      await expect.poll(() => creating).toBe(true)
+      if (destination !== 'selected') {
+        await composer.fill('Next pending draft')
+        await sidebar.locator('[data-conversation-id="thread-existing"]').click()
+        await expect(composer).toBeEnabled()
+        if (destination === 'new') await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+        await composer.fill('Unrelated draft')
+      }
+    } finally {
+      release()
+    }
+    if (destination === 'selected') {
+      await expect(composer).toHaveValue('Original unsent message')
+      await sidebar.locator('[data-conversation-id="thread-existing"]').click()
+      await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+      await expect(composer).toHaveValue('Original unsent message')
+    } else {
+      await expect(chat.getByRole('button', { name: 'Recover unsent draft 1', exact: true })).toBeEnabled()
+      await expect(composer).toHaveValue('Unrelated draft')
+      await chat.getByRole('button', { name: 'Recover unsent draft 1', exact: true }).click()
+      await expect(composer).toHaveValue('Original unsent message')
+      await chat.getByRole('button', { name: 'Recover unsent draft 1', exact: true }).click()
+      await expect(composer).toHaveValue('Next pending draft')
+      if (destination === 'existing') {
+        await sidebar.locator('[data-conversation-id="thread-existing"]').click()
+        await expect(composer).toHaveValue('Unrelated draft')
+        await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+        await expect(composer).toHaveValue('Next pending draft')
+      } else {
+        await chat.getByRole('button', { name: 'Recover unsent draft 1', exact: true }).click()
+        await expect(composer).toHaveValue('Unrelated draft')
+      }
+    }
+    rejectCreation = false
+    await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    await expect(sidebar.locator('[data-conversation-id="thread-1"]')).toBeVisible()
+  })
+}
+
 for (const outcome of ['completed', 'uncertain'] as const) {
   test(`handles a ${outcome} follow-up without losing or duplicating the message`, async ({ page }) => {
     const run: TengriCodexRun = {

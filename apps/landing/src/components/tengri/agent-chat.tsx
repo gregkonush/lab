@@ -210,6 +210,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     selection: number
     draft?: { text: string; images: DraftImage[] }
   } | null>(null)
+  const [recoverableDrafts, setRecoverableDrafts] = useState<{ id: string; text: string; images: DraftImage[] }[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
   const [threadResumeRevision, setThreadResumeRevision] = useState(0)
@@ -530,6 +531,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     autoApprovalAttempts.current.clear()
     resolvedApprovals.current.clear()
     draftsRef.current.clear()
+    creatingDraftRef.current = null
+    setRecoverableDrafts([])
     lastScrollTop.current = 0
     setPrompt('')
     setFollowingConversation(true)
@@ -1255,10 +1258,24 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       const stillSelected =
         (submittedThread && threadIdRef.current === submittedThread) ||
         conversationSelection.current === selectedConversation
+      if (!submittedThread && !stillSelected && creatingDraftRef.current?.selection === selectedConversation) {
+        const nextDraft = creatingDraftRef.current.draft
+        setRecoverableDrafts((current) => [
+          ...current,
+          { id: submissionId, text, images: draftImages },
+          ...(nextDraft?.text || nextDraft?.images.length ? [{ id: `${submissionId}:next`, ...nextDraft }] : []),
+        ])
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+        return
+      }
       const draft = stillSelected
         ? { text: promptRef.current?.value ?? '', images: imagesRef.current }
         : draftsRef.current.get(submittedThread)
       const restoreDraft = !draft?.text && !draft?.images.length
+      if (!submittedThread && !restoreDraft) {
+        setRecoverableDrafts((current) => [...current, { id: submissionId, text, images: draftImages }])
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+      }
       if (restoreDraft) {
         setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
         draftsRef.current.set(submittedThread, { text, images: draftImages })
@@ -1271,6 +1288,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
       }
     } finally {
+      if (creatingDraftRef.current?.selection === selectedConversation) creatingDraftRef.current = null
       setSubmitting(false)
     }
   }
@@ -1409,6 +1427,24 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     } finally {
       setInterrupting(false)
     }
+  }
+
+  function recoverDraft(id: string) {
+    if (submitting || !canChangeConversation) return
+    const recovered = recoverableDrafts.find((draft) => draft.id === id)
+    if (!recovered) return
+    const displaced = threadIdRef.current ? draftsRef.current.get('') : { text: prompt, images: imagesRef.current }
+    setRecoverableDrafts((current) => [
+      ...current.filter((draft) => draft.id !== id),
+      ...(displaced?.text || displaced?.images.length ? [{ id: crypto.randomUUID(), ...displaced }] : []),
+    ])
+    showChat()
+    removeStoredThread(agentId)
+    resetTranscriptUi('')
+    draftsRef.current.delete('')
+    setPrompt(recovered.text)
+    commitImages(recovered.images)
+    focusComposerAfterConversationChange()
   }
 
   function resetTranscriptUi(nextThreadId: string) {
@@ -1815,6 +1851,17 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                 state={eventStreamState}
                 reconnecting={connectionNotice && !errorMessage}
               />
+              {recoverableDrafts.map((draft, index) => (
+                <button
+                  key={draft.id}
+                  type="button"
+                  disabled={submitting || !canChangeConversation}
+                  className="mb-2 rounded px-1 text-label-12 text-zinc-400 hover:text-zinc-200"
+                  onClick={() => recoverDraft(draft.id)}
+                >
+                  Recover unsent draft {index + 1}
+                </button>
+              ))}
               {threadId && !threadReady && recoveryFailed && !(error instanceof AgentConnectionError) ? (
                 <button
                   type="button"
