@@ -1,15 +1,20 @@
+import { jevInstructions } from '../jev/instructions'
+import { replayTestInstruments } from '../testing/replay-instruments'
+import { equityMarketProfile } from '../jev/markets'
+
+import { exchangeSessions } from '../market-hours'
 import { expect, test } from 'bun:test'
 import { NodeServices } from '@effect/platform-node'
 import { gzipSync } from 'node:zlib'
-import { Clock, Effect, FileSystem, Layer, Result, Schema } from 'effect'
+import { Clock, Effect, FileSystem, Layer, Result } from 'effect'
 import { TestClock } from 'effect/testing'
 import fc from 'fast-check'
 
 import { OrderSide } from '../execution/contracts'
-import { canonicalHashV1, sha256 } from '../hash'
+import { sha256, canonicalHashV1Result } from '../hash'
 import { nativeJevFixture, nativeJevInference } from '../jev/native.test-support'
 import { JevPurpose } from '../jev/portfolio'
-import { loadQuoteBoundExecutionRiskPolicy } from '../observe-composition/decision-builder'
+import { loadExecutionRiskPolicy } from '../observe-composition/decision-builder'
 import { retainedReplayFixture, retainedReplayCaptureFixture } from '../testing/retained-replay-fixture'
 import { config } from '../testing/runtime-fixtures'
 import { jevModel } from '../jev/contract'
@@ -20,28 +25,36 @@ import { makeControlJevJournal } from './control-jev-journal'
 import { ControlInputCoverage, runControlPreflight } from './control-preflight'
 import {
   ControlManagementMode,
-  ControlStudyInputSchema,
+  ControlEntryMode,
   controlStudyDefinition,
   runControlSession,
   runControlStudy,
+  prepareControlStudy,
   type ControlCapital,
   type ControlMarket,
 } from './control-study'
 
 const fixture = nativeJevFixture()
-const openMs = Date.parse(fixture.snapshot.manifest.calendar.sessions[0]?.openAt ?? '')
+const openMs = Date.parse(exchangeSessions(fixture.snapshot.manifest.calendar)[0]?.openAt ?? '')
 const closeMs = openMs + 90 * 60_000
-const assumptions = { latencyMs: 100, slippageBps: 1, availableLiquidityPpm: 1_000_000, feeMultiplierPpm: 1_000_000 }
+const assumptions = {
+  instruments: replayTestInstruments,
+  latencyMs: 100,
+  slippageBps: 1,
+  availableLiquidityPpm: 1_000_000,
+  feeMultiplierPpm: 1_000_000,
+}
 const simulate = (
   options: {
     missingSnapshot?: boolean
     missingSelection?: boolean
     noSignal?: boolean
     excludedSymbols?: readonly string[]
-    accountScheduledOpportunities?: boolean
     sessionDurationMs?: number
     routingLatencyMs?: number
     managedLatencyMs?: number
+    nativeEntry?: boolean
+    entryAction?: string
     residualShock?: boolean
     entrySize?: number
     canceledEntries?: boolean
@@ -63,6 +76,7 @@ const simulate = (
       const marketClock = yield* TestClock.make()
       let clock = openMs - 1
       let snapshots = 0
+      let providerCalls = 0
       const observations: { atMs: number; rangeEndMs: number }[] = []
       const market: ControlMarket = {
         advanceTo: (atMs) =>
@@ -75,7 +89,7 @@ const simulate = (
           Effect.sync(() => {
             expect(atMs).toBe(clock)
             const original = fixture.snapshot.latestQuotes[symbol]
-            if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 44 * 60_000))
+            if (original === undefined || (options.missingExitQuotes === true && atMs > openMs + 15 * 60_000))
               return undefined
             const at = new Date(atMs).toISOString()
             const bidPrice = options.bidPriceAtMs?.(atMs, original.bidPrice) ?? original.bidPrice
@@ -88,11 +102,21 @@ const simulate = (
               bidSize: atMs === options.zeroBidAtMs ? 0 : options.tinyExit === true ? 1 : 1000,
               askSize: options.canceledEntries === true ? 0 : (options.entrySize ?? 1000),
             }
-            return { value, sequence: 1, availableAtMs: atMs, recordHash: canonicalHashV1(value) }
+            return {
+              value,
+              sequence: 1,
+              availableAtMs: atMs,
+              recordHash: Result.getOrThrow(canonicalHashV1Result(value)),
+            }
           }),
         snapshot: (query) =>
           Effect.sync(() => {
             snapshots += 1
+            if (options.nativeEntry === true)
+              return {
+                status: 'AVAILABLE' as const,
+                snapshot: nativeJevFixture(JevPurpose.Entry, query.observedAt).snapshot,
+              }
             expect(Date.parse(query.observedAt)).toBe(clock)
             expect(query.candidateEvidencePolicy).toBe(fixture.protocol.candidateEvidencePolicy)
             observations.push({ atMs: clock, rangeEndMs: Date.parse(query.rangeEndAt) })
@@ -146,7 +170,7 @@ const simulate = (
                     ...value,
                     eventAt: query.observedAt,
                     ingestedAt: query.observedAt,
-                    ...(options.noSignal === true && symbol !== fixture.protocol.benchmarkSymbol ? { askSize: 0 } : {}),
+                    ...(options.noSignal === true && symbol !== 'SPY' ? { askSize: 0 } : {}),
                   },
                 ]),
               ),
@@ -159,11 +183,11 @@ const simulate = (
             return { status: 'AVAILABLE' as const, snapshot }
           }),
       }
-      const risk = yield* loadQuoteBoundExecutionRiskPolicy('control-session-test', fixture.protocol.universe)
+      const risk = yield* loadExecutionRiskPolicy('control-session-test', equityMarketProfile.universe)
       const providerClock = yield* TestClock.make()
       const fs = yield* FileSystem.FileSystem
       const management =
-        options.managedLatencyMs === undefined
+        options.managedLatencyMs === undefined && options.nativeEntry !== true
           ? null
           : {
               runId: '3'.repeat(64),
@@ -176,11 +200,12 @@ const simulate = (
                 provider: {
                   evaluate: (input: Parameters<typeof nativeJevInference>[0]) =>
                     Effect.gen(function* () {
+                      providerCalls += 1
                       yield* providerClock.adjust(options.managedLatencyMs ?? 0)
                       return nativeJevInference(
                         input,
                         new Date(yield* providerClock.currentTimeMillis).toISOString(),
-                        'hold',
+                        options.nativeEntry === true ? (options.entryAction ?? 'enter') : 'hold',
                       )
                     }),
                 },
@@ -188,7 +213,12 @@ const simulate = (
               costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
             }
       const report = yield* runControlSession({
-        policy: options.residualShock === true ? ControlPolicy.ResidualShock : ControlPolicy.RelativeMomentum,
+        policy:
+          options.nativeEntry === true
+            ? ControlPolicy.JevEntry
+            : options.residualShock === true
+              ? ControlPolicy.ResidualShock
+              : ControlPolicy.RelativeMomentum,
         protocol: fixture.protocol,
         risk: {
           ...risk,
@@ -208,36 +238,76 @@ const simulate = (
           accruedExternalCostMicros: '0',
         },
         dataCostMicros: options.dataCostMicros ?? '0',
-        targetWeight: 0.1,
+        targetWeight:
+          options.nativeEntry === true
+            ? Math.floor(
+                Math.min(fixture.protocol.maximumGrossWeight, fixture.protocol.maximumSymbolWeight) * 1_000_000,
+              ) / 1_000_000
+            : 0.1,
         decisionLatencyMs: options.decisionLatencyMs ?? 1000,
         pollIntervalMs: options.pollIntervalMs ?? 30_000,
-        ...(options.accountScheduledOpportunities === true ? { accountScheduledOpportunities: true } : {}),
         assumptions: { ...assumptions, latencyMs: options.routingLatencyMs ?? assumptions.latencyMs },
-        eligibleSymbols: new Set(options.emptyAssets === true ? [] : fixture.protocol.candidateSymbols),
+        eligibleSymbols: new Set(options.emptyAssets === true ? [] : equityMarketProfile.candidateSymbols),
         market,
-        management,
+        management: options.nativeEntry === true ? null : management,
+        ...(options.nativeEntry === true && management !== null ? { entry: management } : {}),
       }).pipe(Effect.provideService(Clock.Clock, marketClock))
-      return { report, snapshots, observations }
+      return { report, snapshots, observations, providerCalls }
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   )
 
-test('scheduled accounting covers management work beyond close without inventing controller evidence', async () => {
+test('native Jev entry uses measured commitment before execution and mechanical exits on its own portfolio', async () => {
   const { report } = await simulate({
-    accountScheduledOpportunities: true,
-    managedLatencyMs: 8 * 60_000,
-    sessionDurationMs: 37 * 60_000 + 45_000,
+    nativeEntry: true,
+    managedLatencyMs: 25,
+    sessionDurationMs: 45 * 60_000,
+    decisionLatencyMs: 9000,
   })
-  expect(report.simulatedOpportunityAccounting).toMatchObject({
-    scheduledPollCount: 76,
-    accountedPollCount: 76,
-    engineStartedPollCount: 63,
-    dispositionCounts: { WARMUP: 61, SELECTED: 1, EXITING: 1, SKIPPED_WHILE_BUSY: 13 },
-    capturedControllerStarts: null,
-    capturedControllerTerminals: null,
+  expect(report.entryMode).toBe(ControlEntryMode.Jev)
+  expect(report.managementMode).toBe(ControlManagementMode.Mechanical)
+  expect(report.modelCallCount).toBeGreaterThan(0)
+  expect(BigInt(report.knownModelCostMicros)).toBeGreaterThan(0n)
+  expect(report.completedEpisodes).toBeGreaterThan(0)
+  expect(report.decisions.some((decision) => decision.status.startsWith('MANAGEMENT_'))).toBeFalse()
+  const selected = report.decisions.find((decision) => decision.status === 'SELECTED' && 'nativeEntry' in decision)
+  if (selected === undefined || !('nativeEntry' in selected) || selected.nativeEntry === undefined)
+    throw new Error('Expected committed native entry')
+  const committedAtMs = Date.parse(selected.nativeEntry.committedAt)
+  expect(committedAtMs).toBeGreaterThan(Date.parse(selected.observedAt))
+  expect(committedAtMs - Date.parse(selected.observedAt)).toBeLessThan(9000)
+  expect(report.orders[0]?.submittedAt).toBe(selected.nativeEntry.committedAt)
+  const accounting = report.simulatedOpportunityAccounting
+  if (accounting === undefined) throw new Error('Expected schedule accounting')
+  expect(accounting.scheduledPollCount).toBe(90)
+  expect(report.ledger.positions).toEqual([])
+}, 30_000)
+
+test('native entry abstentions retain paid calls without submitting orders', async () => {
+  const wait = await simulate({
+    nativeEntry: true,
+    entryAction: 'wait',
+    managedLatencyMs: 10,
+    sessionDurationMs: 22 * 60_000,
+    pollIntervalMs: 120_000,
   })
-  expect(report.issues).toContain('MANAGEMENT_AFTER_CLOSE')
-  expect(report.netPnlAfterKnownCostsMicros).toBeNull()
-})
+  expect(wait.report.orders).toEqual([])
+  expect(wait.report.decisions.filter((decision) => decision.status === 'NO_SIGNAL').length).toBeGreaterThan(0)
+  expect(wait.report.modelCallCount).toBeGreaterThan(0)
+  expect(BigInt(wait.report.knownModelCostMicros)).toBeGreaterThan(0n)
+}, 30_000)
+
+test('incomplete expired native entry evidence cannot submit orders', async () => {
+  const expired = await simulate({
+    nativeEntry: true,
+    managedLatencyMs: fixture.protocol.inferenceValidityMs,
+    sessionDurationMs: 22 * 60_000,
+    pollIntervalMs: 120_000,
+  })
+  expect(expired.providerCalls).toBeGreaterThan(0)
+  expect(expired.report.orders).toEqual([])
+  expect(expired.report.completion).toBe('INCOMPLETE')
+  expect(expired.report.missingDecisions).toBeGreaterThan(0)
+}, 30_000)
 
 test.each([
   [0, 30_000, 0],
@@ -248,7 +318,7 @@ test.each([
 ] as const)(
   'scheduled accounting covers %d ms at %d ms cadence with %d warmup polls',
   async (sessionDurationMs, pollIntervalMs, count) => {
-    const { report } = await simulate({ accountScheduledOpportunities: true, sessionDurationMs, pollIntervalMs })
+    const { report } = await simulate({ sessionDurationMs, pollIntervalMs })
     expect(report.simulatedOpportunityAccounting).toEqual({
       schemaVersion: 'bayn.simulated-opportunity-accounting.v1',
       schedule: {
@@ -282,23 +352,23 @@ test.each([
 )
 
 test.each([
-  [{ noSignal: true }, { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 }],
+  [{ noSignal: true }, { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 84 }],
   [
     { missingSnapshot: true },
-    { INPUT_UNAVAILABLE: 109, WINDOW_ALREADY_CONSUMED: 0, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 0 },
+    { INPUT_UNAVAILABLE: 167, WINDOW_ALREADY_CONSUMED: 0, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 0 },
   ],
   [
     { missingSelection: true },
-    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 55, NO_SIGNAL: 0 },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 84, NO_SIGNAL: 0 },
   ],
   [
-    { excludedSymbols: fixture.protocol.candidateSymbols },
-    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 54, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 55 },
+    { excludedSymbols: equityMarketProfile.candidateSymbols },
+    { INPUT_UNAVAILABLE: 0, WINDOW_ALREADY_CONSUMED: 83, SELECTION_UNAVAILABLE: 0, NO_SIGNAL: 84 },
   ],
 ] as const)('scheduled accounting preserves missing, excluded and consumed outcomes %#', async (options, expected) => {
-  const { report } = await simulate({ ...options, accountScheduledOpportunities: true })
+  const { report } = await simulate(options)
   expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
-    WARMUP: 61,
+    WARMUP: 3,
     HOLDING: 0,
     EXITING: 0,
     ENTRY_CUTOFF: 10,
@@ -310,8 +380,8 @@ test.each([
   expect(report.simulatedOpportunityAccounting?.engineStartedPollCount).toBe(180)
   expect(report.completedEpisodes).toBe(0)
   if ('excludedSymbols' in options) {
-    expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(55)
-    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(55 * 15)
+    expect(report.simulatedOpportunityAccounting?.entrySnapshotsWithCandidateExclusions).toBe(84)
+    expect(report.simulatedOpportunityAccounting?.excludedCandidateObservationCount).toBe(84 * 15)
     expect(report.decisions[0]?.exclusions).toHaveLength(15)
   }
 })
@@ -320,26 +390,25 @@ test.each([
   [
     30_000,
     30_000,
-    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 0, WINDOW_ALREADY_CONSUMED: 54, ENTRY_CUTOFF: 10 },
+    { WARMUP: 3, SELECTED: 84, SKIPPED_WHILE_BUSY: 0, WINDOW_ALREADY_CONSUMED: 83, ENTRY_CUTOFF: 10 },
     180,
   ],
   [
     30_000,
     30_001,
-    { WARMUP: 61, SELECTED: 55, SKIPPED_WHILE_BUSY: 55, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 9 },
-    125,
+    { WARMUP: 3, SELECTED: 84, SKIPPED_WHILE_BUSY: 84, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 9 },
+    96,
   ],
   [
     17_000,
     60_000,
-    { WARMUP: 106, SELECTED: 49, SKIPPED_WHILE_BUSY: 147, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 16 },
-    171,
+    { WARMUP: 4, SELECTED: 74, SKIPPED_WHILE_BUSY: 222, WINDOW_ALREADY_CONSUMED: 0, ENTRY_CUTOFF: 18 },
+    96,
   ],
 ] as const)(
   'scheduled accounting separates work at %d ms cadence and %d ms duration',
   async (pollIntervalMs, decisionLatencyMs, expected, started) => {
     const { report } = await simulate({
-      accountScheduledOpportunities: true,
       emptyAssets: true,
       pollIntervalMs,
       decisionLatencyMs,
@@ -359,13 +428,12 @@ test.each([
 
 test('scheduled accounting observes the exact warmup boundary and covers work ending at close', async () => {
   const { report } = await simulate({
-    accountScheduledOpportunities: true,
     pollIntervalMs: 17_000,
     decisionLatencyMs: 20 * 60_000,
     sessionDurationMs: 40 * 60_000,
   })
   expect(report.simulatedOpportunityAccounting?.dispositionCounts).toEqual({
-    WARMUP: 106,
+    WARMUP: 4,
     HOLDING: 0,
     EXITING: 0,
     ENTRY_CUTOFF: 0,
@@ -373,8 +441,8 @@ test('scheduled accounting observes the exact warmup boundary and covers work en
     INPUT_UNAVAILABLE: 0,
     SELECTION_UNAVAILABLE: 0,
     NO_SIGNAL: 0,
-    SELECTED: 1,
-    SKIPPED_WHILE_BUSY: 35,
+    SELECTED: 2,
+    SKIPPED_WHILE_BUSY: 136,
   })
   expect(report.simulatedOpportunityAccounting?.accountedPollCount).toBe(142)
   expect(report.orders).toHaveLength(0)
@@ -389,11 +457,9 @@ test.each([
   { excludedSymbols: ['AAPL'] },
   { routingLatencyMs: 45_000 },
   { residualShock: true, entrySize: 4, tinyExit: true },
-])('scheduled accounting preserves all existing economic evidence %#', async (options) => {
-  const baseline = (await simulate(options)).report
-  const { simulatedOpportunityAccounting: accounting, ...observed } = (
-    await simulate({ ...options, accountScheduledOpportunities: true })
-  ).report
+])('scheduled accounting reproduces the same economics and complete poll inventory %#', async (options) => {
+  const { simulatedOpportunityAccounting: _accounting, ...baseline } = (await simulate(options)).report
+  const { simulatedOpportunityAccounting: accounting, ...observed } = (await simulate(options)).report
   expect(observed).toEqual(baseline)
   expect(accounting?.scheduledPollCount).toBe(180)
   expect(accounting?.accountedPollCount).toBe(180)
@@ -418,7 +484,6 @@ test('property: scheduled accounting covers non-divisible sessions without addin
       fc.integer({ min: 0, max: 60_000 }),
       async (pollIntervalMs, sessionDurationMs, decisionLatencyMs) => {
         const { report } = await simulate({
-          accountScheduledOpportunities: true,
           emptyAssets: true,
           pollIntervalMs,
           sessionDurationMs,
@@ -530,7 +595,7 @@ test('decision latency does not accumulate into skipped signal windows while fla
   const { report, observations } = await simulate({ emptyAssets: true, pollIntervalMs: 60_000 })
   expect(report.orders).toHaveLength(0)
   expect(observations.map(({ rangeEndMs }) => rangeEndMs)).toEqual(
-    Array.from({ length: 54 }, (_, index) => openMs + (30 + index) * 60_000),
+    Array.from({ length: 83 }, (_, index) => openMs + (1 + index) * 60_000),
   )
   expect(observations.every(({ atMs }) => (atMs - openMs) % 60_000 === 0)).toBeTrue()
 })
@@ -552,15 +617,15 @@ test('a decision longer than the poll interval resumes at the first available sc
 })
 
 test('an equity peak between minute marks blocks re-entry after the drawdown limit is exceeded', async () => {
-  const peakStartMs = openMs + 40 * 60_000 + 20_000
-  const peakEndMs = openMs + 40 * 60_000 + 45_000
+  const peakStartMs = openMs + 11 * 60_000 + 20_000
+  const peakEndMs = openMs + 11 * 60_000 + 45_000
   const { report } = await simulate({
-    maximumDrawdownMicros: '100000000',
-    bidPriceAtMs: (atMs, referencePrice) => referencePrice + (atMs >= peakStartMs && atMs < peakEndMs ? 100 : 0),
+    maximumDrawdownMicros: '40000000',
+    bidPriceAtMs: (atMs, referencePrice) => referencePrice * (atMs >= peakStartMs && atMs < peakEndMs ? 1.006 : 1),
   })
   expect(report.completion).toBe('COMPLETE')
-  expect(BigInt(report.closingCapital.peakNetEquityMicros)).toBeGreaterThan(100_100_000_000n)
-  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(100_000_000n)
+  expect(BigInt(report.closingCapital.peakNetEquityMicros)).toBeGreaterThan(100_040_000_000n)
+  expect(BigInt(report.maximumMarkedDrawdownMicros)).toBeGreaterThan(40_000_000n)
   expect(report.completedEpisodes).toBe(1)
   expect(report.orders.filter((order) => order.side === OrderSide.Buy)).toHaveLength(1)
   expect(report.decisions.some((decision) => decision.status === 'RISK_OR_CAPITAL_BLOCKED')).toBeTrue()
@@ -574,7 +639,7 @@ test('missing observations retain zero-trade sessions as incomplete instead of i
   expect(report.missingDecisions).toBe(snapshots)
   expect(report.orders).toHaveLength(0)
   expect(report.completedEpisodes).toBe(0)
-  expect(canonicalHashV1(report)).toHaveLength(64)
+  expect(Result.getOrThrow(canonicalHashV1Result(report))).toHaveLength(64)
 })
 
 test('missing exit prices retain the position and missing marks through close', async () => {
@@ -606,7 +671,7 @@ test('small exit liquidity retries the same inventory and counts only completed 
   const { report } = await simulate({ tinyExit: true })
   const sells = report.ledger.fills.filter((fill) => fill.side === 'sell')
   expect(sells.length).toBeGreaterThan(report.completedEpisodes)
-  expect(sells.every((fill) => fill.quantityMicros === '1000000')).toBeTrue()
+  expect(sells.every((fill) => fill.quantityAtoms === '1000000000')).toBeTrue()
   expect(report.ledger.fills.filter((fill) => fill.side === 'buy').length).toBe(
     report.completedEpisodes + report.ledger.positions.length,
   )
@@ -676,39 +741,51 @@ test('a canceled residual-shock entry consumes the minute and unknown exit quote
   expect(missing.report.missingExecutionQuotes).toBeGreaterThan(0)
 })
 
+const compressedControlFixture = (body: string) => {
+  const compressed = gzipSync(body)
+  compressed[9] = 3
+  return compressed
+}
+
 const frozenControlFixture = () => {
   const retained = retainedReplayFixture()
   const source = {
     ...retained.manifest,
+    dataSha256: sha256(compressedControlFixture(retained.body)),
     coverageStartMs: Date.parse('2026-09-04T13:30:00Z'),
     coverageEndMs: Date.parse('2026-09-08T20:00:00Z'),
   }
   const { verification: _verification, ...build } = config.build
   const input = {
-    schemaVersion: 'bayn.control-study-input.v2',
+    schemaVersion: 'bayn.control-study-input.v9',
+    costObjective: 'ALL_COSTS',
+    entry: 'DETERMINISTIC',
+    turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
     management: ControlManagementMode.Mechanical,
     decisionLatencyMs: 1000,
     repeatedTargetWeightPpm: 100000,
     backtest: {
-      schemaVersion: 'bayn.backtest.v3',
+      schemaVersion: 'bayn.backtest.v5',
+      jevInstructionsHash: Result.getOrThrow(canonicalHashV1Result(jevInstructions)),
       inference: {
         mode: 'measured-provider',
+        maximumCalls: 1000,
         model: jevModel,
-        inputDefinition: 'bayn.jev-trading-signal-state.v2',
+        inputDefinition: 'bayn.jev-trading-signal-state.v17',
         costs: { inputMicrosPerMillionTokens: '42000', outputMicrosPerMillionTokens: '0' },
       },
       allocatedDataCostPerSessionMicros: '1000000',
       replicate: 'control-source-fixture',
-      sessionDates: ['2026-09-04', '2026-09-08'],
+      interval: { startAt: '2026-09-04T13:30:00.000Z', endAt: '2026-09-08T20:00:00.000Z' },
       source,
       openingCashMicros: '100000000000',
       fractionalTrading: false,
       calendar: [
         ...retained.input.input.calendar,
-        { date: '2026-09-08', open: '09:30', close: '16:00' },
-        { date: '2026-09-09', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-08', open: '09:30', close: '16:00' },
+        { session_open: '0930', session_close: '1600', date: '2026-09-09', open: '09:30', close: '16:00' },
       ],
-      assets: retained.input.protocol.universe.map((symbol, index) => ({
+      assets: equityMarketProfile.universe.map((symbol, index) => ({
         id: `12345678-1234-4234-8234-${String(index).padStart(12, '0')}`,
         symbol,
         class: 'us_equity',
@@ -733,57 +810,86 @@ const frozenControlFixture = () => {
   return { retained, source, input, receipt }
 }
 
-test('full frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
+test('net control comparisons require a priced data allocation', () => {
+  const { input, receipt } = frozenControlFixture()
+  expect(
+    Result.isFailure(
+      prepareControlStudy(
+        {
+          ...input,
+          backtest: { ...input.backtest, allocatedDataCostPerSessionMicros: null },
+        },
+        receipt,
+      ),
+    ),
+  ).toBe(true)
+})
+
+test('an explicit known-cost diagnostic retains unknown data allocation without admitting all-cost profit', () => {
+  const { input, receipt } = frozenControlFixture()
+  const prepared = Result.getOrThrow(
+    prepareControlStudy(
+      {
+        ...input,
+        costObjective: 'KNOWN_COST_DIAGNOSTIC',
+        backtest: { ...input.backtest, allocatedDataCostPerSessionMicros: null },
+      },
+      receipt,
+    ),
+  )
+  expect(prepared.dataCostMicros).toBeNull()
+  expect(prepared.input.costObjective).toBe('KNOWN_COST_DIAGNOSTIC')
+})
+
+test('control preparation rejects an interval without a complete regular session', () => {
+  const { input, receipt } = frozenControlFixture()
+  const prepared = prepareControlStudy(
+    {
+      ...input,
+      backtest: {
+        ...input.backtest,
+        interval: { startAt: '2026-09-04T14:00:00.000Z', endAt: '2026-09-04T15:00:00.000Z' },
+      },
+    },
+    receipt,
+  )
+  expect(Result.isFailure(prepared)).toBe(true)
+  if (Result.isFailure(prepared)) {
+    expect(prepared.failure._tag).toBe('ControlStudyFailure')
+    if (prepared.failure._tag === 'ControlStudyFailure')
+      expect(prepared.failure.message).toBe('Control interval must contain a complete regular broker session')
+  }
+})
+
+test('active-build frozen-source control runner produces reproducible hashed incomplete zero-trade sessions', async () => {
   const { retained, source, input, receipt } = frozenControlFixture()
   await Effect.runPromise(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem
       const directory = yield* fs.makeTempDirectoryScoped()
       const arrivals = `${directory}/arrivals.ndjson.gz`
-      yield* fs.writeFile(arrivals, gzipSync(retained.body))
+      yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
       const report = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
-      const legacyV3 = yield* runControlStudy(
-        {
-          ...input,
-          schemaVersion: 'bayn.control-study-input.v3',
-          turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment,
-        },
-        arrivals,
-        receipt,
-        { mode: ControlManagementMode.Mechanical },
-      )
-      expect([report.runId, report.reportHash, legacyV3.runId, legacyV3.reportHash]).toEqual([
-        '4bf32cd85cced9fef200083d643a3a837c9968f84712041e407f4b6705afc1be',
-        '459e3a6a045311f6e83f7a97296feb3c4da65ec5f98e043cf433f1dc28aaed3e',
-        '85229c530965ae8502eda1419fba41bc4217e45b14bb220cf1a959260da7203c',
-        '563aad78ecb75ab371da1bc903b24cb2653299314cb7859efb9f4e9f13bd25d1',
-      ])
-      expect(report.schemaVersion).toBe('bayn.control-study-report.v3')
+      const repeated = yield* runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical })
+      expect(repeated.reportHash).toBe(report.reportHash)
+      expect(report.schemaVersion).toBe('bayn.control-study-report.v7')
       expect(report.sessions).toHaveLength(6)
-      expect(report.definition).toEqual(controlStudyDefinition)
-      expect(report.sessions.some((session) => session.policy === ControlPolicy.ResidualShock)).toBeFalse()
+      expect(report.definition).toMatchObject({
+        ...controlStudyDefinition,
+        schemaVersion: 'bayn.control-study-definition.v12',
+      })
+      expect(
+        report.sessions.every((session) => session.completion === 'INCOMPLETE' && session.modelCallCount === 0),
+      ).toBeTrue()
       for (const session of report.sessions) {
-        expect(session.completion).toBe('INCOMPLETE')
         expect(session.completedEpisodes).toBe(0)
-        expect(session.netPnlAfterKnownCostsMicros).toBe('-1000000')
-        expect(session.marks.filter((mark) => Date.parse(mark.observedAt) % 60_000 === 0)).toHaveLength(391)
-        expect(session.missingDecisions).toBeGreaterThan(0)
-        const cumulativeCost = session.sessionDate === '2026-09-04' ? '1000000' : '2000000'
-        expect(session.closingCapital).toEqual({
-          cashMicros: input.backtest.openingCashMicros,
-          peakBrokerEquityMicros: input.backtest.openingCashMicros,
-          peakNetEquityMicros: input.backtest.openingCashMicros,
-          accruedExternalCostMicros: cumulativeCost,
-        })
-        expect(session.marks.at(-1)?.netEquityAfterKnownCostsMicros).toBe(
-          String(BigInt(input.backtest.openingCashMicros) - BigInt(cumulativeCost)),
-        )
+        expect(session.simulatedOpportunityAccounting?.scheduledPollCount).toBe(780)
+        expect(session.ledger.cashMicros).toBe(input.backtest.openingCashMicros)
       }
       const { reportHash, ...material } = report
-      expect(canonicalHashV1(material)).toBe(reportHash)
+      expect(Result.getOrThrow(canonicalHashV1Result(material))).toBe(reportHash)
       const falsificationInput = {
         ...input,
-        schemaVersion: 'bayn.control-study-input.v4',
         repeatedTargetWeightPpm: residualShockDefinition.targetWeightPpm,
         turnoverPolicy: EntryTurnoverPolicy.EntryAndExpectedExit,
         falsificationCandidate: residualShockDefinition.id,
@@ -791,66 +897,12 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       const falsification = yield* runControlStudy(falsificationInput, arrivals, receipt, {
         mode: ControlManagementMode.Mechanical,
       })
-      expect([falsification.runId, falsification.reportHash]).toEqual([
-        '978cc19244679d09ed1c588b2ab7702cc032f28b6aae937ae238277b6f24e98c',
-        'bc5a34cf3a1968ccf9a707df8c146cc9b4fa083a85c880a6b7fcb9d3b6cc99af',
-      ])
       expect(falsification.sessions).toHaveLength(8)
-      expect(falsification.sessions.filter((session) => session.policy === ControlPolicy.ResidualShock)).toHaveLength(2)
-      expect(
-        falsification.sessions.every((session) => session.modelCallCount === 0 && session.completion === 'INCOMPLETE'),
-      ).toBeTrue()
       expect(falsification.definition).toMatchObject({ falsificationCandidate: residualShockDefinition })
       expect(falsification.runId).not.toBe(report.runId)
-      for (const [legacyInput, legacyReport] of [
-        [{ ...input, turnoverPolicy: EntryTurnoverPolicy.ImmediateAdjustment }, legacyV3],
-        [falsificationInput, falsification],
-      ] as const) {
-        const accountedInput = {
-          falsificationCandidate: null,
-          ...legacyInput,
-          schemaVersion: 'bayn.control-study-input.v5',
-        }
-        const decoded = yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ControlStudyInputSchema))(
-          JSON.stringify(accountedInput),
-        )
-        expect(canonicalHashV1(decoded)).toBe(canonicalHashV1(accountedInput))
-        const accounted = yield* runControlStudy(accountedInput, arrivals, receipt, {
-          mode: ControlManagementMode.Mechanical,
-        })
-        expect(accounted.schemaVersion).toBe('bayn.control-study-report.v4')
-        expect(accounted.definition.schemaVersion).toBe('bayn.control-study-definition.v7')
-        expect(
-          accounted.sessions.map(({ simulatedOpportunityAccounting: _accounting, ...session }) => session),
-        ).toEqual(legacyReport.sessions)
-        expect(accounted.sessions.map((session) => session.simulatedOpportunityAccounting?.scheduledPollCount)).toEqual(
-          legacyReport.sessions.map(() => 780),
-        )
-        expect(accounted.sessions.map((session) => session.completedEpisodes)).toEqual(
-          legacyReport.sessions.map(() => 0),
-        )
-        expect(accounted.runId).not.toBe(legacyReport.runId)
-        const { reportHash: accountedHash, ...accountedMaterial } = accounted
-        expect(canonicalHashV1(accountedMaterial)).toBe(accountedHash)
-        expect(
-          Result.isFailure(
-            Schema.decodeUnknownResult(Schema.fromJsonString(ControlStudyInputSchema))(
-              JSON.stringify({ ...accountedInput, falsificationCandidate: 'UNREGISTERED' }),
-            ),
-          ),
-        ).toBeTrue()
-        for (const pollIntervalMs of [0, 1.5, Number.POSITIVE_INFINITY])
-          expect(
-            Result.isFailure(
-              Schema.decodeUnknownResult(ControlStudyInputSchema)({
-                ...accountedInput,
-                backtest: { ...input.backtest, cadence: { ...input.backtest.cadence, pollIntervalMs } },
-              }),
-            ),
-          ).toBeTrue()
-      }
       for (const invalid of [
-        { ...falsificationInput, management: ControlManagementMode.Jev },
+        { ...input, schemaVersion: 'bayn.control-study-input.v2' },
+        { ...falsificationInput, management: 'JEV' },
         { ...falsificationInput, repeatedTargetWeightPpm: 100000 },
         { ...falsificationInput, falsificationCandidate: 'UNREGISTERED' },
         {
@@ -865,52 +917,30 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
             ),
           ),
         ).toBeTrue()
-      const providerClock = yield* TestClock.make()
-      const evidenceDirectory = `${directory}/managed-evidence`
-      const managedInput = { ...input, management: ControlManagementMode.Jev }
-      const management = {
-        mode: ControlManagementMode.Jev as const,
-        evidenceDirectory,
-        providerClock,
-        provider: { evaluate: () => Effect.die('A missing-signal source must never call a provider') },
-      }
-      const managed = yield* runControlStudy(managedInput, arrivals, receipt, management)
-      expect(managed.sessions).toHaveLength(6)
-      expect(managed.sessions.every((session) => session.modelCallCount === 0)).toBeTrue()
-      for (const session of managed.sessions)
-        expect(session.managementMode).toBe(
-          session.policy === ControlPolicy.RetainedBreakout
-            ? ControlManagementMode.Mechanical
-            : ControlManagementMode.Jev,
-        )
-      expect(yield* fs.exists(`${evidenceDirectory}/registration.json`)).toBeTrue()
-      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RelativeMomentum}`)).toBeTrue()
-      expect(yield* fs.exists(`${evidenceDirectory}/${ControlPolicy.RepeatedBreakout}`)).toBeTrue()
-      expect(
-        Result.isFailure(yield* Effect.result(runControlStudy(managedInput, arrivals, receipt, management))),
-      ).toBeTrue()
       expect(
         Result.isFailure(
           yield* Effect.result(
-            runControlStudy(managedInput, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
+            runControlStudy({ ...input, management: 'JEV' }, arrivals, receipt, {
+              mode: ControlManagementMode.Mechanical,
+            }),
           ),
         ),
       ).toBeTrue()
       const inputText = JSON.stringify(input)
       const receiptText = JSON.stringify({
-        schemaVersion: 'bayn.replay-source-capture.v1',
+        schemaVersion: 'bayn.replay-source-capture.v2',
         capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
         origin: 'Independently frozen deterministic capture fixture',
         coverageStartMs: source.coverageStartMs,
         coverageEndMs: source.coverageEndMs,
-        universe: source.universe,
+        marketSources: source.marketSources,
         positions: source.positions,
       })
       yield* fs.writeFileString(`${directory}/input.json`, inputText)
       yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
       const args = [
         'bun',
-        new URL('../../tools/control-study.ts', import.meta.url).pathname,
+        new URL('../control-study-command.ts', import.meta.url).pathname,
         '--input',
         `${directory}/input.json`,
         '--input-sha256',
@@ -936,7 +966,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
       expect({ status, error }).toEqual({ status: 0, error: '' })
       const written = yield* fs.readFileString(`${directory}/report.json`)
       expect(written).toBe(`${JSON.stringify(report, null, 2)}\n`)
-      yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+      yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
       const corrupt = yield* Effect.result(
         runControlStudy(input, arrivals, receipt, { mode: ControlManagementMode.Mechanical }),
       )
@@ -949,7 +979,7 @@ test('full frozen-source control runner produces reproducible hashed incomplete 
   )
 }, 70_000)
 
-test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
+test.each([ControlManagementMode.Mechanical])(
   'offline %s preflight verifies source coverage and writes a diagnostic without provider configuration',
   async (management) => {
     const { retained, source, input: base, receipt } = frozenControlFixture()
@@ -959,7 +989,7 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         const fs = yield* FileSystem.FileSystem
         const directory = yield* fs.makeTempDirectoryScoped()
         const arrivals = `${directory}/arrivals.ndjson.gz`
-        yield* fs.writeFile(arrivals, gzipSync(retained.body))
+        yield* fs.writeFile(arrivals, compressedControlFixture(retained.body))
         const preflight = yield* runControlPreflight(input, arrivals, receipt)
         expect(preflight.classification).toBe('INPUT_COMPATIBILITY_ONLY')
         expect(preflight.coverage).toBe(ControlInputCoverage.Incomplete)
@@ -977,19 +1007,19 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         expect(preflight.reportHash).toBe((yield* runControlPreflight(input, arrivals, receipt)).reportHash)
         const inputText = JSON.stringify(input)
         const receiptText = JSON.stringify({
-          schemaVersion: 'bayn.replay-source-capture.v1',
+          schemaVersion: 'bayn.replay-source-capture.v2',
           capturedAt: new Date(source.coverageEndMs + 1).toISOString(),
           origin: 'Independently frozen deterministic capture fixture',
           coverageStartMs: source.coverageStartMs,
           coverageEndMs: source.coverageEndMs,
-          universe: source.universe,
+          marketSources: source.marketSources,
           positions: source.positions,
         })
         yield* fs.writeFileString(`${directory}/input.json`, inputText)
         yield* fs.writeFileString(`${directory}/receipt.json`, receiptText)
         const preflightArgs = [
           'bun',
-          new URL('../../tools/control-study.ts', import.meta.url).pathname,
+          new URL('../control-study-command.ts', import.meta.url).pathname,
           '--input',
           `${directory}/input.json`,
           '--input-sha256',
@@ -1016,7 +1046,7 @@ test.each([ControlManagementMode.Mechanical, ControlManagementMode.Jev])(
         expect(preflightStatus).toBe(1)
         expect(preflightError).toContain('Preflight input coverage is INCOMPLETE')
         expect(yield* fs.readFileString(`${directory}/preflight.json`)).toBe(`${JSON.stringify(preflight, null, 2)}\n`)
-        yield* fs.writeFile(arrivals, gzipSync(`${retained.body} `))
+        yield* fs.writeFile(arrivals, compressedControlFixture(`${retained.body} `))
         expect(Result.isFailure(yield* Effect.result(runControlPreflight(input, arrivals, receipt)))).toBeTrue()
       }).pipe(Effect.scoped, Effect.provide(NodeServices.layer), Effect.timeout('25 seconds')),
     )

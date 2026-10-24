@@ -1,8 +1,9 @@
 import { describe, expect, test } from 'bun:test'
 import { ConfigProvider, Effect, Result } from 'effect'
 
-import { canonicalHashV1 } from './hash'
-import { inferenceCostConfig, parseInferenceCostArgs } from './inference-cost-command'
+import { canonicalHashV1Result } from './hash'
+import { parseInferenceCostArgs } from './inference-cost-command'
+import { researchReaderConfig } from './db/research-reader-config'
 import { InferenceCostCoverage, InferenceUsageStatus, makeInferenceCostReport } from './inference-costs'
 import { JevFailure } from './jev/contract'
 import { JevOutcome, makeJevEvaluationReceipt, makeJevEvaluationRequest } from './jev/evidence'
@@ -25,7 +26,15 @@ const rateCard = {
   ],
 } as const
 
-const row = (options: { rejected?: boolean; inputTokens?: number; cycle?: string; missing?: boolean } = {}) => {
+const row = (
+  options: {
+    rejected?: boolean
+    inputTokens?: number
+    cycle?: string
+    missing?: boolean
+    notDispatched?: boolean
+  } = {},
+) => {
   const base = evaluationRequestFixture()
   const { requestId: _id, ...material } = base
   const request = Result.getOrThrow(
@@ -44,25 +53,33 @@ const row = (options: { rejected?: boolean; inputTokens?: number; cycle?: string
           schemaVersion: 'bayn.jev-evaluation-receipt.v1',
           requestId: request.requestId,
           startedAt: request.observedAt,
-          completedAt: request.observedAt,
-          outcome: options.rejected
+          completedAt: options.notDispatched ? request.expiresAt : request.observedAt,
+          outcome: options.notDispatched
             ? {
                 status: JevOutcome.Failed,
-                failure: JevFailure.Response,
+                failure: JevFailure.NotDispatched,
                 httpStatus: null,
-                responseHash: canonicalHashV1(rejected),
-                rejectedResponse: rejected,
+                responseHash: null,
+                rejectedResponse: null,
               }
-            : {
-                status: JevOutcome.Received,
-                inference: {
-                  requestHash: request.requestHash,
-                  responseHash: canonicalHashV1(response),
-                  startedAt: request.observedAt,
-                  completedAt: request.observedAt,
-                  response,
+            : options.rejected
+              ? {
+                  status: JevOutcome.Failed,
+                  failure: JevFailure.Response,
+                  httpStatus: null,
+                  responseHash: Result.getOrThrow(canonicalHashV1Result(rejected)),
+                  rejectedResponse: rejected,
+                }
+              : {
+                  status: JevOutcome.Received,
+                  inference: {
+                    requestHash: request.requestHash,
+                    responseHash: Result.getOrThrow(canonicalHashV1Result(response)),
+                    startedAt: request.observedAt,
+                    completedAt: request.observedAt,
+                    response,
+                  },
                 },
-              },
         }),
       )
   return {
@@ -84,6 +101,55 @@ const evidence = (requests: readonly ReturnType<typeof row>[]) => ({
 })
 
 describe('inference operating-cost evidence', () => {
+  test('uses positive undispatched receipts for zero cost without inventing provider usage or a tariff', () => {
+    const result = Result.getOrThrow(
+      makeInferenceCostReport(evidence([row({ notDispatched: true })]), { ...rateCard, rates: [] }),
+    )
+    expect(result.notDispatchedRequestCount).toBe(1)
+    expect(result.meteredRequestCount).toBe(0)
+    expect(result.unknownUsageCount).toBe(0)
+    expect(result.unpricedUsageCount).toBe(0)
+    expect(result.inputTokens).toBe('0')
+    expect(result.outputTokens).toBe('0')
+    expect(result.estimatedTotalCostMicros).toBe('0')
+    expect(result.requests[0]?.rateHash).toBeNull()
+    expect(result.requests[0]?.usageStatus).toBe(InferenceUsageStatus.NotDispatched)
+    expect(result.invoiceReconciled).toBe(false)
+  })
+
+  test('rejects undispatched receipts that contain HTTP evidence or do not prove the persistence deadline', () => {
+    const source = row({ notDispatched: true })
+    const receipt = source.receipt!
+    for (const changed of [
+      { ...receipt, completedAt: source.request.observedAt },
+      { ...receipt, startedAt: source.request.expiresAt },
+      { ...receipt, outcome: { ...receipt.outcome, httpStatus: 200 } },
+      {
+        ...receipt,
+        outcome: {
+          ...receipt.outcome,
+          rejectedResponse: responseFixture(),
+          responseHash: Result.getOrThrow(canonicalHashV1Result(responseFixture())),
+        },
+      },
+    ]) {
+      const { receiptHash: _hash, ...material } = changed
+      expect(Result.isFailure(makeJevEvaluationReceipt(source.request, material))).toBe(true)
+    }
+  })
+
+  test('keeps command diagnostics on stderr and reserves stdout for report data', () => {
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, `${import.meta.dir}/inference-cost-command.ts`, '--invalid'],
+      env: {},
+      stdout: 'pipe',
+      stderr: 'pipe',
+    })
+    expect(result.exitCode).toBe(1)
+    expect(new TextDecoder().decode(result.stdout)).toBe('')
+    expect(new TextDecoder().decode(result.stderr)).toContain('InferenceCostError')
+  })
+
   test('prices metered usage without adding output charges or rounding each call', () => {
     const result = Result.getOrThrow(makeInferenceCostReport(evidence([row()]), rateCard))
     expect(result.coverage).toBe(InferenceCostCoverage.Estimated)
@@ -207,7 +273,7 @@ describe('inference operating-cost evidence', () => {
 describe('inference-cost operator command', () => {
   test('uses the standard verified PostgreSQL CA without requiring broker or model credentials', () => {
     const config = Effect.runSync(
-      inferenceCostConfig.pipe(
+      researchReaderConfig.pipe(
         Effect.provideService(
           ConfigProvider.ConfigProvider,
           ConfigProvider.fromUnknown({
@@ -223,6 +289,10 @@ describe('inference-cost operator command', () => {
 
   test('accepts an explicit session or offline evidence and requires a rate card', () => {
     expect(Result.getOrThrow(parseInferenceCostArgs(['--help']))._tag).toBe('Help')
+    expect(Result.getOrThrow(parseInferenceCostArgs(['--ledger-session', '2026-10-06']))).toEqual({
+      _tag: 'LedgerSession',
+      sessionDate: '2026-10-06',
+    })
     expect(
       Result.getOrThrow(parseInferenceCostArgs(['--session', '2026-01-02', '--rate-card', 'rates.json']))._tag,
     ).toBe('Session')
@@ -234,6 +304,8 @@ describe('inference-cost operator command', () => {
       ['--session', '2026-02-30', '--rate-card', 'rates.json'],
       ['--session', '2026-01-02'],
       ['--evidence', '--session', '--rate-card', 'rates.json'],
+      ['--ledger-session', '2026-02-30'],
+      ['--ledger-session', '2026-10-06', '--rate-card', 'replacement.json'],
     ])
       expect(Result.isFailure(parseInferenceCostArgs(args))).toBe(true)
   })

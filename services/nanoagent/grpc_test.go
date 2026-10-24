@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"github.com/coder/websocket"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -30,7 +31,7 @@ func rpcTestClient(t *testing.T, api *apiServer) (pb.NanoagentServiceClient, str
 	server.Config.Protocols = fixtureHTTPProtocols()
 	server.Start()
 	t.Cleanup(server.Close)
-	connection, err := grpc.NewClient(server.Listener.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))
+	connection, err := grpc.NewClient(server.Listener.Addr().String(), append(fixtureRPCDialOptions(), grpc.WithTransportCredentials(insecure.NewCredentials()), grpc.WithDefaultCallOptions(grpc.MaxCallRecvMsgSize(maxGuestRPCBytes)))...)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,17 +46,77 @@ func rpcTestContext(t *testing.T) context.Context {
 	return metadata.AppendToOutgoingContext(ctx, "authorization", "Bearer test-bootstrap-token")
 }
 
+func TestRPCReadsCanonicalWorkspaceLinkThroughSignedAdmission(t *testing.T) {
+	api := testAPIServer(t)
+	if err := os.Mkdir(filepath.Join(api.workspace.root, "lab"), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(api.workspace.root, "lab", "README.md"), []byte("canonical preview"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	client, _ := rpcTestClient(t, api)
+	result, err := client.ReadFile(rpcTestContext(t), &pb.Path{Path: "/workspace/lab/README.md"})
+	if err != nil {
+		t.Fatalf("signed canonical README preview: %v", err)
+	}
+	if string(result.Content) != "canonical preview" {
+		t.Fatalf("canonical preview changed its content: %v", result)
+	}
+}
+
+func TestRPCBrowserMCPStatusReachesCodex(t *testing.T) {
+	api := testAPIServer(t)
+	api.codex, _ = readyCodexSupervisor(t)
+	writer := api.codex.stdin.(*codexWireWriter)
+	client, _ := rpcTestClient(t, api)
+	ctx := rpcTestContext(t)
+	type callResult struct {
+		response *pb.CodexResult
+		err      error
+	}
+	done := make(chan callResult, 1)
+	go func() {
+		response, err := client.CodexCall(ctx, &pb.CodexRequest{Method: "mcpServerStatus/list", ParamsJson: []byte(`{"limit":50}`)})
+		done <- callResult{response: response, err: err}
+	}()
+	var wire []byte
+	select {
+	case wire = <-writer.messages:
+	case result := <-done:
+		t.Fatalf("MCP status was rejected before reaching Codex: %v", result.err)
+	case <-ctx.Done():
+		t.Fatal("MCP status did not reach Codex")
+	}
+	var request codexRPCMessage
+	if err := json.Unmarshal(wire, &request); err != nil {
+		t.Fatal(err)
+	}
+	if request.Method != "mcpServerStatus/list" || string(request.Params) != `{"limit":50}` {
+		t.Fatalf("Codex received a different request: %s", wire)
+	}
+	statusJSON := json.RawMessage(`{"data":[{"name":"tengri_browser","tools":{"computer":{"name":"computer","inputSchema":{"type":"object"}}}}]}`)
+	api.codex.resolveResponse(codexRPCMessage{ID: request.ID, Result: statusJSON})
+	select {
+	case result := <-done:
+		if result.err != nil || result.response == nil || !bytes.Equal(result.response.ResultJson, statusJSON) {
+			t.Fatalf("MCP status did not survive the guest RPC: %v, %v", result.response, result.err)
+		}
+	case <-ctx.Done():
+		t.Fatal("Codex status response did not reach the RPC caller")
+	}
+}
+
 func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 	api := testAPIServer(t)
 	client, address := rpcTestClient(t, api)
 	ctx := rpcTestContext(t)
 	for _, credentials := range [][]string{nil, {"Bearer wrong"}, {"Bearer test-bootstrap-token", "Bearer test-bootstrap-token"}} {
 		unauthorized := metadata.NewOutgoingContext(ctx, metadata.MD{"authorization": credentials})
-		_, err := client.WriteFile(unauthorized, &pb.FileWrite{Path: "/denied", ExpectedRevision: "missing", Content: []byte("denied")})
+		_, err := client.WriteFile(unauthorized, &pb.FileWrite{Path: "/workspace/denied", ExpectedRevision: "missing", Content: []byte("denied")})
 		if status.Code(err) != codes.Unauthenticated {
 			t.Fatalf("unary authentication: %v", err)
 		}
-		stream, err := client.WatchFiles(unauthorized, &pb.FileWatch{Path: "/"})
+		stream, err := client.WatchFiles(unauthorized, &pb.FileWatch{Path: "/workspace"})
 		if err == nil {
 			_, err = stream.Recv()
 		}
@@ -67,7 +128,7 @@ func TestRPCAuthenticatesUnaryAndStreamingOnSharedHTTPPort(t *testing.T) {
 		t.Fatalf("unauthorized request mutated workspace: %v", err)
 	}
 	info, err := client.GetInfo(ctx, &pb.Empty{})
-	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != 1 {
+	if err != nil || info.MicrovmId != "interop-agent" || info.ProtocolVersion != guestProtocolVersion {
 		t.Fatalf("authenticated info = %v, %v", info, err)
 	}
 	response, err := http.Get(address + "/healthz")
@@ -107,15 +168,15 @@ func TestRPCFileBytesRevisionAndConfinement(t *testing.T) {
 	client, _ := rpcTestClient(t, api)
 	ctx := rpcTestContext(t)
 	content := bytes.Repeat([]byte{0, 255, 1, 128}, maxFileBytes/4)
-	written, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/binary.dat", ExpectedRevision: "missing", Content: content})
+	written, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/workspace/binary.dat", ExpectedRevision: "missing", Content: content})
 	if err != nil {
 		t.Fatal(err)
 	}
-	read, err := client.ReadFile(ctx, &pb.Path{Path: "/binary.dat"})
+	read, err := client.ReadFile(ctx, &pb.Path{Path: "/workspace/binary.dat"})
 	if err != nil || !bytes.Equal(read.Content, content) || read.Revision != written.Revision {
 		t.Fatalf("binary round trip: %v", err)
 	}
-	_, err = client.WriteFile(ctx, &pb.FileWrite{Path: "/binary.dat", ExpectedRevision: "missing", Content: []byte("stale")})
+	_, err = client.WriteFile(ctx, &pb.FileWrite{Path: "/workspace/binary.dat", ExpectedRevision: "missing", Content: []byte("stale")})
 	conflict := status.Convert(err)
 	if conflict.Code() != codes.Aborted || len(conflict.Details()) != 1 {
 		t.Fatalf("revision conflict: %v", err)
@@ -124,7 +185,7 @@ func TestRPCFileBytesRevisionAndConfinement(t *testing.T) {
 	if !ok || detail.CurrentRevision != written.Revision {
 		t.Fatalf("revision conflict details = %v", conflict.Details())
 	}
-	for _, path := range []string{"/.tengri/private", "/.codex/private"} {
+	for _, path := range []string{"/workspace/.tengri/private", "/workspace/.codex/private"} {
 		if _, err := client.ReadFile(ctx, &pb.Path{Path: path}); status.Code(err) != codes.NotFound {
 			t.Fatalf("hidden path %s: %v", path, err)
 		}
@@ -132,10 +193,10 @@ func TestRPCFileBytesRevisionAndConfinement(t *testing.T) {
 	if err := os.Symlink(t.TempDir(), filepath.Join(api.workspace.root, "escape")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := client.ListFiles(ctx, &pb.Path{Path: "/escape"}); status.Code(err) != codes.PermissionDenied {
+	if _, err := client.ListFiles(ctx, &pb.Path{Path: "/workspace/escape"}); status.Code(err) != codes.PermissionDenied {
 		t.Fatalf("symlink confinement: %v", err)
 	}
-	if _, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/oversized", ExpectedRevision: "missing", Content: append(content, 0)}); status.Code(err) != codes.ResourceExhausted {
+	if _, err := client.WriteFile(ctx, &pb.FileWrite{Path: "/workspace/oversized", ExpectedRevision: "missing", Content: append(content, 0)}); status.Code(err) != codes.ResourceExhausted {
 		t.Fatalf("file size limit: %v", err)
 	}
 }
@@ -145,17 +206,17 @@ func TestRPCSubscriptionsReplayCancelAndShutdown(t *testing.T) {
 	api.codex = newCodexSupervisor("/usr/bin/false", api.workspace.root)
 	client, _ := rpcTestClient(t, api)
 	ctx, cancel := context.WithCancel(rpcTestContext(t))
-	api.fileWatcher.publish(fileEvent{Kind: "created", Path: "/before"})
+	api.fileWatcher.publish(fileEvent{Kind: "created", Path: "/workspace/before"})
 	zero := uint64(0)
-	replay, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/", After: &zero})
+	replay, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace", After: &zero})
 	if err != nil {
 		t.Fatal(err)
 	}
 	before, err := replay.Recv()
-	if err != nil || before.Path != "/before" {
+	if err != nil || before.Path != "/workspace/before" {
 		t.Fatalf("file replay: %v, %v", before, err)
 	}
-	tail, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/"})
+	tail, err := client.WatchFiles(ctx, &pb.FileWatch{Path: "/workspace"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,9 +227,9 @@ func TestRPCSubscriptionsReplayCancelAndShutdown(t *testing.T) {
 	if err != nil || snapshot.Kind != "reset" || snapshot.Sequence != before.Sequence {
 		t.Fatalf("file snapshot cursor: %v, %v", snapshot, err)
 	}
-	api.fileWatcher.publish(fileEvent{Kind: "modified", Path: "/after"})
+	api.fileWatcher.publish(fileEvent{Kind: "modified", Path: "/workspace/after"})
 	after, err := tail.Recv()
-	if err != nil || after.Path != "/after" || after.Sequence <= before.Sequence {
+	if err != nil || after.Path != "/workspace/after" || after.Sequence <= before.Sequence {
 		t.Fatalf("file tail: %v, %v", after, err)
 	}
 	api.codex.publish("item/agentMessage/delta", "", json.RawMessage(`{"params":{"integer":9007199254740993}}`))
@@ -197,7 +258,7 @@ func TestRPCSubscriptionsReplayCancelAndShutdown(t *testing.T) {
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
-	shutdown, err := client.WatchFiles(rpcTestContext(t), &pb.FileWatch{Path: "/"})
+	shutdown, err := client.WatchFiles(rpcTestContext(t), &pb.FileWatch{Path: "/workspace"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -235,7 +296,12 @@ func TestRPCInteropServer(t *testing.T) {
 			t.Error("preview leaked the bootstrap credential to the application")
 		}
 		if r.URL.Path != "/ws" {
-			_, _ = fmt.Fprint(w, "preview-over-mtls")
+			if r.URL.Path == "/submit" {
+				_, _ = fmt.Fprintf(w, "%s:", r.Method)
+				_, _ = io.Copy(w, r.Body)
+			} else {
+				_, _ = fmt.Fprint(w, "preview-over-mtls")
+			}
 			return
 		}
 		connection, err := websocket.Accept(w, r, nil)
