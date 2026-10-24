@@ -198,10 +198,11 @@ and remaining economic assumptions. Native children and protective disposals sha
 Migration 145 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
 history. The strategy protocol hash is `d88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f`.
-The protocol cutover uses explicit OBSERVE manifests with read-only broker access, no standalone capital permission,
-and no retired activation request or lineage. After the v22 image is published and verified, a matching same-account
-PAPER research request is sealed and reviewed against that image. The sealed identity, activation generation and all
-three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
+The v22 protocol cutover completed through explicit OBSERVE recovery. The reviewed PAPER research request is authored
+against source `6729676c2d841fae90d8d2b826fff1c125b8b295` and image digest
+`sha256:ff3e8a4a3f72381ef74d2622811264e48a19b39286bad281e0391393999150ae`. Its request hash is
+`8a5dac560b05fea109936714d6953b7e32fb11e7109723a0189466b336eaae65`. The sealed identity, activation generation and
+all three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
 
 The native hook requires fresh flat/exact accounting before realizing v22 PAPER authority. Correct signal arithmetic
 and successful activation do not establish profitable entries or a natural round trip. Those require subsequent
