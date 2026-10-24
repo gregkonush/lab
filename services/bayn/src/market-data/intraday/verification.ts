@@ -1,7 +1,13 @@
-import { continuousMarketHours, isContinuousMarket, snapshotMarketCloseAt } from '../../market-hours'
+import {
+  continuousMarketHours,
+  isContinuousMarket,
+  snapshotMarketCloseAt,
+  marketHoursAreCanonical,
+} from '../../market-hours'
 import { InstrumentSymbolSchema } from '../../instruments'
-import { BarPublicationPolicy, maximumBarPublicationDelayMs } from './bar-publication'
+import { maximumBarPublicationDelayMs } from './bar-publication'
 import { Result, Schema } from 'effect'
+import { equityClockSession } from '../../equity-hours'
 
 import { canonicalHashV1Result, sha256 } from '../../hash'
 import { marketCalendarSchemaVersion, marketCalendarSource } from '../../broker/alpaca/model'
@@ -21,6 +27,8 @@ import type {
   IntradayTrade,
 } from './model'
 import {
+  IntradayBenchmarkEvidencePolicy,
+  usesCompletedBarBenchmark,
   IntradayCandidateEvidencePolicy,
   IntradayIngestionDelayDirection,
   IntradaySnapshotFailure,
@@ -97,6 +105,8 @@ const ReplaySnapshotEnvelopeSchema = Schema.Struct({
     symbols: Schema.Array(Schema.String),
     candidateSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
     candidateEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayCandidateEvidencePolicy)),
+    benchmarkEvidencePolicy: Schema.optionalKey(Schema.Enum(IntradayBenchmarkEvidencePolicy)),
+    benchmarkSymbols: Schema.optionalKey(Schema.Array(Schema.String)),
     candidateExclusions: Schema.optionalKey(
       Schema.Array(
         Schema.Struct({
@@ -160,6 +170,7 @@ const calendarMaterial = (
   requestedRange: calendar.requestedRange,
   timeZone: calendar.timeZone,
   sessions: calendar.sessions,
+  providerSessions: calendar.providerSessions,
 })
 
 const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, IntradaySnapshotFailure> => {
@@ -191,7 +202,7 @@ const validateCalendar = (request: IntradaySnapshotQuery): Result.Result<void, I
       failure('request', 'intraday calendar observation is not canonically hashable', undefined, expectedHash.failure),
     )
   }
-  if (expectedHash.success !== calendar.normalizedResponseHash) {
+  if (expectedHash.success !== calendar.normalizedResponseHash || !marketHoursAreCanonical(calendar)) {
     return Result.fail(failure('request', 'intraday calendar observation hash does not match its normalized content'))
   }
   let previousDate: string | undefined
@@ -317,6 +328,25 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
   ) {
     return Result.fail(failure('request', 'candidate evidence policy requires an independent decision query'))
   }
+  if (
+    request.benchmarkEvidencePolicy !== undefined &&
+    (request.benchmarkEvidencePolicy !== IntradayBenchmarkEvidencePolicy.CompletedBars ||
+      request.feed !== 'us' ||
+      request.candidateEvidencePolicy !== IntradayCandidateEvidencePolicy.QuoteWithWindowTrade ||
+      request.purpose !== undefined)
+  )
+    return Result.fail(failure('request', 'completed-bar benchmarks require an independent crypto decision query'))
+  if (request.benchmarkSymbols !== undefined || request.benchmarkEvidencePolicy !== undefined) {
+    const benchmarks = request.benchmarkSymbols ?? []
+    const canonical = [...new Set(benchmarks)].sort()
+    if (
+      request.benchmarkEvidencePolicy === undefined ||
+      canonical.length === 0 ||
+      canonical.length !== benchmarks.length ||
+      canonical.some((symbol, index) => symbol !== benchmarks[index] || !requestedSymbols.includes(symbol))
+    )
+      return Result.fail(failure('request', 'completed-bar benchmarks require an explicit canonical symbol subset'))
+  }
   if (request.candidateSymbols !== undefined) {
     const canonicalCandidates = [...new Set(request.candidateSymbols)].sort()
     if (
@@ -325,12 +355,9 @@ const validateQuery = <T extends IntradaySnapshotQuery>(request: T): Result.Resu
       canonicalCandidates.length === 0 ||
       canonicalCandidates.length !== request.candidateSymbols.length ||
       canonicalCandidates.some((symbol, index) => symbol !== request.candidateSymbols?.[index]) ||
-      canonicalCandidates.some((symbol) => !requestedSymbols.includes(symbol)) ||
-      requestedSymbols.length - canonicalCandidates.length !== 1
+      canonicalCandidates.some((symbol) => !requestedSymbols.includes(symbol))
     ) {
-      return Result.fail(
-        failure('request', 'independent candidates require a canonical decision subset and one mandatory benchmark'),
-      )
+      return Result.fail(failure('request', 'independent candidates require a canonical decision subset'))
     }
   }
   if (request.universeId.length === 0 || request.universeId.trim() !== request.universeId) {
@@ -371,6 +398,9 @@ export const verifyIntradaySnapshotQuery = (
       ...(verified.candidateSymbols === undefined
         ? {}
         : { candidateSymbols: Object.freeze([...verified.candidateSymbols]) }),
+      ...(verified.benchmarkSymbols === undefined
+        ? {}
+        : { benchmarkSymbols: Object.freeze([...verified.benchmarkSymbols]) }),
       sourceTopics: Object.freeze({ ...verified.sourceTopics }),
     }),
   )
@@ -469,6 +499,9 @@ export const verifyIntradaySnapshotRequest = (
       ...(request.candidateSymbols === undefined
         ? {}
         : { candidateSymbols: Object.freeze([...request.candidateSymbols]) }),
+      ...(request.benchmarkSymbols === undefined
+        ? {}
+        : { benchmarkSymbols: Object.freeze([...request.benchmarkSymbols]) }),
       sourceTopics: Object.freeze({ ...request.sourceTopics }),
       archiveWatermarks: Object.freeze(request.archiveWatermarks.map((watermark) => Object.freeze({ ...watermark }))),
     })
@@ -537,11 +570,12 @@ export const normalizeBar = (row: IntradayBarRow): Result.Result<IntradayBar, In
 export const normalizeQuote = (row: IntradayQuoteRow): Result.Result<IntradayQuote, IntradaySnapshotFailure> =>
   Result.gen(function* () {
     const identity = yield* recordIdentity(row)
-    const bidPrice = yield* numberValue(row.bid_price, 'quote bid price', true)
+    const bidPrice = yield* numberValue(row.bid_price, 'quote bid price', false)
     const bidSize = yield* numberValue(row.bid_size, 'quote bid size', false)
-    const askPrice = yield* numberValue(row.ask_price, 'quote ask price', true)
+    const askPrice = yield* numberValue(row.ask_price, 'quote ask price', false)
     const askSize = yield* numberValue(row.ask_size, 'quote ask size', false)
-    if (bidPrice > askPrice) return yield* Result.fail(failure('rows', 'intraday quote is crossed'))
+    if (bidPrice > 0 && askPrice > 0 && bidPrice > askPrice)
+      return yield* Result.fail(failure('rows', 'intraday quote is crossed'))
     return Object.freeze({ ...identity, bidPrice, bidSize, askPrice, askSize })
   })
 
@@ -594,7 +628,12 @@ export const validateIdentity = (
       record.universeId !== request.universeId ||
       record.universeSymbolHash !== request.universeSymbolHash ||
       record.feed !== request.feed ||
-      record.marketSession !== (request.feed === 'us' ? 'continuous' : 'regular') ||
+      record.marketSession !==
+        (request.feed === 'us'
+          ? 'continuous'
+          : request.feed === 'iex'
+            ? equityClockSession(record.eventAt)
+            : 'regular') ||
       record.delayClass !== request.delayClass ||
       !symbols.has(record.symbol)
     ) {
@@ -710,16 +749,12 @@ export const validateBarCoverage = (
   request: IntradaySnapshotQuery,
   bars: readonly IntradayBar[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<void, IntradaySnapshotFailure> => {
   for (const bar of bars) {
-    const maximumAvailabilityDelay = millisecondsAsNanos(
-      (publicationPolicy === BarPublicationPolicy.TimelyEquivalentRevision
-        ? maximumBarPublicationDelayMs(bar)
-        : (request.delayClass === 'delayed_15m_consolidated' ? 15 * minuteMs : 0) +
-          minuteMs +
-          request.maximumQuoteAgeMs) + clockSkewMs,
-    )
+    // Historical inputs retain their actual recovery time. Only the current completed
+    // minute needs timely publication; executable quote freshness is checked separately.
+    if (intradayInstantNanos(bar.eventAt) < intradayInstantNanos(request.rangeEndAt) - 60_000_000_000n) continue
+    const maximumAvailabilityDelay = millisecondsAsNanos(maximumBarPublicationDelayMs(bar) + clockSkewMs)
     if (intradayAgeNanos(bar.ingestedAt, bar.eventAt) > maximumAvailabilityDelay) {
       return Result.fail(
         new IntradaySnapshotFailure({
@@ -837,12 +872,20 @@ export const latestQuotes = (
   const minimumDelay = millisecondsAsNanos(expectedDelayMs) - BigInt(clockSkewMs) * 1_000_000n
   const maximumDelay = millisecondsAsNanos(expectedDelayMs + request.maximumQuoteAgeMs + clockSkewMs)
   for (const symbol of intradaySnapshotSymbols(request)) {
+    if (usesCompletedBarBenchmark(request, symbol)) continue
     const quote = latest[symbol]
     const trade = latestTrades[symbol]
+    const quoteAge = quote === undefined ? undefined : intradayAgeNanos(request.observedAt, quote.eventAt)
+    const freshPricingQuote =
+      request.purpose !== undefined &&
+      quoteAge !== undefined &&
+      quoteAge >= 0n &&
+      quoteAge <= millisecondsAsNanos(request.maximumQuoteAgeMs)
     if (
       quote === undefined ||
       (!usesWindowTradeEvidence(request, symbol) &&
-        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt))
+        intradayInstantNanos(quote.eventAt) < intradayInstantNanos(request.rangeEndAt) &&
+        !freshPricingQuote)
     ) {
       return Result.fail(
         failure(
@@ -856,6 +899,8 @@ export const latestQuotes = (
         ),
       )
     }
+    if (quote !== undefined && (quote.bidPrice === 0 || quote.askPrice === 0))
+      return Result.fail(failure('not-ready', 'intraday quote has a withdrawn bid or ask side', { symbol }))
     if (
       request.purpose === undefined &&
       (trade === undefined ||
@@ -973,7 +1018,6 @@ export const candidateAvailability = (
   quotes: readonly IntradayQuote[],
   trades: readonly IntradayTrade[],
   clockSkewMs = 0,
-  publicationPolicy = BarPublicationPolicy.LegacyQuoteAge,
 ): Result.Result<
   {
     readonly latest: Readonly<Record<string, IntradayQuote>>
@@ -990,14 +1034,15 @@ export const candidateAvailability = (
       const symbolRequest = { ...request, symbols: [symbol] }
       const symbolQuotes = quotes.filter((quote) => quote.symbol === symbol)
       const symbolTrades = trades.filter((trade) => trade.symbol === symbol)
-      const available = Result.flatMap(
-        validateBarCoverage(
-          symbolRequest,
-          bars.filter((bar) => bar.symbol === symbol),
-          clockSkewMs,
-          publicationPolicy,
-        ),
-        () => latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
+      const coverage = validateBarCoverage(
+        symbolRequest,
+        bars.filter((bar) => bar.symbol === symbol),
+        clockSkewMs,
+      )
+      if (request.benchmarkSymbols?.includes(symbol) === true && Result.isFailure(coverage))
+        return yield* Result.fail(coverage.failure)
+      const available = Result.flatMap(coverage, () =>
+        latestQuotes(symbolRequest, symbolQuotes, symbolTrades, clockSkewMs),
       )
       if (Result.isSuccess(available)) {
         if (!candidates.has(symbol)) continue
@@ -1139,6 +1184,10 @@ export const verifyIntradaySnapshot = (
       ...(verifiedRequest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: verifiedRequest.candidateEvidencePolicy }),
+      ...(verifiedRequest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: verifiedRequest.benchmarkEvidencePolicy }),
+      ...(verifiedRequest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: verifiedRequest.benchmarkSymbols }),
       barCount: bars.length,
       quoteCount: quotes.length,
       tradeCount: trades.length,
@@ -1315,6 +1364,10 @@ export const reverifyIntradayMarketSnapshot = (
       ...(manifest.candidateEvidencePolicy === undefined
         ? {}
         : { candidateEvidencePolicy: manifest.candidateEvidencePolicy }),
+      ...(manifest.benchmarkEvidencePolicy === undefined
+        ? {}
+        : { benchmarkEvidencePolicy: manifest.benchmarkEvidencePolicy }),
+      ...(manifest.benchmarkSymbols === undefined ? {} : { benchmarkSymbols: manifest.benchmarkSymbols }),
       archiveWatermarks: manifest.archiveWatermarks,
     }
     const verified = yield* verifyIntradaySnapshot(request, {

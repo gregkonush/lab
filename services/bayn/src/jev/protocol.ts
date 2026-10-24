@@ -1,14 +1,8 @@
-import {
-  JevMarketProfilesSchema,
-  jevMarketProfiles,
-  jevUniverse,
-  jevCandidateSymbols,
-  jevBenchmarkSymbol,
-} from './markets'
+import { JevMarketProfilesSchema, jevMarketProfiles, jevUniverse, jevCandidateSymbols } from './markets'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
 import { Result, Schema } from 'effect'
 
-import { ExecutionModelV5Schema } from '../execution-model-contract'
+import { ExecutionModelV6Schema } from '../execution-model-contract'
 import { canonicalHashV1Result, sha256 } from '../hash'
 import { maximumIntradayObservationLagMs } from '../market-data/intraday/verification'
 import { PositiveIntegerSchema, SymbolSchema, UnitIntervalSchema, strictParseOptions } from '../schemas'
@@ -20,16 +14,17 @@ import {
 import { JevContractError, jevModel } from './contract'
 
 const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
-const Probability = UnitIntervalSchema.check(Schema.isGreaterThan(0.5))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
-export const momentumFirstEntryPolicy = 'bayn.positive-relative-momentum-entry.v1' as const
-
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v3'),
-  entrySignalPolicy: Schema.Literal(momentumFirstEntryPolicy),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v20'),
+  entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
+  entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
+  maximumEntryQuoteDriftBps: Schema.Literal(10),
+  maximumEntryLimitSlippageBps: Schema.Literal(10),
+  entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v3'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v17'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -46,15 +41,11 @@ const ProtocolBase = Schema.Struct({
   maximumPositions: Schema.Literal(1),
   maximumGrossWeight: Weight,
   maximumSymbolWeight: Weight,
-  maximumSpreadBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(100)),
   inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
   horizonMinutes: Minutes,
   maximumHoldingMinutes: Minutes,
-  protectiveStopBps: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(500)),
-  minimumEntryProbability: Probability,
-  minimumExitProbability: Probability,
   allocation: Schema.Literal('equal-weight'),
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 export const JevProtocolSchema = ProtocolBase.check(
@@ -76,8 +67,14 @@ export const JevProtocolSchema = ProtocolBase.check(
       issues.push({ path: ['maximumSymbolWeight'], issue: 'cannot exceed the gross allocation' })
     if (protocol.decisionDelaySeconds * 1000 + protocol.maximumDecisionLagMs > maximumIntradayObservationLagMs)
       issues.push({ path: ['maximumDecisionLagMs'], issue: 'must fit the verified observation lag' })
-    if (protocol.horizonMinutes > protocol.maximumHoldingMinutes)
-      issues.push({ path: ['horizonMinutes'], issue: 'cannot exceed the position holding limit' })
+    if (
+      protocol.horizonMinutes !== protocol.maximumHoldingMinutes ||
+      protocol.maximumHoldingMinutes > protocol.lookbackMinutes
+    )
+      issues.push({
+        path: ['horizonMinutes'],
+        issue: 'must equal the holding horizon and fit its completed source window',
+      })
     const expectedModel = canonicalHashV1Result(intradayExecutionModel)
     const actualModel = canonicalHashV1Result(protocol.executionModel)
     if (
@@ -85,7 +82,7 @@ export const JevProtocolSchema = ProtocolBase.check(
       Result.isFailure(actualModel) ||
       expectedModel.success !== actualModel.success
     )
-      issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed LIMIT/IOC execution contract' })
+      issues.push({ path: ['executionModel'], issue: 'must preserve the reviewed session-limit execution contract' })
     return issues
   }),
 )
@@ -93,10 +90,14 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v3',
-  entrySignalPolicy: momentumFirstEntryPolicy,
+  schemaVersion: 'bayn.jev.protocol.v20',
+  entrySizingPolicy: 'capital-weighted-session-limit',
+  entrySelectionPolicy: 'supported-setup-and-economic-plan',
+  maximumEntryQuoteDriftBps: 10,
+  maximumEntryLimitSlippageBps: 10,
+  entrySignalPolicy: 'model-selected-entry-and-protection',
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v3',
+  inputDefinition: 'bayn.jev-trading-signal-state.v17',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -113,13 +114,9 @@ export const defaultJevProtocolDocument = Object.freeze({
   maximumPositions: 1,
   maximumGrossWeight: 0.2,
   maximumSymbolWeight: 0.2,
-  maximumSpreadBps: 5,
   inferenceValidityMs: 10_000,
   horizonMinutes: 15,
   maximumHoldingMinutes: 15,
-  protectiveStopBps: 50,
-  minimumEntryProbability: 0.65,
-  minimumExitProbability: 0.65,
   allocation: 'equal-weight',
   executionModel: intradayExecutionModel,
 } as const)
@@ -132,6 +129,4 @@ export const decodeJevProtocol = (input: unknown) =>
     Result.mapError((cause) => new JevContractError({ message: 'Jev strategy protocol is invalid', cause })),
   )
 
-export const jevBehaviorHash = sha256('bayn.jev.continuous-markets.behavior.v1')
-export const jevSnapshotSymbols = (protocol: JevProtocol, candidates = protocol.candidateSymbols): readonly string[] =>
-  [...new Set([...candidates, ...candidates.map(jevBenchmarkSymbol)])].sort()
+export const jevBehaviorHash = sha256('bayn.jev.executable-profit-limit.behavior.v1')

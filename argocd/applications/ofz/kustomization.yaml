@@ -8,6 +8,7 @@ commonAnnotations:
 resources:
   - control-plane
   - postgres-backups.yaml
+  - database-backup-sealedsecret.yaml
   - postgres-cluster.yaml
   - spicedb-preshared-key-sealedsecret.yaml
   - spicedb-cluster.yaml

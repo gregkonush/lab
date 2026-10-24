@@ -5,7 +5,24 @@ import { Result } from 'effect'
 
 import { cryptoMarketFixture } from '../../testing/crypto-market-fixture'
 import { reproduceStreamingSnapshot } from './replay'
-import { latestQuotes } from '../intraday/verification'
+import { latestQuotes, persistIntradayRecordRows } from '../intraday/verification'
+import { constructStreamingSnapshot } from './snapshot'
+
+for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
+  test(`${symbol} reproduces its native snapshot while the shared consumer also carries equity technical features`, () => {
+    const { cut, query } = cryptoMarketFixture(symbol)
+    const shared = {
+      ...cut,
+      projection: { ...cut.projection, technicalTopic: 'torghut.technical-features.v1' },
+    }
+    const snapshot = Result.getOrThrow(constructStreamingSnapshot(shared, query))
+    const rows = Result.getOrThrow(persistIntradayRecordRows(snapshot))
+    const reproduced = Result.getOrThrow(reproduceStreamingSnapshot(snapshot.manifest, rows))
+    expect(reproduced.manifest.snapshotId).toBe(snapshot.manifest.snapshotId)
+    expect(snapshot.manifest.streaming.technical).toBeUndefined()
+    expect(snapshot.manifest.streaming.features).toHaveLength(2)
+  })
+}
 
 test('native candidate and benchmark features reproduce a Sunday snapshot crossing midnight through the shared projection', () => {
   const { snapshot, rows, fixtures, cut } = cryptoMarketFixture()
@@ -35,12 +52,17 @@ test('crypto replay rejects a normalized price substituted beneath an unchanged 
 })
 
 for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
-  test(`${symbol} rejects a stale benchmark quote while the candidate quote remains fresh`, () => {
-    expect(() => cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9001 })).toThrow()
+  test(`${symbol} uses completed benchmark bars while retaining fresh executable candidate quotes`, () => {
+    expect(() => cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9001 })).not.toThrow()
     const { query, snapshot, rows } = cryptoMarketFixture(symbol, { benchmarkQuoteLagMs: 9000, tradeLagMs: 60_000 })
     expect(jevStalePricingSymbols(snapshot)).toEqual([])
     expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
-    const { candidateSymbols: _candidates, ...requiredQuery } = query
+    const {
+      candidateSymbols: _candidates,
+      benchmarkEvidencePolicy: _benchmarkPolicy,
+      benchmarkSymbols: _benchmarks,
+      ...requiredQuery
+    } = query
     const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
     const staleQuotes = snapshot.quotes.map((quote) =>
       quote.symbol === benchmark
@@ -53,15 +75,17 @@ for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD'] as const) {
     })
   })
 
-  test(`${symbol} admits fresh quotes and actual window trades for both continuous candidate and benchmark`, () => {
+  test(`${symbol} requires candidate quotes and actual window trades with independent completed benchmark bars`, () => {
     const benchmark = symbol === 'BTC/USD' ? 'ETH/USD' : 'BTC/USD'
-    expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).toThrow()
+    expect(() => cryptoMarketFixture(symbol, { missingTradeSymbols: [benchmark] })).not.toThrow()
     const { snapshot, rows } = cryptoMarketFixture(symbol, { tradeLagMs: 60_000 })
     expect(jevStalePricingSymbols(snapshot)).toEqual([])
     const state = JSON.parse(Result.getOrThrow(jevRequestForSnapshot(snapshot, symbol)).body).state
     expect(state.candidate.quote.ageMs).toBe(1000)
     expect(state.candidate.latestTrade.ageMs).toBe(61000)
-    expect(state.benchmark.latestTrade.ageMs).toBe(61000)
+    expect(state.benchmark.pricingBasis).toBe('COMPLETED_BAR_CLOSE')
+    expect(state.benchmark).not.toHaveProperty('latestTrade')
+    expect(state.benchmark).not.toHaveProperty('quote')
     expect(reproduceStreamingSnapshot(snapshot.manifest, rows)).toMatchObject({ _tag: 'Success' })
     expect(() => cryptoMarketFixture(symbol, { tradeLagMs: 31 * 60_000 })).toThrow()
     expect(() => cryptoMarketFixture(symbol, { quoteLagMs: 10_001 })).toThrow()

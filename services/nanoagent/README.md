@@ -1,5 +1,11 @@
 # Nanoagent guest API
 
+The guest includes [dormant Relay support](../../docs/tengri/relay-staged-rollout.md).
+Its connector handlers require the exact server-side setting
+`TENGRI_CONNECTORS_ENABLED=true`; the default denies calls before creating
+identity files or changing Codex configuration. Packaging the client does not
+install a connector or change normal conversation startup.
+
 `internal/guestauth` implements the mandatory protocol 4 signature contract for the Ofz migration. Its admission helper
 verifies the exact request and runtime bindings before atomically consuming a bounded nonce entry. Diagnostic agent
 proofs require an explicit observation budget and cannot carry control actions. Workload proofs permit only an exact
@@ -42,6 +48,10 @@ within one second. The shell and PTY survive in the snapshot; restore does not f
 Unexpected output, an exited shell, or a timeout fails closed and reaps the probe. This private probe does not consume
 a user terminal session. Native acceptance still exercises real guest files, the user's retained PTY, and Codex RPCs.
 
+The Chrome display reconnects a dropped VNC transport against the same authenticated preview origin, with eight
+backoff attempts over at most 121 seconds. It retains the guest Chromium process, tabs and form input. VNC security
+failures stop immediately; closing the viewer cancels any retry without reporting an application error.
+
 ## Current API
 
 Tengri uses `proompteng.runtime.guest.v1.NanoagentService` from the shared
@@ -62,7 +72,14 @@ approvals, file/Codex server streams, and a bidirectional terminal stream. File 
 Codex's independently versioned JSON parameters, results, and events travel as bytes inside typed protobuf envelopes;
 this preserves numeric IDs and the pinned app-server schema. Browser terminal framing is translated by Tengri.
 
-Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and protocol version. Guest control is
+Tengri authenticates directly to `GetInfo` and verifies the MicroVM identity and guest API version 7. This version
+requires confirmed command cleanup before cancellation, stable operation UUIDs, and canonical `/workspace` paths
+for file operations, file events, and terminal working directories. The BFF
+requires that version in the controller's existing authenticated audience response before signing a request. The signed
+target stays unchanged through admission; only the confined filesystem translates it into the retained home. A real
+directory named `workspace` is addressed as `/workspace/workspace`. Legacy virtual paths such as `/lab/README.md`
+are rejected. The request-signature contract remains version 4. Old guests fail the identity check before file
+operations and need a fenced cold replacement on their existing retained home. Guest control is
 gRPC-only: the former REST, NDJSON event streams, and terminal WebSocket endpoints have been removed. There is no
 HTTP discovery, negotiation, or fallback. Controller and guest artifacts must come from the same validated release.
 
@@ -101,11 +118,44 @@ time are revalidated, and the signal is sent through that descriptor so PID reus
 development hosts retain process-group cleanup when Linux process identity metadata is unavailable.
 
 Nanoagent supervises one long-lived `codex app-server` process, waits for protocol initialization before reporting
-ready, and restarts failed processes with bounded backoff. Every Codex call response includes the event sequence
+ready, and restarts failed processes with bounded backoff. Successful initialization publishes a replayable
+`tengri/runtimeReady` event with the process generation. A new process has not loaded retained conversations. When
+`turn/start` receives the exact native `thread not found` rejection, Nanoagent resumes that same conversation and
+repeats the unaccepted operation once, fenced to the rejecting process generation. Other errors and uncertain
+dispatches are never retried this way. The stable operation receipt still prevents duplicate accepted turns.
+The chat clears earlier restart notices on this event,
+without requiring another user turn. Its authenticated `GetInfo` metadata reports whether Codex
+is working across any conversation and the monotonic time since work ended. Starts and steering remain active while
+awaiting a response even if the caller disconnects; turn/status notifications and process generations settle work state.
+Pending approvals also inhibit automatic sleep. No event subscriber is required, and metadata probes do not reset the
+idle timer. Incomplete work state is reported as unavailable so Tengri defers automatic sleep. Every Codex call response includes the event sequence
 captured atomically when its app-server response is received, so thread snapshots can be reconciled with independently
 delivered event streams without duplication. Device login and thread state persist under the private PVC-backed
 `.codex` directory. Events and approvals are typed, bounded, and replayable after reconnect; Nanoagent does not inject
 a shared `OPENAI_API_KEY`.
+
+Tengri disables the inherited ChatGPT app catalog with `features.apps=false` at Codex startup and on every thread
+start or resume, including automatic recovery after a native process restart. This excludes remote execution apps
+such as `agents_shell` from the default tool set. Native shell, file editing, Git, and repository setup run inside
+the guest's retained `/workspace`. The explicitly configured Tengri browser and Relay MCP servers remain separate
+from the ChatGPT app catalog. This default is not a network sandbox; the guest administrator retains full guest access.
+
+Native `turn/interrupt` can leave yielded `exec_command` sessions running. Nanoagent records each command item ID
+from the accepting process generation's ordered turn and item notifications. An interrupted turn retains its work
+inhibitor while Nanoagent inventories native background terminals, terminates only that turn's command items, and
+confirms their absence. Earlier turns' intentional background commands remain running. Cleanup retries stay bound
+to the accepting generation. Missing ownership or an ended generation requires reconciliation and never authorizes
+cleanup against a replacement process. Terminal receipt version 2 records `processesStopped: true` only after this
+confirmation; old receipts and unconfirmed interrupted history cannot release a durable run's workspace or sleep pin.
+
+Native user-input questions and supported primitive MCP forms/HTTPS URL elicitations are retained as pending input
+requests. `CodexCall` method `tengri/resolveApproval` delivers identified controls through a durable receipt and the same
+generation-fenced reply path. Approval IDs include a random process identity; native request ID reuse cannot revive
+an approval card after process replacement.
+The guest validates original question IDs, advertised choices, required fields, types and supported constraints before
+replying. An action decision cannot resolve an input request, and an input payload cannot resolve an action approval.
+Unsupported and oversized question schemas still fail explicitly without fabricating a user answer.
+
 The allowed Codex calls include account, model, conversation and turn operations, and read-only MCP server status
 for verifying the browser computer tool.
 
@@ -152,10 +202,17 @@ and Neovim configuration are preserved. The profile exports the fixed Homebrew p
 a terminal does not start Homebrew. `EDITOR` and `VISUAL` default to `nvim` unless already configured.
 
 The managed editor lives on the fast guest root at `/opt/tengri/editor`: SHA-256-pinned Neovim 0.12.5,
-Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0, every baseline plugin, and nine baseline parsers.
+Tree-sitter CLI 0.27.1, Lazy, AstroNvim 6.1.0 at commit `aa0545fc8357009fc8a67e6cd93e7f8544e3aba9`, every baseline plugin,
+Blink's native completion library, and nine baseline parsers. AstroNvim uses its exact commit because the upstream
+moving minor tag `v6.1` also matches Lazy's `v6.1.0` version range. Build and offline runtime checks verify the installed commit.
 The image build installs and verifies these dependencies; opening a fresh editor downloads nothing.
+The build verifies Blink's release checksum and packages its library without downloader state, following
+Blink's [manual-install contract](https://cmp.saghen.dev/configuration/fuzzy).
+The bundled loader resolves this verified library before Git discovery. The offline image test denies Blink's Git
+version queries and still requires native completion within one second.
 The generated manifest points Lazy directly to these local plugin directories. Automatic plugin updates,
-missing-plugin installation, and parser downloads are disabled for the managed baseline. Explicit `:TSInstall`
+missing-plugin installation, completion-library downloads, and parser downloads are disabled for the managed baseline. The offline
+image test loads completion and requires its bundled Rust implementation. Explicit `:TSInstall`
 and user-added plugins can still use persistent user storage. Run `nvim` and `:AstroVersion` to inspect the editor.
 
 Existing user shell profiles and edited Neovim configuration are preserved. On an image update, bootstrap replaces
@@ -195,7 +252,7 @@ installed system packages consume root-filesystem space. Image builds exercise p
 `/usr/local`, and a real `apt` package installation through `test-guest-admin.sh`. Run its `--runtime` mode in a
 real guest through the isolated [KVM test](../tengri/test-kvm.sh) to exercise mounts and network administration.
 
-On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.159.2 package from the npm registry,
+On first boot, `bootstrap-codex` downloads the architecture-specific Codex 0.164.0 package from the npm registry,
 verifies its pinned SHA-512 digest, and atomically installs the complete native package under the 32 GiB PVC-backed
 `~/.tengri/codex` directory. Subsequent boots reuse that verified install. Nanoagent does not become ready until the
 Codex app server is available. Preparing a vacant slot allows 35 minutes for language-toolchain, developer-tool,
@@ -263,6 +320,12 @@ tasks, debugging, or workspace extensions inside the guest.
 The upstream optional `vsda` browser assets are absent from this open-source distribution; their 404s do not disable the
 workbench. Acceptance tests exercise TypeScript diagnostics to detect actual language-extension failures.
 
+Guest initialization sets `fs.inotify.max_user_watches=524288` for large workspaces. Native KVM acceptance verifies
+the running guest's limit. It also assigns the local hostname `tengri` and its loopback host entry so guest `sudo`
+resolves its own hostname. These settings do not change the host or storage configuration.
+An already running retained guest needs the same setting applied with its existing guest administrator authority;
+ordinary image promotion preserves that guest's processes and kernel state.
+
 See [the desktop acceptance runner](../../apps/landing/README.md#vs-code-in-the-desktop). Sleep and resume retain the
 slot's image and live editor process. An image change requires the explicit fenced recovery procedure in
 [the operations guide](../../docs/tengri/operations.md).
@@ -283,3 +346,15 @@ the retained home and require free space there.
 Desktop replay replaces tool-result image payloads with `[Image output]` before enforcing its byte limit. The tool's
 identity, completion status, text, and structured result remain available; Codex receives the full original image.
 See [browser architecture and research](../../docs/tengri/browser.md).
+
+Nanoagent exports OTLP request spans and sanitized GlitchTip errors when the host supplies telemetry configuration
+through the private boot file. It preserves W3C trace parents and reports gRPC failures as well as HTTP 5xx responses.
+The HTTP wrapper preserves flushing and WebSocket upgrades. Errors retain their class, stack and trace ID; request
+content, credentials, user context and variable values are removed. See
+[Tengri observability](../tengri/README.md#error-reporting-and-request-traces) for the collector allowlist and deployment
+verification. A new guest root is required to install this SDK; an existing snapshot retains its original process.
+The root lifecycle helper and unprivileged API export separate `tengri.component` values. Lifecycle spans join the
+host control trace and time clock synchronization, claim updates, filesystem freeze/thaw, API readiness, workspace
+access and the terminal round trip. Slow or failed lifecycle phases also record their duration in structured logs.
+Readiness failures remain failed spans without creating routine GlitchTip incidents. Platform collector settings are
+excluded from user subprocess environments.

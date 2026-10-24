@@ -7,7 +7,7 @@ spec:
   timeZone: America/Los_Angeles
   suspend: false
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 1800
+  startingDeadlineSeconds: 86400
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:

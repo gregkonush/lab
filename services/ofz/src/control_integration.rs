@@ -107,7 +107,10 @@ async fn setup() -> (Database, Database, Native, Vec<(String, String)>) {
     admin.migrate().await.unwrap();
     admin.migrate().await.unwrap();
     let mut api_config = config;
-    api_config.user("ofz_api").password("ofz-test-only");
+    api_config
+        .user("ofz_api")
+        .password("ofz-test-only")
+        .options(store::CONNECTION_OPTIONS);
     let api = Database::new(api_config, tls).unwrap();
     let native = Native::new(
         &env::var("OFZ_TEST_NATIVE_ENDPOINT").unwrap(),
@@ -335,6 +338,7 @@ async fn verify_runtime_reads(
     .unwrap();
     workload_context.workspace_uid = uid.to_string();
     let runtime_read = GetWorkspaceStateRequest {
+        stream_receipt_id: String::new(),
         context: Some(workload_context.clone()),
         workspace_uid: uid.to_string(),
     };
@@ -583,6 +587,7 @@ async fn runtime_state(
     service
         .get_workspace_state(rpc_as(
             GetWorkspaceStateRequest {
+                stream_receipt_id: String::new(),
                 context: Some(context),
                 workspace_uid: uid.into(),
             },
@@ -668,6 +673,11 @@ struct WorkspaceFixture {
 #[tokio::test]
 #[ignore = "requires the disposable TLS PostgreSQL and SpiceDB from test-control.sh"]
 async fn control_integration_durability_authority_and_quota() {
+    tracing_subscriber::fmt()
+        .with_max_level(tracing::Level::WARN)
+        .with_test_writer()
+        .try_init()
+        .ok();
     let (admin, database, native, identities) = setup().await;
     let service = Service::new(
         database.clone(),
@@ -688,6 +698,19 @@ async fn control_integration_durability_authority_and_quota() {
     Box::pin(verify_maintenance_state_during_audit(&fixture)).await;
     Box::pin(verify_session_bootstrap(&fixture)).await;
     let workspace = Box::pin(verify_workspace_enrollment(&fixture)).await;
+    if policy::connectors_enabled() {
+        Box::pin(verify_connector_grants(&fixture, &workspace)).await;
+    } else {
+        Box::pin(verify_dormant_connector_grants(&fixture)).await;
+    }
+    verify_audit_write_pressure(
+        &fixture.admin,
+        &fixture.database,
+        &fixture.identities[0],
+        &workspace.uid,
+    )
+    .await;
+    Box::pin(verify_authorization_after_audit(&fixture, &workspace)).await;
     Box::pin(verify_runtime_reads(
         &fixture.service,
         &fixture.database,
@@ -709,6 +732,26 @@ async fn control_integration_durability_authority_and_quota() {
     ))
     .await;
     Box::pin(verify_archive_fencing(&fixture, &workspace, grant_id)).await;
+    // Renew the synthetic administrators before the independent runtime/ownership phase.
+    let administrator_sessions: Vec<Uuid> = fixture.identities[..2]
+        .iter()
+        .map(|(_, session)| Uuid::parse_str(session).unwrap())
+        .collect();
+    assert_eq!(
+        fixture
+            .admin
+            .pool
+            .get()
+            .await
+            .unwrap()
+            .execute(
+                "UPDATE ofz.sessions SET mfa_at_ms=ofz.now_ms() WHERE id=ANY($1) AND NOT revoked",
+                &[&administrator_sessions],
+            )
+            .await
+            .unwrap(),
+        2
+    );
     let runtime_epoch = Box::pin(verify_runtime_transfer(&fixture, &workspace)).await;
     Box::pin(verify_offboarding(&fixture, &workspace)).await;
     Box::pin(verify_runtime_removal(
@@ -729,6 +772,201 @@ async fn control_integration_durability_authority_and_quota() {
     Box::pin(verify_offboarding_preserves_removal(&fixture)).await;
     Box::pin(verify_offboarding_during_enrollment(&fixture)).await;
     Box::pin(verify_journal_loss(&fixture, &workspace)).await;
+}
+
+async fn verify_authorization_after_audit(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    enum Read {
+        Decision,
+        Runtime,
+    }
+    let client = fixture.admin.pool.get().await.unwrap();
+    let api = fixture.database.pool.get().await.unwrap();
+    assert_eq!(
+        api.query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "2s"
+    );
+    drop(api);
+    client.batch_execute("CREATE FUNCTION ofz.fixture_delay_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$;").await.unwrap();
+    for read in [Read::Decision, Read::Runtime] {
+        for request_budget in [5000, 2000] {
+            acknowledge_fixture_archive(&fixture.admin).await;
+            let mut context = match read {
+                Read::Decision => {
+                    request(
+                        &fixture.database,
+                        &fixture.identities[0],
+                        Command::ReserveWorkspace(ReserveWorkspace::default()),
+                    )
+                    .await
+                }
+                Read::Runtime => {
+                    controller_request(
+                        &fixture.database,
+                        &fixture.identities[0],
+                        Command::ReserveWorkspace(ReserveWorkspace::default()),
+                    )
+                    .await
+                }
+            }
+            .context
+            .unwrap();
+            context.workspace_uid = workspace.uid.clone();
+            context.deadline_unix_ms =
+                fixture.database.state().await.unwrap().now_ms + request_budget;
+            let deadline = context.deadline_unix_ms;
+            let trace = context.trace_id.clone();
+            let mut renewal_context = context.clone();
+            client.batch_execute(&format!(
+                "CREATE TRIGGER fixture_delay_audit AFTER INSERT ON ofz.audit FOR EACH ROW WHEN (NEW.receipt->>'trace_id'='{trace}') EXECUTE FUNCTION ofz.fixture_delay_audit();"
+            )).await.unwrap();
+            let outcome = match read {
+                Read::Decision => fixture
+                    .service
+                    .check(rpc(CheckRequest {
+                        context: Some(context),
+                        resource: Some(policy::workspace(&workspace.uid)),
+                        action: Action::WorkspaceMetadataRead as i32,
+                        ..Default::default()
+                    }))
+                    .await
+                    .map(|response| {
+                        let response = response.into_inner();
+                        (
+                            response.allowed,
+                            response.valid_until_unix_ms,
+                            response.audit_receipt_id,
+                            Some(response.revision),
+                        )
+                    }),
+                Read::Runtime => fixture
+                    .service
+                    .get_workspace_state(rpc_as(
+                        GetWorkspaceStateRequest {
+                            stream_receipt_id: String::new(),
+                            context: Some(context),
+                            workspace_uid: workspace.uid.clone(),
+                        },
+                        CONTROLLER_ID,
+                    ))
+                    .await
+                    .map(|response| {
+                        let response = response.into_inner();
+                        (
+                            response.owner_id == fixture.identities[0].0,
+                            response.valid_until_unix_ms,
+                            response.audit_receipt_id,
+                            None,
+                        )
+                    }),
+            };
+            let finished = fixture.database.state().await.unwrap();
+            client
+                .batch_execute("DROP TRIGGER fixture_delay_audit ON ofz.audit;")
+                .await
+                .unwrap();
+            if request_budget == 2000 {
+                assert!(
+                    outcome.is_err(),
+                    "audit must not extend the caller's deadline"
+                );
+            } else {
+                let (allowed, valid_until, receipt, revision) = outcome.unwrap();
+                assert!(allowed && !receipt.is_empty());
+                if let Some(revision) = revision {
+                    let audit: AuditReceipt = store::decode(
+                        client
+                            .query_one(
+                                "SELECT receipt FROM ofz.audit WHERE id=$1",
+                                &[&Uuid::parse_str(&receipt).unwrap()],
+                            )
+                            .await
+                            .unwrap()
+                            .get(0),
+                    )
+                    .unwrap();
+                    assert_eq!(
+                        revision, audit.revision,
+                        "an allowed response must identify its durable audited revision"
+                    );
+                    renewal_context.deadline_unix_ms =
+                        fixture.database.state().await.unwrap().now_ms + 2000;
+                    let renewed = fixture
+                        .service
+                        .check(rpc(CheckRequest {
+                            context: Some(renewal_context),
+                            resource: Some(policy::workspace(&workspace.uid)),
+                            action: Action::WorkspaceMetadataRead as i32,
+                            stream_receipt_id: receipt.clone(),
+                            ..Default::default()
+                        }))
+                        .await
+                        .unwrap()
+                        .into_inner();
+                    assert!(renewed.allowed);
+                    assert_eq!(renewed.audit_receipt_id, receipt);
+                    assert_eq!(renewed.revision, audit.revision);
+                }
+                assert!(
+                    valid_until > finished.now_ms && valid_until <= finished.now_ms + 2000,
+                    "audit consumed the authorization window: {valid_until} <= {}",
+                    finished.now_ms
+                );
+                assert!(valid_until <= deadline);
+            }
+        }
+    }
+    client
+        .batch_execute("DROP FUNCTION ofz.fixture_delay_audit();")
+        .await
+        .unwrap();
+    let mut context = request(
+        &fixture.database,
+        &fixture.identities[0],
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    context.workspace_uid = workspace.uid.clone();
+    let resource = policy::workspace(&workspace.uid);
+    let legacy = store::receipt(
+        &context,
+        BFF_ID,
+        resource.clone(),
+        Action::WorkspaceMetadataRead,
+        true,
+        "",
+        "legacy revision fixture",
+    );
+    assert!(legacy.revision.is_empty());
+    let legacy = fixture.database.audit(&legacy, "").await.unwrap();
+    assert_eq!(
+        fixture
+            .service
+            .check(rpc(CheckRequest {
+                context: Some(context),
+                resource: Some(resource),
+                action: Action::WorkspaceMetadataRead as i32,
+                stream_receipt_id: legacy,
+                ..Default::default()
+            }))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let api = fixture.database.pool.get().await.unwrap();
+    assert_eq!(
+        api.query_one("SHOW statement_timeout", &[])
+            .await
+            .unwrap()
+            .get::<_, String>(0),
+        "2s"
+    );
+    acknowledge_fixture_archive(&fixture.admin).await;
 }
 
 async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
@@ -784,6 +1022,7 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
         let trace = context.trace_id.clone();
         let service = fixture.service.clone();
         let request = AuthorizeGuestMaintenanceRequest {
+            stream_receipt_id: String::new(),
             context: Some(context),
             workspace_uid: uid.to_string(),
             purpose: GuestMaintenancePurpose::Probe as i32,
@@ -823,6 +1062,144 @@ async fn verify_maintenance_state_during_audit(fixture: &ControlFixture) {
             .await
             .unwrap();
     }
+    client.batch_execute("CREATE FUNCTION ofz.fixture_delay_workload_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN PERFORM pg_sleep(3); RETURN NEW; END $$;").await.unwrap();
+    enum NativeChange {
+        RuntimeRevocation,
+        MaintenanceRevocation,
+        UnrelatedWrite,
+    }
+    for change in [
+        NativeChange::RuntimeRevocation,
+        NativeChange::MaintenanceRevocation,
+        NativeChange::UnrelatedWrite,
+    ] {
+        let maintenance = !matches!(change, NativeChange::RuntimeRevocation);
+        let revoke = !matches!(change, NativeChange::UnrelatedWrite);
+        acknowledge_fixture_archive(&fixture.admin).await;
+        let mut context = controller_request(
+            &fixture.database,
+            &fixture.identities[0],
+            Command::ReserveWorkspace(ReserveWorkspace::default()),
+        )
+        .await
+        .context
+        .unwrap();
+        context.workspace_uid = uid.to_string();
+        context.runtime_epoch = epoch.to_string();
+        context.deadline_unix_ms = fixture.database.state().await.unwrap().now_ms + 5000;
+        let trace = context.trace_id.clone();
+        client.batch_execute(&format!(
+            "CREATE TRIGGER fixture_delay_workload_audit AFTER INSERT ON ofz.audit FOR EACH ROW WHEN (NEW.receipt->>'trace_id'='{trace}') EXECUTE FUNCTION ofz.fixture_delay_workload_audit();"
+        )).await.unwrap();
+        let service = fixture.service.clone();
+        let workspace_uid = uid.to_string();
+        let in_flight = tokio::spawn(async move {
+            if maintenance {
+                service
+                    .authorize_guest_maintenance(rpc_as(
+                        AuthorizeGuestMaintenanceRequest {
+                            stream_receipt_id: String::new(),
+                            context: Some(context),
+                            workspace_uid,
+                            purpose: GuestMaintenancePurpose::Probe as i32,
+                            terminal_id: String::new(),
+                        },
+                        CONTROLLER_ID,
+                    ))
+                    .await
+                    .and_then(|response| {
+                        response
+                            .into_inner()
+                            .decision
+                            .ok_or_else(|| tonic::Status::internal("maintenance decision missing"))
+                    })
+                    .map(Some)
+            } else {
+                service
+                    .get_workspace_state(rpc_as(
+                        GetWorkspaceStateRequest {
+                            stream_receipt_id: String::new(),
+                            context: Some(context),
+                            workspace_uid,
+                        },
+                        CONTROLLER_ID,
+                    ))
+                    .await
+                    .map(|_| None)
+            }
+        });
+        tokio::time::timeout(std::time::Duration::from_secs(1), async {
+            loop {
+                let writing: bool = client.query_one(
+                    "SELECT EXISTS(SELECT 1 FROM pg_stat_activity WHERE usename='ofz_api' AND wait_event='PgSleep' AND query LIKE 'INSERT INTO ofz.audit%')", &[],
+                ).await.unwrap().get(0);
+                if writing { break; }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+        }).await.expect("runtime read must be committing its audit before workload revocation");
+        let relationship = if revoke {
+            Relationship::new(
+                "platform",
+                "lab",
+                "controller",
+                "workload",
+                &policy::workload_object_id(CONTROLLER_ID),
+            )
+        } else {
+            Relationship::new(
+                "platform",
+                "lab",
+                "auditor",
+                "human",
+                &fixture.identities[2].0,
+            )
+        };
+        fixture
+            .native
+            .write_fixture_relationships(&[if revoke {
+                Update::delete(relationship.clone())
+            } else {
+                Update::touch(relationship.clone())
+            }])
+            .await
+            .unwrap();
+        let outcome = in_flight.await.unwrap();
+        fixture
+            .native
+            .write_fixture_relationships(&[if revoke {
+                Update::touch(relationship)
+            } else {
+                Update::delete(relationship)
+            }])
+            .await
+            .unwrap();
+        client
+            .batch_execute("DROP TRIGGER fixture_delay_workload_audit ON ofz.audit;")
+            .await
+            .unwrap();
+        let receipt: AuditReceipt = store::decode(client.query_one(
+            "SELECT receipt FROM ofz.audit WHERE receipt->>'trace_id'=$1 ORDER BY sequence DESC LIMIT 1", &[&trace],
+        ).await.unwrap().get(0)).unwrap();
+        if revoke {
+            assert_eq!(outcome.unwrap_err().code(), Code::PermissionDenied);
+            assert!(
+                !receipt.allowed,
+                "revoked workload requires a terminal denial receipt"
+            );
+        } else {
+            let decision = outcome.unwrap().unwrap();
+            assert!(decision.allowed && receipt.allowed);
+            assert_eq!(decision.audit_receipt_id, receipt.id);
+            assert_eq!(
+                decision.revision, receipt.revision,
+                "unrelated native writes must not break audit correlation"
+            );
+        }
+    }
+    client
+        .batch_execute("DROP FUNCTION ofz.fixture_delay_workload_audit();")
+        .await
+        .unwrap();
     client
         .execute("DELETE FROM ofz.workspaces WHERE uid=$1", &[&uid])
         .await
@@ -1538,6 +1915,408 @@ async fn verify_workspace_enrollment(fixture: &ControlFixture) -> WorkspaceFixtu
         home: enrolled_home,
         reservation_id: enrolled_reservation,
     }
+}
+
+async fn verify_dormant_connector_grants(fixture: &ControlFixture) {
+    let client = fixture.admin.pool.get().await.unwrap();
+    let snapshot = "SELECT (SELECT count(*) FROM ofz.commands), (SELECT count(*) FROM ofz.grants), (SELECT count(*) FROM ofz.replay), (SELECT count(*) FROM ofz.audit), (SELECT version FROM ofz.platform_state WHERE singleton)";
+    let before = client.query_one(snapshot, &[]).await.unwrap();
+    let input = request(
+        &fixture.database,
+        &fixture.identities[0],
+        Command::ConfigureConnector(ConfigureConnector {
+            connection_id: Uuid::new_v4().to_string(),
+            create: true,
+            enabled: true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(&fixture.database, &fixture.native, BFF_ID, input.clone())
+            .await
+            .unwrap_err()
+            .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            CheckConnectorAgentRequest::default(),
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unimplemented,
+    );
+    assert_eq!(
+        decision::check(
+            &fixture.database,
+            &fixture.native,
+            BFF_ID,
+            CheckRequest {
+                context: input.context,
+                action: Action::ConnectorCreate as i32,
+                resource: Some(policy::platform()),
+                ..Default::default()
+            },
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unimplemented,
+    );
+    let after = client.query_one(snapshot, &[]).await.unwrap();
+    for column in 0..5usize {
+        assert_eq!(
+            before.get::<_, i64>(column),
+            after.get::<_, i64>(column),
+            "a dormant connector request changed durable authority"
+        );
+    }
+}
+
+async fn verify_connector_grants(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
+    acknowledge_fixture_archive(&fixture.admin).await;
+    let owner = &fixture.identities[0];
+    let stranger = &fixture.identities[2];
+    let connection = Uuid::new_v4().to_string();
+    let configured = request(
+        &fixture.database,
+        owner,
+        Command::ConfigureConnector(ConfigureConnector {
+            connection_id: connection.clone(),
+            create: true,
+            enabled: true,
+        }),
+    )
+    .await;
+    let receipt = commands::execute(
+        &fixture.database,
+        &fixture.native,
+        BFF_ID,
+        configured.clone(),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        commands::execute(&fixture.database, &fixture.native, BFF_ID, configured)
+            .await
+            .unwrap()
+            .audit_receipt_id,
+        receipt.audit_receipt_id
+    );
+    let takeover = request(
+        &fixture.database,
+        stranger,
+        Command::ConfigureConnector(ConfigureConnector {
+            connection_id: connection.clone(),
+            create: true,
+            enabled: true,
+        }),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(&fixture.database, &fixture.native, BFF_ID, takeover)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::AlreadyExists
+    );
+    let unauthorized = request(
+        &fixture.database,
+        stranger,
+        Command::ConfigureConnector(ConfigureConnector {
+            connection_id: connection.clone(),
+            create: false,
+            enabled: false,
+        }),
+    )
+    .await;
+    assert_eq!(
+        commands::execute(&fixture.database, &fixture.native, BFF_ID, unauthorized)
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied
+    );
+    let old = fixture
+        .admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .query_one(
+            "SELECT running,runtime_epoch FROM ofz.workspaces WHERE uid=$1",
+            &[&Uuid::parse_str(&workspace.uid).unwrap()],
+        )
+        .await
+        .unwrap();
+    let epoch = Uuid::new_v4().to_string();
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
+            workspace_uid: workspace.uid.clone(),
+            running: true,
+            runtime_epoch: epoch.clone(),
+        }),
+    )
+    .await;
+    let body = Sha256::digest(b"exact connector invocation bytes").to_vec();
+    let (thumbprint, _) = crate::connector_agent::tests::signed_proof(&"a".repeat(43), &body);
+    let grant_id = Uuid::new_v4().to_string();
+    let command = request(
+        &fixture.database,
+        owner,
+        Command::CreateGrant(CreateGrant {
+            grant_id: grant_id.clone(),
+            agent_id: Uuid::new_v4().to_string(),
+            workspace_uid: workspace.uid.clone(),
+            resource: Some(Resource {
+                kind: ResourceKind::ConnectorConnection as i32,
+                id: connection.clone(),
+            }),
+            actions: vec![Action::ConnectorRead as i32],
+            scope: Some(ObservationScope {
+                connector_operations: vec!["search".into()],
+                max_bytes: 1024,
+                max_items: 20,
+                ..Default::default()
+            }),
+            expires_at_unix_ms: fixture.database.state().await.unwrap().now_ms + 600000,
+            proof_key_thumbprint: thumbprint,
+        }),
+    )
+    .await;
+    let credential = commands::execute(&fixture.database, &fixture.native, BFF_ID, command)
+        .await
+        .unwrap()
+        .agent_credential;
+    let signed = || {
+        let (_, proof) = crate::connector_agent::tests::signed_proof(&credential, &body);
+        CheckConnectorAgentRequest {
+            grant_id: grant_id.clone(),
+            credential: credential.clone(),
+            proof,
+            request_hash: body.clone(),
+            connection_id: connection.clone(),
+            operation: "search".into(),
+            action: Action::ConnectorRead as i32,
+        }
+    };
+    let input = signed();
+    let allowed = crate::connector_agent::check(
+        &fixture.database,
+        &fixture.native,
+        policy::CONNECTOR_BROKER_ID,
+        input.clone(),
+    )
+    .await
+    .unwrap();
+    assert!(allowed.decision.as_ref().unwrap().allowed);
+    assert_eq!(allowed.context.as_ref().unwrap().runtime_epoch, epoch);
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            input
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::Unauthenticated,
+        "a proof cannot be replayed through another API process"
+    );
+    let mut wrong = signed();
+    wrong.operation = "delete".into();
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            wrong
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let mut read_cannot_write = signed();
+    read_cannot_write.action = Action::ConnectorInvoke as i32;
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            read_cannot_write
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    let write_grant = Uuid::new_v4().to_string();
+    let (thumbprint, _) = crate::connector_agent::tests::signed_proof(&"a".repeat(43), &body);
+    let write_command = request(
+        &fixture.database,
+        owner,
+        Command::CreateGrant(CreateGrant {
+            grant_id: write_grant.clone(),
+            agent_id: Uuid::new_v4().to_string(),
+            workspace_uid: workspace.uid.clone(),
+            resource: Some(Resource {
+                kind: ResourceKind::ConnectorConnection as i32,
+                id: connection.clone(),
+            }),
+            actions: vec![Action::ConnectorInvoke as i32],
+            scope: Some(ObservationScope {
+                connector_operations: vec!["create_issue".into()],
+                max_bytes: 1024,
+                max_items: 20,
+                ..Default::default()
+            }),
+            expires_at_unix_ms: fixture.database.state().await.unwrap().now_ms + 600000,
+            proof_key_thumbprint: thumbprint,
+        }),
+    )
+    .await;
+    let write_credential =
+        commands::execute(&fixture.database, &fixture.native, BFF_ID, write_command)
+            .await
+            .unwrap()
+            .agent_credential;
+    let (_, write_proof) = crate::connector_agent::tests::signed_proof(&write_credential, &body);
+    let mut write_input = signed();
+    write_input.grant_id = write_grant.clone();
+    write_input.credential = write_credential;
+    write_input.proof = write_proof;
+    write_input.action = Action::ConnectorInvoke as i32;
+    write_input.operation = "create_issue".into();
+    assert!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            write_input
+        )
+        .await
+        .unwrap()
+        .decision
+        .unwrap()
+        .allowed
+    );
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        Command::RevokeGrant(RevokeGrant {
+            grant_id: write_grant,
+        }),
+    )
+    .await;
+    let changed_epoch = Uuid::new_v4();
+    let uid = Uuid::parse_str(&workspace.uid).unwrap();
+    fixture
+        .admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "UPDATE ofz.workspaces SET runtime_epoch=$1 WHERE uid=$2",
+            &[&changed_epoch, &uid],
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            signed()
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied,
+        "a new runtime must not resurrect an old connector capability"
+    );
+    fixture
+        .admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "UPDATE ofz.workspaces SET runtime_epoch=$1 WHERE uid=$2",
+            &[&Uuid::parse_str(&epoch).unwrap(), &uid],
+        )
+        .await
+        .unwrap();
+    let revoke = request(
+        &fixture.database,
+        owner,
+        Command::ConfigureConnector(ConfigureConnector {
+            connection_id: connection.clone(),
+            create: false,
+            enabled: false,
+        }),
+    )
+    .await;
+    commands::execute(&fixture.database, &fixture.native, BFF_ID, revoke)
+        .await
+        .unwrap();
+    assert_eq!(
+        crate::connector_agent::check(
+            &fixture.database,
+            &fixture.native,
+            policy::CONNECTOR_BROKER_ID,
+            signed()
+        )
+        .await
+        .unwrap_err()
+        .code(),
+        Code::PermissionDenied
+    );
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        Command::RevokeGrant(RevokeGrant { grant_id }),
+    )
+    .await;
+    execute(
+        &fixture.database,
+        &fixture.native,
+        owner,
+        Command::SetWorkspaceRuntime(SetWorkspaceRuntime {
+            workspace_uid: workspace.uid.clone(),
+            running: false,
+            runtime_epoch: epoch,
+        }),
+    )
+    .await;
+    fixture
+        .admin
+        .pool
+        .get()
+        .await
+        .unwrap()
+        .execute(
+            "UPDATE ofz.workspaces SET running=$1,runtime_epoch=$2 WHERE uid=$3",
+            &[
+                &old.get::<_, bool>(0),
+                &old.get::<_, Option<Uuid>>(1),
+                &Uuid::parse_str(&workspace.uid).unwrap(),
+            ],
+        )
+        .await
+        .unwrap();
+    acknowledge_fixture_archive(&fixture.admin).await;
 }
 
 async fn verify_access_rosters(fixture: &ControlFixture, workspace: &WorkspaceFixture) {
@@ -2726,12 +3505,14 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
     .unwrap();
     context.workspace_uid = uid.into();
     context.runtime_epoch = epoch.into();
-    let request = AuthorizeGuestMaintenanceRequest {
+    let mut request = AuthorizeGuestMaintenanceRequest {
+        stream_receipt_id: String::new(),
         context: Some(context.clone()),
         workspace_uid: uid.into(),
         purpose: GuestMaintenancePurpose::Probe as i32,
         terminal_id: String::new(),
     };
+    let mut probe_receipt = String::new();
     for (purpose, terminal_id, action) in [
         (
             GuestMaintenancePurpose::Probe,
@@ -2776,6 +3557,9 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
             .await
             .unwrap();
         let receipt: AuditReceipt = store::decode(row.get(0)).unwrap();
+        if purpose == GuestMaintenancePurpose::Probe {
+            probe_receipt = decision.audit_receipt_id.clone();
+        }
         assert!(receipt.allowed);
         assert_eq!(receipt.resource, Some(policy::workspace(uid)));
         assert_eq!(receipt.action, action as i32);
@@ -2787,6 +3571,79 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
             Sha256::digest(terminal_id.as_bytes()).to_vec()
         );
     }
+    request.stream_receipt_id = probe_receipt;
+    let mut runtime_context = context.clone();
+    runtime_context.runtime_epoch.clear();
+    runtime_context.deadline_unix_ms = fixture.database.state().await.unwrap().now_ms + 5000;
+    let mut runtime_request = GetWorkspaceStateRequest {
+        context: Some(runtime_context),
+        workspace_uid: uid.into(),
+        stream_receipt_id: String::new(),
+    };
+    let original = fixture
+        .service
+        .get_workspace_state(rpc_as(runtime_request.clone(), CONTROLLER_ID))
+        .await
+        .unwrap()
+        .into_inner();
+    runtime_request.stream_receipt_id = original.audit_receipt_id.clone();
+    let warm_trace = Uuid::new_v4().to_string();
+    request.context.as_mut().unwrap().trace_id = warm_trace.clone();
+    runtime_request.context.as_mut().unwrap().trace_id = warm_trace.clone();
+    let connection = fixture.admin.pool.get().await.unwrap();
+    connection.batch_execute(&format!(
+        "CREATE FUNCTION ofz.fixture_reject_runtime_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'warm observation attempted an audit write'; END $$; CREATE TRIGGER fixture_reject_runtime_audit AFTER INSERT ON ofz.audit FOR EACH ROW WHEN (NEW.receipt->>'trace_id'='{warm_trace}') EXECUTE FUNCTION ofz.fixture_reject_runtime_audit();"
+    )).await.unwrap();
+    for _ in 0..8 {
+        let deadline = fixture.database.state().await.unwrap().now_ms + 5000;
+        runtime_request.context.as_mut().unwrap().deadline_unix_ms = deadline;
+        request.context.as_mut().unwrap().deadline_unix_ms = deadline;
+        let state = fixture
+            .service
+            .get_workspace_state(rpc_as(runtime_request.clone(), CONTROLLER_ID))
+            .await
+            .expect("runtime observation must not require another audit write")
+            .into_inner();
+        assert_eq!(state.audit_receipt_id, original.audit_receipt_id);
+        assert!(state.runtime_allowed);
+        let probe = fixture
+            .service
+            .authorize_guest_maintenance(rpc_as(request.clone(), CONTROLLER_ID))
+            .await
+            .expect("health probe must not require another audit write")
+            .into_inner()
+            .decision
+            .unwrap();
+        assert_eq!(probe.audit_receipt_id, request.stream_receipt_id);
+        assert!(probe.allowed);
+    }
+    connection.batch_execute("DROP TRIGGER fixture_reject_runtime_audit ON ofz.audit; DROP FUNCTION ofz.fixture_reject_runtime_audit();").await.unwrap();
+    drop(connection);
+    request.context.as_mut().unwrap().deadline_unix_ms =
+        fixture.database.state().await.unwrap().now_ms + 5000;
+    let mut cleanup = request.clone();
+    cleanup.purpose = GuestMaintenancePurpose::TerminalCleanup as i32;
+    cleanup.terminal_id = "terminal-7".into();
+    assert_eq!(
+        fixture
+            .service
+            .authorize_guest_maintenance(rpc_as(cleanup, CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::InvalidArgument,
+    );
+    let mut mismatched = request.clone();
+    mismatched.stream_receipt_id = original.audit_receipt_id;
+    assert_eq!(
+        fixture
+            .service
+            .authorize_guest_maintenance(rpc_as(mismatched, CONTROLLER_ID))
+            .await
+            .unwrap_err()
+            .code(),
+        Code::PermissionDenied,
+    );
     assert_eq!(
         fixture
             .service
@@ -2816,6 +3673,8 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
         (GuestMaintenancePurpose::TerminalCleanup as i32, ""),
         (GuestMaintenancePurpose::TerminalCleanup as i32, "../other"),
     ] {
+        request.context.as_mut().unwrap().deadline_unix_ms =
+            fixture.database.state().await.unwrap().now_ms + 5000;
         let mut invalid = request.clone();
         invalid.purpose = purpose;
         invalid.terminal_id = terminal_id.into();
@@ -2878,9 +3737,22 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
             "UPDATE ofz.workspaces SET state='active' WHERE uid=$1",
         ),
     ] {
+        let deadline = fixture.database.state().await.unwrap().now_ms + 5000;
+        request.context.as_mut().unwrap().deadline_unix_ms = deadline;
+        runtime_request.context.as_mut().unwrap().deadline_unix_ms = deadline;
         conn.execute(fence, &[&Uuid::parse_str(uid).unwrap()])
             .await
             .unwrap();
+        let observed = fixture
+            .service
+            .get_workspace_state(rpc_as(runtime_request.clone(), CONTROLLER_ID))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(
+            !observed.runtime_allowed,
+            "receipt reuse cannot hide runtime fencing"
+        );
         assert_eq!(
             fixture
                 .service
@@ -2897,6 +3769,8 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
     conn.batch_execute("UPDATE ofz.platform_state SET fenced=true")
         .await
         .unwrap();
+    request.context.as_mut().unwrap().deadline_unix_ms =
+        fixture.database.state().await.unwrap().now_ms + 5000;
     assert_eq!(
         fixture
             .service
@@ -2907,6 +3781,8 @@ async fn verify_guest_maintenance(fixture: &ControlFixture, uid: &str, epoch: &s
         Code::PermissionDenied
     );
     conn.batch_execute("UPDATE ofz.platform_state SET fenced=false; UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()-61000").await.unwrap();
+    request.context.as_mut().unwrap().deadline_unix_ms =
+        fixture.database.state().await.unwrap().now_ms + 5000;
     assert_eq!(
         fixture
             .service
@@ -3061,6 +3937,8 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
         "a Viewer without an approved scope must remain metadata-only on a running workspace"
     );
     let scope = ObservationScope {
+        connector_operations: vec![],
+        connector_runtime_epoch: String::new(),
         file_roots: vec!["/workspace/src".into()],
         thread_ids: vec!["thread-approved".into()],
         terminal_ids: vec!["terminal-approved".into()],
@@ -3200,7 +4078,7 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     let trace_id = context.trace_id.clone();
     let database = fixture.database.clone();
     let native = fixture.native.clone();
-    let in_flight = tokio::spawn(async move {
+    let mut in_flight = tokio::spawn(async move {
         decision::check(
             &database,
             &native,
@@ -3217,6 +4095,9 @@ async fn verify_viewer_scope(fixture: &ControlFixture, uid: &str, epoch: &str) {
     });
     tokio::time::timeout(std::time::Duration::from_secs(1), async {
         loop {
+            if in_flight.is_finished() {
+                panic!("content decision ended before its audit write: {:?}", (&mut in_flight).await);
+            }
             let blocked: bool = audit_lock.query_one(
                 "SELECT EXISTS(SELECT 1 FROM pg_locks WHERE relation='ofz.audit'::regclass AND mode='RowExclusiveLock' AND NOT granted)", &[],
             ).await.unwrap().get(0);
@@ -3478,7 +4359,69 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
             > short_idle + 1_000_000,
         "qualifying control extends idle timeout"
     );
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.query_one(
+        "SELECT id FROM ofz.sessions WHERE id=$1 FOR UPDATE",
+        &[&owner_session],
+    )
+    .await
+    .unwrap();
+    let activity_client = database.pool.get().await.unwrap();
+    let activity = AuditReceipt {
+        actor: Some(Actor {
+            identity: Some(Identity::HumanId(owner.0.clone())),
+        }),
+        session_id: owner.1.clone(),
+        action: Action::FilesWrite as i32,
+        allowed: true,
+        ..Default::default()
+    };
+    let recorded = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        store::record_activity(&**activity_client, &activity),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+    assert!(
+        matches!(recorded, Ok(Ok(true))),
+        "fresh activity must validate without waiting to rewrite the session: {recorded:?}"
+    );
+    drop(activity_client);
     let short_idle:i64 = client.query_one("UPDATE ofz.sessions SET idle_deadline_ms=ofz.now_ms()+60000 WHERE id=$1 RETURNING idle_deadline_ms", &[&owner_session]).await.unwrap().get(0);
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.query_one(
+        "SELECT id FROM ofz.sessions WHERE id=$1 FOR UPDATE",
+        &[&owner_session],
+    )
+    .await
+    .unwrap();
+    let concurrent_activity = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        futures::future::join_all((0..8).map(|_| async {
+            let client = database.pool.get().await.unwrap();
+            store::record_activity(&**client, &activity).await
+        })),
+    )
+    .await;
+    lock.rollback().await.unwrap();
+    assert!(
+        matches!(&concurrent_activity, Ok(results) if results.iter().all(|result| matches!(result, Ok(true)))),
+        "parallel activity must validate without queuing behind an idle refresh: {concurrent_activity:?}"
+    );
+    assert_eq!(
+        client
+            .query_one(
+                "SELECT idle_deadline_ms FROM ofz.sessions WHERE id=$1",
+                &[&owner_session],
+            )
+            .await
+            .unwrap()
+            .get::<_, i64>(0),
+        short_idle,
+        "a busy session row skips only the optional idle refresh"
+    );
     let mut context = request(
         database,
         owner,
@@ -3569,6 +4512,7 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
         paused
             .get_workspace_state(rpc_as(
                 GetWorkspaceStateRequest {
+                    stream_receipt_id: String::new(),
                     context: Some(runtime_context),
                     workspace_uid: runtime_uid,
                 },
@@ -3676,6 +4620,130 @@ async fn verify_runtime_transfer(fixture: &ControlFixture, workspace: &Workspace
         "transfer quarantines retained content until clean recovery"
     );
     runtime_epoch
+}
+
+async fn verify_audit_write_pressure(
+    admin: &Database,
+    database: &Database,
+    owner: &(String, String),
+    uid: &str,
+) {
+    let context = request(
+        database,
+        owner,
+        Command::ReserveWorkspace(ReserveWorkspace::default()),
+    )
+    .await
+    .context
+    .unwrap();
+    let receipts: Vec<_> = (0..12)
+        .map(|_| {
+            store::receipt(
+                &context,
+                CONTROLLER_ID,
+                policy::workspace(uid),
+                Action::WorkspaceMetadataRead,
+                true,
+                "",
+                "audit write pressure",
+            )
+        })
+        .collect();
+    let warm = futures::future::join_all((0..12).map(|_| database.pool.get())).await;
+    assert!(warm.iter().all(Result::is_ok));
+    drop(warm);
+    let mut held = admin.pool.get().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.batch_execute(
+        "CREATE FUNCTION ofz.fixture_block_audit_commit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.receipt->>'reason'='audit write pressure' THEN PERFORM pg_advisory_xact_lock(726635522922); END IF; RETURN NEW; END $$;
+         CREATE CONSTRAINT TRIGGER fixture_block_audit_commit AFTER INSERT ON ofz.audit DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION ofz.fixture_block_audit_commit();",
+    )
+    .await
+    .unwrap();
+    lock.commit().await.unwrap();
+    let lock = held.transaction().await.unwrap();
+    lock.batch_execute("SELECT pg_advisory_xact_lock(726635522922)")
+        .await
+        .unwrap();
+    let barrier = std::sync::Arc::new(tokio::sync::Barrier::new(13));
+    let writers: Vec<_> = receipts
+        .iter()
+        .map(|receipt| {
+            let database = database.clone();
+            let receipt = receipt.clone();
+            let barrier = barrier.clone();
+            tokio::spawn(async move {
+                barrier.wait().await;
+                database.audit(&receipt, "").await
+            })
+        })
+        .collect();
+    barrier.wait().await;
+    tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    let read = tokio::time::timeout(std::time::Duration::from_millis(300), database.state()).await;
+    let pending = writers.iter().all(|writer| !writer.is_finished());
+    lock.rollback().await.unwrap();
+    for writer in writers {
+        writer.await.unwrap().unwrap();
+    }
+    assert!(
+        pending,
+        "durable audit writes must wait for the database commit"
+    );
+    assert!(
+        matches!(read, Ok(Ok(_))),
+        "audit writes starved fresh authorization reads: {read:?}"
+    );
+    let ids: Vec<_> = receipts
+        .iter()
+        .map(|receipt| Uuid::parse_str(&receipt.id).unwrap())
+        .collect();
+    let client = admin.pool.get().await.unwrap();
+    client.batch_execute("DROP TRIGGER fixture_block_audit_commit ON ofz.audit; DROP FUNCTION ofz.fixture_block_audit_commit();").await.unwrap();
+    let committed = client.query_one("SELECT count(*)::integer,count(DISTINCT pg_xact_commit_timestamp(xmin))::integer FROM ofz.audit WHERE id=ANY($1)", &[&ids]).await.unwrap();
+    assert_eq!(committed.get::<_, i32>(0), 12);
+    assert!(
+        (1..=2).contains(&committed.get::<_, i32>(1)),
+        "concurrent audit receipts must share durable commits"
+    );
+    let good = store::receipt(
+        &context,
+        CONTROLLER_ID,
+        policy::workspace(uid),
+        Action::WorkspaceMetadataRead,
+        true,
+        "",
+        "audit failure isolation",
+    );
+    let mut expired = store::receipt(
+        &context,
+        CONTROLLER_ID,
+        policy::workspace(uid),
+        Action::FilesWrite,
+        true,
+        "",
+        "audit failure isolation",
+    );
+    expired.session_id = Uuid::new_v4().to_string();
+    let (accepted, rejected) =
+        tokio::join!(database.audit(&good, ""), database.audit(&expired, ""));
+    assert_eq!(accepted.unwrap(), good.id);
+    assert_eq!(rejected.unwrap_err().code(), Code::Unauthenticated);
+    let count: i64 = client
+        .query_one(
+            "SELECT count(*) FROM ofz.audit WHERE id=ANY($1)",
+            &[&vec![
+                Uuid::parse_str(&good.id).unwrap(),
+                Uuid::parse_str(&expired.id).unwrap(),
+            ]],
+        )
+        .await
+        .unwrap()
+        .get(0);
+    assert_eq!(
+        count, 1,
+        "one invalid audit must roll back only its own receipt"
+    );
 }
 
 async fn verify_offboarding(fixture: &ControlFixture, workspace: &WorkspaceFixture) {

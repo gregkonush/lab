@@ -122,10 +122,14 @@ describe('native Restate execution server', () => {
     ).toEqual([
       {
         name: 'BaynExecutionController',
-        handlers: ['activate', 'tick', 'deactivate', 'status', 'activateDeployment'],
+        handlers: ['activate', 'tick', 'deactivate', 'prepareActivation', 'status', 'activateDeployment'],
       },
       { name: 'BaynBrokerObservations', handlers: ['activate', 'poll', 'status'] },
     ])
+    expect(services[0]?.handlers?.find(({ name }) => name === 'prepareActivation')).toMatchObject({
+      ty: 'EXCLUSIVE',
+      ingressPrivate: true,
+    })
     expect(services[0]?.handlers?.find(({ name }) => name === 'activateDeployment')).toMatchObject({
       ty: 'SHARED',
       ingressPrivate: false,
@@ -143,6 +147,7 @@ describe('native Restate execution server', () => {
       { name: 'activate', ingressPrivate: true },
       { name: 'tick', ingressPrivate: true },
       { name: 'deactivate', ingressPrivate: true },
+      { name: 'prepareActivation', ingressPrivate: true },
       { name: 'status', ingressPrivate: true },
     ])
   })
@@ -176,13 +181,7 @@ describe('native Restate execution server', () => {
       port: 9080,
       requestIdentityKeys: requestIdentityKey,
     })
-    expect(Object.keys(configured).sort()).toEqual([
-      'activationToken',
-      'port',
-      'previousPlanHash',
-      'previousSourceRevision',
-      'requestIdentityKeys',
-    ])
+    expect(Object.keys(configured).sort()).toEqual(['activationToken', 'port', 'requestIdentityKeys'])
   })
 
   test('rejects an unsigned discovery request when request identity is configured', async () => {

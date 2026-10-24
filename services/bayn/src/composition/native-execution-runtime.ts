@@ -8,6 +8,7 @@ import {
   Fiber,
   Layer,
   ManagedRuntime,
+  Metric,
   Option,
   Ref,
   Result,
@@ -16,7 +17,7 @@ import {
   type Tracer,
 } from 'effect'
 
-import { prepareAutonomousApplication, type ApplicationPlanFor } from '../app'
+import { prepareAutonomousApplication, type ApplicationPlan } from '../app'
 import {
   maximumRetainedJevObservationReferences,
   type RetainedAutonomousCyclePassObservation,
@@ -34,7 +35,6 @@ import {
 import { advanceExecutionOnce, TransientExecutionFailure, type AdvanceExecutionCommand } from '../execution/advance'
 import {
   decodeExecutionAdvanceStepResult,
-  type ExecutionControllerBinding,
   type ExecutionAdvanceStepResult,
   type ExecutionControllerState,
 } from '../execution/controller'
@@ -44,7 +44,7 @@ import {
   type RecoveryFirstCycleDriver,
   type RecoveryFirstCycleDriverOwner,
   type RecoveryFirstRuntime,
-} from '../observe-composition'
+} from '../observe-composition/model'
 import { currentOpenTelemetryLogAnnotations, currentOpenTelemetryParentSpan } from '../restate/restate-telemetry'
 import type { NativeExecutionRuntime, ExecutionControllerConfig } from '../restate/restate-execution-controller'
 import { currentUtcInstant } from '../time'
@@ -75,10 +75,10 @@ export const nativeExecutionRuntimeInitializationTimeoutMs = (operationTimeoutMs
  * Restate's durable controller identity describes the orchestration protocol, not a deployable worker revision.
  * Trading authority, strategy, market-data and risk bindings remain validated by each execution pass.
  */
-export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v2')
+export const executionControllerPlanHash = sha256('bayn.execution-controller-plan.v3')
 
 export type BoundRecoveryFirstCycleDriver = {
-  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner').CycleRunnerError>
+  readonly advance: Effect.Effect<RecoveryFirstCycleAdvance, import('../cycle/runner/model').CycleRunnerError>
   readonly nextDelayMs: number
 }
 
@@ -108,7 +108,7 @@ const runtimeError = (
 ): NativeExecutionRuntimeError => new NativeExecutionRuntimeError({ operation, message, cause })
 
 export const executionControllerConfig = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
+  plan: ApplicationPlan,
 ): Result.Result<ExecutionControllerConfig, NativeExecutionRuntimeError> =>
   Result.succeed({
     controllerKey: plan.config.alpaca.identity.identityHash,
@@ -172,7 +172,8 @@ const bindRecoveryFirstCycleDriver = (
             read: (batchId) =>
               observe(store.read(batchId), (batch) => (batch === null ? null : batch.plan.observationHash)),
             pending: (cycleId, generation) => observe(store.pending(cycleId, generation), () => null),
-            begin: (plan) => observe(store.begin(plan), (batch) => batch.plan.observationHash),
+            begin: (plan, observation) =>
+              observe(store.begin(plan, observation), (batch) => batch.plan.observationHash),
             finish: (batchId) => observe(store.finish(batchId), (batch) => batch.plan.observationHash),
           })
         } else complete = false
@@ -246,8 +247,6 @@ const controllerOutcome = (outcome: 'Blocked' | 'Completed' | 'Waiting'): Execut
   }
 }
 
-const legacyUnboundControllerPlanHash = '0'.repeat(64)
-
 const persistControllerStatus = (
   statusStore: ExecutionControllerStatusStoreShape,
   status: ExecutionControllerStatus,
@@ -320,11 +319,9 @@ const replayProjectedAdvance = (
   planHash: string,
 ): Result.Result<ExecutionAdvanceStepResult | null, TransientExecutionFailure> => {
   if (status === null || status.epoch < command.epoch) return Result.succeed(null)
-  const legacyPlanCanBind =
-    status.planHash === legacyUnboundControllerPlanHash && status.nextSequence <= command.sequence
   if (
     status.controllerKey !== command.controllerKey ||
-    (status.planHash !== planHash && !legacyPlanCanBind) ||
+    status.planHash !== planHash ||
     status.epoch !== command.epoch
   ) {
     return Result.fail(projectionFailure('controller status has already advanced beyond this execution command'))
@@ -475,25 +472,7 @@ const logEffect = (
   )
 }
 
-export const makeNativeExecutionRuntimeAdapter = (
-  driver: Effect.Effect<BoundRecoveryFirstCycleDriver, NativeExecutionRuntimeError>,
-  statusStore: ExecutionControllerStatusStoreShape,
-  runner: ExecutionEffectRunner,
-  planHash: string,
-): NativeExecutionRuntime => ({
-  advance: (command, signal) => {
-    const parent = currentOpenTelemetryParentSpan()
-    const advance = driver.pipe(
-      Effect.flatMap((current) => executeNativeExecutionAdvance(command, current, statusStore, planHash)),
-    )
-    return runner.runPromise(parent === undefined ? advance : advance.pipe(Effect.withParentSpan(parent)), { signal })
-  },
-  log: (level, message, annotations) => runner.runPromise(logEffect(level, message, annotations)),
-  projectState: (controllerKey, state, signal) =>
-    runner.runPromise(projectExecutionControllerState(controllerKey, state, statusStore), { signal }),
-})
-
-const startRuntimePreparation = (plan: ApplicationPlanFor<'AutonomousService'>, slot: RecoveryFirstCycleDriverSlot) =>
+const startRuntimePreparation = (plan: ApplicationPlan, slot: RecoveryFirstCycleDriverSlot) =>
   makeAutonomousServiceRuntime(plan, {
     ownCycleDriver: captureRecoveryFirstCycleDriver(slot),
   }).pipe(
@@ -547,7 +526,7 @@ export const makePublishedExecutionCycleDriverLive = <R>(
     }),
   )
 
-export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlanFor<'AutonomousService'>) =>
+export const PublishedExecutionCycleDriverLive = (plan: ApplicationPlan) =>
   makePublishedExecutionCycleDriverLive(plan.config.operationTimeoutMs, (slot) => startRuntimePreparation(plan, slot))
 
 type NativeExecutionManagedServices = PublishedExecutionCycleDriver | ExecutionControllerStatusStore
@@ -590,18 +569,6 @@ const runManagedControllerStateProjection = <R, E>(
     { signal },
   )
 
-export const makeManagedNativeExecutionRuntimeAdapter = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-  logRunner: ExecutionEffectRunner,
-  planHash: string,
-): NativeExecutionRuntime => ({
-  advance: (command, signal) =>
-    runManagedNativeExecutionAdvance(executionRunner, command, signal, planHash, currentOpenTelemetryParentSpan()),
-  log: (level, message, annotations) => logRunner.runPromise(logEffect(level, message, annotations)),
-  projectState: (controllerKey, state, signal) =>
-    runManagedControllerStateProjection(executionRunner, controllerKey, state, signal),
-})
-
 const ownManagedRuntime = <R, E>(
   managed: ManagedRuntime.ManagedRuntime<R, E>,
 ): Effect.Effect<ManagedRuntime.ManagedRuntime<R, E>, never, Scope.Scope> =>
@@ -619,23 +586,6 @@ export const initializeNativeExecutionProjectionRuntime = <R, E>(
         : Effect.failCause(
             Cause.map(exit.cause, (cause) =>
               runtimeError('initialize', 'native execution controller persistence bootstrap failed', cause),
-            ),
-          ),
-    ),
-  )
-
-export const initializeNativeExecutionRuntime = <R, E>(
-  executionRunner: NativeExecutionManagedRuntime<R, E>,
-): Effect.Effect<void, NativeExecutionRuntimeError> =>
-  Effect.promise((signal) =>
-    executionRunner.runPromiseExit(PublishedExecutionCycleDriver.pipe(Effect.asVoid), { signal }),
-  ).pipe(
-    Effect.flatMap((exit) =>
-      Exit.isSuccess(exit)
-        ? Effect.void
-        : Effect.failCause(
-            Cause.map(exit.cause, (cause) =>
-              runtimeError('initialize', 'native execution controller runtime bootstrap failed', cause),
             ),
           ),
     ),
@@ -687,18 +637,22 @@ export const prewarmNativeMarketProjection = <E, R>(projection: Layer.Layer<Kafk
   )
 
 export const acquireNativeExecutionRuntime = (
-  plan: ApplicationPlanFor<'AutonomousService'>,
-  previousBinding?: ExecutionControllerBinding,
+  plan: ApplicationPlan,
 ): Effect.Effect<NativeExecutionRuntimeResource, NativeExecutionRuntimeError, Scope.Scope> =>
   Effect.gen(function* () {
-    const baseConfig = yield* Effect.fromResult(executionControllerConfig(plan))
-    const config: ExecutionControllerConfig =
-      previousBinding === undefined ? baseConfig : { ...baseConfig, previousBinding }
+    const config = yield* Effect.fromResult(executionControllerConfig(plan))
+    const metricIdentity = Layer.mergeAll(
+      Layer.succeed(Metric.CurrentMetricAttributes, yield* Metric.CurrentMetricAttributes),
+      Layer.succeed(Metric.MetricRegistry, yield* Metric.MetricRegistry),
+    )
     const prewarmedProjection = yield* prewarmNativeMarketProjection(WorkerMarketProjectionLive(plan))
     const sharedResources = Layer.merge(
       AutonomousWorkerApplicationResourcesLive(plan, prewarmedProjection),
       ExecutionControllerStatusResourceLive(plan.config),
-    ).pipe(Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')))
+    ).pipe(
+      Layer.provideMerge(makeConfiguredTelemetryRuntimeLayer('bayn-execution-controller')),
+      Layer.provideMerge(metricIdentity),
+    )
     const executionResources = Layer.merge(
       sharedResources,
       PublishedExecutionCycleDriverLive(plan).pipe(Layer.provide(sharedResources)),
@@ -709,7 +663,7 @@ export const acquireNativeExecutionRuntime = (
     const managed = yield* ScopedRef.fromAcquire(ownManagedRuntime(ManagedRuntime.make(executionResources)))
 
     const projectionManaged = yield* ownManagedRuntime(
-      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config)),
+      ManagedRuntime.make(ExecutionControllerStatusResourceLive(plan.config).pipe(Layer.provideMerge(metricIdentity))),
     )
     yield* initializeNativeExecutionProjectionRuntime(projectionManaged)
     const logManaged = yield* ownManagedRuntime(

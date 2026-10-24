@@ -21,8 +21,10 @@ from minio import Minio
 from minio.error import S3Error
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, GOVERNANCE, Retention
+from minio.sseconfig import Rule, SSEConfig
 from psycopg.conninfo import conninfo_to_dict, make_conninfo
 from psycopg.rows import dict_row
+from psycopg import sql
 
 module = importlib.util.spec_from_file_location(
     "audit_export", Path(__file__).resolve().parents[1] / "audit_export.py"
@@ -56,6 +58,48 @@ class StoredBeforeCrash(archive.Exporter):
 
 
 class ArchiveBoundaries(unittest.TestCase):
+    def test_database_writer_identity_cannot_be_replaced(self):
+        with tempfile.TemporaryDirectory(prefix="ofz-database-writers-") as temporary:
+            directory = Path(temporary)
+            initialize.prepare(directory)
+            manifest = directory / "database-writers.json"
+            original = manifest.read_bytes()
+            initialize.prepare(directory)
+            self.assertEqual(original, manifest.read_bytes())
+            values = json.loads(original)
+            self.assertEqual(set(values), {"ofz", "keycloak"})
+            values["ofz"]["secret_key"] = "00" * 32
+            manifest.write_text(json.dumps(values, sort_keys=True))
+            with self.assertRaisesRegex(archive.ArchiveError, "identity changed"):
+                initialize.prepare(directory)
+            manifest.unlink()
+            with self.assertRaisesRegex(archive.ArchiveError, "original"):
+                initialize.prepare(directory)
+            self.assertFalse(manifest.exists())
+
+    def test_recovery_key_is_stable_and_corruption_is_not_replaced(self):
+        with tempfile.TemporaryDirectory(prefix="ofz-recovery-key-") as temporary:
+            directory = Path(temporary)
+            initialize.prepare(directory)
+            key = directory / "sse_kek"
+            original = key.read_bytes()
+            configuration = (directory / "security.toml").read_bytes()
+            initialize.prepare(directory)
+            self.assertEqual(original, key.read_bytes())
+            self.assertEqual(configuration, (directory / "security.toml").read_bytes())
+            self.assertEqual(len(bytes.fromhex(original.decode())), 32)
+            key.write_text("corrupt-key")
+            with self.assertRaises(archive.ArchiveError):
+                initialize.prepare(directory)
+            self.assertEqual(key.read_text(), "corrupt-key")
+            key.write_text("00" * 32)
+            with self.assertRaisesRegex(archive.ArchiveError, "identity changed"):
+                initialize.prepare(directory)
+            key.unlink()
+            with self.assertRaisesRegex(archive.ArchiveError, "original"):
+                initialize.prepare(directory)
+            self.assertFalse(key.exists())
+
     def test_private_credentials_and_redacted_failures(self):
         with tempfile.TemporaryDirectory(
             prefix="ofz-archive-credentials-"
@@ -92,6 +136,175 @@ class ArchiveBoundaries(unittest.TestCase):
         self.assertNotIn("fixture-secret", json.dumps(report))
 
 
+class ArchivePolling(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        config = conninfo_to_dict(os.environ["OFZ_TEST_DSN"])
+        config.update(sslmode="verify-full", sslrootcert=os.environ["OFZ_TEST_CA_FILE"])
+        cls.administrator = psycopg.connect(**config, autocommit=True)
+        cls.database_name = f"ofz_poll_{uuid.uuid4().hex}"
+        cls.administrator.execute(
+            sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database_name))
+        )
+        cls.database = psycopg.connect(
+            **dict(config, dbname=cls.database_name),
+            autocommit=True,
+            row_factory=dict_row,
+        )
+        cls.database.execute("""
+            CREATE SCHEMA ofz;
+            CREATE TABLE ofz.audit (
+                sequence bigint PRIMARY KEY, receipt jsonb NOT NULL,
+                target_hash bytea NOT NULL, created_at_ms bigint NOT NULL
+            );
+            CREATE TABLE ofz.audit_outbox (
+                audit_sequence bigint PRIMARY KEY REFERENCES ofz.audit(sequence),
+                acknowledged_at_ms bigint,
+                archive_receipt text
+            );
+            CREATE FUNCTION ofz.now_ms() RETURNS bigint LANGUAGE sql AS
+                'SELECT floor(extract(epoch FROM clock_timestamp())*1000)::bigint';
+            CREATE TABLE ofz.archive_state (
+                acknowledged_sequence bigint NOT NULL,
+                acknowledged_at_ms bigint NOT NULL
+            );
+            CREATE INDEX audit_outbox_unacknowledged ON ofz.audit_outbox(audit_sequence)
+                WHERE acknowledged_at_ms IS NULL;
+            INSERT INTO ofz.audit
+                SELECT n,jsonb_build_object('fixture',repeat(md5(n::text),32)),
+                    decode(repeat('00',32),'hex'),n
+                FROM generate_series(1,10300) n;
+            INSERT INTO ofz.audit_outbox
+                SELECT sequence,CASE WHEN sequence<=10000 THEN 1 END FROM ofz.audit;
+            INSERT INTO ofz.archive_state VALUES (10300,0);
+        """)
+        cls.database.execute("VACUUM ANALYZE ofz.audit")
+        cls.database.execute("VACUUM ANALYZE ofz.audit_outbox")
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.database.close()
+        cls.administrator.execute(
+            sql.SQL("DROP DATABASE {}").format(sql.Identifier(cls.database_name))
+        )
+        cls.administrator.close()
+
+    def setUp(self):
+        self.database.execute("BEGIN")
+
+    def tearDown(self):
+        self.database.execute("ROLLBACK")
+
+    def idle_exporter(self):
+        receipt = archive.Receipt(
+            f"batches/1-10300-{'0' * 64}.json",
+            "idle-heartbeat-sql-fixture",
+            "0" * 64,
+            (datetime.now(UTC) + timedelta(days=90)).isoformat(),
+        )
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=1,archive_receipt=%s",
+            (receipt.encode(),),
+        )
+
+        class VerifiedArchive(archive.Exporter):
+            verifications = 0
+
+            def verify_destination(self):
+                self.verifications += 1
+
+            def verify_object(self, stored):
+                self.verifications += 1
+                if stored != receipt:
+                    raise archive.ArchiveError("unexpected fixture receipt")
+
+        return VerifiedArchive(self.database, None)
+
+    def checkpoint_version(self):
+        return self.database.execute(
+            "SELECT ctid::text AS tuple,acknowledged_at_ms FROM ofz.archive_state"
+        ).fetchone()
+
+    def test_idle_poll_verifies_archive_without_rewriting_fresh_heartbeat(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+        initial = self.checkpoint_version()
+        self.assertGreater(initial["acknowledged_at_ms"], 0)
+        self.assertEqual(exporter.tick(), 0)
+        self.assertEqual(self.checkpoint_version(), initial)
+        self.assertEqual(exporter.verifications, 4)
+
+        self.database.execute(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()-11000"
+        )
+        expired = self.checkpoint_version()
+        self.assertEqual(exporter.tick(), 0)
+        self.assertGreater(
+            self.checkpoint_version()["acknowledged_at_ms"],
+            expired["acknowledged_at_ms"],
+        )
+
+        self.database.execute(
+            "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms()+11000"
+        )
+        future = self.checkpoint_version()
+        self.assertEqual(exporter.tick(), 0)
+        self.assertLess(
+            self.checkpoint_version()["acknowledged_at_ms"],
+            future["acknowledged_at_ms"],
+        )
+
+    def test_idle_archive_failure_invalidates_health_immediately_and_once(self):
+        exporter = self.idle_exporter()
+        self.assertEqual(exporter.tick(), 0)
+
+        def unavailable():
+            raise archive.ArchiveError("fixture archive unavailable")
+
+        exporter.verify_destination = unavailable
+        with self.assertRaises(archive.ArchiveError):
+            exporter.tick()
+        failed = self.checkpoint_version()
+        self.assertEqual(failed["acknowledged_at_ms"], 0)
+        with self.assertRaises(archive.ArchiveError):
+            exporter.tick()
+        self.assertEqual(self.checkpoint_version(), failed)
+
+    def test_bounded_order_preserves_late_commits_and_missing_outboxes(self):
+        self.database.execute("DELETE FROM ofz.audit_outbox WHERE audit_sequence=5")
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=NULL WHERE audit_sequence=10"
+        )
+        self.database.execute(
+            "UPDATE ofz.audit_outbox SET acknowledged_at_ms=1 WHERE audit_sequence=10005"
+        )
+        rows = self.database.execute(archive.PENDING_AUDIT_QUERY, (10000,)).fetchall()
+        self.assertEqual(
+            [row["sequence"] for row in rows], [5, 10, *range(10001, 10063)]
+        )
+        self.assertFalse(rows[0]["has_outbox"])
+        self.assertTrue(all(row["has_outbox"] for row in rows[1:]))
+
+    def test_poll_reads_payloads_only_for_the_selected_batch(self):
+        plan = self.database.execute(
+            "EXPLAIN (ANALYZE, FORMAT JSON) " + archive.PENDING_AUDIT_QUERY, (10000,)
+        ).fetchone()["QUERY PLAN"][0]["Plan"]
+
+        def payload_rows(node):
+            own = 0
+            if (
+                node.get("Relation Name") == "audit"
+                and node["Node Type"] != "Index Only Scan"
+            ):
+                own = (
+                    node["Actual Rows"] + node.get("Rows Removed by Filter", 0)
+                ) * node["Actual Loops"]
+            return own + sum(payload_rows(child) for child in node.get("Plans", []))
+
+        self.assertEqual(plan["Actual Rows"], 64)
+        self.assertLessEqual(payload_rows(plan), 64)
+
+
 class RealArchive(unittest.TestCase):
     def test_independent_archive_and_bootstrap(self):
         with tempfile.TemporaryDirectory(prefix="ofz-archive-") as directory:
@@ -122,7 +335,6 @@ class RealArchive(unittest.TestCase):
                     (credentials / "manifest.json").read_bytes()
                 ).hexdigest(),
             )
-            config = credentials / "s3.json"
             filer_config = root / "filer.toml"
             filer_config.write_text(
                 (
@@ -132,31 +344,32 @@ class RealArchive(unittest.TestCase):
             )
             filer_config.chmod(0o444)
             docker("volume", "create", name)
-            initialized = subprocess.run(
-                [
-                    "docker",
-                    "run",
-                    "--rm",
-                    "--interactive",
-                    "--user",
-                    "0:0",
-                    "--cap-drop=ALL",
-                    "--cap-add=CHOWN",
-                    "--cap-add=DAC_OVERRIDE",
-                    "--read-only",
-                    "--entrypoint",
-                    "/bin/sh",
-                    "--mount",
-                    f"type=volume,source={name},target=/data",
-                    IMAGE,
-                    "-ec",
-                    "cat > /data/s3.json; chmod 0600 /data/s3.json; chown 1000:1000 /data /data/s3.json",
-                ],
-                input=config.read_text(),
-                text=True,
-                capture_output=True,
-            )
-            self.assertEqual(initialized.returncode, 0, initialized.stderr)
+            for filename in ["s3.json", "security.toml"]:
+                initialized = subprocess.run(
+                    [
+                        "docker",
+                        "run",
+                        "--rm",
+                        "--interactive",
+                        "--user",
+                        "0:0",
+                        "--cap-drop=ALL",
+                        "--cap-add=CHOWN",
+                        "--cap-add=DAC_OVERRIDE",
+                        "--read-only",
+                        "--entrypoint",
+                        "/bin/sh",
+                        "--mount",
+                        f"type=volume,source={name},target=/data",
+                        IMAGE,
+                        "-ec",
+                        f"cat > /data/{filename}; chmod 0600 /data/{filename}; chown 1000:1000 /data /data/{filename}",
+                    ],
+                    input=(credentials / filename).read_text(),
+                    text=True,
+                    capture_output=True,
+                )
+                self.assertEqual(initialized.returncode, 0, initialized.stderr)
             with socket.socket() as reservation:
                 reservation.bind(("127.0.0.1", 0))
                 host_port = reservation.getsockname()[1]
@@ -189,7 +402,7 @@ class RealArchive(unittest.TestCase):
                 "-dir=/data",
                 "-ip=127.0.0.1",
                 "-ip.bind=0.0.0.0",
-                "-volume.max=4",
+                "-volume.max=0",
                 "-master.volumeSizeLimitMB=64",
                 "-master.telemetry=false",
                 "-volume.minFreeSpace=1GiB",
@@ -231,8 +444,93 @@ class RealArchive(unittest.TestCase):
                     if time.monotonic() >= deadline:
                         self.fail("isolated S3 server did not become ready")
                     time.sleep(0.2)
+            docker(
+                "exec",
+                name,
+                "/bin/sh",
+                "-ec",
+                "printf 'fs.configure -locationPrefix=/buckets/ -fsync -volumeGrowthCount=1 -apply\\n' | /usr/bin/weed shell -master=127.0.0.1:9333 -filer=127.0.0.1:8888",
+            )
             initialize.configure(credentials, storage=administrator)
             initialize.configure(credentials, storage=administrator)
+            writers = json.loads((credentials / "database-writers.json").read_text())
+            database_clients = {}
+            for database, bucket in initialize.DATABASE_BUCKETS.items():
+                writer = Minio(
+                    endpoint,
+                    access_key=writers[database]["access_key"],
+                    secret_key=writers[database]["secret_key"],
+                    secure=False,
+                    region="us-east-1",
+                )
+                config = writer.get_object_lock_config(bucket)
+                database_clients[database] = writer
+                self.assertEqual(config.mode, COMPLIANCE)
+                self.assertEqual(config.duration, 30)
+                self.assertEqual(writer.get_bucket_versioning(bucket).status, "Enabled")
+                data = (database + " independent physical backup fixture").encode()
+                written = writer.put_object(
+                    bucket, "wal/test", io.BytesIO(data), len(data)
+                )
+                self.assertTrue(written.version_id)
+                self.assertEqual(
+                    len(list(writer.list_objects(bucket, prefix="wal/"))), 1
+                )
+                response = writer.get_object(
+                    bucket, "wal/test", version_id=written.version_id
+                )
+                try:
+                    self.assertEqual(
+                        response.headers.get("x-amz-server-side-encryption"), "AES256"
+                    )
+                    self.assertEqual(response.read(), data)
+                finally:
+                    response.close()
+                    response.release_conn()
+                for denied_client in (writer, administrator):
+                    initialize.denied(
+                        lambda: denied_client.remove_object(
+                            bucket, "wal/test", version_id=written.version_id
+                        )
+                    )
+                other = next(
+                    value
+                    for value in initialize.DATABASE_BUCKETS.values()
+                    if value != bucket
+                )
+                initialize.denied(
+                    lambda: writer.put_object(
+                        other, "cross-database", io.BytesIO(data), len(data)
+                    )
+                )
+                initialize.denied(
+                    lambda: storage.put_object(
+                        bucket, "audit-writer", io.BytesIO(data), len(data)
+                    )
+                )
+                initialize.denied(
+                    lambda: writer.set_bucket_encryption(
+                        bucket, SSEConfig(Rule.new_sse_s3_rule())
+                    )
+                )
+                lifecycle = administrator.get_bucket_lifecycle(bucket)
+                self.assertEqual(lifecycle.rules[0].expiration.days, 40)
+                self.assertEqual(
+                    lifecycle.rules[0].noncurrent_version_expiration.noncurrent_days, 45
+                )
+            report = initialize.verify_databases(
+                credentials, writers=database_clients, root=administrator
+            )
+            self.assertEqual(
+                {item["bucket"] for item in report},
+                set(initialize.DATABASE_BUCKETS.values()),
+            )
+            with self.assertRaises(S3Error):
+                initialize.verify_databases(
+                    credentials,
+                    writers={**database_clients, "ofz": database_clients["keycloak"]},
+                    root=administrator,
+                )
             docker("exec", name, "/bin/sh", "-ec", "test -s /data/filer.sqlite3")
             administrator.set_object_lock_config(
                 archive.BUCKET, ObjectLockConfig(COMPLIANCE, 90, "Days")
@@ -382,6 +680,57 @@ class RealArchive(unittest.TestCase):
             self.assertEqual(exporter.tick(), 1)
             self.assertEqual(exporter.tick(), 0)
 
+            plaintext = b"qualification payload with valid hash and retention"
+            plaintext_hash = hashlib.sha256(plaintext).hexdigest()
+            plaintext_key = f"batches/1-1-{plaintext_hash}.json"
+            until = datetime.now(UTC).replace(microsecond=0) + timedelta(
+                days=90, seconds=1
+            )
+            administrator.delete_bucket_encryption(archive.BUCKET)
+            try:
+                unencrypted = administrator.put_object(
+                    archive.BUCKET,
+                    plaintext_key,
+                    io.BytesIO(plaintext),
+                    len(plaintext),
+                    retention=Retention(COMPLIANCE, until),
+                )
+            finally:
+                administrator.set_bucket_encryption(
+                    archive.BUCKET, SSEConfig(Rule.new_sse_s3_rule())
+                )
+            with self.assertRaisesRegex(archive.ArchiveError, "encrypted"):
+                exporter.verify_object(
+                    archive.Receipt(
+                        plaintext_key,
+                        unencrypted.version_id,
+                        plaintext_hash,
+                        until.isoformat(),
+                    )
+                )
+
+            marker = f"OFZ-CIPHERTEXT-PROBE-{uuid.uuid4().hex}"
+            payload = (marker.encode() * (8 * 1024 * 1024 // len(marker) + 1))[
+                : 8 * 1024 * 1024
+            ]
+            payload_hash = hashlib.sha256(payload).hexdigest()
+            encrypted = storage.put_object(
+                archive.BUCKET,
+                "qualification/encrypted-multipart",
+                io.BytesIO(payload),
+                len(payload),
+            )
+            self.assertTrue(encrypted.version_id)
+            docker(
+                "exec",
+                name,
+                "/bin/sh",
+                "-ec",
+                'if grep -aFq -- "$1" /data/*.dat /data/filer.sqlite3*; then exit 1; fi',
+                "sh",
+                marker,
+            )
+
             for client in [storage, administrator]:
                 with self.assertRaises(S3Error):
                     client.remove_object(
@@ -438,6 +787,48 @@ class RealArchive(unittest.TestCase):
                 0,
             )
 
+            checkpoint = newer
+            delayed.execute("BEGIN")
+            older = append(delayed, "commit-during-independent-upload")
+            newer = append(connect("ofz_api"), "visible-before-upload")
+
+            class CommitDuringUpload(archive.Exporter):
+                def store(self, rows, now_ms):
+                    receipt = super().store(rows, now_ms)
+                    delayed.execute("COMMIT")
+                    return receipt
+
+            try:
+                self.assertEqual(CommitDuringUpload(caller, storage).tick(), 1)
+            finally:
+                delayed.rollback()
+            state = database.execute(
+                "SELECT acknowledged_sequence,acknowledged_at_ms FROM ofz.archive_state"
+            ).fetchone()
+            self.assertEqual(state["acknowledged_sequence"], checkpoint)
+            self.assertGreater(state["acknowledged_at_ms"], 0)
+            self.assertIsNone(
+                database.execute(
+                    "SELECT acknowledged_at_ms FROM ofz.audit_outbox WHERE audit_sequence=%s",
+                    (older,),
+                ).fetchone()["acknowledged_at_ms"]
+            )
+            self.assertTrue(cli("activate")["currentArchiveHealthy"])
+            self.assertEqual(exporter.tick(), 2)
+            self.assertEqual(exporter.tick(), 0)
+            self.assertEqual(
+                database.execute(
+                    "SELECT acknowledged_sequence FROM ofz.archive_state"
+                ).fetchone()["acknowledged_sequence"],
+                newer,
+            )
+            self.assertEqual(
+                database.execute(
+                    "SELECT count(*) AS pending FROM ofz.audit_outbox WHERE acknowledged_at_ms IS NULL"
+                ).fetchone()["pending"],
+                0,
+            )
+
             docker("kill", "--signal=KILL", name)
             with self.assertRaises(Exception):
                 exporter.tick()
@@ -463,6 +854,21 @@ class RealArchive(unittest.TestCase):
                     time.sleep(0.2)
             self.assertTrue(cli("activate")["currentArchiveHealthy"])
             exporter.verify_object(receipt)
+            response = storage.get_object(
+                archive.BUCKET,
+                "qualification/encrypted-multipart",
+                version_id=encrypted.version_id,
+            )
+            try:
+                self.assertEqual(
+                    response.headers.get("x-amz-server-side-encryption"), "AES256"
+                )
+                self.assertEqual(
+                    hashlib.sha256(response.read()).hexdigest(), payload_hash
+                )
+            finally:
+                response.close()
+                response.release_conn()
             self.assertTrue(
                 initialize.verify(credentials, writer=storage, root=administrator)[
                     "rootVersionDeleteDenied"
@@ -579,7 +985,7 @@ class RealArchive(unittest.TestCase):
             finally:
                 archive.MAX_BATCH_BYTES = original_budget
             print(
-                "PASS: independent versioned compliance archive; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
+                "PASS: independent versioned compliance archive; encrypted multipart and ciphertext backing-store proof; unencrypted versions rejected; stable recovery key; real bootstrap/activation; owner and writer role boundaries; version-specific deletion and retention shortening denied; interrupted upload retries; out-of-order audit commits; crash/restart readback; archive failure fences without fabricated acknowledgement"
             )
 
 

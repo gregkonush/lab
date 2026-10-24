@@ -1,9 +1,10 @@
 import { Data, Result, Schema } from 'effect'
 
-import { AutonomousCycleSchema, makeExecutionCalendarObservation } from './cycle'
-import { ExecutionModelV5Schema } from './execution-model-contract'
+import { AutonomousCycleSchema } from './cycle/model'
+import { makeExecutionCalendarObservation } from './cycle/construction'
+import { ExecutionModelV6Schema } from './execution-model-contract'
 import { canonicalHashV1Result } from './hash'
-import { continuousExecutionPolicy, isContinuousMarket } from './market-hours'
+import { continuousExecutionPolicy, isContinuousMarket, marketHoursAreCanonical } from './market-hours'
 import { SnapshotCalendarSchema } from './market-data/streaming/manifest-schema'
 import { IsoDateSchema, Sha256Schema, UtcInstantSchema, strictParseOptions } from './schemas'
 
@@ -60,6 +61,7 @@ const bindingIssues = (binding: typeof BindingBase.Type): Schema.FilterIssue[] =
     const { normalizedResponseHash, ...calendarMaterial } = calendar
     const calendarHash = canonicalHashV1Result(calendarMaterial)
     if (
+      !marketHoursAreCanonical(calendar) ||
       Result.isFailure(calendarHash) ||
       calendarHash.success !== normalizedResponseHash ||
       !calendar.sessions.some(
@@ -112,7 +114,7 @@ const InputSchema = Schema.Struct({
   executionSessionDate: IsoDateSchema,
   planningBrokerState: PlanningBrokerStateSchema,
   calendar: SnapshotCalendarSchema,
-  executionModel: ExecutionModelV5Schema,
+  executionModel: ExecutionModelV6Schema,
 })
 
 export interface BindCycleExecutionSessionInput {

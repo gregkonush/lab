@@ -1,11 +1,12 @@
 import { create, fromBinary } from '@bufbuild/protobuf'
 import { describe, expect, test } from 'bun:test'
-import vector from '../../../../../services/tengri/fixtures/ofz-request-v1.json'
+import vector from '../../../../../services/tengri/fixtures/ofz-request-v2.json'
 import { ActorSchema, RequestContextSchema } from './generated/proompteng/authz/v1/authz_pb'
 import { signTengriMetadata } from './internal-auth'
 
 const context = () => fromBinary(RequestContextSchema, Buffer.from(vector.contextBase64, 'base64'))
 const request = {
+  audience: vector.audience,
   rpcPath: vector.rpcPath,
   body: Buffer.from(vector.bodyHex, 'hex'),
   nonce: vector.nonce,
@@ -43,6 +44,12 @@ describe('Tengri signed Ofz context', () => {
       ).not.toBe(original)
     }
     expect(signTengriMetadata(context(), generation + BigInt(1), vector.keyHex, request).signature).not.toBe(original)
+    expect(
+      signTengriMetadata(context(), generation, vector.keyHex, {
+        ...request,
+        audience: '88888888-8888-4888-8888-888888888888',
+      }).signature,
+    ).not.toBe(original)
     expect(
       signTengriMetadata(context(), generation, vector.keyHex, { ...request, body: new Uint8Array([1]) }).signature,
     ).not.toBe(original)
@@ -86,6 +93,11 @@ describe('Tengri signed Ofz context', () => {
     }
     for (const nonce of ['short', `${vector.nonce}=`, `${vector.nonce.slice(0, -1)}9`, 'a'.repeat(44)]) {
       expect(() => signTengriMetadata(context(), generation, vector.keyHex, { ...request, nonce })).toThrow('nonce')
+    }
+    for (const audience of ['', '00000000-0000-0000-0000-000000000000', 'another-server']) {
+      expect(() => signTengriMetadata(context(), generation, vector.keyHex, { ...request, audience })).toThrow(
+        'audience',
+      )
     }
     expect(() => signTengriMetadata(context(), BigInt(0), vector.keyHex, request)).toThrow()
     expect(() =>

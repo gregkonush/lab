@@ -1,3 +1,4 @@
+import { jevMarketForFeed } from './jev/markets'
 import { nativeFeatureMatchesBars, rollingWindowStartMs } from './market-data/features/native-feature'
 import { observedBarsAt, type StreamingProjection } from './market-data/streaming/projection'
 import { compressionsAlgorithms } from '@platformatic/kafka'
@@ -7,7 +8,7 @@ import { SnapshotManifestFields } from './market-data/streaming/manifest-schema'
 import { diagnoseStreamingInputs } from './market-data/streaming/inputs'
 import { SymbolSchema, strictParseOptions } from './schemas'
 import { verifyIntradaySnapshotQuery } from './market-data/intraday/verification'
-import type { IntradaySnapshotQuery } from './market-data'
+import type { IntradaySnapshotQuery } from './market-data/intraday/model'
 import { kafkaMarketConfig } from './config/source'
 import { canonicalJsonV1Result } from './hash'
 
@@ -15,7 +16,6 @@ import { technicalFeatureMatchesBars } from './market-data/features/technical-co
 import { technicalReceiptAvailableAt } from './market-data/streaming/technical-projection'
 import { makeKafkaMarketProjection } from './market-data/streaming/kafka'
 import { kafkaBootstrapDeadlineMs } from './market-data/streaming/bootstrap'
-import { intradayMomentumFeatureTopic } from './strategy/intraday-momentum/protocol'
 
 class StreamingDiagnosticsFailure extends Data.TaggedError('StreamingDiagnosticsFailure')<{
   readonly message: string
@@ -103,6 +103,8 @@ const DiagnosticQuerySchema = Schema.Struct({
   symbols: Schema.optionalKey(SnapshotManifestFields.symbols),
   candidateSymbols: SnapshotManifestFields.candidateSymbols,
   candidateEvidencePolicy: SnapshotManifestFields.candidateEvidencePolicy,
+  benchmarkEvidencePolicy: SnapshotManifestFields.benchmarkEvidencePolicy,
+  benchmarkSymbols: SnapshotManifestFields.benchmarkSymbols,
   purpose: SnapshotManifestFields.purpose,
   feed: SnapshotManifestFields.feed,
   delayClass: SnapshotManifestFields.delayClass,
@@ -194,8 +196,8 @@ const main = (args: ReturnType<typeof parseStreamingDiagnosticsArgs>) =>
             symbols: query.universe,
             topics: {
               ...query.sourceTopics,
-              features: intradayMomentumFeatureTopic,
-              ...(config.technicalFeaturesTopic === undefined
+              features: jevMarketForFeed(query.feed).streamingInput.featureTopic,
+              ...(query.feed === 'us' || config.technicalFeaturesTopic === undefined
                 ? {}
                 : { technicalFeatures: config.technicalFeaturesTopic }),
             },

@@ -73,9 +73,24 @@ test('Bayn owns a protected two-instance synchronous CNPG cluster', () => {
   expect(monitor.metadata.labels['cnpg.io/reload']).toBe('true')
   expect(readManifest('argocd/applications/bayn/kustomization.yaml').resources).toContain('postgres-monitoring.yaml')
   const queries = YAML.parse(monitor.data.queries)
-  expect(Object.keys(queries).sort()).toEqual(['bayn_io', 'bayn_io_timing', 'bayn_replication', 'bayn_waits'])
+  expect(Object.keys(queries).sort()).toEqual([
+    'bayn_generation_index',
+    'bayn_io',
+    'bayn_io_timing',
+    'bayn_replication',
+    'bayn_waits',
+  ])
   expect(queries.bayn_io.runonserver).toBe('>=18.0.0 <19.0.0')
   expect(queries.bayn_replication.primary).toBe(true)
+  expect(queries.bayn_generation_index.primary).toBe(true)
+  expect(queries.bayn_generation_index.query).toContain('autonomous_cycle_shadow_decisions_generation_idx')
+  expect(queries.bayn_generation_index.metrics.map((entry: Record<string, unknown>) => Object.keys(entry)[0])).toEqual([
+    'valid',
+    'ready',
+    'scans_total',
+    'tuples_read_total',
+    'tuples_fetched_total',
+  ])
 })
 
 test('Bayn preserves three ledger identities across the two 100G hosts', () => {
@@ -364,6 +379,15 @@ test('Bayn and its database have explicit network paths and existing CNPG teleme
     ],
     ports: [{ port: 3128, protocol: 'TCP' }],
   })
+  expect(egressProxyPolicy.spec.ingress).toContainEqual({
+    from: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'opencode' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'opencode-research' } },
+      },
+    ],
+    ports: [{ port: 3129, protocol: 'TCP' }],
+  })
   const researchPolicy = YAML.parseAllDocuments(readRepoFile('argocd/applications/bayn/research-networkpolicy.yaml'))
     .map((document) => document.toJSON())
     .find((policy) => policy.metadata.name === 'bayn-research')
@@ -521,26 +545,14 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(controllerEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(activationEnvironment.has('BAYN_LIFECYCLE_OWNER')).toBe(false)
   expect(deploymentEnvironment.get('BAYN_EXPECTED_EXECUTION_CONTROLLER_PLAN_HASH')?.value).toBe(
-    'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
+    '0c2f682a50bbd17fc1d780fbdb48f1dd588932f8f771474ecdce272091aaadcc',
   )
   expect(activationSecret.metadata.annotations).not.toHaveProperty('bayn.proompteng.ai/capital-activation-generation')
   if (mandateIdentity !== undefined) expect(request).toBeString()
-  const previousBinding = {
-    planHash: 'a4894282066826ab3516bda712267f285e7b6b107f7b8946436eecbcb49de761',
-    sourceRevision: '808bfa84609959712042174b6fd176fc56f8edb2',
+  for (const environment of [deploymentEnvironment, controllerEnvironment, activationEnvironment]) {
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
+    expect(environment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   }
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')?.value).toBe(previousBinding.planHash)
-  expect(controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')?.value).toBe(
-    previousBinding.sourceRevision,
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_PLAN_HASH'),
-  )
-  expect(activationEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toEqual(
-    controllerEnvironment.get('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION'),
-  )
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_PLAN_HASH')).toBe(false)
-  expect(deploymentEnvironment.has('BAYN_EXECUTION_PREVIOUS_SOURCE_REVISION')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_CONTROLLER_KEY')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_PLAN_HASH')).toBe(false)
   expect(controllerEnvironment.has('BAYN_LEGACY_LIFECYCLE_SOURCE_REVISION')).toBe(false)
@@ -555,7 +567,17 @@ test('the native Restate controller is the only rendered Bayn lifecycle owner', 
   expect(activation.spec.template.spec.restartPolicy).toBe('OnFailure')
   expect(activation.spec.activeDeadlineSeconds).toBe(900)
   expect(activation.spec.template.spec.automountServiceAccountToken).toBe(false)
+  expect(activationPolicy.spec.egress[0]).toEqual({
+    to: [
+      {
+        namespaceSelector: { matchLabels: { 'kubernetes.io/metadata.name': 'glitchtip' } },
+        podSelector: { matchLabels: { 'app.kubernetes.io/name': 'glitchtip', 'app.kubernetes.io/component': 'web' } },
+      },
+    ],
+    ports: [{ port: 8000, protocol: 'TCP' }],
+  })
   expect(activationPolicy.spec.egress.flatMap((rule: Record<string, any>) => rule.ports ?? [])).toEqual([
+    { port: 8000, protocol: 'TCP' },
     { port: 53, protocol: 'UDP' },
     { port: 53, protocol: 'TCP' },
     { port: 8080, protocol: 'TCP' },

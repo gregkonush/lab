@@ -5,7 +5,7 @@ import { Cause, Effect, Exit, Fiber, Layer, Redacted, Result, Schema } from 'eff
 import { TestClock } from 'effect/testing'
 import { HttpClient, HttpClientError, HttpClientResponse } from 'effect/http'
 
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { BrokerEnvironment } from '../execution/authority'
 import {
   AccountStatus,
@@ -13,13 +13,6 @@ import {
   AssetExchange,
   AssetStatus,
   BrokerRead,
-  BrokerReadError,
-  BrokerReadErrorKind,
-  BrokerAccountPreflightError,
-  BrokerProvider,
-  BrokerSession,
-  BrokerSessionAcquisitionError,
-  BrokerSessionAcquisitionStage,
   OrderCollection,
   OrderSide,
   OrderStatus,
@@ -27,20 +20,18 @@ import {
   PositionSide,
   SortDirection,
   TradeActivityType,
-  alpacaSandboxBaseUrl,
-  decodeBrokerConnection,
-  layer,
-  make,
-  makeProxyDispatcher,
   readPreflightTimeoutMs,
-  verifyReadAccess,
   type BrokerReadShape,
-  type BrokerConnection,
-} from './alpaca'
-import { parseProxyUrl } from './alpaca/http'
+} from './alpaca/model'
+import { BrokerReadError, BrokerReadErrorKind } from './alpaca/failures'
+import { BrokerAccountPreflightError, verifyReadAccess } from './alpaca/preflight'
+import { BrokerProvider, alpacaSandboxBaseUrl, decodeBrokerConnection, type BrokerConnection } from './connection'
+import { BrokerSession, BrokerSessionAcquisitionError, BrokerSessionAcquisitionStage, layer } from './alpaca/session'
+import { make, alpacaHttpLayer } from './alpaca/http'
 import { decodeOrder } from './alpaca/model'
 import { decimalToMicrosResult, normalizeOrderResult } from './alpaca/normalizers'
 import { responseEvidenceResult } from './alpaca/requests'
+import { readStableBrokerSnapshot } from '../simulation-reconciliation/broker-history'
 
 const accountId = 'e6fe16f3-64a4-4921-8928-cadf02f92f98'
 const assetId = 'b0b6dd9d-8b9b-48a9-ba46-b9d54906e415'
@@ -192,6 +183,24 @@ const withClient = <A, E>(
 const verifyConnectionReadAccess = (read: BrokerReadShape) => verifyReadAccess(options, read)
 
 describe('Alpaca paper reads', () => {
+  test.each([
+    ['ETHUSD', 'us_equity'],
+    ['ETH/USD', 'us_equity'],
+    ['AAPL', 'crypto'],
+    ['XRPUSD', 'crypto'],
+    ['ETH/BTC', 'crypto'],
+    ['ethusd', 'crypto'],
+  ])('rejects mismatched or unsupported broker position %s in %s', async (symbol, assetClass) => {
+    const response = [{ ...positionResponse, symbol, asset_class: assetClass }]
+    const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+    const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.positions)))
+    expect(failure).toMatchObject({
+      operation: 'positions',
+      kind: BrokerReadErrorKind.InvalidResponse,
+      retryable: false,
+    })
+  })
+
   test('reads and runtime-decodes the configured paper account without leaking credentials', async () => {
     let method = ''
     let url = ''
@@ -258,7 +267,7 @@ describe('Alpaca paper reads', () => {
     expect(result.evidence).toEqual({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
       observedAt: '1970-01-01T00:00:00.000Z',
       rateLimit: {
         limit: '200',
@@ -268,6 +277,40 @@ describe('Alpaca paper reads', () => {
       },
     })
   })
+
+  test.each([
+    ['103820.560000493882', '104000.000000693882', '103820560000', '104000000001'],
+    ['-0.000000000001', '-0.000000000001', '-1', '0'],
+    ['-100.000000000001', '-101.000000000001', '-100000001', '-101000000'],
+    ['10.999999999999', '11.999999999999', '10999999', '12000000'],
+    ['10.123456000000', '11.123456000000', '10123456', '11123456'],
+  ])(
+    'bounds account equity marks without understating daily loss: %s / %s',
+    async (equity, lastEquity, current, previous) => {
+      const raw = { ...accountResponse, equity, last_equity: lastEquity }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.account))
+      expect(result.value.equityMicros).toBe(current)
+      expect(result.value.lastEquityMicros).toBe(previous)
+      expect(result.value.cashMicros).toBe('-23140200000')
+      expect(result.value.buyingPowerMicros).toBe('262113632000')
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(raw)))
+    },
+  )
+
+  test.each(['cash', 'buying_power', 'non_marginable_buying_power'] as const)(
+    'keeps exact-money precision checks for %s while accepting high-precision marks',
+    async (field) => {
+      const raw = { ...accountResponse, last_equity: '104000.000000693882', [field]: '1.000000000001' }
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, raw)))
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.account)))
+      expect(failure).toMatchObject({
+        operation: 'account',
+        kind: BrokerReadErrorKind.InvalidResponse,
+        retryable: false,
+      })
+    },
+  )
 
   test('reads and hashes the current fractional-trading account configuration with GET only', async () => {
     const requests: Array<{ method: string; url: URL; key: string; secret: string }> = []
@@ -320,12 +363,14 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
-      source: 'alpaca-v2-account-configurations',
-      method: 'GET',
-      path: '/v2/account/configurations',
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
+        source: 'alpaca-v2-account-configurations',
+        method: 'GET',
+        path: '/v2/account/configurations',
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-account-configuration-observation.v1',
       source: 'alpaca-v2-account-configurations',
@@ -335,12 +380,12 @@ describe('Alpaca paper reads', () => {
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:01.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(accountConfigurationResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountConfigurationResponse)),
       observedAt: '1970-01-01T00:00:01.000Z',
     })
     expect(requests.some(({ method }) => method === 'PATCH' || method === 'POST' || method === 'DELETE')).toBe(false)
@@ -360,7 +405,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -428,13 +473,15 @@ describe('Alpaca paper reads', () => {
         secret: 'paper-secret',
       },
     ])
-    const requestHash = canonicalHashV1({
-      schemaVersion: 'bayn.alpaca-asset-observation.v1',
-      source: 'alpaca-v2-asset',
-      method: 'GET',
-      path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
-      requestedSymbol,
-    })
+    const requestHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.alpaca-asset-observation.v1',
+        source: 'alpaca-v2-asset',
+        method: 'GET',
+        path: `/v2/assets/${encodeURIComponent(requestedSymbol)}`,
+        requestedSymbol,
+      }),
+    )
     const normalized = {
       schemaVersion: 'bayn.alpaca-asset-observation.v1',
       source: 'alpaca-v2-asset',
@@ -455,12 +502,12 @@ describe('Alpaca paper reads', () => {
     expect(result.value).toEqual({
       ...normalized,
       observedAt: '1970-01-01T00:00:02.000Z',
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:02.000Z',
     })
     expect(requests.some(({ method }) => method === 'POST' || method === 'DELETE')).toBe(false)
@@ -515,7 +562,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
 
@@ -527,7 +574,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         message: 'asset lookup returned symbol MSFT, expected AAPL',
@@ -549,7 +596,7 @@ describe('Alpaca paper reads', () => {
       operation: 'asset-by-symbol',
       kind: BrokerReadErrorKind.InvalidResponse,
       retryable: false,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
       observedAt: '1970-01-01T00:00:00.000Z',
     })
   })
@@ -597,31 +644,47 @@ describe('Alpaca paper reads', () => {
     expect(requestedUrl?.pathname).toBe('/v2/calendar')
     expect(requestedUrl?.searchParams.toString()).toBe('start=2026-03-06&end=2026-03-10&date_type=TRADING')
     const normalized = {
-      schemaVersion: 'bayn.alpaca-market-calendar-observation.v1',
+      schemaVersion: 'bayn.alpaca-market-calendar-observation.v2',
       source: 'alpaca-v2-calendar',
       requestedRange: { start: '2026-03-06', end: '2026-03-10' },
       timeZone: 'UTC',
       sessions: [
         {
           date: '2026-03-06',
-          openAt: '2026-03-06T14:30:00.000Z',
-          closeAt: '2026-03-06T21:00:00.000Z',
+          openAt: '2026-03-06T13:00:00.000Z',
+          closeAt: '2026-03-06T22:00:00.000Z',
         },
         {
           date: '2026-03-09',
-          openAt: '2026-03-09T13:30:00.000Z',
-          closeAt: '2026-03-09T20:00:00.000Z',
+          openAt: '2026-03-09T12:00:00.000Z',
+          closeAt: '2026-03-09T21:00:00.000Z',
+        },
+      ],
+      providerSessions: [
+        {
+          date: '2026-03-06',
+          regularOpenAt: '2026-03-06T14:30:00.000Z',
+          regularCloseAt: '2026-03-06T21:00:00.000Z',
+          sessionOpenAt: '2026-03-06T09:00:00.000Z',
+          sessionCloseAt: '2026-03-07T01:00:00.000Z',
+        },
+        {
+          date: '2026-03-09',
+          regularOpenAt: '2026-03-09T13:30:00.000Z',
+          regularCloseAt: '2026-03-09T20:00:00.000Z',
+          sessionOpenAt: '2026-03-09T08:00:00.000Z',
+          sessionCloseAt: '2026-03-10T00:00:00.000Z',
         },
       ],
     } as const
     expect(result.value).toEqual({
       ...normalized,
-      normalizedResponseHash: canonicalHashV1(normalized),
+      normalizedResponseHash: Result.getOrThrow(canonicalHashV1Result(normalized)),
     })
     expect(result.evidence).toMatchObject({
       requestId: 'req-123',
       status: 200,
-      contentHash: canonicalHashV1(response),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(response)),
     })
   })
 
@@ -665,8 +728,8 @@ describe('Alpaca paper reads', () => {
     })
 
     response = [
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
-      { date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
+      { session_open: '0930', session_close: '1600', date: '2026-03-09', open: '09:30', close: '16:00' },
     ]
     const duplicate = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(duplicate).toMatchObject({
@@ -675,7 +738,7 @@ describe('Alpaca paper reads', () => {
       retryable: false,
     })
 
-    response = [{ date: '2026-03-11', open: '09:30', close: '16:00' }]
+    response = [{ session_open: '0930', session_close: '1600', date: '2026-03-11', open: '09:30', close: '16:00' }]
     const outsideRange = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.marketCalendar(query))))
     expect(outsideRange).toMatchObject({
       operation: 'market-calendar',
@@ -987,6 +1050,39 @@ describe('Alpaca paper reads', () => {
     })
   })
 
+  for (const symbol of ['BTC/USD', 'ETH/USD', 'SOL/USD']) {
+    test(`reads the compact ${symbol} position after a native coin fill`, async () => {
+      const response = [
+        {
+          ...positionResponse,
+          symbol: symbol.replace('/', ''),
+          exchange: 'CRYPTO',
+          asset_class: 'crypto',
+          qty: '0.032967375',
+          avg_entry_price: '2425.31',
+          cost_basis: '79.956104',
+          market_value: '79.45467',
+          unrealized_pl: '-0.501434',
+          current_price: '2410.1',
+        },
+      ]
+      const client = HttpClient.make((request) => Effect.succeed(jsonResponse(request, response)))
+      const result = await Effect.runPromise(withClient(client, (read) => read.positions))
+      expect(result.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result(response)))
+      expect(result.value).toEqual([
+        expect.objectContaining({
+          symbol,
+          assetClass: AssetClass.Crypto,
+          quantityAtoms: '32967375',
+          averageEntryPriceMicros: '2425310000',
+          costBasisMicros: '79956104',
+          marketValueMicros: '79454670',
+          unrealizedPnlMicros: '-501434',
+        }),
+      ])
+    })
+  }
+
   test('reads order collections and deterministic order lookups with GET only', async () => {
     const requests: Array<{ method: string; url: URL }> = []
     const client = HttpClient.make((request, url) => {
@@ -1221,6 +1317,60 @@ describe('Alpaca paper reads', () => {
     expect(Result.getOrThrow(decimalToMicrosResult('0.01', true, 'fee refund'))).toBe('10000')
   })
 
+  test('retains available cash CFEE through the HTTP adapter in a stable broker snapshot', async () => {
+    const raw = {
+      activity_type: 'CFEE',
+      id: `20261015000000000::${orderId}`,
+      date: '2026-10-15',
+      created_at: '2026-10-14T23:59:58.123456Z',
+      net_amount: '-0.23',
+      status: 'executed',
+      description: 'Coin Pair Transaction Fee (USD)',
+    }
+    const client = HttpClient.make((request, url) => {
+      if (url.pathname === '/v2/account') return Effect.succeed(jsonResponse(request, accountResponse))
+      if (url.pathname === '/v2/account/activities')
+        return Effect.succeed(jsonResponse(request, url.searchParams.has('until') ? [] : [raw]))
+      if (['/v2/positions', '/v2/orders', '/v2/account/activities/FILL'].includes(url.pathname))
+        return Effect.succeed(jsonResponse(request, []))
+      return Effect.die(new Error('Unexpected broker endpoint'))
+    })
+
+    const snapshot = await Effect.runPromise(
+      withClient(client, (read) => readStableBrokerSnapshot(read, Effect.succeed('2026-10-15T08:00:00.000Z'))),
+    )
+    expect(snapshot.history.fees).toHaveLength(1)
+    expect(snapshot.history.fees[0]?.value).toMatchObject({
+      accountId,
+      activityId: raw.id,
+      date: raw.date,
+      sourceCreatedAt: '2026-10-14T23:59:58.123456000Z',
+      netAmountMicros: '-230000',
+    })
+    expect(snapshot.history.fees[0]?.value.coinDebit).toBeUndefined()
+    expect(snapshot.history.fees[0]?.evidence.contentHash).toBe(Result.getOrThrow(canonicalHashV1Result([raw])))
+  })
+
+  test('rejects trade timestamp filters on daily fee queries before dispatch', async () => {
+    let calls = 0
+    const client = HttpClient.make((request) => {
+      calls += 1
+      return Effect.succeed(jsonResponse(request, []))
+    })
+    for (const query of [
+      { pageSize: 1, until: '2026-10-15T09:56:00.000Z' },
+      { pageSize: 1, after: '2026-10-15T00:00:00.000Z' },
+    ]) {
+      const failure = await Effect.runPromise(Effect.flip(withClient(client, (read) => read.feeActivities(query))))
+      expect(failure).toMatchObject({
+        operation: 'fee-activities',
+        kind: BrokerReadErrorKind.InvalidRequest,
+        retryable: false,
+      })
+    }
+    expect(calls).toBe(0)
+  })
+
   test('reads a bounded fill page and derives the documented page token', async () => {
     let requestedUrl: URL | undefined
     const client = HttpClient.make((request, url) => {
@@ -1414,7 +1564,7 @@ describe('Alpaca paper reads', () => {
       kind: BrokerReadErrorKind.InvalidResponse,
       status: 200,
       requestId: 'req-123',
-      contentHash: canonicalHashV1(accountResponse),
+      contentHash: Result.getOrThrow(canonicalHashV1Result(accountResponse)),
       observedAt: '1970-01-01T00:00:00.000Z',
       cause: {
         tag: 'BrokerReadContractFailure',
@@ -1465,7 +1615,7 @@ describe('Alpaca paper reads', () => {
       status: 429,
       requestId: 'req-123',
       retryable: true,
-      contentHash: canonicalHashV1({ code: 42910000, message: 'slow down' }),
+      contentHash: Result.getOrThrow(canonicalHashV1Result({ code: 42910000, message: 'slow down' })),
     })
     expect(calls).toBe(2)
   })
@@ -1647,44 +1797,20 @@ describe('Alpaca paper reads', () => {
 })
 
 describe('Alpaca proxy lifecycle', () => {
-  test('parses only credential-free HTTP origins as a pure Result decision', () => {
-    const valid = parseProxyUrl('https://proxy.test:3128')
-    expect(Result.isSuccess(valid)).toBe(true)
-    if (Result.isSuccess(valid)) expect(valid.success.origin).toBe('https://proxy.test:3128')
-
-    for (const [proxyUrl, message] of [
-      ['not a URL', 'invalid Alpaca proxy configuration'],
-      ['socks5://proxy.test:1080', 'Alpaca proxy URL must use HTTP or HTTPS'],
-      ['http://user:secret@proxy.test:3128', 'Alpaca proxy credentials must not be embedded in the URL'],
-      ['http://proxy.test:3128/path', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128?route=paper', 'Alpaca proxy URL must contain only an origin'],
-      ['http://proxy.test:3128#paper', 'Alpaca proxy URL must contain only an origin'],
-    ] as const) {
-      const result = parseProxyUrl(proxyUrl)
-      expect(Result.isFailure(result)).toBe(true)
-      if (Result.isFailure(result)) {
-        expect(result.failure).toMatchObject({
-          kind: BrokerReadErrorKind.Configuration,
-          operation: 'proxy',
-          retryable: false,
-          message,
-        })
-      }
-    }
-  })
-
   test('keeps its Undici proxy dispatcher alive until the owning scope exits and releases it exactly once', async () => {
     let releases = 0
     await Effect.runPromise(
       Effect.scoped(
         Effect.gen(function* () {
-          yield* makeProxyDispatcher('http://proxy.test:3128', {
-            create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          })
+          yield* Layer.build(
+            alpacaHttpLayer(options, {
+              create: (url) => new Undici.ProxyAgent({ uri: url.toString() }),
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          )
           expect(releases).toBe(0)
           yield* Effect.yieldNow
           expect(releases).toBe(0)
@@ -1694,31 +1820,22 @@ describe('Alpaca proxy lifecycle', () => {
     expect(releases).toBe(1)
   })
 
-  test('fails before acquisition for unsafe proxy configuration', async () => {
-    const failure = await Effect.runPromise(
-      Effect.flip(Effect.scoped(makeProxyDispatcher('socks5://user:secret@proxy.test:1080'))),
-    )
-    expect(failure).toMatchObject({
-      kind: BrokerReadErrorKind.Configuration,
-      operation: 'proxy',
-      retryable: false,
-    })
-  })
-
   test('contains dispatcher construction failures in the typed acquisition channel', async () => {
     let releases = 0
     const failure = await Effect.runPromise(
       Effect.flip(
         Effect.scoped(
-          makeProxyDispatcher('http://proxy.test:3128', {
-            create: () => {
-              throw new Error('dispatcher construction failed')
-            },
-            destroy: () => {
-              releases += 1
-              return Promise.resolve()
-            },
-          }),
+          Layer.build(
+            alpacaHttpLayer(options, {
+              create: () => {
+                throw new Error('dispatcher construction failed')
+              },
+              destroy: () => {
+                releases += 1
+                return Promise.resolve()
+              },
+            }),
+          ),
         ),
       ),
     )

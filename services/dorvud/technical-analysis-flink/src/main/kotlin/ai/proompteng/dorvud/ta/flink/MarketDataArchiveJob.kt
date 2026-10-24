@@ -165,7 +165,7 @@ data class MarketDataArchiveConfig(
       val saslPassword = env["ARCHIVE_KAFKA_PASSWORD"]?.takeIf { it.isNotEmpty() }
       require(checkpointIntervalMs > 0) { "ARCHIVE_CHECKPOINT_INTERVAL_MS must be > 0" }
       require(parallelism in 1..16) { "ARCHIVE_PARALLELISM must be within 1..16" }
-      require(batchSize in 1..1_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..1000" }
+      require(batchSize in 1..10_000) { "ARCHIVE_CLICKHOUSE_BATCH_SIZE must be within 1..10000" }
       require(flushMs >= 250) { "ARCHIVE_CLICKHOUSE_FLUSH_MS must be >= 250" }
       require(maxRetries in 0..10) { "ARCHIVE_CLICKHOUSE_MAX_RETRIES must be within 0..10" }
       if (securityProtocol.startsWith("SASL_")) {

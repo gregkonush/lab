@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto'
 import { ByteSize, Clock, Context, Data, Effect, Metric, Result, Schema } from 'effect'
 import { HttpClient, HttpClientRequest, HttpIncomingMessage } from 'effect/http'
 
-import { canonicalHashV1 } from './hash'
+import { canonicalHashV1Result } from './hash'
 import { GitSourceRevisionSchema, Sha256Schema, SymbolSchema, UtcInstantSchema, strictParseOptions } from './schemas'
 import { utcInstantFromEpochMillis } from './time'
 import { withObservedSpan } from './telemetry'
@@ -38,12 +38,12 @@ export const PublicInformationRunSchema = Schema.Struct({
     Schema.Struct({ url: Schema.String, stage: Schema.String, status: Schema.NullOr(Schema.Int) }),
   ),
 })
-export type PublicArtifact = typeof PublicArtifactSchema.Type
 export type PublicInformationRun = typeof PublicInformationRunSchema.Type
 export class PublicInformationError extends Data.TaggedError('PublicInformationError')<{
   readonly stage: string
   readonly message: string
   readonly status?: number
+  readonly cause?: unknown
 }> {}
 export class PublicArtifactStore extends Context.Service<
   PublicArtifactStore,
@@ -187,7 +187,13 @@ export const collectPublicInformation = (
           retained.set(url, { ...old, checkedAt: fetchedAt })
           return text
         }
-        const objectKey = `captures/v1/public-information/${source}/${fetchedAt.slice(0, 10)}/${canonicalHashV1({ url, fetchedAt, contentSha256 })}`
+        const captureHash = yield* Effect.fromResult(canonicalHashV1Result({ url, fetchedAt, contentSha256 })).pipe(
+          Effect.mapError(
+            (cause) =>
+              new PublicInformationError({ stage: 'parse', message: 'Capture identity is not canonical', cause }),
+          ),
+        )
+        const objectKey = `captures/v1/public-information/${source}/${fetchedAt.slice(0, 10)}/${captureHash}`
         const contentType = response.headers['content-type'] ?? 'application/octet-stream'
         yield* store.put(objectKey, body, contentType, contentSha256)
         const storedAt = utcInstantFromEpochMillis(yield* Clock.currentTimeMillis)

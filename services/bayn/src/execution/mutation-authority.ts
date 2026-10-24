@@ -1,6 +1,7 @@
+import { equityClockSession } from '../equity-hours'
 import { instrumentMarket, MarketKind, validateInstrumentOrder, InstrumentError } from '../instruments'
-import { quantityFromDecimal } from '../quantity'
-import { orderRequestBody } from '../broker/alpaca-mutations/decisions'
+import { quantityFromDecimal, quantityScale } from '../quantity'
+import { orderPriceBoundaryMicros, orderRequestBody } from '../broker/alpaca-mutations/decisions'
 import { Effect, Result } from 'effect'
 
 import {
@@ -12,15 +13,15 @@ import {
   type BrokerReadShape,
   type Order,
   type Position,
-} from '../broker/alpaca'
+} from '../broker/alpaca/model'
 import {
   BrokerMutationError,
   MutationOperation,
   invalidRequest,
   type BrokerMutationShape,
-} from '../broker/alpaca-mutations'
+} from '../broker/alpaca-mutations/model'
 import { canonicalHashV1Result } from '../hash'
-import { OrderSide as IntentOrderSide, type Intent } from './contracts'
+import { submittedBrokerOrderCount, OrderSide as IntentOrderSide, type Intent } from './contracts'
 import type { Policy } from '../risk'
 import type { CachedBrokerState } from './broker-state-cache'
 import {
@@ -33,7 +34,8 @@ import {
   type PersistedCapitalGrant,
   type MutationExecutionAuthority,
 } from './authority'
-import { Pipeable } from '../pipeable'
+
+import { SubmissionDenialReason } from './submission-denial'
 
 export type PersistedGrantExecutionAuthority = MutationExecutionAuthority & {
   readonly capitalAuthority: GrantedCapitalAuthority & { readonly persistedGrant: PersistedCapitalGrant }
@@ -294,11 +296,11 @@ const positionExposureIdentity = (
       symbol: position.symbol,
       quantityAtoms: position.quantityAtoms,
       averageEntryPriceMicros: position.averageEntryPriceMicros,
-      ...(position.costBasisMicros === undefined ? {} : { costBasisMicros: position.costBasisMicros }),
+      costBasisMicros: position.costBasisMicros,
     }))
     .sort((left, right) => left.symbol.localeCompare(right.symbol))
 
-const validateStablePositionSnapshotDataFirst = (
+export const validateStablePositionSnapshot = (
   before: Parameters<typeof positionExposureIdentity>[0],
   after: readonly Position[],
 ): Result.Result<readonly Position[], ExecutionCapitalLimitFailure> => {
@@ -318,8 +320,6 @@ const validateStablePositionSnapshotDataFirst = (
         afterHash: afterHash.success,
       })
 }
-
-export const validateStablePositionSnapshot = Pipeable.dual(2, validateStablePositionSnapshotDataFirst)
 
 const openOrderExposureIdentity = (orders: readonly Order[]) =>
   orders
@@ -341,7 +341,7 @@ const openOrderExposureIdentity = (orders: readonly Order[]) =>
       left.brokerOrderId < right.brokerOrderId ? -1 : left.brokerOrderId > right.brokerOrderId ? 1 : 0,
     )
 
-const validateStableOpenOrderSnapshotDataFirst = (
+const validateStableOpenOrderSnapshot = (
   before: readonly Order[],
   after: readonly Order[],
 ): Result.Result<readonly Order[], ExecutionCapitalLimitFailure> => {
@@ -362,12 +362,10 @@ const validateStableOpenOrderSnapshotDataFirst = (
       })
 }
 
-const validateStableOpenOrderSnapshot = Pipeable.dual(2, validateStableOpenOrderSnapshotDataFirst)
-
 const expectedAuthorityGeneration = (authority: MutationExecutionAuthority): string =>
   authority.capitalAuthority.authorityGenerationHash
 
-const validateIntentAuthorityBindingDataFirst = (
+export const validateIntentAuthorityBinding = (
   authority: MutationExecutionAuthority,
   intent: Intent,
 ): Result.Result<void, IntentAuthorityBindingFailure> => {
@@ -396,23 +394,18 @@ const validateIntentAuthorityBindingDataFirst = (
   return Result.succeed(undefined)
 }
 
-export const validateIntentAuthorityBinding = Pipeable.dual(2, validateIntentAuthorityBindingDataFirst)
-
 const signedIntentNotional = (intent: Intent, notional: bigint): bigint =>
   intent.side === IntentOrderSide.Buy ? notional : -notional
 
-const parseCanonicalPositiveMicros = (value: string): bigint | undefined =>
-  /^[1-9][0-9]*$/.test(value) ? BigInt(value) : undefined
-
 export const boundedBrokerOrderNotional = (intent: Intent): Result.Result<bigint, ExecutionCapitalLimitFailure> => {
-  const notionalLimitMicros = parseCanonicalPositiveMicros(intent.notionalLimitMicros)
-  if (notionalLimitMicros === undefined) {
+  const price = orderPriceBoundaryMicros(intent)
+  if (Result.isFailure(price)) {
     return Result.fail({
       _tag: 'BoundedBrokerOrderInvalid',
       symbol: intent.symbol,
     })
   }
-  return Result.succeed(notionalLimitMicros)
+  return Result.succeed((BigInt(intent.quantityAtoms) * price.success + quantityScale - 1n) / quantityScale)
 }
 
 const orderHasUnboundedExecutionPrice = (order: Order): boolean =>
@@ -608,7 +601,7 @@ interface PendingSymbolExposure {
 
 const emptyPendingSymbolExposure: PendingSymbolExposure = { buyMicros: 0n, sellMicros: 0n }
 
-const maximumAbsoluteExposureAcrossPendingFillsDataFirst = (
+export const maximumAbsoluteExposureAcrossPendingFills = (
   currentMicros: bigint,
   pending: PendingSymbolExposure,
   proposedMicros: bigint,
@@ -617,11 +610,6 @@ const maximumAbsoluteExposureAcrossPendingFillsDataFirst = (
   const upperBound = currentMicros + proposedMicros + pending.buyMicros
   return absolute(lowerBound) > absolute(upperBound) ? absolute(lowerBound) : absolute(upperBound)
 }
-
-export const maximumAbsoluteExposureAcrossPendingFills = Pipeable.dual(
-  3,
-  maximumAbsoluteExposureAcrossPendingFillsDataFirst,
-)
 
 const validateSnapshotBindings = (
   authority: MutationExecutionAuthority,
@@ -722,7 +710,7 @@ const validateBrokerStateFreshness = (
       })
 }
 
-const validateExecutionCapitalLimitsDataFirst = (
+export const validateExecutionCapitalLimits = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
@@ -739,11 +727,12 @@ const validateExecutionCapitalLimitsDataFirst = (
   const pendingSellCoverage = validatePendingSellCoverage(snapshot)
   if (Result.isFailure(pendingSellCoverage)) return Result.fail(pendingSellCoverage.failure)
 
-  if (snapshot.openOrders.length >= limits.maxOpenOrders) {
+  const prospectiveOrderCount = snapshot.openOrders.length + submittedBrokerOrderCount(intent.protection)
+  if (prospectiveOrderCount > limits.maxOpenOrders) {
     return Result.fail({
       _tag: 'OpenOrderLimitExceeded',
       limit: limits.maxOpenOrders,
-      observed: snapshot.openOrders.length,
+      observed: prospectiveOrderCount,
     })
   }
 
@@ -935,8 +924,6 @@ const validateExecutionCapitalLimitsDataFirst = (
   return Result.succeed(undefined)
 }
 
-export const validateExecutionCapitalLimits = Pipeable.dual(8, validateExecutionCapitalLimitsDataFirst)
-
 const mutationAuthorizationError = (message: string, cause: unknown) =>
   invalidRequest({ operation: MutationOperation.Submit, message, cause })
 
@@ -947,7 +934,11 @@ export const confirmExecutionBrokerState = (
 ): Effect.Effect<ExecutionBrokerSubmitSnapshot, BrokerMutationError> =>
   Effect.gen(function* () {
     if (brokerRead.projection === undefined)
-      return yield* mutationAuthorizationError('broker observation projection is required for submit', undefined)
+      return yield* invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'broker observation projection is required for submit',
+        denialReason: SubmissionDenialReason.ProjectionRequired,
+      })
     const {
       positions,
       openOrders: orders,
@@ -992,7 +983,7 @@ export type PersistedCapitalGrantRefreshFailure =
       readonly _tag: 'FreshAuthorityCapabilityMismatch'
     }
 
-const validatePersistedCapitalGrantForSubmitDataFirst = (
+export const validatePersistedCapitalGrantForSubmit = (
   captured: MutationExecutionAuthority,
   persisted: GrantedCapitalAuthority,
   observedAt: string,
@@ -1023,11 +1014,9 @@ const validatePersistedCapitalGrantForSubmitDataFirst = (
     : Result.fail({ _tag: 'FreshAuthorityCapabilityMismatch' })
 }
 
-export const validatePersistedCapitalGrantForSubmit = Pipeable.dual(3, validatePersistedCapitalGrantForSubmitDataFirst)
-
 export type BrokerSubmitValidationFailure = ExecutionCapitalLimitFailure | InstrumentError
 
-const validateExecutionBrokerSubmitSnapshotDataFirst = (
+export const validateExecutionBrokerSubmitSnapshot = (
   authority: MutationExecutionAuthority,
   limits: ExecutionCapitalLimits,
   intent: Intent,
@@ -1037,6 +1026,17 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
 ): Result.Result<void, BrokerSubmitValidationFailure> => {
   const snapshotFreshness = validateBrokerStateFreshness(snapshot, observedAt, context.maxBrokerStateAgeMs)
   if (Result.isFailure(snapshotFreshness)) return Result.fail(snapshotFreshness.failure)
+  if (
+    intent.protection !== undefined &&
+    instrumentMarket(intent.symbol) === MarketKind.Equity &&
+    equityClockSession(observedAt) !== 'regular'
+  )
+    return Result.fail(
+      new InstrumentError({
+        symbol: intent.symbol,
+        message: 'Native equity protection requires the regular session at final transmission',
+      }),
+    )
   const asset = snapshot.asset
   if (
     asset.symbol !== intent.symbol ||
@@ -1055,9 +1055,14 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
   if (Result.isFailure(request))
     return Result.fail(new InstrumentError({ symbol: intent.symbol, message: request.failure.message }))
   const limit = 'limit_price' in request.success ? quantityFromDecimal(request.success.limit_price) : undefined
+  const stop = request.success.stop_price === undefined ? undefined : quantityFromDecimal(request.success.stop_price)
   if (limit !== undefined && Result.isFailure(limit))
     return Result.fail(
       new InstrumentError({ symbol: intent.symbol, message: 'broker limit price is outside the exact price domain' }),
+    )
+  if (stop !== undefined && Result.isFailure(stop))
+    return Result.fail(
+      new InstrumentError({ symbol: intent.symbol, message: 'broker stop price is outside the exact price domain' }),
     )
   const instrument = validateInstrumentOrder(
     {
@@ -1072,6 +1077,7 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
       closeOnly: context.closeOnly,
       fractionable: asset.fractionable,
       ...(limit === undefined || Result.isFailure(limit) ? {} : { limitPriceAtoms: limit.success }),
+      ...(stop === undefined || Result.isFailure(stop) ? {} : { stopPriceAtoms: stop.success }),
     },
   )
   if (Result.isFailure(instrument)) return instrument
@@ -1104,22 +1110,20 @@ const validateExecutionBrokerSubmitSnapshotDataFirst = (
     limits,
     intent,
     cashSnapshot,
-    requestedNotional.success,
+    BigInt(intent.notionalLimitMicros),
     requestedNotional.success,
     openOrderNotionals.success,
     context,
   )
 }
 
-export const validateExecutionBrokerSubmitSnapshot = Pipeable.dual(6, validateExecutionBrokerSubmitSnapshotDataFirst)
-
-const makeAuthorityGuardedBrokerMutationDataFirst = (
+export const makeAuthorityGuardedBrokerMutation = (
   authority: MutationExecutionAuthority,
   dependencies: MutationAuthorityDependencies,
 ): BrokerMutationShape => {
-  const transmit = (intent: Intent, closeOnly: boolean) =>
+  const transmit = (intent: Intent) =>
     dependencies
-      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent, closeOnly))
+      .finalSubmitAuthorization(intent, dependencies.brokerMutation.submit(intent))
       .pipe(
         Effect.mapError((cause) =>
           cause instanceof BrokerMutationError
@@ -1127,14 +1131,14 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
             : mutationAuthorizationError('final broker submit authorization failed', cause),
         ),
       )
-  const submit = (intent: Intent, closeOnly = false) => {
+  const submit = (intent: Intent) => {
     const binding = validateIntentAuthorityBinding(authority, intent)
     if (Result.isFailure(binding)) {
       return Effect.fail(
         mutationAuthorizationError('intent is not bound to the active execution authority', binding.failure),
       )
     }
-    return transmit(intent, closeOnly)
+    return transmit(intent)
   }
 
   return {
@@ -1148,5 +1152,3 @@ const makeAuthorityGuardedBrokerMutationDataFirst = (
       : { orderByClientId: dependencies.brokerMutation.orderByClientId }),
   }
 }
-
-export const makeAuthorityGuardedBrokerMutation = Pipeable.dual(2, makeAuthorityGuardedBrokerMutationDataFirst)

@@ -4,7 +4,7 @@ import { NodeServices, NodeRuntime } from '@effect/platform-node'
 import { Clock, Effect, Layer, Option, Schedule } from 'effect'
 
 import { PgClient } from '@effect/sql-pg'
-import { loadConfig } from './config'
+import { loadConfig } from './config/load'
 import { makeBrokerObservationStore } from './db/broker-observations'
 import { PostgresClientLive } from './db/postgres-client'
 import { brokerSnapshotCacheConfig } from './broker/alpaca/snapshot-cache'
@@ -15,13 +15,14 @@ import { makeConfiguredTelemetryRuntimeLayer } from './telemetry'
 export const verifyValkeyClient = Effect.gen(function* () {
   const cache = yield* ValkeyCache
   const key = `bayn:client-acceptance:${randomUUID()}`
+  const payload = 'verified'.repeat(131_072)
   yield* Effect.addFinalizer(() => cache.remove(key).pipe(Effect.orDie))
   const missing = yield* cache.get(key)
   if (Option.isSome(missing))
     return yield* new ValkeyCacheError({ operation: 'verify', message: 'Expected cache miss' })
-  yield* cache.put({ key, value: 'verified', ttlMs: 300_000 })
+  yield* cache.put({ key, value: payload, ttlMs: 300_000 })
   const value = yield* cache.get(key)
-  if (Option.getOrNull(value) !== 'verified')
+  if (Option.getOrNull(value) !== payload)
     return yield* new ValkeyCacheError({ operation: 'verify', message: 'Cache read did not match write' })
   yield* cache.remove(key)
   if (Option.isSome(yield* cache.get(key)))
@@ -31,7 +32,10 @@ export const verifyValkeyClient = Effect.gen(function* () {
   if (Option.isSome(yield* cache.get(key)))
     return yield* new ValkeyCacheError({ operation: 'verify', message: 'Cache key outlived its TTL' })
   yield* Effect.logInfo('Bayn Valkey client acceptance passed').pipe(
-    Effect.annotateLogs({ checks: ['miss', 'write', 'read', 'delete', 'expiry'] }),
+    Effect.annotateLogs({
+      writeBytes: Buffer.byteLength(payload),
+      checks: ['miss', 'write', 'read', 'delete', 'expiry'],
+    }),
   )
 }).pipe(Effect.scoped)
 

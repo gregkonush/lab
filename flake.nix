@@ -247,7 +247,7 @@
               bun = exact.bun;
             };
             "proompteng-image" = import ./nix/images/proompteng.nix {
-              inherit pkgs lib nodejs;
+              inherit pkgs lib nodejs repoRevision;
               repoRoot = ./.;
               bun = exact.bun;
             };
@@ -263,6 +263,11 @@
             };
             "symphony-image" = import ./nix/images/symphony.nix {
               inherit pkgs lib nodejs;
+              repoRoot = ./.;
+              bun = exact.bun;
+            };
+            "opencode-image" = import ./nix/images/opencode.nix {
+              inherit pkgs lib nodejs repoRevision ciToolchain;
               repoRoot = ./.;
               bun = exact.bun;
             };

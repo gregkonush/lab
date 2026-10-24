@@ -1,3 +1,4 @@
+import { observeRequest } from '@/lib/observability/server'
 import { createHash } from 'node:crypto'
 import { create, toJson, type MessageInitShape } from '@bufbuild/protobuf'
 import { z } from 'zod'
@@ -66,6 +67,10 @@ function workspace(command: AccessCommand) {
 }
 
 export async function GET(request: Request) {
+  return observeRequest(request, 'tengri/access.get', () => handleGET(request))
+}
+
+async function handleGET(request: Request) {
   try {
     requireSameOriginGet(request)
     const identity = await requireTengriIdentity(request)
@@ -104,6 +109,10 @@ export async function GET(request: Request) {
 }
 
 export async function POST(request: Request) {
+  return observeRequest(request, 'tengri/access.post', () => handlePOST(request))
+}
+
+async function handlePOST(request: Request) {
   try {
     requireSameOrigin(request)
     const identity = await requireTengriIdentity(request)

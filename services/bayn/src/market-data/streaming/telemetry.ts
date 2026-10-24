@@ -1,4 +1,5 @@
 import { nativeFeatureMatchesBars, rollingWindowStartMs, type NativeMarketFeature } from '../features/native-feature'
+import { diagnoseStreamingInputs } from './inputs'
 import { isCryptoMarketFeature } from '../features/crypto-contract'
 import { Result, Schema } from 'effect'
 import { errorCodes, findErrorBy, protocolErrorsCodesById, TimeoutError } from '@platformatic/kafka'
@@ -72,8 +73,43 @@ export const snapshotFailureMeasurement = (
     const value = facts?.[key]
     if (typeof value === 'number' && Number.isFinite(value) && value >= 0) durations[key] = value
   }
+  const diagnosed = diagnoseStreamingInputs(projection, query)
+  const candidateCoverage = Result.isSuccess(diagnosed)
+    ? diagnosed.success.candidates.map(({ matchingFeature, ...candidate }) => ({
+        ...candidate,
+        matchingFeature:
+          matchingFeature === null
+            ? null
+            : { featureId: matchingFeature.value.featureId, availableAtMs: matchingFeature.availableAtMs },
+      }))
+    : null
   return {
-    schemaVersion: 'bayn.market-snapshot-failure.v1',
+    schemaVersion: 'bayn.market-snapshot-failure.v2',
+    purpose: query.purpose ?? 'DECISION',
+    ...(query.purpose === undefined
+      ? {}
+      : {
+          pricingQuoteCut: (query.symbols ?? query.universe).map((symbol) => {
+            const quote = projection.quoteHistory
+              .get(symbol)
+              ?.findLast((entry) => entry.availableAtMs <= Date.parse(query.observedAt))
+            return {
+              symbol,
+              eventAt: quote?.value.eventAt ?? null,
+              availableAtMs: quote?.availableAtMs ?? null,
+              ageMs: quote === undefined ? null : Date.parse(query.observedAt) - Date.parse(quote.value.eventAt),
+              postRange:
+                quote !== undefined && intradayInstantNanos(quote.value.eventAt) >= BigInt(windowEndMs) * 1_000_000n,
+            }
+          }),
+        }),
+    candidateCoverage,
+    inputFailure: Result.isFailure(diagnosed) ? diagnosed.failure.reason : null,
+    projectionCoverage: projectionCoverageMeasurements(
+      projection,
+      query.symbols ?? query.universe,
+      Date.parse(query.observedAt),
+    ),
     failureReason: failure.reason,
     ...(failure.ingestionDelayDirection === undefined
       ? {}

@@ -1,7 +1,9 @@
 """Check the rendered coordinated-cutover targets, including rejected regressions."""
 
+import base64
 import copy
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -72,7 +74,7 @@ def validate(targets):
         ]["max_connections"]
     )
     require(
-        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 12 + 8) + 6 * 2
+        (int(native["replicas"]) + 1) * native_pool + 3 * (14 + 14 + 8) + 6 * 4
         <= maximum_connections - 30,
         "ofz: simultaneous rolling surges exhaust the SQL connection budget",
     )
@@ -87,9 +89,9 @@ def validate(targets):
         "ofz_api": 42,
         "ofz_archiver": 4,
         "tengri_migrator": 2,
-        "tengri_controller": 36,
+        "tengri_controller": 42,
         "tengri_bff": 24,
-        "tengri_supervisor": 12,
+        "tengri_supervisor": 24,
     }
     require(
         roles.keys() == limits.keys(),
@@ -179,6 +181,110 @@ def validate(targets):
         and export["strategy"]["rollingUpdate"]["maxSurge"] == 0,
         "ofz: archive leadership must fit its four-connection budget",
     )
+    activation = resource(targets, "ofz", "Job", "ofz-platform-activate")
+    activation_pod = activation["spec"]["template"]["spec"]
+    activation_app = activation_pod["containers"][0]
+    require(
+        activation["metadata"]["annotations"].get("argocd.argoproj.io/hook")
+        == "PostSync"
+        and activation_app["args"]
+        == ["activate", "/var/run/ofz/bootstrap/manifest.json"]
+        and activation_pod["serviceAccountName"] == "ofz-migrator"
+        and values(activation_app) == values(bootstrap_app)
+        and activation_pod["volumes"] == bootstrap_pod["volumes"],
+        "ofz: archive-gated activation must use only the approved owner manifest and authority",
+    )
+    reader = resource(targets, "ofz", "Role", "ofz-public-ca-reader")
+    require(
+        reader["rules"]
+        == [
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "resourceNames": ["ofz-db-public-ca"],
+                "verbs": ["get"],
+            }
+        ],
+        "ofz: public CA projection must not permit discovery or access to unrelated Secrets",
+    )
+    publisher = resource(targets, "ofz", "Role", "ofz-ca-publisher")
+    require(
+        publisher["rules"]
+        == [
+            {
+                "apiGroups": [""],
+                "resources": ["secrets"],
+                "resourceNames": ["ofz-db-ca"],
+                "verbs": ["get"],
+            }
+        ],
+        "ofz: only the namespace-local CA publisher may read the private CA Secret",
+    )
+    local_store = resource(targets, "ofz", "SecretStore", "ofz-ca-source")["spec"]
+    require(
+        local_store["provider"]["kubernetes"]["remoteNamespace"] == "ofz"
+        and local_store["provider"]["kubernetes"]["auth"]["serviceAccount"]
+        == {"name": "ofz-ca-publisher"},
+        "ofz: private CA source must remain namespace-scoped",
+    )
+    public_ca = resource(targets, "ofz", "ExternalSecret", "ofz-db-public-ca")["spec"]
+    require(
+        public_ca["secretStoreRef"] == {"kind": "SecretStore", "name": "ofz-ca-source"}
+        and public_ca["target"]["name"] == "ofz-db-public-ca"
+        and public_ca.get("dataFrom") is None
+        and public_ca["data"]
+        == [
+            {
+                "secretKey": "ca.crt",
+                "remoteRef": {"key": "ofz-db-ca", "property": "ca.crt"},
+            }
+        ]
+        and public_ca["refreshInterval"] == "1m",
+        "ofz: shared trust bundle must contain only the refreshed public certificate",
+    )
+    for item in targets["ofz"]:
+        if item and item["kind"] in ["Deployment", "Job"]:
+            for volume in item["spec"]["template"]["spec"].get("volumes", []):
+                secret = volume.get("secret", {})
+                if secret.get("secretName") == "ofz-db-ca":
+                    require(
+                        secret.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
+                        "ofz: database callers must not mount the CA signing key",
+                    )
+    ca_store = resource(targets, "ofz", "ClusterSecretStore", "ofz-database-ca")["spec"]
+    require(
+        ca_store["conditions"] == [{"namespaces": ["tengri", "proompteng"]}]
+        and ca_store["provider"]["kubernetes"]["remoteNamespace"] == "ofz"
+        and ca_store["provider"]["kubernetes"]["auth"]["serviceAccount"]
+        == {"name": "ofz-public-ca-reader", "namespace": "ofz"},
+        "ofz: database CA store must retain its exact reader and application namespace allowlist",
+    )
+    for target in ["tengri", "proompteng"]:
+        ca = resource(targets, target, "ExternalSecret", "ofz-database-ca")["spec"]
+        require(
+            ca.get("dataFrom") is None
+            and ca["data"]
+            == [
+                {
+                    "secretKey": "ca.crt",
+                    "remoteRef": {"key": "ofz-db-public-ca", "property": "ca.crt"},
+                }
+            ]
+            and ca["secretStoreRef"]
+            == {"kind": "ClusterSecretStore", "name": "ofz-database-ca"}
+            and ca["refreshInterval"] == "1m",
+            f"{target}: only the refreshed public CA may leave the Ofz namespace",
+        )
+        require(
+            not any(
+                item
+                and item.get("kind") == "SealedSecret"
+                and item["metadata"]["name"]
+                in ["tengri-runtime", "tengri-spicedb-key", "tengri-bff"]
+                for item in targets[target]
+            ),
+            f"{target}: obsolete authority must be deleted during hard cutover",
+        )
     export_pod = export["template"]["spec"]
     export_app = export_pod["containers"][0]
     require(
@@ -387,26 +493,277 @@ def validate(targets):
         "sslmode=verify-full" in kc.get("KC_DB_URL", ""),
         "keycloak: database identity verification required",
     )
+    keycloak_pod = resource(targets, "keycloak", "StatefulSet", "keycloak")["spec"][
+        "template"
+    ]["spec"]
+    keycloak_ca = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "database-ca"
+    )["secret"]
+    require(
+        keycloak_ca["defaultMode"] == 0o440
+        and keycloak_ca.get("items") == [{"key": "ca.crt", "path": "ca.crt"}],
+        "keycloak: mount only the public database CA certificate with mode 0440",
+    )
+    theme_mounts = [
+        mount
+        for mount in container(targets, "keycloak", "StatefulSet", "keycloak")[
+            "volumeMounts"
+        ]
+        if mount["name"] == "login-theme"
+    ]
+    require(
+        theme_mounts
+        == [
+            {
+                "name": "login-theme",
+                "mountPath": "/opt/keycloak/themes/tengri/login",
+                "readOnly": True,
+            }
+        ],
+        "keycloak: the dedicated login theme must be mounted read-only",
+    )
+    theme = next(
+        volume for volume in keycloak_pod["volumes"] if volume["name"] == "login-theme"
+    )["configMap"]
+    theme_files = {
+        "theme.properties": "theme.properties",
+        "webauthnRegister.js": "resources/js/webauthnRegister.js",
+        "webauthnAuthenticate.js": "resources/js/webauthnAuthenticate.js",
+        "webauthn-authenticate.ftl": "webauthn-authenticate.ftl",
+        "template.ftl": "template.ftl",
+        "tengri.css": "resources/css/tengri.css",
+        "messages_en.properties": "messages/messages_en.properties",
+        "fruit-pear.svg": "resources/img/fruit-pear.svg",
+        "wallpaper.webp": "resources/img/wallpaper.webp",
+        "GeistSans.woff2": "resources/fonts/GeistSans.woff2",
+        "OFL.txt": "resources/fonts/OFL.txt",
+        "pictogrammers-LICENSE.txt": "resources/img/pictogrammers-LICENSE.txt",
+    }
+    require(
+        theme["items"]
+        == [{"key": key, "path": path} for key, path in theme_files.items()],
+        "keycloak: branded assets must use the paths imported by the login templates",
+    )
+    theme_root = Path("argocd/applications/keycloak/tengri/theme/login")
+    theme_config = resource(targets, "keycloak", "ConfigMap", theme["name"])
+    binary_assets = {"wallpaper.webp", "GeistSans.woff2"}
+    require(
+        theme_config["data"]
+        == {
+            key: (theme_root / path).read_text()
+            for key, path in theme_files.items()
+            if key not in binary_assets
+        }
+        and {
+            key: base64.b64decode(value)
+            for key, value in theme_config["binaryData"].items()
+        }
+        == {
+            key: (theme_root / path).read_bytes()
+            for key, path in theme_files.items()
+            if key in binary_assets
+        },
+        "keycloak: the deployed theme must contain the browser-qualified templates, modules and brand assets",
+    )
+    require(
+        len(json.dumps(theme_config).encode()) < 1024 * 1024,
+        "keycloak: the complete login theme must fit within the ConfigMap size limit",
+    )
     require(
         kc.get("KC_DB_POOL_MAX_SIZE") == "20",
         "keycloak: bounded connection pool required",
     )
     database = resource(targets, "keycloak", "Cluster", "keycloak-db")["spec"]
     require(database["instances"] == 3, "keycloak: three database instances required")
+    capacity_mib = int(database["storage"]["size"].removesuffix("Gi")) * 1024
+    retained_wal_mib = int(
+        database["postgresql"]["parameters"]
+        .get("max_slot_wal_keep_size", "-1")
+        .removesuffix("MB")
+    )
+    require(
+        0 < retained_wal_mib <= capacity_mib // 4,
+        "keycloak: replica WAL retention must be bounded to a quarter of database storage",
+    )
     require(
         database["affinity"]["podAntiAffinityType"] == "required",
         "keycloak: database host spread required",
+    )
+    require(
+        database["affinity"].get("tolerations")
+        == [
+            {
+                "key": "workload.proompteng.ai/compute-local",
+                "operator": "Equal",
+                "value": "true",
+                "effect": "NoSchedule",
+            }
+        ],
+        "keycloak: third database host requires the exact compute-local toleration",
     )
     require(
         database["postgresql"]["synchronous"]
         == {"method": "any", "number": 1, "dataDurability": "required"},
         "keycloak: synchronous durability required",
     )
+    checkpoint = resource(targets, "keycloak", "Backup", "keycloak-server-26-7-4")
+    require(
+        checkpoint["metadata"]["annotations"]
+        == {
+            "argocd.argoproj.io/sync-wave": "-10",
+            "argocd.argoproj.io/sync-options": "Prune=false,Delete=false",
+        }
+        and checkpoint["spec"]["method"] == "volumeSnapshot"
+        and checkpoint["spec"]["cluster"]["name"] == "keycloak-db"
+        and checkpoint["spec"]["online"] is True,
+        "keycloak: the server upgrade requires a fresh protected checkpoint before its wave",
+    )
     ingress = resource(targets, "keycloak", "IngressRoute", "keycloak")["spec"]
     require(
         ingress["entryPoints"] == ["websecure"]
         and ingress["tls"]["secretName"] == "auth-proompteng-ai-tls",
         "keycloak: reviewed HTTPS certificate required",
+    )
+    for target in ["ofz", "keycloak"]:
+        store = resource(targets, target, "ObjectStore", f"{target}-db")["spec"]
+        config = store["configuration"]
+        require(
+            config["destinationPath"] == f"s3://{target}-database-backups/"
+            and config["endpointURL"] == "https://nuc.ide-newton.ts.net:9444"
+            and config["data"].get("encryption") == "AES256"
+            and config["wal"].get("encryption") == "AES256"
+            and store["retentionPolicy"] == "35d",
+            f"{target}: independent encrypted base backups and WAL are required",
+        )
+        require(
+            config["s3Credentials"]
+            == {
+                "accessKeyId": {
+                    "name": f"{target}-database-backup",
+                    "key": "AWS_ACCESS_KEY_ID",
+                },
+                "secretAccessKey": {
+                    "name": f"{target}-database-backup",
+                    "key": "AWS_SECRET_ACCESS_KEY",
+                },
+            },
+            f"{target}: database writer must be separate from the audit writer",
+        )
+        cluster = resource(targets, target, "Cluster", f"{target}-db")["spec"]
+        require(
+            cluster["affinity"]["podAntiAffinityType"] == "required"
+            and cluster["affinity"]["topologyKey"] == "kubernetes.io/hostname"
+            and cluster["affinity"].get("tolerations")
+            == [
+                {
+                    "key": "workload.proompteng.ai/compute-local",
+                    "operator": "Equal",
+                    "value": "true",
+                    "effect": "NoSchedule",
+                }
+            ],
+            f"{target}: database replicas must use three hosts without removing the compute taint",
+        )
+        require(
+            resource(targets, target, "Cluster", f"{target}-db")["metadata"]
+            .get("annotations", {})
+            .get("argocd.argoproj.io/sync-wave")
+            == "-8",
+            f"{target}: database plugin must be installed before the immediate backup wave",
+        )
+        require(
+            cluster["postgresql"]["parameters"]["archive_timeout"] == "60s"
+            and cluster["plugins"]
+            == [
+                {
+                    "name": "barman-cloud.cloudnative-pg.io",
+                    "enabled": True,
+                    "isWALArchiver": True,
+                    "parameters": {
+                        "barmanObjectName": f"{target}-db",
+                        "serverName": f"{target}-db",
+                    },
+                }
+            ],
+            f"{target}: native backup and WAL archive binding changed",
+        )
+        scheduled = resource(targets, target, "ScheduledBackup", f"{target}-db-daily")[
+            "spec"
+        ]
+        require(
+            scheduled["immediate"] is False
+            and scheduled["cluster"]["name"] == f"{target}-db"
+            and scheduled["method"] == "plugin"
+            and scheduled["pluginConfiguration"]["name"]
+            == "barman-cloud.cloudnative-pg.io",
+            f"{target}: daily schedule must not duplicate the explicit initial backup",
+        )
+        initial = resource(
+            targets, target, "Backup", f"{target}-db-nuc-cutover-primary"
+        )
+        require(
+            initial["spec"]["method"] == "plugin"
+            and initial["spec"]["target"] == "primary"
+            and initial["spec"]["pluginConfiguration"]["name"]
+            == "barman-cloud.cloudnative-pg.io"
+            and initial["spec"]["cluster"]["name"] == f"{target}-db"
+            and initial["metadata"]["annotations"].get("argocd.argoproj.io/sync-wave")
+            == "-6"
+            and initial["metadata"]["annotations"].get(
+                "argocd.argoproj.io/sync-options"
+            )
+            == "Prune=false,Delete=false",
+            f"{target}: new store requires a protected physical backup before serving changes",
+        )
+    for name in ["keycloak-tengri-broker", "keycloak-tengri-bff"]:
+        credential = resource(targets, "keycloak", "SealedSecret", name)
+        require(
+            credential["metadata"]
+            .get("annotations", {})
+            .get("argocd.argoproj.io/sync-wave")
+            == "-9",
+            "keycloak: outer SealedSecrets must precede realm bootstrap",
+        )
+    certificate = resource(targets, "keycloak", "Certificate", "auth-proompteng-ai")
+    require(
+        certificate["spec"]["dnsNames"] == ["auth.proompteng.ai"]
+        and certificate["spec"]["secretName"] == ingress["tls"]["secretName"],
+        "keycloak: issuer certificate must match the ingress and public hostname",
+    )
+    tunnel = resource(targets, "cloudflare", "Deployment", "cloudflared-deployment")
+    config_name = tunnel["spec"]["template"]["spec"]["volumes"][0]["configMap"]["name"]
+    require(
+        config_name.startswith("cloudflared-config-")
+        and config_name != "cloudflared-config",
+        "keycloak: changed tunnel configuration must roll its serving Pod",
+    )
+    config = resource(targets, "cloudflare", "ConfigMap", config_name)["data"][
+        "config.yaml"
+    ]
+    routes = json.loads(
+        subprocess.check_output(["yq", "-o=json", "."], input=config, text=True)
+    )["ingress"]
+    issuer_routes = [
+        route for route in routes if route.get("hostname") == "auth.proompteng.ai"
+    ]
+    require(
+        len(issuer_routes) == 1, "keycloak: one exact public issuer route is required"
+    )
+    issuer_route = issuer_routes[0]
+    require(
+        issuer_route["service"] == "https://traefik.traefik.svc.cluster.local:443"
+        and issuer_route.get("originRequest", {})
+        == {"originServerName": "auth.proompteng.ai"},
+        "keycloak: public issuer route must verify the origin TLS identity",
+    )
+    require(
+        routes.index(issuer_route)
+        < next(
+            index
+            for index, route in enumerate(routes)
+            if route.get("hostname") == "*.proompteng.ai"
+        ),
+        "keycloak: verified issuer route must precede the wildcard route",
     )
     network = resource(targets, "keycloak", "NetworkPolicy", "keycloak-server")["spec"]
     for direction, peer_key in [("ingress", "from"), ("egress", "to")]:
@@ -433,10 +790,103 @@ def main():
     directory = Path(sys.argv[1])
     targets = {
         name: json.loads((directory / f"{name}.json").read_text())
-        for name in ["tengri", "proompteng", "keycloak", "ofz", "crd"]
+        for name in ["tengri", "proompteng", "keycloak", "ofz", "crd", "cloudflare"]
     }
     validate(targets)
     mutations = [
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"]["postgresql"][
+            "parameters"
+        ].update(max_connections="200"),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_controller"
+        ).update(connectionLimit=36),
+        lambda data: next(
+            role
+            for role in resource(data, "ofz", "Cluster", "ofz-db")["spec"]["managed"][
+                "roles"
+            ]
+            if role["name"] == "tengri_supervisor"
+        ).update(connectionLimit=12),
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
+            "spec"
+        ].update(method="volumeSnapshot"),
+        lambda data: resource(
+            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+        )["metadata"]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(data, "ofz", "Backup", "ofz-db-nuc-cutover-primary")[
+            "spec"
+        ].update(target="prefer-standby"),
+        lambda data: resource(
+            data, "keycloak", "Backup", "keycloak-db-nuc-cutover-primary"
+        )["spec"].update(target="prefer-standby"),
+        lambda data: resource(data, "ofz", "Cluster", "ofz-db")["spec"][
+            "affinity"
+        ].update(podAntiAffinityType="preferred"),
+        lambda data: resource(data, "ofz", "Job", "ofz-platform-activate")["spec"][
+            "template"
+        ]["spec"]["containers"][0].update(
+            args=["bootstrap", "/var/run/ofz/bootstrap/manifest.json"]
+        ),
+        lambda data: resource(data, "ofz", "Role", "ofz-public-ca-reader")["rules"][
+            0
+        ].pop("resourceNames"),
+        lambda data: resource(data, "ofz", "Role", "ofz-public-ca-reader")["rules"][
+            0
+        ].update(resourceNames=["ofz-db-ca"]),
+        lambda data: resource(data, "ofz", "Role", "ofz-ca-publisher")["rules"][0].pop(
+            "resourceNames"
+        ),
+        lambda data: resource(data, "ofz", "ExternalSecret", "ofz-db-public-ca")[
+            "spec"
+        ]["data"][0]["remoteRef"].update(property="ca.key"),
+        lambda data: resource(data, "ofz", "ExternalSecret", "ofz-db-public-ca")[
+            "spec"
+        ]["secretStoreRef"].update(kind="ClusterSecretStore"),
+        lambda data: next(
+            volume
+            for volume in resource(data, "ofz", "Deployment", "ofz-api")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume.get("secret", {}).get("secretName") == "ofz-db-ca"
+        )["secret"].pop("items"),
+        lambda data: resource(data, "tengri", "ExternalSecret", "ofz-database-ca")[
+            "spec"
+        ]["data"][0]["remoteRef"].update(property="ca.key"),
+        lambda data: resource(data, "proompteng", "ExternalSecret", "ofz-database-ca")[
+            "spec"
+        ].update(dataFrom=[{"extract": {"key": "ofz-db-ca"}}]),
+        lambda data: resource(data, "ofz", "ClusterSecretStore", "ofz-database-ca")[
+            "spec"
+        ].update(conditions=[{"namespaceRegexes": [".*"]}]),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["metadata"][
+            "annotations"
+        ].pop("argocd.argoproj.io/sync-wave"),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "database-ca"
+        )["secret"].pop("items"),
+        lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
+            "configuration"
+        ].update(endpointURL="https://rook-ceph-rgw.rook-ceph.svc"),
+        lambda data: resource(data, "keycloak", "ObjectStore", "keycloak-db")["spec"][
+            "configuration"
+        ].update(destinationPath="s3://ofz-database-backups/"),
+        lambda data: resource(data, "ofz", "ObjectStore", "ofz-db")["spec"][
+            "configuration"
+        ]["wal"].pop("encryption"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].update(archive_timeout="1h"),
+        lambda data: resource(data, "keycloak", "ScheduledBackup", "keycloak-db-daily")[
+            "spec"
+        ].update(immediate=True),
         lambda data: container(data, "tengri", "Deployment", "tengri")["env"].append(
             {"name": "TENGRI_GUEST_SIGNING_KEY_FILE", "value": "/tmp/wrong-key"}
         ),
@@ -463,9 +913,62 @@ def main():
         lambda data: container(data, "keycloak", "StatefulSet", "keycloak")[
             "env"
         ].append({"name": "KC_CACHE_EMBEDDED_MTLS_ENABLED", "value": "false"}),
+        lambda data: container(data, "keycloak", "StatefulSet", "keycloak").update(
+            volumeMounts=[]
+        ),
+        lambda data: next(
+            volume
+            for volume in resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+                "template"
+            ]["spec"]["volumes"]
+            if volume["name"] == "login-theme"
+        )["configMap"]["items"].pop(),
+        lambda data: resource(data, "keycloak", "StatefulSet", "keycloak")["spec"][
+            "template"
+        ]["spec"]["volumes"][0]["secret"].update(defaultMode=440),
         lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
             "postgresql"
         ]["synchronous"].update(dataDurability="preferred"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "storage"
+        ].update(size="5Gi"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "postgresql"
+        ]["parameters"].pop("max_slot_wal_keep_size"),
+        lambda data: resource(data, "keycloak", "Cluster", "keycloak-db")["spec"][
+            "affinity"
+        ].update(tolerations=[]),
+        lambda data: resource(data, "keycloak", "Backup", "keycloak-server-26-7-4")[
+            "metadata"
+        ]["annotations"].update({"argocd.argoproj.io/sync-wave": "0"}),
+        lambda data: resource(
+            data, "keycloak", "SealedSecret", "keycloak-tengri-broker"
+        )["metadata"].pop("annotations"),
+        lambda data: resource(data, "keycloak", "Certificate", "auth-proompteng-ai")[
+            "spec"
+        ].update(dnsNames=["other.proompteng.ai"]),
+        lambda data: resource(
+            data, "cloudflare", "Deployment", "cloudflared-deployment"
+        )["spec"]["template"]["spec"]["volumes"][0]["configMap"].update(
+            name="cloudflared-config"
+        ),
+        lambda data: next(
+            item for item in data["cloudflare"] if item and item["kind"] == "ConfigMap"
+        )["data"].update({"config.yaml": "ingress: []\n"}),
+        lambda data: next(
+            item for item in data["cloudflare"] if item and item["kind"] == "ConfigMap"
+        )["data"].update(
+            {
+                "config.yaml": next(
+                    item
+                    for item in data["cloudflare"]
+                    if item and item["kind"] == "ConfigMap"
+                )["data"]["config.yaml"].replace(
+                    "originServerName: auth.proompteng.ai",
+                    "originServerName: auth.proompteng.ai\n      noTLSVerify: true",
+                )
+            }
+        ),
         lambda data: resource(
             data, "tengri", "CustomResourceDefinition", "microvms.runtime.proompteng.ai"
         )["spec"].update(versions=[]),
@@ -537,7 +1040,9 @@ def main():
         except ValueError:
             continue
         raise RuntimeError(f"HA regression {index + 1} was accepted")
-    print(f"PASS: four rendered HA targets and {len(mutations)} rejected regressions")
+    print(
+        f"PASS: {len(targets) - 1} rendered targets and {len(mutations)} rejected regressions"
+    )
 
 
 if __name__ == "__main__":

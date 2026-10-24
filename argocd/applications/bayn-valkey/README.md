@@ -9,8 +9,14 @@ their existing authority.
 
 `valkey.yaml` selects `arch: replica`, one shard and two data pods. Required
 anti-affinity places one pod on each eligible 100G host. Each requests 1Gi of
-memory, caps the dataset at 512Mi and owns a 10Gi Ceph RBD volume. AOF uses
-`appendfsync everysec`; `noeviction` rejects writes at capacity.
+memory, caps the dataset at 512Mi and retains its existing 10Gi Ceph RBD volume.
+`noeviction` rejects writes at capacity. AOF and scheduled RDB snapshots are
+disabled for these expiring, disposable materializations. Diskless primary
+replication also prevents the operator from injecting default snapshot schedules.
+The two memory copies still require application replica acknowledgement before
+PostgreSQL publishes their hashes. A complete cache restart requires a fresh
+broker poll; there is no database payload fallback. Existing volumes and files
+are retained.
 
 There is no Sentinel or automatic promotion. A failed primary makes the cache
 unavailable until recovery or an operator-managed manual promotion. Bayn bounds
@@ -58,6 +64,20 @@ let the operator recover, then run a full reviewed sync of `bayn-valkey` to
 rerun acceptance. Do not use a `--resource` selective sync for this check:
 [Argo hooks do not run during selective sync](https://argo-cd.readthedocs.io/en/stable/user-guide/sync-waves/#hook-lifecycle-and-cleanup).
 Successful Job history stays available until the next attempt.
+
+After Bayn's image rollout, run its installed `valkey-command.js --broker` from
+both API and execution replicas. The transport check writes and reads a 1 MiB
+synthetic value with replica acknowledgement and expiry; the broker check reads
+the actual fenced full and compact materializations. Tiny writes alone do not
+exercise publication-sized traffic.
+
+Apply reviewed configuration through this Application, then verify `appendonly`
+is `no`, `save` is empty and `repl-diskless-sync` is `yes` on both data pods.
+The operator applies these mutable settings without a required Pod restart.
+Keep the one-second application deadline, TLS identity, ACL, `WAIT 1`, PostgreSQL
+fences and retained volumes unchanged. A reverted persistence policy restores
+disk writes through GitOps; missing or expired cache contents still require a
+fresh poll rather than replaying historical trading evidence.
 
 ```sh
 kustomize build argocd/applications/bayn-valkey > /tmp/bayn-valkey.yaml

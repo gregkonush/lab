@@ -2,7 +2,7 @@ import { describe, expect, test } from 'bun:test'
 import { Cause, Effect, Exit } from 'effect'
 import { cachedBrokerStateFixture } from './broker-state-cache.fixture'
 import { makeBrokerStateCache } from './broker-state-cache'
-import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca'
+import { AccountStatus as BrokerAccountStatus } from '../broker/alpaca/model'
 import { Authority, KillState, OrderStatus, OrderSide, OrderType, TimeInForce } from './contracts'
 import type { ReconciliationPassResult } from '../reconciler'
 
@@ -12,6 +12,7 @@ const generation = '1'.repeat(64)
 const fixture = (): ReconciliationPassResult => {
   const cached = cachedBrokerStateFixture({
     cryptoStatus: null,
+    cashReportingQuantumMicros: '1' as const,
     nonMarginableBuyingPowerMicros: null,
 
     id: accountId,

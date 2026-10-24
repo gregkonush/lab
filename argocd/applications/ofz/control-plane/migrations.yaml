@@ -74,6 +74,9 @@ spec:
         - name: database-ca
           secret:
             secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
             defaultMode: 288
 ---
 apiVersion: batch/v1
@@ -144,4 +147,7 @@ spec:
         - name: database-ca
           secret:
             secretName: ofz-db-ca
+            items:
+              - key: ca.crt
+                path: ca.crt
             defaultMode: 288

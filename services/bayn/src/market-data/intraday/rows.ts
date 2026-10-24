@@ -22,7 +22,9 @@ const hasExpectedDelayClass = (row: {
   readonly market_session: string
   readonly native_payload?: string
 }): boolean =>
-  (row.market_session === 'regular' && row.feed === 'iex' && row.delay_class === 'real_time_exchange_only') ||
+  (['pre', 'regular', 'post'].includes(row.market_session) &&
+    row.feed === 'iex' &&
+    row.delay_class === 'real_time_exchange_only') ||
   (row.market_session === 'regular' && row.feed === 'sip' && row.delay_class === 'real_time_consolidated') ||
   (row.market_session === 'regular' && row.feed === 'delayed_sip' && row.delay_class === 'delayed_15m_consolidated') ||
   (row.feed === 'us' &&
@@ -38,7 +40,7 @@ const identityFields = {
   universe_id: StrictNonEmptyStringSchema,
   universe_symbol_hash: Schema.String,
   feed: Schema.Literals(['iex', 'sip', 'delayed_sip', 'us']),
-  market_session: Schema.Literals(['regular', 'continuous']),
+  market_session: Schema.Literals(['pre', 'regular', 'post', 'continuous']),
   native_payload: Schema.optionalKey(Schema.String),
   delay_class: Schema.Literals([
     'real_time_exchange_only',
@@ -98,14 +100,23 @@ const IntradayQuoteRowSchema = Schema.Struct({
   ask_size: NumericSchema,
 }).check(
   Schema.makeFilter(
-    (row) =>
-      hasExpectedDelayClass(row) &&
-      numericValue(row.bid_price) > 0 &&
-      numericValue(row.ask_price) > 0 &&
-      numericValue(row.bid_size) >= 0 &&
-      numericValue(row.ask_size) >= 0 &&
-      numericValue(row.bid_price) <= numericValue(row.ask_price),
-    { expected: 'positive uncrossed quote prices with non-negative sizes' },
+    (row) => {
+      const bid = numericValue(row.bid_price)
+      const ask = numericValue(row.ask_price)
+      const bidSize = numericValue(row.bid_size)
+      const askSize = numericValue(row.ask_size)
+      return (
+        hasExpectedDelayClass(row) &&
+        bid >= 0 &&
+        ask >= 0 &&
+        bidSize >= 0 &&
+        askSize >= 0 &&
+        (bid > 0 || bidSize === 0) &&
+        (ask > 0 || askSize === 0) &&
+        (bid === 0 || ask === 0 || bid <= ask)
+      )
+    },
+    { expected: 'non-negative uncrossed quote sides, with zero size on a withdrawn price' },
   ),
 )
 

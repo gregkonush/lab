@@ -14,9 +14,20 @@ from pathlib import Path
 
 import urllib3
 from minio import Minio
+from minio.commonconfig import ENABLED, Filter
 from minio.error import S3Error
+from minio.lifecycleconfig import (
+    Expiration,
+    LifecycleConfig,
+    NoncurrentVersionExpiration,
+)
+from minio.lifecycleconfig import (
+    Rule as LifecycleRule,
+)
 from minio.objectlockconfig import ObjectLockConfig
 from minio.retention import COMPLIANCE, Retention
+from minio.sse import SseS3
+from minio.sseconfig import Rule, SSEConfig
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3] / "services/ofz"))
 from audit_export import (
@@ -28,6 +39,12 @@ from audit_export import (
     failure_report,
 )  # noqa: E402
 
+DATABASE_BUCKETS = {
+    "ofz": "ofz-database-backups",
+    "keycloak": "keycloak-database-backups",
+}
+DATABASE_RETENTION_DAYS = 30
+
 
 def write_private(path: Path, value: str, *, exclusive: bool = False) -> None:
     flags = os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW
@@ -37,6 +54,22 @@ def write_private(path: Path, value: str, *, exclusive: bool = False) -> None:
         target.write(value)
         target.flush()
         os.fsync(target.fileno())
+
+
+def persist_once(path: Path, value: str) -> None:
+    temporary = path.with_name(f".{path.name}-{secrets.token_hex(8)}")
+    write_private(temporary, value, exclusive=True)
+    try:
+        os.link(temporary, path)
+    except FileExistsError:
+        pass
+    finally:
+        temporary.unlink()
+    descriptor = os.open(path.parent, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
 
 
 def prepare(directory: Path) -> None:
@@ -55,19 +88,26 @@ def prepare(directory: Path) -> None:
             "archive_access_key": f"OFZAUDIT{secrets.token_hex(10).upper()}",
             "archive_secret_key": secrets.token_hex(32),
         }
-        temporary = directory / f".manifest-{secrets.token_hex(8)}"
-        write_private(temporary, json.dumps(values, sort_keys=True), exclusive=True)
-        try:
-            os.link(temporary, manifest)
-        except FileExistsError:
-            pass
-        finally:
-            temporary.unlink()
-        descriptor = os.open(directory, os.O_RDONLY | os.O_DIRECTORY)
-        try:
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        persist_once(manifest, json.dumps(values, sort_keys=True))
+    encryption_key = directory / "sse_kek"
+    encryption_fingerprint = directory / "sse_kek.sha256"
+    if not encryption_key.exists():
+        if encryption_fingerprint.exists():
+            raise ArchiveError("restore the original recovery encryption key")
+        persist_once(encryption_key, secrets.token_hex(32))
+    key = credential(str(encryption_key))
+    try:
+        valid_key = len(key) == 64 and len(bytes.fromhex(key)) == 32
+    except ValueError:
+        valid_key = False
+    if not valid_key:
+        raise ArchiveError("invalid persistent recovery encryption key")
+    fingerprint = hashlib.sha256(bytes.fromhex(key)).hexdigest()
+    if not encryption_fingerprint.exists():
+        persist_once(encryption_fingerprint, fingerprint)
+    if credential(str(encryption_fingerprint)) != fingerprint:
+        raise ArchiveError("recovery encryption key identity changed")
+    write_private(directory / "security.toml", f'[s3.sse]\nkek = "{key}"\n')
     values = json.loads(credential(str(manifest)))
     names = {
         "root_access_key",
@@ -108,12 +148,57 @@ def prepare(directory: Path) -> None:
             "policy_names": ["audit-export"],
         },
     ]
+    database_manifest = directory / "database-writers.json"
+    database_fingerprint = directory / "database-writers.sha256"
+    if not database_manifest.exists():
+        if database_fingerprint.exists():
+            raise ArchiveError("restore the original database backup credentials")
+        persist_once(
+            database_manifest,
+            json.dumps(
+                {
+                    name: {
+                        "access_key": f"{name.upper()}DB{secrets.token_hex(10).upper()}",
+                        "secret_key": secrets.token_hex(32),
+                    }
+                    for name in DATABASE_BUCKETS
+                },
+                sort_keys=True,
+            ),
+        )
+    database_values = credential(str(database_manifest))
+    digest = hashlib.sha256(database_values.encode()).hexdigest()
+    persist_once(database_fingerprint, digest)
+    if credential(str(database_fingerprint)) != digest:
+        raise ArchiveError("database backup credential identity changed")
+    writers = json.loads(database_values)
+    if set(writers) != set(DATABASE_BUCKETS):
+        raise ArchiveError("unsupported database backup credentials")
+    policies = [{"name": "audit-export", "content": json.dumps(policy)}]
+    database_policy = Path(__file__).with_name("database-policy.json").read_text()
+    for name, bucket in DATABASE_BUCKETS.items():
+        keys = writers[name]
+        if set(keys) != {"access_key", "secret_key"} or any(
+            not isinstance(value, str) or not value.isalnum() or len(value) < 20
+            for value in keys.values()
+        ):
+            raise ArchiveError("invalid database backup credentials")
+        identities.append(
+            {
+                "name": f"{name}-database-backup",
+                "credentials": [keys],
+                "policy_names": [name],
+            }
+        )
+        policies.append(
+            {"name": name, "content": database_policy.replace("BACKUP_BUCKET", bucket)}
+        )
     write_private(
         directory / "s3.json",
         json.dumps(
             {
                 "identities": identities,
-                "policies": [{"name": "audit-export", "content": json.dumps(policy)}],
+                "policies": policies,
             },
             sort_keys=True,
         ),
@@ -140,24 +225,49 @@ def client(directory: Path, *, root: bool, local: bool = False) -> Minio:
 
 def configure(directory: Path, storage: Minio | None = None) -> None:
     storage = storage or client(directory, root=True, local=True)
-    if not storage.bucket_exists(BUCKET):
-        storage.make_bucket(BUCKET, object_lock=True)
+    configure_bucket(storage, BUCKET, RETENTION_DAYS)
+    for bucket in DATABASE_BUCKETS.values():
+        configure_bucket(storage, bucket, DATABASE_RETENTION_DAYS)
+        lifecycle = LifecycleConfig(
+            [
+                LifecycleRule(
+                    ENABLED,
+                    rule_filter=Filter(prefix=""),
+                    rule_id="database-retention",
+                    expiration=Expiration(days=40),
+                    noncurrent_version_expiration=NoncurrentVersionExpiration(
+                        noncurrent_days=45
+                    ),
+                )
+            ]
+        )
+        storage.set_bucket_lifecycle(bucket, lifecycle)
+
+
+def configure_bucket(storage: Minio, bucket: str, retention_days: int) -> None:
+    if not storage.bucket_exists(bucket):
+        storage.make_bucket(bucket, object_lock=True)
     try:
-        existing = storage.get_object_lock_config(BUCKET)
+        existing = storage.get_object_lock_config(bucket)
     except S3Error as error:
         if error.code != "ObjectLockConfigurationNotFoundError":
             raise
         existing = ObjectLockConfig(None, None, None)
     if existing.mode is None:
         storage.set_object_lock_config(
-            BUCKET, ObjectLockConfig(COMPLIANCE, RETENTION_DAYS, "Days")
+            bucket, ObjectLockConfig(COMPLIANCE, retention_days, "Days")
         )
     elif (
         existing.mode != COMPLIANCE
         or existing.duration_unit != "Days"
-        or existing.duration < RETENTION_DAYS
+        or existing.duration < retention_days
     ):
         raise ArchiveError("existing archive has an unapproved retention policy")
+    encryption = storage.get_bucket_encryption(bucket)
+    if encryption is None:
+        storage.set_bucket_encryption(bucket, SSEConfig(Rule.new_sse_s3_rule()))
+    elif encryption.rule != Rule.new_sse_s3_rule():
+        raise ArchiveError("existing archive has an unapproved encryption policy")
 
 
 def denied(operation) -> None:
@@ -190,7 +300,12 @@ def verify(
         days=RETENTION_DAYS, seconds=1
     )
     written = writer.put_object(
-        BUCKET, key, io.BytesIO(data), len(data), retention=Retention(COMPLIANCE, until)
+        BUCKET,
+        key,
+        io.BytesIO(data),
+        len(data),
+        retention=Retention(COMPLIANCE, until),
+        sse=SseS3(),
     )
     if not written.version_id:
         raise ArchiveError("archive did not return an immutable version")
@@ -199,6 +314,8 @@ def verify(
         raise ArchiveError("archive retention readback failed")
     response = writer.get_object(BUCKET, key, version_id=written.version_id)
     try:
+        if response.headers.get("x-amz-server-side-encryption") != "AES256":
+            raise ArchiveError("archive encryption readback failed")
         if response.read(len(data) + 1) != data:
             raise ArchiveError("archive version readback failed")
     finally:
@@ -227,10 +344,107 @@ def verify(
         "retainedUntil": retention.retain_until_date.isoformat(),
         "versionId": written.version_id,
         "sha256": digest,
+        "encryption": "AES256",
         "writerDeleteDenied": True,
         "rootVersionDeleteDenied": True,
         "retentionShorteningDenied": True,
     }
+
+
+def database_clients(directory: Path, *, local: bool = False) -> dict[str, Minio]:
+    values = json.loads(credential(str(directory / "database-writers.json")))
+    return {
+        name: Minio(
+            "127.0.0.1:9445" if local else ENDPOINT,
+            access_key=keys["access_key"],
+            secret_key=keys["secret_key"],
+            secure=not local,
+            region="us-east-1",
+            http_client=urllib3.PoolManager(
+                ssl_context=ssl.create_default_context(
+                    cafile=os.environ.get("SSL_CERT_FILE")
+                ),
+                timeout=urllib3.Timeout(total=8, connect=2, read=5),
+                retries=False,
+            ),
+        )
+        for name, keys in values.items()
+    }
+
+
+def verify_databases(
+    directory: Path,
+    writers: dict[str, Minio] | None = None,
+    root: Minio | None = None,
+) -> list[dict]:
+    writers = writers or database_clients(directory)
+    root = root or client(directory, root=True)
+    report = []
+    for name, bucket in DATABASE_BUCKETS.items():
+        writer = writers[name]
+        config = writer.get_object_lock_config(bucket)
+        if (
+            writer.get_bucket_versioning(bucket).status != "Enabled"
+            or config.mode != COMPLIANCE
+            or config.duration_unit != "Days"
+            or config.duration < DATABASE_RETENTION_DAYS
+        ):
+            raise ArchiveError("versioned thirty-day database retention required")
+        data = f"{name} independent database storage qualification\n".encode()
+        digest = hashlib.sha256(data).hexdigest()
+        key = f"qualification/{digest}.txt"
+        minimum = datetime.now(UTC) + timedelta(
+            days=DATABASE_RETENTION_DAYS, minutes=-1
+        )
+        written = writer.put_object(
+            bucket, key, io.BytesIO(data), len(data), sse=SseS3()
+        )
+        if not written.version_id:
+            raise ArchiveError("database archive returned no immutable version")
+        retained = writer.get_object_retention(
+            bucket, key, version_id=written.version_id
+        )
+        if retained.mode != COMPLIANCE or retained.retain_until_date < minimum:
+            raise ArchiveError("database retention readback failed")
+        response = writer.get_object(bucket, key, version_id=written.version_id)
+        try:
+            if (
+                response.headers.get("x-amz-server-side-encryption") != "AES256"
+                or response.read(len(data) + 1) != data
+            ):
+                raise ArchiveError("encrypted database version readback failed")
+        finally:
+            response.close()
+            response.release_conn()
+        listed = next(writer.list_objects(bucket, prefix=key), None)
+        if listed is None or listed.object_name != key:
+            raise ArchiveError("database writer cannot list its backup")
+        denied(lambda: writer.remove_object(bucket, key, version_id=written.version_id))
+        denied(lambda: root.remove_object(bucket, key, version_id=written.version_id))
+        for other in [BUCKET, *DATABASE_BUCKETS.values()]:
+            if other != bucket:
+                denied(
+                    lambda: writer.put_object(other, key, io.BytesIO(data), len(data))
+                )
+                denied(lambda: writer.get_object(other, key))
+        denied(
+            lambda: writer.set_bucket_encryption(
+                bucket, SSEConfig(Rule.new_sse_s3_rule())
+            )
+        )
+        report.append(
+            {
+                "bucket": bucket,
+                "versionId": written.version_id,
+                "sha256": digest,
+                "encryption": "AES256",
+                "retainedUntil": retained.retain_until_date.isoformat(),
+                "crossBucketWriteDenied": True,
+                "crossBucketReadDenied": True,
+                "rootVersionDeleteDenied": True,
+            }
+        )
+    return report
 
 
 def main() -> None:
@@ -244,15 +458,22 @@ def main() -> None:
         prepare(arguments.directory)
     elif arguments.operation == "configure":
         configure(arguments.directory)
-    elif arguments.operation == "verify-local":
+    else:
+        local = arguments.operation == "verify-local"
+        root = client(arguments.directory, root=True, local=local)
         report = verify(
             arguments.directory,
-            writer=client(arguments.directory, root=False, local=True),
-            root=client(arguments.directory, root=True, local=True),
+            writer=client(arguments.directory, root=False, local=local),
+            root=root,
         )
-        print(json.dumps({"boundary": "NUC loopback S3", **report}, sort_keys=True))
-    else:
-        print(json.dumps(verify(arguments.directory), sort_keys=True))
+        report["databases"] = verify_databases(
+            arguments.directory,
+            writers=database_clients(arguments.directory, local=local),
+            root=root,
+        )
+        if local:
+            report["boundary"] = "NUC loopback S3"
+        print(json.dumps(report, sort_keys=True))
 
 
 if __name__ == "__main__":

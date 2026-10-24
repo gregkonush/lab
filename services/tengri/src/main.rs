@@ -12,9 +12,11 @@ mod leadership;
 mod metrics;
 mod ofz;
 mod pod;
+mod runs;
 #[cfg(test)]
 mod runtime_state_test;
 mod slot;
+mod telemetry;
 mod tickets;
 
 use std::{env, future::Future, net::SocketAddr, path::PathBuf, time::Duration};
@@ -36,7 +38,6 @@ use tokio::{
 };
 use tonic::transport::Server;
 use tracing::{info, warn};
-use tracing_subscriber::EnvFilter;
 
 const DEFAULT_NAMESPACE: &str = "tengri";
 const DEFAULT_LISTEN_ADDRESS: &str = "0.0.0.0:50051";
@@ -52,22 +53,32 @@ const STARTUP_KUBERNETES_MAX_RETRY_DELAY: Duration = Duration::from_secs(5);
 async fn main() -> anyhow::Result<()> {
     install_rustls_crypto_provider()?;
 
-    tracing_subscriber::fmt()
-        .json()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
-        )
-        .init();
+    let role = match env::args().nth(1).as_deref() {
+        Some("slot-runner") => "tengri-slot-runner",
+        Some("slot-supervisor") => "tengri-slot-supervisor",
+        Some("run-worker") => "tengri-run-worker",
+        _ => "tengri",
+    };
+    let _telemetry = telemetry::init(role)?;
 
     match env::args().nth(1).as_deref() {
+        Some("telemetry-check") => {
+            println!("{}", _telemetry.verify()?);
+            return Ok(());
+        }
         Some("slot-runner") => return slot::runner::run().await,
         Some("slot-supervisor") => return slot::supervisor::run().await,
+        Some("run-worker") => {}
         Some(argument) => anyhow::bail!("unknown Tengri command {argument}"),
         None => {}
     }
 
-    let database =
-        std::sync::Arc::new(control::Database::from_environment("tengri_controller").await?);
+    let database = control::Database::from_environment("tengri_controller").await?;
+    let database = std::sync::Arc::new(if env::args().nth(1).as_deref() == Some("run-worker") {
+        database.into_run_worker()
+    } else {
+        database
+    });
     database.verify_schema().await?;
     let namespace = env_value("TENGRI_NAMESPACE").unwrap_or_else(|| DEFAULT_NAMESPACE.to_owned());
     let listen_address = env_value("TENGRI_LISTEN_ADDRESS")
@@ -121,7 +132,6 @@ async fn main() -> anyhow::Result<()> {
         .await
         .context("Ofz authority is unavailable")?;
     let auth = auth::Authenticator::new(
-        database.clone(),
         &PathBuf::from(required_env("TENGRI_INTERNAL_HMAC_KEY_FILE")?),
         desktop_origin,
     )?;
@@ -134,9 +144,6 @@ async fn main() -> anyhow::Result<()> {
         database.clone(),
         authorization.clone(),
     )?;
-    let grpc_listener = TcpListener::bind(listen_address)
-        .await
-        .context("bind SPIFFE gRPC control plane")?;
     let activity = ActivityTracker::new(client.clone(), namespace.clone());
     let service = ControlPlane::new(
         client.clone(),
@@ -154,6 +161,12 @@ async fn main() -> anyhow::Result<()> {
         },
         activity.clone(),
     )?;
+    if env::args().nth(1).as_deref() == Some("run-worker") {
+        return runs::serve(service).await;
+    }
+    let grpc_listener = TcpListener::bind(listen_address)
+        .await
+        .context("bind SPIFFE gRPC control plane")?;
     retry_kubernetes_startup_operation(
         || service.recover_provisional_terminal_leases(),
         STARTUP_KUBERNETES_RETRY_ATTEMPTS,
@@ -167,7 +180,7 @@ async fn main() -> anyhow::Result<()> {
         client.clone(),
         namespace.clone(),
         tickets.clone(),
-        activity,
+        activity.clone(),
         preview_origin,
         service.guest_pool(),
         guest_authority.clone(),
@@ -183,14 +196,14 @@ async fn main() -> anyhow::Result<()> {
     let controller_client = client.clone();
     let controller_namespace = namespace.clone();
     let election = leadership::Election::new(
-        client.clone(),
-        namespace.clone(),
         own_pod
             .uid()
             .context("controller Pod UID required")?
             .parse()?,
         database.clone(),
     )?;
+    let agent_work =
+        activity::AgentWorkMonitor::new(service.guest_pool(), guest_authority, activity);
     let mut controller_task = tokio::spawn(async move {
         election
             .run(controller::ControllerContext {
@@ -203,6 +216,7 @@ async fn main() -> anyhow::Result<()> {
                 identity: workload_identity,
                 authorization,
                 leadership: None,
+                agent_work,
             })
             .await;
         Ok::<(), anyhow::Error>(())
@@ -211,6 +225,11 @@ async fn main() -> anyhow::Result<()> {
     let grpc_shutdown = shutdown_rx.clone();
     let mut grpc_task = tokio::spawn(async move {
         Server::builder()
+            .layer(
+                tower_http::trace::TraceLayer::new_for_grpc()
+                    .make_span_with(telemetry::RequestSpan)
+                    .on_failure(telemetry::grpc_failure),
+            )
             .add_service(
                 MicroVmControlPlaneServer::new(service)
                     .max_decoding_message_size(MAX_GRPC_MESSAGE_BYTES)

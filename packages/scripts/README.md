@@ -80,9 +80,14 @@ Manual selection retains each workflow's existing controls. Native Tengri images
 and the Landing desktop so the controller, guest, and desktop can be promoted from one source revision; they do not
 use the root Bun lockfile.
 
-PR image builds run for non-draft PRs targeting `main`; later native-stack layers keep source validation and build
-their images when retargeted to `main`. Controller-only PR changes do not rebuild the desktop. Pushes to `main`
-retain coordinated controller, guest, and desktop publication. Ofz, Tengri, and Nanoagent source validation uses
+The Agents Kind smoke test resolves unaffected image defaults from one fetched `kargo/agents` commit, records that
+commit as `gitops_revision`, and reads its values without changing the source checkout. Kargo owns the promoted
+digests. The baseline values on `main` can reference images removed by registry retention and are not CI defaults.
+
+Ofz, Tengri, Nanoagent, and Proompteng images build only from `main`. PRs retain source, authorization,
+database, browser, and editor validation without rebuilding up to eight platform images or exporting unused KVM archives.
+Pushes to `main` retain coordinated image publication and native KVM qualification on both architectures.
+Other product images retain their existing PR selection. Ofz, Tengri, and Nanoagent source validation uses
 GitHub-hosted runners; native image and KVM jobs retain the cluster runners.
 
 Changes to CI planning code, its action, or its tests run `packages-scripts` validation without forcing every

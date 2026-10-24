@@ -17,7 +17,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::{
     io,
-    sync::OnceLock,
+    sync::{Arc, OnceLock},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 use tokio::{net::TcpStream, time::timeout};
@@ -30,11 +30,14 @@ use tonic::{
 pub const CONTROLLER_ID: &str = "spiffe://proompteng.ai/ns/tengri/sa/tengri";
 pub const OFZ_ID: &str = "spiffe://proompteng.ai/ns/ofz/sa/ofz-api";
 const DECISION_TIMEOUT: Duration = Duration::from_secs(2);
-const COMMAND_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const AUDITED_REQUEST_BUDGET_MS: u64 = 25_000;
+const DURABLE_TIMEOUT: Duration = Duration::from_secs(30);
+mod receipts;
 
 #[derive(Clone)]
 pub struct Client {
     rpc: AuthorizationServiceClient<Channel>,
+    receipts: Arc<receipts::Cache>,
 }
 
 impl Client {
@@ -45,21 +48,47 @@ impl Client {
         purpose: proto::GuestMaintenancePurpose,
         terminal_id: &str,
     ) -> Result<CheckResponse, Status> {
+        let recovery = if purpose == proto::GuestMaintenancePurpose::Probe {
+            Some(self.state().await?.recovery_generation)
+        } else {
+            None
+        };
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
         context.runtime_epoch = epoch.into();
-        context.deadline_unix_ms = now_ms()? + 2000;
+        let binding = if let Some(recovery) = recovery {
+            Some(
+                self.receipts
+                    .bind(
+                        &CheckRequest {
+                            context: Some(context.clone()),
+                            action: Action::WorkspaceMetadataRead as i32,
+                            resource: Some(Resource {
+                                kind: proto::ResourceKind::Workspace as i32,
+                                id: uid.into(),
+                            }),
+                            target: terminal_id.into(),
+                            stream_receipt_id: String::new(),
+                        },
+                        recovery,
+                    )
+                    .await?,
+            )
+        } else {
+            None
+        };
         let mut rpc = self.rpc.clone();
         let decision = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.authorize_guest_maintenance(request(
                 proto::AuthorizeGuestMaintenanceRequest {
                     context: Some(context),
                     workspace_uid: uid.into(),
                     purpose: purpose as i32,
                     terminal_id: terminal_id.into(),
+                    stream_receipt_id: binding.as_ref().map_or("", receipts::Binding::id).into(),
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?
@@ -77,6 +106,9 @@ impl Client {
             return Err(Status::unavailable(
                 "invalid or expired Ofz maintenance decision",
             ));
+        }
+        if let Some(binding) = binding {
+            binding.record(decision.audit_receipt_id.clone());
         }
         Ok(decision)
     }
@@ -125,6 +157,7 @@ impl Client {
 
     fn from_channel(channel: Channel) -> Self {
         Self {
+            receipts: Arc::new(receipts::Cache::default()),
             rpc: AuthorizationServiceClient::new(channel)
                 .max_decoding_message_size(1_048_576)
                 .max_encoding_message_size(65536),
@@ -148,18 +181,35 @@ impl Client {
         if !canonical_uuid(uid) {
             return Err(Status::invalid_argument("workspace UID required"));
         }
+        let recovery = self.state().await?.recovery_generation;
         let mut context = workload_context()?;
         context.workspace_uid = uid.into();
-        context.deadline_unix_ms = now_ms()? + 2000;
+        let binding = self
+            .receipts
+            .bind(
+                &CheckRequest {
+                    context: Some(context.clone()),
+                    action: Action::WorkspaceEnroll as i32,
+                    resource: Some(Resource {
+                        kind: proto::ResourceKind::Platform as i32,
+                        id: "lab".into(),
+                    }),
+                    target: String::new(),
+                    stream_receipt_id: String::new(),
+                },
+                recovery,
+            )
+            .await?;
         let mut rpc = self.rpc.clone();
         let state = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_workspace_state(request(
                 GetWorkspaceStateRequest {
                     context: Some(context),
                     workspace_uid: uid.into(),
+                    stream_receipt_id: binding.id().into(),
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?;
@@ -181,6 +231,7 @@ impl Client {
         {
             return Err(Status::unavailable("invalid Ofz runtime state"));
         }
+        binding.record(state.audit_receipt_id.clone());
         Ok(state)
     }
 
@@ -193,17 +244,17 @@ impl Client {
             return Err(Status::invalid_argument("capacity reservation required"));
         }
         let mut context = principal.context.clone();
-        context.deadline_unix_ms = context.deadline_unix_ms.min(now_ms()? + 2000);
+        context.deadline_unix_ms = now_ms()? + AUDITED_REQUEST_BUDGET_MS;
         let mut rpc = self.rpc.clone();
         let reservation = bounded(
-            DECISION_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_workspace_reservation(request(
                 GetWorkspaceReservationRequest {
                     context: Some(context),
                     reservation_id: id.into(),
                     recovery_generation: principal.recovery_generation,
                 },
-                DECISION_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await?;
@@ -237,21 +288,47 @@ impl Client {
         receipt_id: String,
         recovery_generation: u64,
     ) -> Result<CheckResponse, Status> {
+        let mut check = CheckRequest {
+            context: Some(context),
+            action: action as i32,
+            resource: Some(resource),
+            target,
+            stream_receipt_id: receipt_id,
+        };
+        // Repeated observations retain one durable receipt. Control operations still
+        // audit each submission and renew human activity through that transaction.
+        if !check.stream_receipt_id.is_empty()
+            || !matches!(
+                action,
+                Action::WorkspaceMetadataRead
+                    | Action::FilesObserve
+                    | Action::TerminalObserve
+                    | Action::CodexObserve
+                    | Action::BrowserObserve
+            )
+        {
+            return self.check_request(check, recovery_generation).await;
+        }
+        let binding = self.receipts.bind(&check, recovery_generation).await?;
+        check.stream_receipt_id = binding.id().into();
+        let decision = self.check_request(check, recovery_generation).await?;
+        binding.record(decision.audit_receipt_id.clone());
+        Ok(decision)
+    }
+
+    async fn check_request(
+        &self,
+        check: CheckRequest,
+        recovery_generation: u64,
+    ) -> Result<CheckResponse, Status> {
         let mut rpc = self.rpc.clone();
-        let decision = bounded(
-            DECISION_TIMEOUT,
-            rpc.check(request(
-                CheckRequest {
-                    context: Some(context),
-                    action: action as i32,
-                    resource: Some(resource),
-                    target,
-                    stream_receipt_id: receipt_id,
-                },
-                DECISION_TIMEOUT,
-            )),
-        )
-        .await?;
+        let duration = if check.stream_receipt_id.is_empty() {
+            DURABLE_TIMEOUT
+        } else {
+            DECISION_TIMEOUT
+        }
+        .min(remaining_deadline(&check)?);
+        let decision = bounded(duration, rpc.check(request(check, duration))).await?;
         if decision.recovery_generation != recovery_generation {
             return Err(Status::unauthenticated(
                 "authorization recovery generation changed",
@@ -287,14 +364,14 @@ impl Client {
         let client_request_hash = Sha256::digest(payload).to_vec();
         let mut rpc = self.rpc.clone();
         match bounded(
-            COMMAND_TIMEOUT,
+            DURABLE_TIMEOUT,
             rpc.get_command(request(
                 GetCommandRequest {
                     context: Some(workload_context()?),
                     operation_id: operation_id.into(),
                     client_request_hash: client_request_hash.clone(),
                 },
-                COMMAND_TIMEOUT,
+                DURABLE_TIMEOUT,
             )),
         )
         .await
@@ -312,7 +389,7 @@ impl Client {
             let state = self.state().await?;
             let mut rpc = self.rpc.clone();
             match bounded(
-                COMMAND_TIMEOUT,
+                DURABLE_TIMEOUT,
                 rpc.execute_command(request(
                     ExecuteCommandRequest {
                         context: Some(workload_context()?),
@@ -322,7 +399,7 @@ impl Client {
                         client_request_hash: client_request_hash.clone(),
                         command: Some(command.clone()),
                     },
-                    COMMAND_TIMEOUT,
+                    DURABLE_TIMEOUT,
                 )),
             )
             .await
@@ -340,13 +417,28 @@ impl Client {
     }
 }
 
+fn remaining_deadline(check: &CheckRequest) -> Result<Duration, Status> {
+    let deadline = check
+        .context
+        .as_ref()
+        .expect("client checks always supply context")
+        .deadline_unix_ms;
+    let remaining = deadline.saturating_sub(now_ms()?);
+    if remaining == 0 {
+        return Err(Status::deadline_exceeded(
+            "authorization request deadline expired",
+        ));
+    }
+    Ok(Duration::from_millis(remaining))
+}
+
 fn workload_context() -> Result<RequestContext, Status> {
     Ok(RequestContext {
         actor: Some(Actor {
             identity: Some(Identity::WorkloadId(CONTROLLER_ID.into())),
         }),
         trace_id: uuid::Uuid::new_v4().to_string(),
-        deadline_unix_ms: now_ms()? + 5000,
+        deadline_unix_ms: now_ms()? + AUDITED_REQUEST_BUDGET_MS,
         contract_version: 1,
         ..Default::default()
     })
@@ -358,6 +450,7 @@ fn request<T>(message: T, duration: Duration) -> Request<T> {
         .metadata_mut()
         .insert("x-ofz-contract-version", "1".parse().unwrap());
     request.set_timeout(duration);
+    crate::telemetry::inject(&mut request);
     request
 }
 
@@ -427,3 +520,11 @@ pub fn operation_id(uid: &str, action: &str) -> String {
 #[cfg(test)]
 #[path = "ofz_wire_test.rs"]
 mod wire_test;
+
+#[cfg(test)]
+#[path = "ofz_receipt_transport_test.rs"]
+mod receipt_transport_test;
+
+#[cfg(test)]
+#[path = "ofz_runtime_receipt_test.rs"]
+mod runtime_receipt_test;

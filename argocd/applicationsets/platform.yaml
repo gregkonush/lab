@@ -224,6 +224,21 @@ spec:
                   argocd.argoproj.io/sync-wave: "2"
                 automation: auto
                 enabled: "true"
+              - name: glitchtip
+                path: argocd/applications/glitchtip
+                namespace: glitchtip
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                automation: auto
+                enabled: "true"
+                managedNamespaceMetadata:
+                  labels:
+                    external-secrets.proompteng.ai/enabled: "true"
+                    pod-security.kubernetes.io/enforce: restricted
+                    pod-security.kubernetes.io/audit: restricted
+                    pod-security.kubernetes.io/warn: restricted
+                  annotations:
+                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: kubevirt
                 path: argocd/applications/kubevirt
                 namespace: kubevirt
@@ -415,6 +430,15 @@ spec:
                     pod-security.kubernetes.io/enforce: privileged
                     pod-security.kubernetes.io/audit: privileged
                     pod-security.kubernetes.io/warn: privileged
+              - name: opencode
+                path: argocd/applications/opencode
+                namespace: opencode
+                targetRevision: kargo/opencode
+                annotations:
+                  argocd.argoproj.io/sync-wave: "2"
+                  kargo.akuity.io/authorized-stage: lab-delivery:opencode
+                automation: auto
+                enabled: "true"
               - name: hermes
                 path: argocd/applications/hermes
                 namespace: hermes
@@ -677,22 +701,6 @@ spec:
                   argocd.argoproj.io/sync-wave: "4"
                 automation: auto
                 enabled: "false"
-              - name: bayn-model
-                path: argocd/applications/bayn-model
-                namespace: bayn-model
-                targetRevision: kargo/bayn-model
-                annotations:
-                  argocd.argoproj.io/sync-wave: "4"
-                  kargo.akuity.io/authorized-stage: lab-delivery:bayn-model
-                automation: auto
-                enabled: "true"
-                managedNamespaceMetadata:
-                  labels:
-                    pod-security.kubernetes.io/enforce: restricted
-                    pod-security.kubernetes.io/audit: restricted
-                    pod-security.kubernetes.io/warn: restricted
-                  annotations:
-                    argocd.argoproj.io/sync-options: Prune=false,Delete=false
               - name: restate
                 path: argocd/applications/restate
                 namespace: restate

@@ -187,7 +187,7 @@ func guestRPCTarget(method string, message proto.Message) (string, error) {
 	case pb.NanoagentService_GetInfo_FullMethodName, pb.NanoagentService_OpenEditor_FullMethodName,
 		pb.NanoagentService_OpenBrowser_FullMethodName, pb.NanoagentService_ListTerminals_FullMethodName,
 		pb.NanoagentService_CreateTerminal_FullMethodName, pb.NanoagentService_CodexCall_FullMethodName,
-		pb.NanoagentService_CodexLogin_FullMethodName, pb.NanoagentService_ResolveCodexApproval_FullMethodName,
+		pb.NanoagentService_CodexLogin_FullMethodName,
 		pb.NanoagentService_WatchCodexEvents_FullMethodName:
 		return "", nil
 	case pb.NanoagentService_ListFiles_FullMethodName, pb.NanoagentService_ReadFile_FullMethodName,

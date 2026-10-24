@@ -7,8 +7,8 @@ import {
 } from '../../market-hours'
 import { DateTime, Option, Result } from 'effect'
 
-import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca'
-import { intradayDecisionDelaySeconds, intradayLookbackMinutes } from '../../strategy/intraday-market'
+import type { MarketCalendarQuery, MarketCalendarSession } from '../../broker/alpaca/model'
+import { intradayDecisionDelaySeconds, intradayMinimumCompletedHistoryMs } from '../../strategy/intraday-market'
 import {
   makeCycleDraft,
   makeCycleIdentity,
@@ -19,14 +19,13 @@ import {
 import {
   CycleState,
   CycleTerminalReason,
-  intradayCycleEntryAttemptOrdinal,
-  isIntradayAutonomousCycle,
   type AutonomousCycle,
   type CycleDraft,
   type CycleExecutionPolicy,
   type IntradayCycleEntryAttemptOrdinal,
 } from '../model'
 import { cycleDraftMatches, cycleDraftOf } from '../transitions'
+import { unusedEntryExpiresAt } from '../entry-admission'
 
 const calendarRangeDays = 31
 const millisecondsPerDay = 86_400_000
@@ -99,6 +98,14 @@ export const marketCalendarQueryFromSession = (
     }),
   )
 
+export const firstIntradayObservationAtMs = (
+  session: Pick<MarketCalendarSession, 'openAt'>,
+  executionPolicy: { readonly warmupAfterOpenMs: number },
+): number =>
+  Date.parse(session.openAt) +
+  Math.max(executionPolicy.warmupAfterOpenMs, intradayMinimumCompletedHistoryMs) +
+  intradayDecisionDelaySeconds * 1_000
+
 export const selectIntradayExecutionSession = (
   observation: MarketHours,
   executionPolicy: Extract<
@@ -115,13 +122,8 @@ export const selectIntradayExecutionSession = (
   if (!Number.isFinite(observedAtMillis)) return undefined
 
   return observation.sessions.reduce<MarketCalendarSession | undefined>((selected, session) => {
-    const openAtMillis = Date.parse(session.openAt)
     const cutoffAtMillis = Date.parse(session.closeAt) - executionPolicy.submissionCutoffBeforeCloseMs
-    const hasExecutableWindow =
-      openAtMillis +
-        Math.max(executionPolicy.warmupAfterOpenMs, intradayLookbackMinutes * 60_000) +
-        intradayDecisionDelaySeconds * 1_000 <
-      cutoffAtMillis
+    const hasExecutableWindow = firstIntradayObservationAtMs(session, executionPolicy) < cutoffAtMillis
     if (!Number.isFinite(cutoffAtMillis) || !hasExecutableWindow || observedAtMillis >= cutoffAtMillis) return selected
     return selected === undefined || session.date < selected.date ? session : selected
   }, undefined)
@@ -129,7 +131,7 @@ export const selectIntradayExecutionSession = (
 
 export interface IntradayCycleCandidate {
   readonly cycleBindingId: string
-  readonly strategyName: 'intraday-momentum' | 'jev'
+  readonly strategyName: 'jev'
   readonly strategyProtocolHash: string
   readonly accountId: string
   readonly executionPolicy: Extract<
@@ -140,7 +142,7 @@ export interface IntradayCycleCandidate {
 
 export const makeIntradayCycleDraft = (
   candidate: IntradayCycleCandidate,
-  observation: MarketHours,
+  observation: Pick<MarketHours, 'schemaVersion' | 'source'>,
   executionSession: MarketCalendarSession,
   entryAttemptOrdinal: IntradayCycleEntryAttemptOrdinal = 1,
 ): Result.Result<CycleDraft, CycleConstructionFailure> =>
@@ -176,7 +178,6 @@ export const nextIntradayEntryAttemptOrdinal = (
   recoveredBlockedCycle = false,
 ): IntradayCycleEntryAttemptOrdinal | undefined => {
   if (
-    (cycle.identity.strategyName !== 'intraday-momentum' && cycle.identity.strategyName !== 'jev') ||
     (cycle.state !== CycleState.Completed &&
       cycle.state !== CycleState.NoTrade &&
       !(cycle.state === CycleState.Blocked && recoveredBlockedCycle)) ||
@@ -199,7 +200,7 @@ export const nextIntradayEntryAttemptOrdinal = (
 }
 
 /**
- * An authority rollover or expired continuous entry lease can leave an unused cycle without a decision. Reconstruct its
+ * An authority rollover or expired entry lease can leave an unused cycle without a decision. Reconstruct its
  * original draft under the current approved context before allowing a distinct attempt; never reinterpret a changed
  * strategy, account, mandate, calendar or execution policy. The caller must separately prove an absent decision and
  * current execution authority. The ordinary rearm cooldown, cutoff and fresh admission checks still apply.
@@ -212,7 +213,6 @@ export const canRearmUnusedCycle = (
   observedAt: string,
 ): boolean => {
   if (
-    !isIntradayAutonomousCycle(cycle) ||
     cycle.state !== CycleState.Blocked ||
     cycle.bindings.snapshotId !== undefined ||
     cycle.bindings.decisionHash !== undefined ||
@@ -226,8 +226,16 @@ export const canRearmUnusedCycle = (
     observedAt >= cycle.window.submissionCutoffAt
   const preSubmissionRollover =
     cycle.terminalReason === CycleTerminalReason.ProvenanceMismatch && cycle.terminalAt < cycle.window.submissionOpenAt
-  if (!expiredContinuousLease && !preSubmissionRollover) return false
-  const originalSession = expiredContinuousLease
+  const unusedEntryExpired =
+    cycle.terminalReason === CycleTerminalReason.UnusedEntryExpired &&
+    Date.parse(cycle.terminalAt) >= unusedEntryExpiresAt(cycle) &&
+    Date.parse(observedAt) >= unusedEntryExpiresAt(cycle)
+  if (!expiredContinuousLease && !unusedEntryExpired && !preSubmissionRollover) return false
+  const useOriginalWindow =
+    expiredContinuousLease ||
+    unusedEntryExpired ||
+    cycle.window.executionCalendarSchemaVersion !== observation.schemaVersion
+  const originalSession = useOriginalWindow
     ? {
         date: cycle.identity.executionSessionDate,
         openAt: cycle.window.executionOpenAt,
@@ -236,9 +244,11 @@ export const canRearmUnusedCycle = (
     : executionSession
   const originalDraft = makeIntradayCycleDraft(
     candidate,
-    expiredContinuousLease ? continuousMarketHours : observation,
+    useOriginalWindow
+      ? { schemaVersion: cycle.window.executionCalendarSchemaVersion, source: cycle.window.executionCalendarSource }
+      : observation,
     originalSession,
-    intradayCycleEntryAttemptOrdinal(cycle.identity),
+    cycle.identity.entryAttemptOrdinal,
   )
   if (Result.isFailure(originalDraft)) return false
   return (

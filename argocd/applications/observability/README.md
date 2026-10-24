@@ -30,6 +30,10 @@ See the [Tempo migration runbook](../../../docs/runbooks/tempo-3-migration.md) f
 
 ## Sources of truth
 
+The cluster Alloy collector retains Bayn API, execution, activation, research, PostgreSQL, broker egress-proxy and
+TigerBeetle logs by an explicit container allowlist. Valkey logs use their existing failover-pod discovery. Current
+Loki readback must verify the actual container and pod labels; an `up` scrape establishes metric delivery only.
+
 Loki, Mimir and Tempo Deployments and StatefulSets require `network.proompteng.ai/100g=true` on Turin or Altra.
 Their stateless Kafka and RGW clients also require this label; the Ryzen Ceph-volume exclusion alone cannot keep
 these network workloads off its slower link. Tempo keeps three block builders and three live stores with a two-plus-one
@@ -114,10 +118,14 @@ The observability app owns the cluster metrics pipeline used for ARC runner sizi
   manager, Bayn's bounded service and financial-model metrics, and Tengri's bounded control-plane metrics; it applies metric allowlists,
   including logical-slot WAL retention and pod-level `/dev/rbd*` I/O only, before remote-writing to Mimir.
 - `arc-runner-capacity-dashboard`: Grafana dashboard for ARC CPU, memory, pending pods, and requested CPU saturation.
-- `bayn-cycle-operations-dashboard`: Grafana dashboard for current trading readiness, execution authority, cycle
-  reason and phase, session timing, economic evidence, accounting coverage, safety freshness, and replica-reduced
-  lifecycle history. Running accounting is distinct from immutable terminal profit, cost, and return evidence; missing
-  terminal evidence is never displayed as zero profit.
+- `bayn-cycle-operations-dashboard`: nine overview panels for the current condition, blocker, planner outcome, runtime, authority,
+  ledger, accounting coverage and execution funnel. Expand execution, account/P&L and export diagnostics as needed.
+  Running accounting is distinct from terminal qualification; missing terminal evidence never becomes zero profit.
+- `bayn-cache-performance-dashboard`: critical-path activity, outcomes and p95 duration, plus broker snapshot age
+  relative to its configured limit. Expand cache replication, dependency failures and PostgreSQL diagnostics after
+  identifying the affected path. The API uses
+  its existing scrape and workers use native Effect OTLP metrics. See the
+  [cache observability runbook](../../../docs/runbooks/bayn-cache-observability.md) for collection, alerts and acceptance.
 - `graf-mimir-rules`: records Torghut PostgreSQL and Ceph pressure baselines and alerts on Buzz relay/Redis/CNPG
   health, stale Buzz backups, Tengri availability and guest failures, missing telemetry, low PVC capacity, WAL archive
   backlog, logical-slot WAL retention, forced checkpoints, Ceph slow operations, scrub debt, and OSD latency.
@@ -200,13 +208,13 @@ curl -fsS -G -H 'X-Scope-OrgID: anonymous' \
 
 ## Bayn research model
 
-The private `bayn-model` application replaces Rune with a locked Alpha-R1 checkpoint. The central Alloy scrapes
-vLLM metrics and admission metrics every fifteen seconds and retains both provisioning and serving logs with
-namespace, pod, container and service identity. `bayn-model-performance` shows readiness, queue time, TTFT,
-prefill/decode latency, throughput, token volume, KV occupancy and bounded-admission failures. Request logs contain
-generated request IDs, validated trace IDs and durations; request/response bodies are disabled in vLLM.
-The same log pipeline retains the independent `research` container. Its Effect metrics reach Mimir through the
-gateway's pod port 8080; the research egress policy must allow that destination port even though the Service exposes
-port 80. `bayn-research.rules` covers worker heartbeat, failed attempts and incomplete expense coverage.
-Research-model unavailability and repeated deadline expiry are warnings without email paging. A model outage does
-not change Bayn execution readiness. See [the model runbook](../../../services/bayn-model/README.md).
+Bayn's GEPA editor uses the shared Flamingo vLLM deployment. Central Alloy scrapes its metrics every fifteen
+seconds, including `up` and `vllm:*`. `FlamingoModelUnavailable` detects an idle outage while the deployment is
+enabled. Request/response bodies remain disabled in vLLM request logs.
+
+The Bayn log pipeline retains the independent `research` container with namespace, pod, container and service
+identity. Its Effect metrics reach Mimir through the gateway's pod port 8080; the research egress policy must allow
+that destination port even though the Service exposes port 80. `bayn-research.rules` covers worker heartbeat,
+failed attempts and incomplete expense coverage. A proposal-model outage does not change Bayn execution readiness.
+See [native Jev optimization](../../../docs/bayn/jev-optimization.md) and the
+[shared model runbook](../flamingo/README.md).

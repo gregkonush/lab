@@ -80,8 +80,8 @@ spec:
         name: restate
       autoPromotionEnabled: true
     - stageSelector:
-        name: bayn-model
+        name: temporal-worker
       autoPromotionEnabled: true
     - stageSelector:
-        name: temporal-worker
+        name: opencode
       autoPromotionEnabled: true

@@ -30,6 +30,17 @@ Synchronous reconciliation writes and commit I/O remain a separate measured cost
 The live database already had 512 MB of shared buffers; this change does not claim
 that adding a cache fixes storage latency or durable accounting work.
 
+The [October 14 production check](evidence/2026-10-14-valkey-publication-stalls.json) found another cost in publication. Both API
+hosts reproduced 731,459-byte synthetic writes that took 1.25–1.27 seconds for
+`SET` and 2.25–2.59 seconds for replica acknowledgement. Four retained polling
+traces hit the one-second Valkey publication deadline. Valkey reported delayed
+AOF fsyncs, automatic AOF rewrites and scheduled RDB saves on the existing Ceph
+volumes. These expiring materializations do not need disk persistence. AOF and
+scheduled snapshots are disabled while memory replication, acknowledgement,
+freshness and failure guards remain required. Diskless primary synchronization
+prevents the pinned operator from silently adding default snapshot schedules.
+The existing volumes remain retained.
+
 Earlier market-session traces were also inspected. Verified market snapshot work
 was materially smaller than reconciliation in this sample. A public research owner
 landed on main during this work, but its new acquisition path was not in the live

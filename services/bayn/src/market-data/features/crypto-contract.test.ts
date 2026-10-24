@@ -1,15 +1,15 @@
 import { expect, test } from 'bun:test'
 import { Result } from 'effect'
 
-import fixture from './fixtures/crypto-continuous-v1.json'
+import fixture from './fixtures/crypto-continuous-v2.json'
 import { decodeCryptoMarketFeature } from './crypto-contract'
-import { canonicalHashV1 } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { nativePayloadCanonicalJson, nativeSourceContentHash } from '../native-json'
 
 test('the consumer verifies the real Dorvud-produced crypto fixture across a weekend midnight', () => {
   const feature = Result.getOrThrow(decodeCryptoMarketFeature(fixture.feature))
   expect(feature.material.windowEndMs).toBe(Date.parse('2026-10-11T00:01:00Z'))
-  expect(feature.material.rolling30m.values?.totalVolume).toBe('0.00000003')
+  expect(feature.material.priceWindow.totalVolume).toBe('0.00000003')
   const record = fixture.records[0]
   const input = feature.material.inputs[0]
   if (record === undefined || input === undefined) throw new Error('producer fixture must contain raw source records')
@@ -32,7 +32,11 @@ test('crypto feature verification rejects changed payloads, broken history, and 
   const changed = { ...fixture.feature.material, historyHash: 'f'.repeat(64) }
   expect(
     Result.isFailure(
-      decodeCryptoMarketFeature({ ...fixture.feature, material: changed, featureId: canonicalHashV1(changed) }),
+      decodeCryptoMarketFeature({
+        ...fixture.feature,
+        material: changed,
+        featureId: Result.getOrThrow(canonicalHashV1Result(changed)),
+      }),
     ),
   ).toBe(true)
   expect(

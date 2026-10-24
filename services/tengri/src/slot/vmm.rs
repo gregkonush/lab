@@ -7,6 +7,7 @@ use std::{
 #[cfg(not(target_os = "linux"))]
 use anyhow::bail;
 use anyhow::{Context, ensure};
+use opentelemetry::global;
 use reqwest::{Client, Method};
 use serde_json::{Value, json};
 use tokio::{
@@ -16,6 +17,8 @@ use tokio::{
     process::{Child, Command},
     time::{sleep, timeout},
 };
+use tracing::{Instrument, Span};
+use tracing_opentelemetry::OpenTelemetrySpanExt;
 
 use super::{GUEST_CONTROL_PORT, SlotConfig};
 
@@ -289,32 +292,89 @@ pub async fn connect_vsock(path: &Path, port: u32) -> anyhow::Result<UnixStream>
 }
 
 pub async fn guest_command(path: &Path, command: &Value) -> anyhow::Result<Value> {
-    timeout(Duration::from_secs(30), async {
-        let mut stream = connect_vsock(path, GUEST_CONTROL_PORT).await?;
-        let mut bytes = serde_json::to_vec(command)?;
-        bytes.push(b'\n');
-        stream.write_all(&bytes).await?;
-        let mut reader = BufReader::new(stream);
-        let mut reply = String::new();
-        use tokio::io::AsyncReadExt;
-        (&mut reader).take(4097).read_line(&mut reply).await?;
-        ensure!(
-            reply.len() <= 4096 && reply.ends_with('\n'),
-            "invalid guest control response"
-        );
-        let reply: Value = serde_json::from_str(&reply)?;
-        ensure!(
-            reply.get("ok").and_then(Value::as_bool) == Some(true),
-            "guest lifecycle failed: {}",
-            reply
-                .get("error")
-                .and_then(Value::as_str)
-                .unwrap_or("invalid response")
-        );
-        Ok::<_, anyhow::Error>(reply)
-    })
+    let operation = match command["action"].as_str() {
+        Some("ready") => "guest.ready.control",
+        Some("freeze") => "guest.freeze.control",
+        Some("resume") => "guest.resume.control",
+        _ => "guest.unknown.control",
+    };
+    let span = tracing::info_span!("guest.control", otel.name = operation, operation);
+    let result = timeout(
+        Duration::from_secs(30),
+        async {
+            loop {
+                let mut stream = connect_vsock(path, GUEST_CONTROL_PORT)
+                    .instrument(tracing::info_span!("guest.control.connect"))
+                    .await?;
+                let mut command = command.clone();
+                let context = Span::current().context();
+                let mut carrier = std::collections::HashMap::new();
+                global::get_text_map_propagator(|propagator| {
+                    propagator.inject_context(&context, &mut carrier);
+                });
+                if let Some(traceparent) = carrier.get("traceparent") {
+                    command["traceparent"] = json!(traceparent);
+                }
+                let sent = Instant::now();
+                if command["action"] == "resume" {
+                    command["unixTimeNanos"] = json!(
+                        chrono::Utc::now()
+                            .timestamp_nanos_opt()
+                            .context("host clock overflow")?
+                    );
+                }
+                let mut bytes = serde_json::to_vec(&command)?;
+                bytes.push(b'\n');
+                stream
+                    .write_all(&bytes)
+                    .instrument(tracing::info_span!("guest.control.send"))
+                    .await?;
+                let mut reader = BufReader::new(stream);
+                let mut reply = String::new();
+                use tokio::io::AsyncReadExt;
+                (&mut reader)
+                    .take(4097)
+                    .read_line(&mut reply)
+                    .instrument(tracing::info_span!("guest.control.reply"))
+                    .await?;
+                ensure!(
+                    reply.len() <= 4096 && reply.ends_with('\n'),
+                    "invalid guest control response"
+                );
+                let reply: Value = serde_json::from_str(&reply)?;
+                ensure!(
+                    reply.get("ok").and_then(Value::as_bool) == Some(true),
+                    "guest lifecycle failed: {}",
+                    reply
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or("invalid response")
+                );
+                if command["action"] != "resume" {
+                    return Ok::<_, anyhow::Error>(reply);
+                }
+                let after_clock = reply["clockElapsedNanos"]
+                    .as_u64()
+                    .context("guest resume requires clock application timing")?;
+                // The guest clock advances during readiness checks after it is set.
+                let transfer = sent
+                    .elapsed()
+                    .checked_sub(Duration::from_nanos(after_clock))
+                    .context("invalid guest clock application timing")?;
+                if transfer <= Duration::from_millis(500) {
+                    return Ok::<_, anyhow::Error>(reply);
+                }
+            }
+        }
+        .instrument(span.clone()),
+    )
     .await
-    .context("guest lifecycle timed out")?
+    .context("guest lifecycle timed out")
+    .and_then(|result| result);
+    if result.is_err() {
+        span.set_status(opentelemetry::trace::Status::error("Operation failed"));
+    }
+    result
 }
 
 async fn wait_guest(path: &Path, allowance: Duration) -> anyhow::Result<()> {
@@ -379,6 +439,199 @@ pub fn evict_memory(_: &Path) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn lifecycle_control_sends_only_traceparent_and_records_phases() {
+        // Isolate the global tracing callsite cache from concurrent tests without a subscriber.
+        if std::env::var_os("TENGRI_LIFECYCLE_TRACE_TEST").is_none() {
+            let output = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "slot::vmm::tests::lifecycle_control_sends_only_traceparent_and_records_phases",
+                    "--nocapture",
+                ])
+                .env("TENGRI_LIFECYCLE_TRACE_TEST", "1")
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            return;
+        }
+        use opentelemetry::trace::TracerProvider;
+        use opentelemetry_sdk::{
+            propagation::TraceContextPropagator,
+            trace::{SdkTracerProvider, SpanData, SpanExporter},
+        };
+        use std::sync::{Arc, Mutex};
+        use tracing_subscriber::layer::SubscriberExt;
+
+        #[derive(Clone, Debug)]
+        struct Spans(Arc<Mutex<Vec<SpanData>>>);
+        impl SpanExporter for Spans {
+            async fn export(
+                &self,
+                spans: Vec<SpanData>,
+            ) -> opentelemetry_sdk::error::OTelSdkResult {
+                self.0.lock().unwrap().extend(spans);
+                Ok(())
+            }
+        }
+        global::set_text_map_propagator(TraceContextPropagator::new());
+        let exported = Spans(Arc::default());
+        let provider = SdkTracerProvider::builder()
+            .with_simple_exporter(exported.clone())
+            .build();
+        let subscriber = tracing_subscriber::registry()
+            .with(tracing_opentelemetry::layer().with_tracer(provider.tracer("fixture")));
+        tracing::subscriber::set_global_default(subscriber).unwrap();
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let command: Value = serde_json::from_str(&line).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"{\"ok\":true}\n")
+                .await
+                .unwrap();
+            command
+        });
+        guest_command(&path, &json!({"action": "freeze"}))
+            .await
+            .unwrap();
+        let command = peer.await.unwrap();
+        fs::remove_file(path).await.unwrap();
+        provider.force_flush().unwrap();
+        let spans = exported.0.lock().unwrap();
+        let control = spans
+            .iter()
+            .find(|span| span.name == "guest.freeze.control")
+            .unwrap();
+        assert_eq!(command.as_object().unwrap().len(), 2);
+        assert_eq!(
+            command["traceparent"],
+            format!(
+                "00-{}-{}-01",
+                control.span_context.trace_id(),
+                control.span_context.span_id()
+            )
+        );
+        for phase in [
+            "guest.control.connect",
+            "guest.control.send",
+            "guest.control.reply",
+        ] {
+            let span = spans
+                .iter()
+                .find(|span| span.name == phase)
+                .unwrap_or_else(|| panic!("missing {phase}; exported spans: {spans:?}"));
+            assert_eq!(span.parent_span_id, control.span_context.span_id());
+        }
+    }
+
+    #[tokio::test]
+    async fn resume_refreshes_clock_after_slow_guest_readiness() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let mut ready_at = 0;
+            for round in 1..=2 {
+                let (stream, _) = listener.accept().await.unwrap();
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                reader.read_line(&mut line).await.unwrap();
+                assert_eq!(line, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+                reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+                line.clear();
+                reader.read_line(&mut line).await.unwrap();
+                let command: Value = serde_json::from_str(&line).unwrap();
+                assert_eq!(command["action"], "resume");
+                if round == 1 {
+                    sleep(Duration::from_millis(1100)).await;
+                    ready_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+                    assert!(ready_at - command["unixTimeNanos"].as_i64().unwrap() > 1_000_000_000);
+                } else {
+                    assert!(command["unixTimeNanos"].as_i64().unwrap() >= ready_at);
+                }
+                let reply = format!("{{\"ok\":true,\"round\":{round},\"clockElapsedNanos\":0}}\n");
+                reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+            }
+        });
+        let reply = guest_command(&path, &json!({"action": "resume"}))
+            .await
+            .unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert_eq!(reply["round"], 2);
+        peer.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn slow_readiness_after_setting_clock_does_not_repeat_resume() {
+        let path = std::env::temp_dir().join(format!("tg-{}.sock", uuid::Uuid::new_v4()));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut line = String::new();
+            reader.read_line(&mut line).await.unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            line.clear();
+            reader.read_line(&mut line).await.unwrap();
+            let applied = Instant::now();
+            sleep(Duration::from_millis(1100)).await;
+            let elapsed = applied.elapsed().as_nanos();
+            let reply = format!("{{\"ok\":true,\"clockElapsedNanos\":{elapsed}}}\n");
+            reader.get_mut().write_all(reply.as_bytes()).await.unwrap();
+        });
+        let result = guest_command(&path, &json!({"action": "resume"})).await;
+        fs::remove_file(path).await.unwrap();
+        peer.await.unwrap();
+        assert!(result.is_ok(), "healthy guest was retried: {result:?}");
+    }
+
+    #[tokio::test]
+    async fn resume_clock_is_sampled_after_the_vsock_handshake() {
+        let path = std::env::temp_dir().join(format!(
+            "tg-{}.sock",
+            &uuid::Uuid::new_v4().simple().to_string()[..8]
+        ));
+        let listener = tokio::net::UnixListener::bind(&path).unwrap();
+        let peer = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let mut reader = BufReader::new(stream);
+            let mut handshake = String::new();
+            reader.read_line(&mut handshake).await.unwrap();
+            assert_eq!(handshake, format!("CONNECT {GUEST_CONTROL_PORT}\n"));
+            let connected_at = chrono::Utc::now().timestamp_nanos_opt().unwrap();
+            reader.get_mut().write_all(b"OK 1\n").await.unwrap();
+            let mut command = String::new();
+            reader.read_line(&mut command).await.unwrap();
+            let command: Value = serde_json::from_str(&command).unwrap();
+            reader
+                .get_mut()
+                .write_all(b"{\"ok\":true,\"clockElapsedNanos\":0}\n")
+                .await
+                .unwrap();
+            (connected_at, command)
+        });
+        let stale = chrono::Utc::now().timestamp_nanos_opt().unwrap() - 10_000_000_000;
+        guest_command(&path, &json!({"action": "resume", "unixTimeNanos": stale}))
+            .await
+            .unwrap();
+        let (connected_at, command) = peer.await.unwrap();
+        fs::remove_file(path).await.unwrap();
+        assert!(command["unixTimeNanos"].as_i64().unwrap() >= connected_at);
+    }
 
     #[cfg(target_os = "linux")]
     #[test]

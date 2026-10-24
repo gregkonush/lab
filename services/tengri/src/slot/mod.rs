@@ -1,7 +1,10 @@
 mod admission;
+pub(crate) use admission::REPLAY_STARTUP_FENCE_MS;
 pub mod client;
 #[cfg(all(test, target_os = "linux"))]
 mod kvm_test;
+#[cfg(test)]
+mod probe_output;
 pub mod runner;
 pub mod supervisor;
 mod vmm;
@@ -17,7 +20,7 @@ use tokio::{
 };
 use vmm::Vmm;
 
-pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.3";
+pub const FIRECRACKER_VERSION: &str = "1.16.1+tengri-async-io.8";
 pub const GUEST_API_PORT: u32 = 1024;
 pub const GUEST_CONTROL_PORT: u32 = 1025;
 
@@ -305,6 +308,7 @@ impl Slot {
         finish_journal_write(&mut pending).await
     }
 
+    #[tracing::instrument(name = "journal.persist", skip_all)]
     async fn transition(&mut self, state: SlotState) -> anyhow::Result<()> {
         let completed = matches!(
             state,
@@ -386,6 +390,7 @@ impl Slot {
         result
     }
 
+    #[tracing::instrument(name = "guest.restore", skip_all)]
     async fn restore_vm(&mut self, snapshot: &Snapshot, claim: &Claim) -> anyhow::Result<()> {
         #[cfg(test)]
         let started = std::time::Instant::now();
@@ -410,9 +415,13 @@ impl Slot {
             "real KVM runner resumed: {:.2} ms cumulative",
             started.elapsed().as_secs_f64() * 1000.0
         );
-        let reply = vmm::guest_command(&self.config.vsock(), &serde_json::json!({
-            "action": "resume", "claim": claim, "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt().context("host clock overflow")?
-        })).await?;
+        let reply = vmm::guest_command(
+            &self.config.vsock(),
+            &serde_json::json!({
+                "action": "resume", "claim": claim
+            }),
+        )
+        .await?;
         ensure!(
             reply.get("claim") == Some(&serde_json::to_value(claim)?),
             "restored guest claim does not match its slot"
@@ -478,8 +487,7 @@ impl Slot {
                             && vmm::guest_command(
                                 &self.config.vsock(),
                                 &serde_json::json!({
-                                    "action": "resume", "claim": claim,
-                                    "unixTimeNanos": chrono::Utc::now().timestamp_nanos_opt()
+                                    "action": "resume", "claim": claim
                                 }),
                             )
                             .await
@@ -539,6 +547,7 @@ impl Slot {
         Ok(())
     }
 
+    #[tracing::instrument(name = "guest.snapshot.save", skip_all)]
     async fn save_vm(&mut self) -> anyhow::Result<Snapshot> {
         vmm::guest_command(
             &self.config.vsock(),
@@ -577,6 +586,7 @@ impl Slot {
         Ok(Snapshot { generation })
     }
 
+    #[tracing::instrument(name = "guest.snapshot.finalize", skip_all)]
     async fn finish_snapshot(&self, generation: u64) -> anyhow::Result<()> {
         let memory = self.config.snapshot_dir(generation).join("memory.bin");
         #[cfg(not(test))]

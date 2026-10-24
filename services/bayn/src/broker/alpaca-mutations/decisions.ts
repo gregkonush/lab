@@ -1,6 +1,8 @@
+import { cashSpotLimitTimeInForce } from '../../execution/order-terms'
 import { Data, Redacted, Result, Schema } from 'effect'
+import { SubmissionDenialReason } from '../../execution/submission-denial'
 
-import { canonicalHashV1OrThrow, canonicalHashV1Result } from '../../hash'
+import { canonicalHashV1Result } from '../../hash'
 import { BrokerAccess, type ExecutionAuthority } from '../../execution/authority'
 import {
   IntentSchema,
@@ -10,10 +12,12 @@ import {
   TimeInForce as DomainTimeInForce,
   type Intent,
 } from '../../execution/contracts'
-import { AssetClass, OrderSide, OrderType, TimeInForce, type BrokerSessionShape, type Order } from '../alpaca'
+import { AssetClass, OrderSide, OrderType, TimeInForce, type Order } from '../alpaca/model'
+import { type BrokerSessionShape } from '../alpaca/session'
 import { quantizeInstrumentPriceMicros } from '../alpaca-price'
 import { decodeErrorResponse, decodeOrder } from '../alpaca/model'
 import { normalizeOrderResult } from '../alpaca/normalizers'
+import { verifyProtectionGroup } from '../alpaca/protection-group'
 import type { BrokerConnection } from '../connection'
 import {
   BrokerMutationError,
@@ -27,7 +31,7 @@ import {
   type MutationEvidence,
   type SubmitReceipt,
 } from './model'
-import { Pipeable } from '../../pipeable'
+
 import { quantityScale, quantityToDecimal } from '../../quantity'
 import { instrumentMarket, MarketKind } from '../../instruments'
 
@@ -49,41 +53,25 @@ export interface ResolvedMutationCapability {
   readonly secret: string
 }
 
-export interface QuantityMarketOrderRequestBody {
+export interface OrderRequestBody {
   readonly symbol: string
   readonly qty: string
   readonly side: OrderSide
-  readonly type: OrderType.Market
-  readonly time_in_force: TimeInForce
-  readonly client_order_id: string
-  readonly extended_hours: false
-}
-
-export interface LimitIocOrderRequestBody {
-  readonly symbol: string
-  readonly qty: string
-  readonly side: OrderSide
-  readonly type: OrderType.Limit
-  readonly time_in_force: TimeInForce.ImmediateOrCancel
+  readonly type: OrderType.Limit | OrderType.StopLimit
+  readonly time_in_force: TimeInForce.Day | TimeInForce.ImmediateOrCancel | TimeInForce.GoodUntilCanceled
   readonly limit_price: string
+  readonly stop_price?: string
+  readonly order_class?: 'bracket' | 'oco'
+  readonly take_profit?: { readonly limit_price: string }
+  readonly stop_loss?: { readonly stop_price: string; readonly limit_price: string }
   readonly client_order_id: string
-  readonly extended_hours: false
-}
-
-export type OrderRequestBody = QuantityMarketOrderRequestBody | LimitIocOrderRequestBody
-
-type MarketOrderRequestCommon = Omit<QuantityMarketOrderRequestBody, 'qty'>
-
-interface ValidatedMarketOrderRequest {
-  readonly common: MarketOrderRequestCommon
-  readonly notional: bigint
-  readonly quantity: bigint
+  readonly extended_hours: boolean
 }
 
 export type OrderRequestIntent = Pick<
   Intent,
-  'clientOrderId' | 'notionalLimitMicros' | 'orderType' | 'quantityAtoms' | 'side' | 'symbol' | 'timeInForce'
->
+  'clientOrderId' | 'notionalLimitMicros' | 'limitPriceMicros' | 'quantityAtoms' | 'side' | 'symbol' | 'protection'
+> & { readonly orderType: DomainOrderType; readonly timeInForce: DomainTimeInForce }
 
 export class OrderRequestError extends Data.TaggedError('OrderRequestError')<{
   readonly failure: 'invalid-intent-state' | 'invalid-order'
@@ -130,19 +118,6 @@ const side = (value: DomainSide): OrderSide => {
   }
 }
 
-const timeInForce = (value: DomainTimeInForce): TimeInForce => {
-  switch (value) {
-    case DomainTimeInForce.Day:
-      return TimeInForce.Day
-    case DomainTimeInForce.GoodUntilCanceled:
-      return TimeInForce.GoodUntilCanceled
-    case DomainTimeInForce.ImmediateOrCancel:
-      return TimeInForce.ImmediateOrCancel
-    case DomainTimeInForce.FillOrKill:
-      return TimeInForce.FillOrKill
-  }
-}
-
 const quantityAtoms = (value: string): Result.Result<bigint, OrderRequestError> =>
   /^[1-9][0-9]*$/.test(value)
     ? Result.succeed(BigInt(value))
@@ -181,32 +156,29 @@ const decimalToMicros = (decimal: string): string | undefined => {
 }
 
 export const orderPriceBoundaryMicros = (
-  intent: Pick<OrderRequestIntent, 'symbol' | 'side' | 'quantityAtoms' | 'notionalLimitMicros'>,
+  intent: Pick<OrderRequestIntent, 'symbol' | 'side' | 'quantityAtoms' | 'notionalLimitMicros' | 'limitPriceMicros'>,
 ): Result.Result<bigint, OrderRequestError> => {
   const quantity = quantityAtoms(intent.quantityAtoms)
   if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
   const notional = notionalMicros(intent.notionalLimitMicros)
   if (Result.isFailure(notional)) return Result.fail(notional.failure)
-  const numerator = notional.success * quantityScale
-  const unquantized =
-    intent.side === DomainSide.Buy
-      ? numerator / quantity.success
-      : (numerator + quantity.success - 1n) / quantity.success
-  const price = quantizeInstrumentPriceMicros(
-    intent.symbol,
-    unquantized,
-    intent.side === DomainSide.Buy ? 'DOWN' : 'UP',
+  const price = notionalMicros(intent.limitPriceMicros)
+  if (Result.isFailure(price)) return Result.fail(price.failure)
+  const buy = intent.side === DomainSide.Buy
+  const expectedNotional = (quantity.success * price.success + (buy ? quantityScale - 1n : 0n)) / quantityScale
+  if (
+    expectedNotional !== notional.success ||
+    quantizeInstrumentPriceMicros(intent.symbol, price.success, buy ? 'DOWN' : 'UP') !== price.success
   )
-  return price > 0n
-    ? Result.succeed(price)
-    : Result.fail(
-        new OrderRequestError({
-          failure: 'invalid-order',
-          message: 'order price boundary must be positive',
-          quantityAtoms: intent.quantityAtoms,
-          notionalLimitMicros: intent.notionalLimitMicros,
-        }),
-      )
+    return Result.fail(
+      new OrderRequestError({
+        failure: 'invalid-order',
+        message: 'explicit limit price and rounded notional do not describe the same order',
+        quantityAtoms: intent.quantityAtoms,
+        notionalLimitMicros: intent.notionalLimitMicros,
+      }),
+    )
+  return Result.succeed(price.success)
 }
 
 export const authorizeMutationAccess = (
@@ -220,7 +192,7 @@ export const authorizeMutationAccess = (
   return Result.succeed(BrokerAccess.Mutation)
 }
 
-const resolveMutationCapabilityDataFirst = (
+export const resolveMutationCapability = (
   session: BrokerSessionShape,
   authority: ExecutionAuthority,
 ): Result.Result<ResolvedMutationCapability, BrokerMutationError> => {
@@ -274,110 +246,79 @@ const resolveMutationCapabilityDataFirst = (
   })
 }
 
-export const resolveMutationCapability = Pipeable.dual(2, resolveMutationCapabilityDataFirst)
-
-export const limitIocOrderRequestBody = (
-  intent: OrderRequestIntent,
-): Result.Result<LimitIocOrderRequestBody, OrderRequestError> => {
-  if (intent.orderType !== DomainOrderType.Limit || intent.timeInForce !== DomainTimeInForce.ImmediateOrCancel) {
+export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
+  const crypto = instrumentMarket(intent.symbol) === MarketKind.Crypto
+  const protective = intent.protection
+  const stop = protective?._tag === 'StopLimit'
+  const grouped = protective?._tag === 'Bracket' || protective?._tag === 'Oco'
+  const expectedDuration = stop
+    ? crypto
+      ? DomainTimeInForce.GoodUntilCanceled
+      : DomainTimeInForce.Day
+    : cashSpotLimitTimeInForce(instrumentMarket(intent.symbol))
+  const quantity = quantityAtoms(intent.quantityAtoms)
+  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
+  if (
+    intent.orderType !== (stop ? DomainOrderType.StopLimit : DomainOrderType.Limit) ||
+    intent.timeInForce !== expectedDuration ||
+    (protective !== undefined &&
+      (protective._tag === 'Bracket' ? intent.side !== DomainSide.Buy : intent.side !== DomainSide.Sell)) ||
+    (grouped && (crypto || quantity.success % quantityScale !== 0n))
+  )
     return Result.fail(
       new OrderRequestError({
         failure: 'invalid-order',
-        message: 'quote-bound Bayn orders require LIMIT with IOC time in force',
+        message: 'order terms violate the instrument protection contract',
         orderType: intent.orderType,
         timeInForce: intent.timeInForce,
       }),
     )
-  }
-  const quantity = quantityAtoms(intent.quantityAtoms)
-  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
-  if (instrumentMarket(intent.symbol) === MarketKind.Equity && quantity.success % quantityScale !== 0n) {
-    return Result.fail(
-      new OrderRequestError({
-        failure: 'invalid-order',
-        message: 'quote-bound LIMIT/IOC orders require a whole-share quantity',
-        quantityAtoms: intent.quantityAtoms,
-      }),
-    )
-  }
-  const notional = notionalMicros(intent.notionalLimitMicros)
-  if (Result.isFailure(notional)) return Result.fail(notional.failure)
   const price = orderPriceBoundaryMicros(intent)
   if (Result.isFailure(price)) return Result.fail(price.failure)
-  const priceBoundary = price.success
-  if (
-    instrumentMarket(intent.symbol) === MarketKind.Equity &&
-    priceBoundary * quantity.success !== notional.success * quantityScale
-  ) {
-    return Result.fail(
-      new OrderRequestError({
-        failure: 'invalid-order',
-        message: 'verified LIMIT/IOC price does not match the equity price increment',
-        quantityAtoms: intent.quantityAtoms,
-        notionalLimitMicros: intent.notionalLimitMicros,
-      }),
+  if (protective !== undefined) {
+    const stopPrice = BigInt(protective.stopPriceMicros)
+    if (
+      stopPrice <= 0n ||
+      quantizeInstrumentPriceMicros(intent.symbol, stopPrice, 'DOWN') !== stopPrice ||
+      (stop && price.success > stopPrice) ||
+      (grouped &&
+        (quantizeInstrumentPriceMicros(intent.symbol, BigInt(protective.stopLimitPriceMicros), 'UP') !==
+          BigInt(protective.stopLimitPriceMicros) ||
+          quantizeInstrumentPriceMicros(intent.symbol, BigInt(protective.profitLimitPriceMicros), 'UP') !==
+            BigInt(protective.profitLimitPriceMicros) ||
+          BigInt(protective.stopLimitPriceMicros) > stopPrice ||
+          stopPrice >= BigInt(protective.profitLimitPriceMicros))) ||
+      (protective._tag === 'Oco' && intent.limitPriceMicros !== protective.profitLimitPriceMicros)
     )
+      return Result.fail(
+        new OrderRequestError({
+          failure: 'invalid-order',
+          message: 'protection prices are invalid or exceed venue precision',
+        }),
+      )
   }
   return Result.succeed({
     symbol: intent.symbol,
     qty: quantityToDecimal(quantity.success),
     side: side(intent.side),
-    type: OrderType.Limit,
-    time_in_force: TimeInForce.ImmediateOrCancel,
-    limit_price: microsToDecimal(priceBoundary),
+    type: stop ? OrderType.StopLimit : OrderType.Limit,
+    time_in_force:
+      stop && crypto ? TimeInForce.GoodUntilCanceled : crypto ? TimeInForce.ImmediateOrCancel : TimeInForce.Day,
+    limit_price: microsToDecimal(price.success),
+    ...(stop ? { stop_price: microsToDecimal(BigInt(protective.stopPriceMicros)) } : {}),
+    ...(grouped
+      ? {
+          order_class: protective._tag === 'Bracket' ? ('bracket' as const) : ('oco' as const),
+          take_profit: { limit_price: microsToDecimal(BigInt(protective.profitLimitPriceMicros)) },
+          stop_loss: {
+            stop_price: microsToDecimal(BigInt(protective.stopPriceMicros)),
+            limit_price: microsToDecimal(BigInt(protective.stopLimitPriceMicros)),
+          },
+        }
+      : {}),
     client_order_id: intent.clientOrderId,
-    extended_hours: false,
+    extended_hours: !crypto && protective === undefined,
   })
-}
-
-const validateMarketOrderRequest = (
-  intent: OrderRequestIntent,
-): Result.Result<ValidatedMarketOrderRequest, OrderRequestError> => {
-  if (intent.orderType !== DomainOrderType.Market) {
-    return Result.fail(
-      new OrderRequestError({
-        failure: 'invalid-order',
-        message: 'Bayn broker submission supports market orders only',
-        orderType: intent.orderType,
-      }),
-    )
-  }
-  const quantity = quantityAtoms(intent.quantityAtoms)
-  if (Result.isFailure(quantity)) return Result.fail(quantity.failure)
-  const notional = notionalMicros(intent.notionalLimitMicros)
-  if (Result.isFailure(notional)) return Result.fail(notional.failure)
-  if (
-    intent.timeInForce !==
-    (instrumentMarket(intent.symbol) === MarketKind.Crypto
-      ? DomainTimeInForce.GoodUntilCanceled
-      : DomainTimeInForce.Day)
-  ) {
-    return Result.fail(
-      new OrderRequestError({
-        failure: 'invalid-order',
-        message: 'market order duration does not match the instrument',
-        timeInForce: intent.timeInForce,
-        quantityAtoms: intent.quantityAtoms,
-      }),
-    )
-  }
-  const common = {
-    symbol: intent.symbol,
-    side: side(intent.side),
-    type: OrderType.Market,
-    time_in_force: timeInForce(intent.timeInForce),
-    client_order_id: intent.clientOrderId,
-    extended_hours: false,
-  } as const
-  return Result.succeed({ common, notional: notional.success, quantity: quantity.success })
-}
-
-export const orderRequestBody = (intent: OrderRequestIntent): Result.Result<OrderRequestBody, OrderRequestError> => {
-  if (intent.orderType === DomainOrderType.Limit) return limitIocOrderRequestBody(intent)
-  return Result.map(validateMarketOrderRequest(intent), ({ common, quantity }) => ({
-    ...common,
-    qty: quantityToDecimal(quantity),
-  }))
 }
 
 export const orderRequestRequiresFractionalTrading = (request: OrderRequestBody): boolean =>
@@ -426,18 +367,24 @@ const submitRequestHash = (body: OrderRequestBody): Result.Result<string, Broker
     invalidRequest({
       operation: MutationOperation.Submit,
       message: 'order request cannot be canonically hashed',
+      denialReason: SubmissionDenialReason.RequestEncoding,
       cause,
     }),
   )
 
-const prepareSubmitDataFirst = (
+export const prepareSubmit = (
   input: unknown,
   expectedAccountId: string,
 ): Result.Result<PreparedSubmit, BrokerMutationError> => {
   const decoded = decodeIntent(input)
   if (Result.isFailure(decoded)) {
     return Result.fail(
-      invalidRequest({ operation: MutationOperation.Submit, message: 'invalid order intent', cause: decoded.failure }),
+      invalidRequest({
+        operation: MutationOperation.Submit,
+        message: 'invalid order intent',
+        cause: decoded.failure,
+        denialReason: SubmissionDenialReason.InvalidIntent,
+      }),
     )
   }
   const intent = decoded.success
@@ -446,6 +393,7 @@ const prepareSubmitDataFirst = (
       invalidRequest({
         operation: MutationOperation.Submit,
         message: 'order intent account does not match the configured Alpaca account',
+        denialReason: SubmissionDenialReason.AccountMismatch,
       }),
     )
   }
@@ -455,6 +403,7 @@ const prepareSubmitDataFirst = (
       invalidRequest({
         operation: MutationOperation.Submit,
         message: 'order intent cannot be submitted',
+        denialReason: SubmissionDenialReason.OrderContract,
         cause: body.failure,
       }),
     )
@@ -465,11 +414,6 @@ const prepareSubmitDataFirst = (
     requestHash,
   }))
 }
-
-export const prepareSubmit = prepareSubmitDataFirst
-
-export const cancelRequestHash = (brokerOrderId: string): string =>
-  canonicalHashV1OrThrow({ operation: MutationOperation.Cancel, brokerOrderId })
 
 export const prepareCancel = (input: unknown): Result.Result<PreparedCancel, BrokerMutationError> => {
   const decoded = decodeOrderId(input)
@@ -584,8 +528,23 @@ const acceptedOrderMatches = (order: Order, facts: SubmitResponseFacts): boolean
     order.orderType === facts.request.type &&
     order.timeInForce === facts.request.time_in_force &&
     order.limitPriceMicros === expectedLimitPriceMicros &&
-    !order.extendedHours
+    order.extendedHours === facts.request.extended_hours &&
+    order.stopPriceMicros ===
+      (facts.request.stop_price === undefined ? undefined : decimalToMicros(facts.request.stop_price)) &&
+    order.orderClass === (facts.request.order_class ?? 'simple')
   if (!commonMatches) return false
+  if (facts.intent.protection?._tag === 'Bracket' || facts.intent.protection?._tag === 'Oco') {
+    if (
+      Result.isFailure(
+        verifyProtectionGroup(order, {
+          symbol: facts.intent.symbol,
+          quantityAtoms: facts.intent.quantityAtoms,
+          protection: facts.intent.protection,
+        }),
+      )
+    )
+      return false
+  }
   return order.quantityAtoms === facts.intent.quantityAtoms && order.notionalMicros === undefined
 }
 

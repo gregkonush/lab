@@ -74,7 +74,7 @@ spec:
       createrole: false
       replication: false
       bypassrls: false
-      connectionLimit: 36
+      connectionLimit: 42
       passwordSecret:
         name: tengri-controller-db-auth
     - name: tengri_bff
@@ -98,14 +98,19 @@ spec:
       createrole: false
       replication: false
       bypassrls: false
-      connectionLimit: 12
+      connectionLimit: 24
       passwordSecret:
         name: tengri-supervisor-db-auth
   primaryUpdateStrategy: unsupervised
   primaryUpdateMethod: switchover
   affinity:
-    podAntiAffinityType: preferred
+    podAntiAffinityType: required
     topologyKey: kubernetes.io/hostname
+    tolerations:
+      - key: workload.proompteng.ai/compute-local
+        operator: Equal
+        value: "true"
+        effect: NoSchedule
   resources:
     requests:
       cpu: 250m
@@ -129,8 +134,12 @@ spec:
       number: 1
       dataDurability: required
     parameters:
+      archive_timeout: 60s
+      wal_buffers: 16MB
+      wal_sync_method: fdatasync
+      track_wal_io_timing: "on"
       track_commit_timestamp: "on"
-      max_connections: "200"
+      max_connections: "220"
       password_encryption: scram-sha-256
       ssl_min_protocol_version: TLSv1.3
   plugins:

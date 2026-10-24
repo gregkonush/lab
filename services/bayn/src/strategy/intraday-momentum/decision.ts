@@ -8,11 +8,10 @@ import type { IntradayCandidateExclusion, IntradayQuote, IntradayTrade } from '.
 import type { StrategyMarketSnapshot } from '../../market-data/streaming/snapshot'
 import { compareIntradayInstants, intradayInstantNanos } from '../../market-data/intraday/time'
 import { strictParseOptions, UtcInstantSchema } from '../../schemas'
-import type { VerifiedStrategyContext } from '../core'
+
 import {
   IntradayMomentumFailure,
   type IntradayMomentumMarketContext,
-  type IntradayMomentumStrategyDefinition,
   type IntradayMomentumTargetPortfolio,
 } from './model'
 import {
@@ -363,13 +362,3 @@ export const verifyIntradayMomentumDecisionEnvelope = (
             ),
     ),
   )
-
-export const makeIntradayMomentumDefinition = (
-  protocol: IntradayMomentumProtocol,
-): IntradayMomentumStrategyDefinition => ({
-  name: 'intraday-momentum',
-  holdingPeriod: 'INTRADAY',
-  parameters: protocol,
-  decide: (context: VerifiedStrategyContext<IntradayMomentumMarketContext>) =>
-    decideIntradayMomentum(context.market, protocol),
-})

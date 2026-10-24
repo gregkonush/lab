@@ -1,8 +1,8 @@
+import { executionIntentSchemaVersion, submittedBrokerOrderCount } from './execution/contracts'
 import { Data, Result, Schema, pipe } from 'effect'
 
 import { canonicalHashV1Result } from './hash'
-import { instrumentMarket, MarketKind } from './instruments'
-import { notionalMicros } from './execution-model'
+import { ceilDiv } from './strategy/execution-model/fixed-point'
 import { ExecutionSessionBindingSchema } from './execution-session'
 import {
   AccountSnapshotSchema,
@@ -31,7 +31,7 @@ import {
   type Position,
   type ReferenceIntent,
 } from './execution/contracts'
-import { reconciledStateHash } from './reconciliation'
+import { reconciledStateHash } from './simulation-reconciliation/broker-model'
 import {
   Sha256Schema as Sha256,
   StrictNonEmptyStringSchema as NonEmptyString,
@@ -40,14 +40,12 @@ import {
   UtcOrderTimestampSchema,
   strictParseOptions as StrictParseOptions,
 } from './schemas'
-import { Pipeable } from './pipeable'
+
 import { utcInstantFromEpochMillis } from './time'
 import { intradayAgeNanos } from './market-data/intraday/time'
 import {
   legacyExecutionAuthorityToken,
-  legacyExecutionIntentSchemaVersion,
   legacyObserveAuthorityToken,
-  legacyRiskPolicySchemaVersion,
   legacyRiskDecisionSchemaVersion,
   legacyRiskEvaluationInputV2SchemaVersion,
   legacyRiskEvaluationInputV3SchemaVersion,
@@ -230,31 +228,19 @@ const RiskPolicyFields = {
   decisionTtlMs: AgeMilliseconds,
 } as const
 
-const LegacyRiskPolicyV2Schema = Schema.Struct({
-  schemaVersion: Schema.Literal(legacyRiskPolicySchemaVersion),
-  ...RiskPolicyFields,
-  allowedOrderTypes: Schema.Tuple([Schema.Literal(OrderType.Market)]),
-})
-
-export const executionRiskPolicySchemaVersion = 'bayn.execution-risk-policy.v3' as const
+export const executionRiskPolicySchemaVersion = 'bayn.execution-risk-policy.v4' as const
 
 export const ExecutionRiskPolicySchema = Schema.Struct({
   schemaVersion: Schema.Literal(executionRiskPolicySchemaVersion),
   ...RiskPolicyFields,
-  allowedOrderTypes: Schema.Array(Schema.Enum(OrderType)).check(
+  allowedOrderTypes: Schema.Array(Schema.Literals([OrderType.Limit, OrderType.StopLimit])).check(
     Schema.isMinLength(1),
     Schema.isUnique(),
-    SortedUniqueStrings,
   ),
 })
 
-export const PolicySchema = Schema.Union([LegacyRiskPolicyV2Schema, ExecutionRiskPolicySchema])
+export const PolicySchema = ExecutionRiskPolicySchema
 export type Policy = typeof PolicySchema.Type
-
-const policyAllowsOrderType = (policy: Policy, orderType: OrderType): boolean =>
-  policy.schemaVersion === legacyRiskPolicySchemaVersion
-    ? orderType === OrderType.Market
-    : policy.allowedOrderTypes.includes(orderType)
 
 export const EntryQuoteFreshnessSchema = Schema.Struct({
   eventAt: Schema.Union([UtcInstant, UtcOrderTimestampSchema]),
@@ -619,6 +605,28 @@ const decodeRiskEvaluationResult = Schema.decodeUnknownResult(EvaluationSchema, 
 
 const absolute = (value: bigint): bigint => (value < 0n ? -value : value)
 const positiveDifference = (left: bigint, right: bigint): bigint => (left > right ? left - right : 0n)
+
+export const accountLossMicros = (facts: {
+  readonly accountEquityMicros: bigint
+  readonly dayStartEquityMicros: bigint
+  readonly peakEquityMicros: bigint
+}) => ({
+  dailyLossMicros: positiveDifference(facts.dayStartEquityMicros, facts.accountEquityMicros),
+  drawdownMicros: positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros),
+})
+
+/** The existing entry limits retain exact micros and permit equality at either boundary. */
+export const accountEntryProtectionReasons = (
+  facts: Parameters<typeof accountLossMicros>[0],
+  limits: Pick<Policy, 'maxDailyLossMicros' | 'maxDrawdownMicros'>,
+): readonly (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] => {
+  const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
+  const reasons: (Reason.DailyLossExceeded | Reason.DrawdownExceeded)[] = []
+  if (dailyLossMicros > BigInt(limits.maxDailyLossMicros)) reasons.push(Reason.DailyLossExceeded)
+  if (drawdownMicros > BigInt(limits.maxDrawdownMicros)) reasons.push(Reason.DrawdownExceeded)
+  return reasons
+}
+
 const divideUp = (numerator: bigint, denominator: bigint): bigint =>
   numerator === 0n ? 0n : (numerator + denominator - 1n) / denominator
 const divideAwayFromZero = (numerator: bigint, denominator: bigint): bigint =>
@@ -743,7 +751,7 @@ const parseRiskFacts = (
 })
 
 const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, RiskEvaluationFailure> => {
-  const orderNotional = notionalMicros(facts.intentQuantityAtoms, facts.expectedExecutionPriceMicros)
+  const orderNotional = ceilDiv(facts.intentQuantityAtoms * facts.expectedExecutionPriceMicros, QUANTITY_SCALE)
   if (Result.isFailure(orderNotional)) {
     return Result.fail(
       computeRiskMetricsFailure(
@@ -781,8 +789,7 @@ const deriveRiskMetrics = (facts: RiskFacts): Result.Result<DerivedRiskMetrics, 
   const aggregateBuyingPowerMicros =
     facts.reservedBuyingPowerMicros + (facts.intent.side === OrderSide.Buy ? orderNotionalMicros : 0n)
   const dailyTradedNotionalMicros = facts.priorDailyTradedNotionalMicros + orderNotionalMicros
-  const dailyLossMicros = positiveDifference(facts.dayStartEquityMicros, facts.accountEquityMicros)
-  const drawdownMicros = positiveDifference(facts.peakEquityMicros, facts.accountEquityMicros)
+  const { dailyLossMicros, drawdownMicros } = accountLossMicros(facts)
   const adversePriceDifference =
     facts.intent.side === OrderSide.Buy
       ? positiveDifference(facts.expectedExecutionPriceMicros, facts.referencePriceMicros)
@@ -865,15 +872,8 @@ const deriveReconciledHash = (facts: RiskFacts): Result.Result<string, RiskEvalu
     ),
   )
 
-const isBrokerSupportedMarketCloseOrder = (facts: RiskFacts): boolean =>
-  isPositionReducingCloseOrder(facts) &&
-  facts.intent.orderType === OrderType.Market &&
-  facts.intent.timeInForce ===
-    (instrumentMarket(facts.intent.symbol) === MarketKind.Crypto ? TimeInForce.GoodUntilCanceled : TimeInForce.Day)
-
 const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
   const { intent, policy, state } = facts
-  const brokerSupportedMarketClose = isBrokerSupportedMarketCloseOrder(facts)
   const closeOnlyPositionReduction = state.closeOnly === true && isPositionReducingCloseOrder(facts)
   return [
     makeGate(Gate.IntentState, intent.state === IntentState.Planned, intent.state, 'PLANNED'),
@@ -913,19 +913,15 @@ const buildIntentContractGates = (facts: RiskFacts): readonly GateResult[] => {
     makeGate(Gate.MarketDataSymbol, state.marketDataSymbol === intent.symbol, state.marketDataSymbol, intent.symbol),
     makeGate(
       Gate.OrderType,
-      policyAllowsOrderType(policy, intent.orderType) || brokerSupportedMarketClose,
+      policy.allowedOrderTypes.includes(intent.orderType),
       intent.orderType,
-      brokerSupportedMarketClose
-        ? `${policy.allowedOrderTypes.join(',')}|MARKET_CLOSE_ONLY`
-        : policy.allowedOrderTypes.join(','),
+      policy.allowedOrderTypes.join(','),
     ),
     makeGate(
       Gate.TimeInForce,
-      policy.allowedTimeInForce.includes(intent.timeInForce) || brokerSupportedMarketClose,
+      policy.allowedTimeInForce.includes(intent.timeInForce),
       intent.timeInForce,
-      brokerSupportedMarketClose
-        ? `${policy.allowedTimeInForce.join(',')}|${intent.timeInForce}_MARKET_CLOSE_ONLY`
-        : policy.allowedTimeInForce.join(','),
+      policy.allowedTimeInForce.join(','),
     ),
   ]
 }
@@ -935,7 +931,7 @@ const buildAuthorityAndStateGates = (
   metrics: DerivedRiskMetrics,
   reconciledHash: string,
 ): readonly GateResult[] => {
-  const { policy, state } = facts
+  const { intent, policy, state } = facts
   const closeOnly = state.closeOnly === true
   const positionReducingClose = isPositionReducingCloseOrder(facts)
   return [
@@ -989,9 +985,9 @@ const buildAuthorityAndStateGates = (
     makeGate(Gate.UnknownMutations, state.unknownMutationCount === 0, state.unknownMutationCount, 0),
     makeGate(
       Gate.UnresolvedOrders,
-      metrics.unresolvedOrderCount < policy.maxOpenOrders,
-      metrics.unresolvedOrderCount,
-      `<${policy.maxOpenOrders}`,
+      metrics.unresolvedOrderCount + submittedBrokerOrderCount(intent.protection) <= policy.maxOpenOrders,
+      metrics.unresolvedOrderCount + submittedBrokerOrderCount(intent.protection),
+      `<=${policy.maxOpenOrders}`,
     ),
   ]
 }
@@ -999,12 +995,16 @@ const buildAuthorityAndStateGates = (
 const buildOrderLimitGates = (facts: RiskFacts, metrics: DerivedRiskMetrics): readonly GateResult[] => {
   const { intent, policy, state } = facts
   const exposureReducingClose = isStrictlyExposureReducingClose(facts, metrics)
+  const proceedsFloor =
+    intent.side === OrderSide.Sell && (intent.orderType === OrderType.Limit || intent.orderType === OrderType.StopLimit)
   return [
     makeGate(
       Gate.IntentNotional,
-      metrics.orderNotionalMicros <= facts.intentNotionalLimitMicros,
+      proceedsFloor
+        ? metrics.orderNotionalMicros >= facts.intentNotionalLimitMicros
+        : metrics.orderNotionalMicros <= facts.intentNotionalLimitMicros,
       metrics.orderNotionalMicros,
-      `<=${intent.notionalLimitMicros}`,
+      `${proceedsFloor ? '>=' : '<='}${intent.notionalLimitMicros}`,
     ),
     makeGate(
       Gate.OrderNotional,
@@ -1194,7 +1194,7 @@ const deriveRiskBindingHashes = (facts: RiskFacts): Result.Result<RiskBindingHas
     Result.map(
       riskEvidenceHash(facts, {
         schemaVersion:
-          facts.intent.schemaVersion === legacyExecutionIntentSchemaVersion
+          facts.intent.schemaVersion === executionIntentSchemaVersion
             ? legacyRiskEvaluationInputV3SchemaVersion
             : legacyRiskEvaluationInputV2SchemaVersion,
         intent: facts.intent,
@@ -1299,7 +1299,7 @@ const makeRiskEvaluation = (
   )
 
 const validateAuthorityBinding = (intent: RiskIntent, state: State): Result.Result<void, RiskEvaluationFailure> => {
-  if (intent.schemaVersion === legacyExecutionIntentSchemaVersion) {
+  if (intent.schemaVersion === executionIntentSchemaVersion) {
     if (state.authority.maximum !== Authority.Execution) {
       return Result.fail(
         bindRiskAuthorityFailure(
@@ -1379,6 +1379,14 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
     decodeRiskInputFailure('policy', 'risk policy is invalid', {}, cause),
   )
   if (Result.isFailure(policy)) return Result.fail(policy.failure)
+  if (intent.success.limitPriceMicros !== state.success.expectedExecutionPriceMicros)
+    return Result.fail(
+      decodeRiskInputFailure('intent', 'risk execution price differs from the explicit LIMIT bound', {
+        intentId: intent.success.intentId,
+        limitPriceMicros: intent.success.limitPriceMicros,
+        expectedExecutionPriceMicros: state.success.expectedExecutionPriceMicros,
+      }),
+    )
   const proposedPositions = Result.mapError(
     decodeProposedPositionsResult(input.proposedPositions ?? state.success.positions),
     (cause) => decodeRiskInputFailure('positions', 'proposed risk positions are invalid', {}, cause),
@@ -1401,9 +1409,4 @@ export const evaluate = (input: RiskEvaluationInput): Result.Result<Evaluation, 
   return evaluateDecoded(intent.success, state.success, policy.success, proposedPositions.success)
 }
 
-const decodePolicyDataFirst = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)
-
-export const decodePolicy = Pipeable.dual(1, (input: unknown) => decodePolicyDataFirst(input))
-const decodeStateDataFirst = Schema.decodeUnknownEffect(StateSchema, StrictParseOptions)
-
-export const decodeState = Pipeable.dual(1, (input: unknown) => decodeStateDataFirst(input))
+export const decodePolicy = Schema.decodeUnknownEffect(PolicySchema, StrictParseOptions)

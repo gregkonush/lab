@@ -19,6 +19,7 @@ import urllib3
 from minio import Minio
 from minio.error import S3Error
 from minio.retention import COMPLIANCE, Retention
+from minio.sse import SseS3
 from psycopg.conninfo import conninfo_to_dict
 from psycopg.rows import dict_row
 
@@ -26,7 +27,28 @@ BUCKET = "ofz-audit"
 ENDPOINT = "nuc.ide-newton.ts.net:9444"
 MAX_BATCH_BYTES = 4 * 1024 * 1024
 RETENTION_DAYS = 90
+IDLE_HEARTBEAT_MS = 10_000
 EXPORT_LOCK = 726635522919
+PENDING_AUDIT_QUERY = """
+    WITH candidates AS MATERIALIZED (
+        (SELECT sequence FROM ofz.audit
+         WHERE sequence>%s ORDER BY sequence LIMIT 64)
+        UNION
+        (SELECT audit_sequence FROM ofz.audit_outbox
+         WHERE acknowledged_at_ms IS NULL ORDER BY audit_sequence LIMIT 64)
+        UNION
+        (SELECT a.sequence FROM ofz.audit a
+         WHERE NOT EXISTS (
+             SELECT 1 FROM ofz.audit_outbox o WHERE o.audit_sequence=a.sequence
+         ) ORDER BY a.sequence LIMIT 64)
+        ORDER BY sequence LIMIT 64
+    )
+    SELECT a.sequence,a.receipt,encode(a.target_hash,'hex') AS target_hash,
+           a.created_at_ms,o.audit_sequence IS NOT NULL AS has_outbox
+    FROM candidates c JOIN ofz.audit a ON a.sequence=c.sequence
+    LEFT JOIN ofz.audit_outbox o ON o.audit_sequence=a.sequence
+    ORDER BY a.sequence
+"""
 
 
 class ArchiveError(Exception):
@@ -136,6 +158,8 @@ class Exporter:
             BUCKET, receipt.key, version_id=receipt.version_id
         )
         try:
+            if response.headers.get("x-amz-server-side-encryption") != "AES256":
+                raise ArchiveError("independent archive version must be encrypted")
             data = response.read(MAX_BATCH_BYTES + 1)
         finally:
             response.close()
@@ -181,6 +205,7 @@ class Exporter:
                 content_type="application/json",
                 metadata={"sha256": digest},
                 retention=Retention(COMPLIANCE, minimum),
+                sse=SseS3(),
             )
             version = stored.version_id
             until = minimum
@@ -196,7 +221,8 @@ class Exporter:
         except Exception:
             try:
                 self.database.execute(
-                    "UPDATE ofz.archive_state SET acknowledged_at_ms=0"
+                    "UPDATE ofz.archive_state SET acknowledged_at_ms=0 "
+                    "WHERE acknowledged_at_ms<>0"
                 )
             except psycopg.Error as failure:
                 print(
@@ -213,11 +239,7 @@ class Exporter:
             "SELECT acknowledged_sequence,ofz.now_ms() AS now_ms FROM ofz.archive_state"
         ).fetchone()
         rows = self.database.execute(
-            "SELECT a.sequence,a.receipt,encode(a.target_hash,'hex') AS target_hash,"
-            "a.created_at_ms,o.audit_sequence IS NOT NULL AS has_outbox "
-            "FROM ofz.audit a LEFT JOIN ofz.audit_outbox o ON o.audit_sequence=a.sequence "
-            "WHERE a.sequence>%s OR o.acknowledged_at_ms IS NULL "
-            "ORDER BY a.sequence LIMIT 64",
+            PENDING_AUDIT_QUERY,
             (state["acknowledged_sequence"],),
         ).fetchall()
         if not rows:
@@ -233,8 +255,9 @@ class Exporter:
                 self.verify_object(Receipt.decode(previous["archive_receipt"]))
             self.database.execute(
                 "UPDATE ofz.archive_state SET acknowledged_at_ms=ofz.now_ms() "
-                "WHERE acknowledged_sequence=%s",
-                (state["acknowledged_sequence"],),
+                "WHERE acknowledged_sequence=%s AND "
+                "(acknowledged_at_ms<=ofz.now_ms()-%s OR acknowledged_at_ms>ofz.now_ms())",
+                (state["acknowledged_sequence"], IDLE_HEARTBEAT_MS),
             )
             return 0
         if any(not row.pop("has_outbox") for row in rows):
@@ -251,14 +274,14 @@ class Exporter:
                 "archive_receipt=coalesce(archive_receipt,%s) WHERE audit_sequence=ANY(%s)",
                 (receipt.encode(), sequences),
             ).rowcount
-            checkpoint = self.database.execute(
+            self.database.execute(
                 "UPDATE ofz.archive_state SET acknowledged_sequence=greatest(acknowledged_sequence,%s),"
                 "acknowledged_at_ms=ofz.now_ms(),batch_hash=%s "
                 "WHERE NOT EXISTS(SELECT 1 FROM ofz.audit a LEFT JOIN ofz.audit_outbox o "
                 "ON o.audit_sequence=a.sequence WHERE a.sequence<=%s AND o.acknowledged_at_ms IS NULL)",
                 (sequences[-1], receipt.sha256, sequences[-1]),
-            ).rowcount
-            if acknowledged != len(sequences) or checkpoint != 1:
+            )
+            if acknowledged != len(sequences):
                 raise ArchiveError("audit acknowledgement changed")
         return len(sequences)
 

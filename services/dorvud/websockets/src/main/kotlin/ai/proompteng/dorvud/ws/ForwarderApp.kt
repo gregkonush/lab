@@ -127,6 +127,7 @@ internal fun marketDataIdleRequiresReconnect(
     marketDataFreshnessGateActive(
       marketSessionState(now, marketType, marketHolidays),
       equityFeed,
+      now,
     )
 
 internal fun providerMarketDataIdleRequiresReconnect(
@@ -139,7 +140,7 @@ internal fun providerMarketDataIdleRequiresReconnect(
   idleTimeoutMs: Long,
 ): Boolean {
   if (subscribedAt == null || (marketType != AlpacaMarketType.CRYPTO && equityFeed != EquityFeed.Iex)) return false
-  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed)) return false
+  if (!marketDataFreshnessGateActive(marketSessionState(now, marketType, marketHolidays), equityFeed, now)) return false
   val lastProviderOrSubscriptionAt = maxOf(subscribedAt, lastProviderMarketDataAt ?: subscribedAt)
   return now.toEpochMilli() - lastProviderOrSubscriptionAt.toEpochMilli() >= idleTimeoutMs
 }

@@ -9,7 +9,7 @@ import { PgClient, PgMigrator } from '@effect/sql-pg'
 import { Effect, Redacted, Result, Schema } from 'effect'
 import { migrationLoader } from './migrations'
 import { baynTestPostgresUrl } from '../test-environment.test-support'
-import { canonicalHashV1 } from '../hash'
+import { canonicalHashV1Result } from '../hash'
 import { prepareAccounting, rebuildAccountingLedger } from '../accounting/domain'
 import { planAccountingReceipt } from './execution-store/decisions'
 import { AccountingTransactionRowSchema, accountingTransactionFromRow } from './accounting-rows'
@@ -65,18 +65,22 @@ const retainFill = (side: OrderSide, previous: { quantityAtoms: string; costMicr
       feeMicros: '0',
       occurredAt: at,
     }
-    const originalEventHash = canonicalHashV1({
-      schemaVersion: 'bayn.paper-fill-source.v1',
-      fill: originalFill,
-      brokerTransactionTime: timestamp,
-    })
-    const eventId = canonicalHashV1({
-      schemaVersion: 'bayn.paper-broker-event-id.v1',
-      broker: 'ALPACA',
-      accountId,
-      sourceEventId: fill.fillId,
-      contentHash: originalEventHash,
-    })
+    const originalEventHash = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.paper-fill-source.v1',
+        fill: originalFill,
+        brokerTransactionTime: timestamp,
+      }),
+    )
+    const eventId = Result.getOrThrow(
+      canonicalHashV1Result({
+        schemaVersion: 'bayn.paper-broker-event-id.v1',
+        broker: 'ALPACA',
+        accountId,
+        sourceEventId: fill.fillId,
+        contentHash: originalEventHash,
+      }),
+    )
     const prepared = Result.getOrThrow(prepareAccounting(eventId, fill, previous, ledger))
     const current = prepared.transaction
     const originalMaterial = {
@@ -98,7 +102,7 @@ const retainFill = (side: OrderSide, previous: { quantityAtoms: string; costMicr
       ledgerPlanHash: current.ledgerPlanHash,
       occurredAt: at,
     }
-    const originalContentHash = canonicalHashV1(originalMaterial)
+    const originalContentHash = Result.getOrThrow(canonicalHashV1Result(originalMaterial))
     yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
     VALUES(${eventId},'bayn.paper-broker-event.v1',${originalEventHash},'FILL','ALPACA',${accountId},${fill.fillId},${side === OrderSide.Buy ? 0 : 1},${at},${at})`
     yield* sql`INSERT INTO fills(event_id,account_id,schema_version,fill_id,broker_order_id,client_order_id,symbol,side,quantity_micros,price_micros,fee_micros,source_timestamp)
@@ -115,11 +119,13 @@ const retainFill = (side: OrderSide, previous: { quantityAtoms: string; costMicr
       originalContentHash,
       eventId,
       originalEventHash,
-      normalizedEventHash: canonicalHashV1({
-        schemaVersion: 'bayn.fill-source.v2',
-        fill,
-        brokerTransactionTime: timestamp,
-      }),
+      normalizedEventHash: Result.getOrThrow(
+        canonicalHashV1Result({
+          schemaVersion: 'bayn.fill-source.v2',
+          fill,
+          brokerTransactionTime: timestamp,
+        }),
+      ),
     }
   })
 
@@ -140,8 +146,8 @@ integration(
         for (const [index, item] of cases.entries()) {
           const brokerOrderId = `retained-order-${index}`
           const clientOrderId = `retained-client-${index}`
-          const eventId = canonicalHashV1({ brokerOrderId, at })
-          const originalHash = canonicalHashV1({ brokerOrderId, item })
+          const eventId = Result.getOrThrow(canonicalHashV1Result({ brokerOrderId, at }))
+          const originalHash = Result.getOrThrow(canonicalHashV1Result({ brokerOrderId, item }))
           yield* sql.withTransaction(
             Effect.gen(function* () {
               yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,source_event_id,source_sequence,occurred_at,observed_at)
@@ -151,25 +157,27 @@ integration(
             }),
           )
           const quantityAtoms = item.quantity === null ? null : (BigInt(item.quantity) * 1000n).toString()
-          const normalizedHash = canonicalHashV1({
-            schemaVersion: 'bayn.order-source.v3',
-            order: {
-              schemaVersion: 'bayn.order.v3',
-              accountId,
-              brokerOrderId,
-              clientOrderId,
-              symbol: 'AAPL',
-              side: 'BUY',
-              orderType: item.type,
-              timeInForce: 'DAY',
-              ...(quantityAtoms === null ? {} : { quantityAtoms }),
-              ...(item.notional === null ? {} : { notionalMicros: item.notional }),
-              filledQuantityAtoms: '0',
-              ...(item.price === null ? {} : { limitPriceMicros: item.price }),
-              status: 'CANCELED',
-            },
-            brokerUpdatedAt: at,
-          })
+          const normalizedHash = Result.getOrThrow(
+            canonicalHashV1Result({
+              schemaVersion: 'bayn.order-source.v3',
+              order: {
+                schemaVersion: 'bayn.order.v3',
+                accountId,
+                brokerOrderId,
+                clientOrderId,
+                symbol: 'AAPL',
+                side: 'BUY',
+                orderType: item.type,
+                timeInForce: 'DAY',
+                ...(quantityAtoms === null ? {} : { quantityAtoms }),
+                ...(item.notional === null ? {} : { notionalMicros: item.notional }),
+                filledQuantityAtoms: '0',
+                ...(item.price === null ? {} : { limitPriceMicros: item.price }),
+                status: 'CANCELED',
+              },
+              brokerUpdatedAt: at,
+            }),
+          )
           expected.push({ eventId, originalHash, normalizedHash, quantityAtoms, item })
         }
         yield* migrate
