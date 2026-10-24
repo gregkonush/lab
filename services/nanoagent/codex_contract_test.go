@@ -298,6 +298,14 @@ stream_max_retries = 0
 					if err != nil || string(replayed.result) != string(next.result) || requests.Load() != requestsBeforeRestart+1 {
 						t.Fatalf("restart replay duplicated the native turn: requests=%d error=%v", requests.Load(), err)
 					}
+					supervisor.mu.Lock()
+					events := append([]codexEvent(nil), supervisor.buffer...)
+					supervisor.mu.Unlock()
+					for _, event := range events {
+						if strings.Contains(string(event.Raw), "Full-history hydration is deprecated") {
+							t.Fatalf("native restart requested deprecated full history: %s", event.Raw)
+						}
+					}
 					nextInterrupt, _ := json.Marshal(map[string]any{"threadId": thread.Thread.ID, "turnId": nextTurn.Turn.ID, "clientUserMessageId": "55555555-5555-4555-8555-555555555555"})
 					if _, err := supervisor.call(ctx, "turn/interrupt", nextInterrupt); err != nil {
 						t.Fatal("interrupt restarted native turn", err)

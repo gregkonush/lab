@@ -121,6 +121,15 @@ type DraftImage = { id: string; name: string; size: number; input: TengriCodexIm
 
 class AgentConnectionError extends Error {}
 
+class ApprovalDeliveryError extends Error {
+  constructor(
+    readonly approvalId: string,
+    cause: unknown,
+  ) {
+    super(cause instanceof Error ? cause.message : 'Approval could not be resolved', { cause })
+  }
+}
+
 function runRecoveryError(cause: unknown, fallback: string): Error {
   if ((cause instanceof TengriRequestError && cause.status >= 500) || cause instanceof TypeError) {
     return new AgentConnectionError('Reconnecting to your agent…', { cause })
@@ -277,6 +286,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     resolvedApprovals.current.add(approvalId)
     retainedEvents.current = retainedEvents.current.filter((event) => event.approvalId !== approvalId)
     setEvents((current) => current.filter((event) => event.approvalId !== approvalId))
+    setError((current) =>
+      current instanceof ApprovalDeliveryError && current.approvalId === approvalId ? '' : current,
+    )
   }, [])
 
   useEffect(() => {
@@ -1312,6 +1324,10 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       completeCodexOperation(key, op.id)
       retireApproval(event.approvalId)
     } catch (cause) {
+      if (resolvedApprovals.current.has(event.approvalId)) {
+        if (operationId) completeCodexOperation(key, operationId)
+        return
+      }
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId) {
         completeCodexOperation(key, operationId)
         try {
@@ -1329,8 +1345,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           reportBrowserFailure('codex.approval.recovery')
         }
       }
-      if (threadIdRef.current === event.threadId)
-        setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
+      if (threadIdRef.current === event.threadId) setError(new ApprovalDeliveryError(event.approvalId, cause))
     } finally {
       setResolvingApprovals((current) => {
         const next = new Set(current)
