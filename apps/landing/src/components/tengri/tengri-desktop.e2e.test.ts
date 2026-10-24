@@ -2393,6 +2393,77 @@ test('automatically recovers a saved conversation after a cleanly truncated hist
   expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(false)
 })
 
+for (const { status, close } of [
+  { status: 503, close: false },
+  { status: 403, close: false },
+  { status: 503, close: true },
+]) {
+  const name = close
+    ? 'cancels a replay-history retry when the chat window closes'
+    : `recovers a replay-history failure with status ${status} without sending another turn`
+  test(name, async ({ page }) => {
+    await page.clock.install()
+    const mock = await mockTengri(page)
+    await page.addInitScript(() => localStorage.setItem('tengri-thread:microvm-ada', 'thread-existing'))
+    let attempts = 0
+    let failNext = false
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'resume-thread')
+        return route.fallback()
+      attempts++
+      if (failNext) {
+        failNext = false
+        return route.fulfill({ status, json: { error: 'History recovery failed' } })
+      }
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+    await expect(composer).toBeEditable()
+    await composer.fill('Keep my draft through recovery')
+    await expect(page.getByTestId('agent-event-stream')).toHaveAttribute('data-state', 'connected')
+    failNext = true
+    await emitCodexEvent(page, {
+      sequence: 1,
+      kind: 'warning',
+      method: 'tengri/replayWarning',
+      threadId: 'thread-existing',
+      turnId: '',
+      itemId: '',
+      approvalId: '',
+      text: 'Event replay needs a fresh snapshot',
+      rawJson: '{}',
+    })
+    await expect.poll(() => attempts).toBe(2)
+    if (close) {
+      await expect(chat.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+      await chat.getByRole('button', { name: 'Close Tengri', exact: true }).click()
+      await page.clock.runFor(31_000)
+      expect(attempts).toBe(2)
+      return
+    }
+    if (status === 503) {
+      await expect(chat.getByRole('status', { name: 'Loading conversation', exact: true })).toBeVisible()
+      await expect(chat.getByText('History recovery failed', { exact: true })).toHaveCount(0)
+      await page.clock.runFor(1_000)
+    } else {
+      await expect(chat.getByRole('alert')).toHaveText('History recovery failed')
+      await page.clock.runFor(31_000)
+      expect(attempts).toBe(2)
+      await chat.getByRole('button', { name: 'Retry', exact: true }).click()
+    }
+    await expect(composer).toBeEditable()
+    await expect(composer).toHaveValue('Keep my draft through recovery')
+    await expect(chat.getByRole('alert')).toHaveCount(0)
+    await expect(chat.getByRole('button', { name: 'Retry', exact: true })).toHaveCount(0)
+    expect(attempts).toBe(3)
+    expect(mock.actions.some((action) => action.action === 'create-thread' || action.action === 'send-turn')).toBe(
+      false,
+    )
+  })
+}
+
 test('cancels a pending conversation recovery retry when the chat window closes', async ({ page }) => {
   await page.clock.install()
   const mock = await mockTengri(page, {

@@ -208,6 +208,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
+  const [threadResumeRevision, setThreadResumeRevision] = useState(0)
   const [recoveryFailed, setRecoveryFailed] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
@@ -681,8 +682,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   )
 
   useEffect(() => {
-    if (!account?.authenticated || !threadId || threadReady || replayRecoveryRef.current || (!models && !modelError))
-      return
+    if (!account?.authenticated || !threadId || threadReady || (!models && !modelError)) return
     const controller = new AbortController()
     threadStartupController.current = controller
     let timer = 0
@@ -704,6 +704,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         if (!current()) return
         commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
         setThreadReady(true)
+        replayRecoveryRef.current = false
+        setReplayRecovering(false)
         setError('')
       } catch (cause: unknown) {
         if (current()) {
@@ -712,6 +714,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           if (retryableReadFailure(cause)) {
             timer = window.setTimeout(() => void resume(), retryDelay)
             retryDelay = Math.min(retryDelay * 2, 30_000)
+          } else {
+            replayRecoveryRef.current = false
+            setReplayRecovering(false)
           }
         }
       }
@@ -721,50 +726,27 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (threadStartupController.current === controller) threadStartupController.current = null
     }
-  }, [account?.authenticated, agentId, commitThreadState, modelError, models, threadId, threadReady])
+  }, [
+    account?.authenticated,
+    agentId,
+    commitThreadState,
+    modelError,
+    models,
+    threadId,
+    threadReady,
+    threadResumeRevision,
+  ])
 
-  const recoverThreadState = useCallback(async () => {
-    const currentThread = threadIdRef.current
-    if (!currentThread || replayRecoveryRef.current) return
+  const recoverThreadState = useCallback(() => {
+    if (!threadIdRef.current || replayRecoveryRef.current) return
     threadStartupController.current?.abort()
-    const recoverySequence = lastEventSequence.current
     replayRecoveryRef.current = true
-    const generation = ++threadResumeGeneration.current
     setThreadReady(false)
     setReplayRecovering(true)
     setRecoveryFailed(false)
     setError('')
-    try {
-      const thread = await runTengriAction<TengriCodexThread>({
-        action: 'resume-thread',
-        agentId,
-        threadId: currentThread,
-        ...optionsRef.current,
-      })
-      if (
-        !mountedRef.current ||
-        !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
-      ) {
-        return
-      }
-      commitThreadState(thread, lastTurnLifecycleSequence.current <= recoverySequence)
-      setThreadReady(true)
-      setError('')
-    } catch (cause) {
-      if (
-        mountedRef.current &&
-        codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
-      ) {
-        setRecoveryFailed(true)
-        setError(runRecoveryError(cause, 'This conversation could not be loaded.'))
-      }
-    } finally {
-      if (generation === threadResumeGeneration.current) {
-        replayRecoveryRef.current = false
-        if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
-      }
-    }
-  }, [agentId, commitThreadState])
+    setThreadResumeRevision((revision) => revision + 1)
+  }, [])
 
   useEffect(() => {
     if (!accountChecked) return
