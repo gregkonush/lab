@@ -56,7 +56,7 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v21 / signal state v19, retaining the 15-minute holding limit. Jev separately judges the current setup and whether an actual
+The source selects `jev` protocol v22 / signal state v20, retaining the 15-minute holding limit. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
 setup. Code supplies a bounded menu of market-price targets and per-stop net-reward scenarios whose conservative modeled
@@ -124,7 +124,9 @@ Crypto benchmarks use verified completed bars and their matching Dorvud feature.
 returns use the same starting minute and completed ending minute. Their comparison is labeled `COMPLETED_BAR_CLOSE`
 and ends at `relativeSignals.comparisonAt`; it never compares a live candidate quote against an older benchmark close.
 The candidate's current quote return, spread, breakout and range location remain in `candidate.currentPriceSignals`,
-separate from the relative returns. Executable quote pricing, fee estimates and funding still use the fresh candidate
+separate from the relative returns. Crypto breakout uses the fresh executable bid against the completed window's
+range high and labels `breakoutPricingBasis=CURRENT_BID`. Its older actual trade remains contextual; it cannot cap
+the current breakout. Equity breakout retains the current ask and fresh-trade confirmation basis. Executable quote pricing, fee estimates and funding still use the fresh candidate
 quote. Equity relative returns retain the current-quote comparison and label it `CURRENT_QUOTES`.
 BTC uses ETH; ETH and SOL use BTC. A benchmark supplies price context, without a quote
 or latest-trade field. Missing required benchmark bars or features reject the entire observation, including when that symbol is also a candidate. Every tradable candidate
@@ -134,7 +136,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v21 uses state v19.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v22 uses state v20.
 Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
@@ -1675,7 +1677,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v19"`, and positive `maximumCalls`. The input
+`inputDefinition: "bayn.jev-trading-signal-state.v20"`, and positive `maximumCalls`. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
