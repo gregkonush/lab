@@ -7,7 +7,14 @@ import { persistIntradayRecordRows } from '../market-data/intraday/verification'
 import { reconciledStateHash } from '../simulation-reconciliation/broker-model'
 import { makeIntradayMomentumTestSnapshot } from '../strategy/intraday-momentum/test-support'
 import { streamingFixtureFromRaw } from '../testing/streaming-market-fixture'
-import { decideJevExit, jevProtectiveQuoteIsFresh, JevExitReason, JevExitTargetSchema } from './exit'
+import {
+  decideJevExit,
+  jevProfitTargetHoldingDeadlineAt,
+  jevProfitTargetLimitFloors,
+  jevProtectiveQuoteIsFresh,
+  JevExitReason,
+  JevExitTargetSchema,
+} from './exit'
 import { nativeJevFixture } from './native.test-support'
 import { JevPurpose } from './portfolio'
 import { jevProtectiveQuoteDiagnostics, JevQuoteReferenceScope } from './quote-diagnostics'
@@ -88,6 +95,22 @@ describe('native Jev exit targets', () => {
     const result = decideJevExit({ ...evidence, trigger })
     expect(Result.isSuccess(result)).toBe(accepted)
     if (!Result.isSuccess(result)) return
+    const plan = fixture.portfolio.exitPolicy.plans['AAPL']
+    if (plan === undefined) throw new Error('Expected the sealed exit plan')
+    const reference = [{ symbol: 'AAPL', referencePriceMicros: plan.levels.profitLimitPriceMicros }]
+    const deadline = Result.getOrThrow(jevProfitTargetHoldingDeadlineAt(result.success))
+    if (deadline === undefined) throw new Error('Expected the actual holding deadline')
+    expect(Result.getOrThrow(jevProfitTargetLimitFloors(result.success, evidence.observedAt, reference))).toEqual({
+      AAPL: BigInt(plan.levels.profitLimitPriceMicros),
+    })
+    expect(Result.getOrThrow(jevProfitTargetLimitFloors(result.success, deadline, reference))).toEqual({})
+    expect(
+      Result.getOrThrow(
+        jevProfitTargetLimitFloors(result.success, evidence.observedAt, [
+          { symbol: 'AAPL', referencePriceMicros: plan.levels.stopPriceMicros },
+        ]),
+      ),
+    ).toEqual({})
     expect(Result.getOrThrow(Schema.decodeUnknownResult(JevExitTargetSchema)(result.success))).toEqual(result.success)
     expect(
       Result.isFailure(

@@ -1,4 +1,4 @@
-import { makeResearchStreamDecoder } from './client'
+import { makeResearchStreamDecoder, verifyOpenCodeEvidence } from './client'
 import type { PgClient } from '@effect/sql-pg'
 import { Effect, Result, Schema } from 'effect'
 
@@ -67,6 +67,16 @@ export const verifyResearchReceipt = (run: RetainedResearchRun, input: unknown) 
     if (Buffer.from(receipt.responseBase64, 'base64').length > maximumResearchStreamBytes)
       return yield* Result.fail(new ResearchError({ message: 'Research response bytes exceed the serving bound' }))
     if (receipt.outcome === 'COMPLETE') {
+      yield* verifyOpenCodeEvidence(run, receipt.harnessEvidence, receipt.startedAtMs)
+      if (
+        'harness' in run.policy &&
+        (receipt.workerSourceRevision === null ||
+          receipt.harnessEvidence === undefined ||
+          receipt.harnessEvidence.firstTokenAtMs !== receipt.firstTokenAtMs)
+      )
+        return yield* Result.fail(
+          new ResearchError({ message: 'OpenCode receipt lacks worker source or matching provider timing evidence' }),
+        )
       const stream = makeResearchStreamDecoder(run)
       yield* stream.push(Buffer.from(receipt.responseBase64, 'base64'), receipt.startedAtMs)
       yield* stream.complete()

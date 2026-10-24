@@ -55,7 +55,13 @@ export const makeResearchRunner = (
           }),
         )
       }
-      const receipt = yield* inferResearch(input, runId, endpoint, traceHeaders(), workerSourceRevision)
+      const receipt = yield* inferResearch(
+        input,
+        runId,
+        'harness' in input.policy ? 'http://opencode-research.opencode.svc.cluster.local:4096/proposal' : endpoint,
+        traceHeaders(),
+        workerSourceRevision,
+      )
       yield* store.finish(input, receipt)
       yield* recordResearchMetrics(receipt)
       yield* Effect.logInfo('Bayn research attempt completed').pipe(
