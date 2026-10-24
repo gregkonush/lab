@@ -75,7 +75,7 @@ container="$(docker run --detach --network none --read-only --tmpfs /tmp:rw,nosu
   "$image_id" node /app/opencode/research.js)"
 ready=false
 for _ in {1..45}; do
-  if docker exec "$container" curl --fail --silent http://127.0.0.1:4096/readyz >/dev/null; then ready=true; break; fi
+  if docker exec "$container" curl --connect-timeout 1 --max-time 3 --fail --silent http://127.0.0.1:4096/readyz >/dev/null; then ready=true; break; fi
   if [[ "$(docker inspect --format '{{.State.Running}}' "$container")" != true ]]; then break; fi
   sleep 1
 done
