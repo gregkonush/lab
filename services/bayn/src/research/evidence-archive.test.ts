@@ -14,7 +14,7 @@ test('the production Node S3 adapter verifies bytes, conditional writes, private
     })
     expect(built.success).toBeTrue()
     const node = Effect.runSync(Config.String('BAYN_TEST_NODE_BINARY').pipe(Config.withDefault('node')))
-    for (const mode of ['regular', 'public', 'corrupt', 'cancel', 'deadline']) {
+    for (const mode of ['regular', 'public', 'corrupt', 'cancel', 'deadline', 'audit']) {
       const child = Bun.spawn([node, join(directory, 'evidence-archive.test-support.js'), mode], {
         stdout: 'pipe',
         stderr: 'pipe',

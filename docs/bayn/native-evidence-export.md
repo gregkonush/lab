@@ -72,6 +72,36 @@ completed summary, or attempts to retain an incomplete failure marker. If storag
 a started attempt without a completed summary remains incomplete. Checkpoints and original pages are
 retained; the exporter does not change the trading journal.
 
+## Independent archive audit
+
+Run the verifier from the pinned checkout with only the existing object-store configuration. It needs
+neither PostgreSQL access nor model or broker credentials:
+
+```sh
+bun services/bayn/tools/native-arrival-archive-audit.ts \
+  --capture <native-capture-id> --receipt <export-receipt-hash> \
+  --maximum-pages 1000 --source-revision <verified-checkout-revision>
+```
+
+Pin the collector's receipt hash before starting. The audit follows every content-addressed page back to
+ordinal zero, independent of the collector's mutable cursor and database. It reads one page and decodes one
+chunk at a time. The explicit page budget is an admission limit; reaching it fails without a completed audit.
+Increase it deliberately for larger retained prefixes, up to 100,000 pages. Every referenced object must have
+its exact capture, key, byte length and SHA-256. Original compressed bytes, record hashes, consumer sequence,
+epoch and availability ordering must reproduce. Missing old pages, substituted bytes, skipped prefixes,
+conflicting end receipts and a receipt beginning inside a page all fail.
+
+The report counts every delivery by the original topic and partition, including zero-delivery partitions,
+accepted, ignored, rejected, tombstone and assignment-invalidated records. Counts include redeliveries;
+they are neither unique market events nor trade opportunities. It retains the original end receipt and the
+exporter's read-cut limit. A bounded prefix may verify completely while the consumer continues beyond it.
+The verifier retains its started/completed or failed attempt and a private content-addressed report with
+exact GET readback. The report binds both producer and verifier source revisions and the pinned receipt.
+
+`completeRetainedPrefixBytesVerified` establishes the archived prefix's integrity. Session coverage remains
+false, controller coverage remains unknown and qualification remains `UNQUALIFIED`. Independent source,
+session, timing, decision and cost evidence is still required for the registered evaluation.
+
 ## Native session export
 
 The published image also includes the native session command:

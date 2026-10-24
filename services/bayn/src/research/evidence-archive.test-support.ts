@@ -4,6 +4,9 @@ import { Effect, Exit, Fiber, Layer, Option, Redacted } from 'effect'
 import { TestClock } from 'effect/testing'
 
 import { makeEvidenceArchive, evidenceObjectMaximumBytes } from './evidence-archive'
+import { auditNativeArrivalArchive } from './native-arrival-archive-audit'
+import { exportNativeArrivalPrefix } from './native-arrival-export'
+import { nativeArrivalArchiveFixture } from './native-arrival-export.test-support'
 
 const mode = process.argv[2]
 const objects = new Map<string, { body: Buffer; etag: string }>()
@@ -90,6 +93,22 @@ try {
       }
       if (Exit.isFailure(result)) throw new Error('Private storage fixture was rejected')
       const archive = result.value
+      if (mode === 'audit') {
+        const fixture = nativeArrivalArchiveFixture()
+        const receipt = yield* exportNativeArrivalPrefix(fixture.source, archive, 20)
+        const report = yield* auditNativeArrivalArchive(archive, {
+          captureId: receipt.captureId,
+          receiptHash: receipt.receiptHash,
+          maximumPages: 3,
+          auditSourceRevision: 'f'.repeat(40),
+        })
+        assert.equal(report.records, 20)
+        assert.equal(report.pages, 3)
+        assert.equal(report.completeRetainedPrefixBytesVerified, true)
+        assert.equal(report.completeSessionCoverage, false)
+        assert.equal(report.qualification, 'UNQUALIFIED')
+        return
+      }
       const key = 'native-evidence/v1/fixture/original'
       const body = new TextEncoder().encode('original native bytes: 你好\n')
       if (mode === 'cancel' || mode === 'deadline') {

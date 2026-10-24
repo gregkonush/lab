@@ -3,26 +3,21 @@ import { Data, Effect, Option, Result, Schema } from 'effect'
 import { canonicalHashV1Result, canonicalJsonV1Result, sha256 } from '../hash'
 import {
   NativeArrivalCaptureError,
-  NativeArrivalChunkHeaderSchema,
   NativeArrivalEpochSchema,
   nativeArrivalCaptureId,
   type NativeArrivalChunk,
 } from '../market-data/streaming/native-arrival'
 import { NativeArrivalEndSchema } from '../market-data/streaming/native-arrival'
-import { NonNegativeIntegerSchema, Sha256Schema, StrictNonEmptyStringSchema, strictParseOptions } from '../schemas'
+import { NonNegativeIntegerSchema, Sha256Schema, strictParseOptions } from '../schemas'
 import { currentUtcInstant } from '../time'
 import type { EvidenceArchive } from './evidence-archive'
+import { EvidenceObjectSchema, NativeArrivalArchivePageSchema } from './native-arrival-archive-format'
 
 export class NativeArrivalExportFailure extends Data.TaggedError('NativeArrivalExportFailure')<{
   readonly message: string
   readonly cause?: unknown
 }> {}
 
-export const EvidenceObjectSchema = Schema.Struct({
-  key: StrictNonEmptyStringSchema,
-  sha256: Sha256Schema,
-  bytes: NonNegativeIntegerSchema,
-})
 const CursorMaterialSchema = Schema.Struct({
   schemaVersion: Schema.Literal('bayn.native-arrival-export-cursor.v1'),
   captureId: Sha256Schema,
@@ -35,19 +30,6 @@ const CursorMaterialSchema = Schema.Struct({
 })
 const CursorSchema = Schema.Struct({ ...CursorMaterialSchema.fields, cursorHash: Sha256Schema })
 type Cursor = typeof CursorMaterialSchema.Type
-const PageSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.native-arrival-export-page.v1'),
-  captureId: Sha256Schema,
-  epochHash: Sha256Schema,
-  previousPage: Schema.NullOr(EvidenceObjectSchema),
-  chunks: Schema.Array(
-    Schema.Struct({
-      header: NativeArrivalChunkHeaderSchema,
-      contentHash: Sha256Schema,
-      compressedBase64: Schema.String.check(Schema.isMaxLength(6 * 1024 * 1024)),
-    }),
-  ).check(Schema.isMinLength(1), Schema.isMaxLength(8)),
-})
 export interface NativeArrivalExportSource {
   readonly epoch: Effect.Effect<
     {
@@ -140,7 +122,7 @@ export const exportNativeArrivalPrefix = (
           message: 'Arrival checkpoint refers to a missing or changed page',
         })
       const page = yield* Schema.decodeUnknownEffect(
-        Schema.fromJsonString(PageSchema),
+        Schema.fromJsonString(NativeArrivalArchivePageSchema),
         strictParseOptions,
       )(yield* utf8(previousPage.value.body))
       if (
