@@ -8952,3 +8952,58 @@ test.describe('durable control retries', () => {
     await expect.poll(() => mock.actions.filter((action) => action.action === 'resolve-approval').length).toBe(1)
   })
 })
+
+for (const anotherDraft of [false, true]) {
+  test(`moves a pending new conversation draft to its assigned thread with another draft ${anotherDraft}`, async ({
+    page,
+  }) => {
+    await mockTengri(page)
+    await page.addInitScript(() =>
+      localStorage.setItem(
+        'tengri-conversations:microvm-ada',
+        JSON.stringify([{ id: 'thread-existing', title: 'Existing', updatedAt: 1 }]),
+      ),
+    )
+    let creating = false
+    let release = () => {}
+    const held = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    await page.route('**/api/tengri', async (route) => {
+      if (route.request().method() !== 'POST' || route.request().postDataJSON().action !== 'create-thread')
+        return route.fallback()
+      creating = true
+      await held
+      return route.fallback()
+    })
+    await page.goto('/')
+    const chat = page.getByRole('region', { name: 'Tengri window' })
+    const sidebar = chat.getByTestId('agent-conversation-sidebar')
+    const composer = chat.getByRole('form', { name: 'Message composer' }).getByRole('textbox')
+    await composer.fill('Create this conversation')
+    await chat.getByRole('button', { name: 'Send message', exact: true }).click()
+    try {
+      await expect.poll(() => creating).toBe(true)
+      await composer.fill('Follow up in the pending conversation')
+      await pasteClipboardImage(page, composer)
+      await expect(chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+      await sidebar.locator('[data-conversation-id="thread-existing"]').click()
+      await expect(composer).toBeEditable()
+      await composer.fill('Keep the existing conversation draft')
+      if (anotherDraft) {
+        await sidebar.getByRole('button', { name: 'New conversation', exact: true }).click()
+        await expect(composer).toHaveValue('')
+        await expect(chat.getByRole('list', { name: 'Image attachments' })).toHaveCount(0)
+        await expect(chat.getByRole('article', { name: 'Your message' })).toHaveCount(0)
+        await composer.fill('A separate new draft')
+      }
+    } finally {
+      release()
+    }
+    await expect(sidebar.locator('[data-conversation-id="thread-1"]')).toBeVisible()
+    await expect(composer).toHaveValue(anotherDraft ? 'A separate new draft' : 'Keep the existing conversation draft')
+    await sidebar.locator('[data-conversation-id="thread-1"]').click()
+    await expect(composer).toHaveValue('Follow up in the pending conversation')
+    await expect(chat.getByRole('list', { name: 'Image attachments' }).getByRole('img')).toHaveCount(1)
+  })
+}
