@@ -901,8 +901,9 @@ async fn optional_counter(path: &Path) -> serde_json::Value {
         if bytes.len() > 65_536 {
             return Err(std::io::Error::other("counter exceeds 64 KiB limit"));
         }
-        String::from_utf8(bytes)
-            .map_err(|_| std::io::Error::new(std::io::ErrorKind::InvalidData, "counter is not UTF-8"))
+        String::from_utf8(bytes).map_err(|_| {
+            std::io::Error::new(std::io::ErrorKind::InvalidData, "counter is not UTF-8")
+        })
     };
     match read.await {
         Ok(value) => json!({ "value": value }),
