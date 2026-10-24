@@ -47,7 +47,6 @@ docker exec "$container" bash -euc '
 for tool in opencode node bun go python3 uv ruby git gh nix kubectl helm kustomize kubeconform tofu buf make cc cmake rustc cargo ssh sqlite3 docker buildctl jq rg; do
   command -v "$tool" >/dev/null
 done
-nix build --no-link --impure --expr '''derivation { name = "opencode-development-proof"; system = builtins.currentSystem; builder = "/bin/bash"; args = [ "-c" "printf native-nix > $out" ]; }'''
 cd /workspace/lab
 printf "export const total = (a, b) => a + b\n" > total.js
 printf "import { test, expect } from \"bun:test\"; import { total } from \"./total.js\"; test(\"total\", () => expect(total(2,3)).toBe(5));\n" > total.test.js
@@ -55,6 +54,9 @@ bun test total.test.js
 bun build total.js --outfile=/workspace/total.bundle.js
 sha256sum "$HOME/server-password" > /workspace/password.sha256
 '
+docker exec -i "$container" bash -eu <<'NIX_PROOF'
+nix build --no-link --impure --expr 'derivation { name = "opencode-development-proof"; system = builtins.currentSystem; builder = "/bin/bash"; args = [ "-c" "printf native-nix > $out" ]; }'
+NIX_PROOF
 docker restart --time 10 "$container" >/dev/null
 ready=false
 for _ in {1..30}; do
