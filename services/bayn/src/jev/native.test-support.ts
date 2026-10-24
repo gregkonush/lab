@@ -243,6 +243,7 @@ export const nativeJevFixture = (
             entryIntentIds: [intentId],
             protectionIntentIds: [],
             exitRequestedAt: null,
+            profitExitRequested: false,
             entryFills,
             entryInventoryDebit: { quantityAtoms: '0', costBasisMicros: '0' },
             protectionDisposals: { quantityAtoms: '0', costBasisMicros: '0' },

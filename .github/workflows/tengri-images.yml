@@ -301,6 +301,7 @@ jobs:
           platforms: linux/${{ matrix.architecture }}
           load: true
           tags: tengri-kvm-test:validation
+          cache-from: type=registry,ref=${{ env.TENGRI_IMAGE }}:cache-${{ matrix.architecture }}
           build-contexts: |
             ofz-proto=proto
             ofz-catalog=services/ofz

@@ -408,6 +408,48 @@ test('provider failures consume elapsed time and remain retained', async () => {
   })
 })
 
+test('payment-required receipts stop the replay even when native evaluation handles the provider error', async () => {
+  const result = await Effect.runPromise(
+    Effect.scoped(
+      Effect.gen(function* () {
+        const f = yield* fixture
+        let providerCalls = 0
+        const provider: JevClient['Service'] = {
+          evaluate: () =>
+            Effect.suspend(() => {
+              providerCalls++
+              return Effect.fail(new JevError({ failure: JevFailure.Status, message: 'Payment required', status: 402 }))
+            }),
+        }
+        const timing = yield* makeReplayJevTiming({ ...f, provider }).pipe(
+          Effect.provideService(Clock.Clock, f.marketClock),
+        )
+        const outcome = yield* timing
+          .run(
+            Effect.forEach(['AAPL', 'AMD'], (symbol) =>
+              timing.client.evaluate(request(symbol).request).pipe(Effect.result),
+            ),
+          )
+          .pipe(Effect.result)
+        return { outcome, calls: f.calls, providerCalls }
+      }),
+    ),
+  )
+  expect(result.providerCalls).toBe(1)
+  expect(result.calls).toHaveLength(1)
+  expect(result.calls[0]?.outcome).toEqual({
+    status: 'FAILED',
+    failure: JevFailure.Status,
+    httpStatus: 402,
+    responseHash: null,
+    rejectedResponse: null,
+  })
+  expect(result.outcome).toMatchObject({
+    _tag: 'Failure',
+    failure: { _tag: 'ReplayBrokerFailure', message: 'Jev replay stopped after HTTP 402 payment required' },
+  })
+})
+
 test('failure to retain inference fails the replay even when the evaluator handles the provider error', async () => {
   const result = await Effect.runPromise(
     Effect.scoped(
