@@ -518,6 +518,12 @@ diagnostics before cleaning only its own resources. Its report states the bounda
 creation and repeated slot resumes do not prove the full authenticated BFF/Kubernetes creation distribution or six
 concurrent guests.
 
+`creation-resources.json` retains fixture-cgroup CPU, memory (including major faults), I/O and pressure counters
+before and after prepared creation. These bounded, fixed-file reads run outside the unchanged creation timer and
+are saved before later lifecycle checks, so a later failure does not erase the creation evidence. Missing counters
+are reported as unavailable, not zero. Cgroup-wide deltas can identify contention or paging evidence but do not
+attribute individual guest operations or prove a performance improvement.
+
 ## Editor sessions
 
 `IssueEditorSession(agent_id, window_id)` authorizes the owner, starts the guest workbench, and returns an ordinary
