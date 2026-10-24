@@ -10,8 +10,8 @@ let
       "bun build services/bayn/src/opencode-command.ts --target=node --format=esm --packages=bundle --outfile=research.js"
     ];
     runtimeInstallPhase = ''
-      mkdir -p "$out/usr/bin"
-    ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
+      mkdir -p "$out/app/opencode" "$out/usr/bin"
+      ln -s ${pkgs.coreutils}/bin/env "$out/usr/bin/env"
       cp "$TMPDIR/work/research.js" "$out/app/opencode/research.js"
       printf '{"type":"module"}\n' > "$out/app/opencode/package.json"
     '';

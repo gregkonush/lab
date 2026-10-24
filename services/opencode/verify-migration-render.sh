@@ -14,6 +14,10 @@ for application in opencode bayn; do
       kustomize edit set image "$application-main=registry.ide-newton.ts.net/lab/$application@sha256:$digest"
       kustomize build .
     ) > "$fixture/$application-$marker.yaml"
+    # Prove the promotion changed a rolling workload, not just an unused alias.
+    expected_image="registry.ide-newton.ts.net/lab/$application@sha256:$digest"
+    yq eval-all -o=json '[select(.kind == "Deployment") | .spec.template.spec.containers[].image]' \
+      "$fixture/$application-$marker.yaml" | jq -e --arg image "$expected_image" 'index($image) != null' >/dev/null
     yq eval-all -o=json '[select(.kind == "Job") | select(.metadata.name | test("^opencode-research-state-")) | .spec.template]' \
       "$fixture/$application-$marker.yaml" > "$fixture/$application-$marker.json"
     jq -e 'length == 1' "$fixture/$application-$marker.json" >/dev/null
