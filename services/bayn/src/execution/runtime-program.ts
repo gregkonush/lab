@@ -1,4 +1,5 @@
 import { Effect, Result } from 'effect'
+import type { JevExitTarget } from '../jev/exit'
 
 import { BrokerRead, type BrokerReadShape } from '../broker/alpaca/model'
 import { BrokerMutation, type BrokerMutationShape } from '../broker/alpaca-mutations/model'
@@ -288,12 +289,17 @@ export const makeExecutionProgram = (authority: ExecutionAuthority, dependencies
         ),
       )
     },
-    cancelProtectionOrder: (intentId: string, brokerOrderId: string) =>
+    cancelProtectionOrder: (intentId: string, brokerOrderId: string, exitTarget: JevExitTarget | undefined) =>
       dependencies.brokerStateCache.invalidate.pipe(
         Effect.andThen(
           Effect.gen(function* () {
             const observedAt = yield* dependencies.currentUtcInstant
-            const allowed = yield* dependencies.intentStore.beginProtectionCancel(intentId, brokerOrderId, observedAt)
+            const allowed = yield* dependencies.intentStore.beginProtectionCancel(
+              intentId,
+              brokerOrderId,
+              observedAt,
+              exitTarget,
+            )
             if (allowed) yield* defaultCoordinatorDependencies.brokerMutation.cancel(brokerOrderId)
             return allowed
           }),

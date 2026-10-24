@@ -185,13 +185,15 @@ const Document = Schema.Struct({
 })
 const NonNegative = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 const State = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v16'),
+  schemaVersion: Schema.Literal('bayn.jev-trading-signal-state.v17'),
   task: Schema.Struct({ horizonMinutes: Schema.Finite }),
   execution: Schema.Struct({ estimatedFeeBpsPerSide: NonNegative, estimatedRoundTripFeesBps: NonNegative }),
   entryEconomics: Schema.NullOr(
     Schema.Struct({
-      requiredBidRiseBps: Schema.Finite,
-      breakEvenExitBidUsd: Schema.Finite,
+      holdingExitRequiredBidRiseBps: Schema.Finite,
+      holdingExitBreakEvenBidUsd: Schema.Finite,
+      takeProfitRequiredBidRiseBps: Schema.Finite,
+      takeProfitBreakEvenLimitUsd: Schema.Finite,
       estimatedEntryFeesUsd: NonNegative,
       maximumHoldingMinutes: Schema.Finite,
       maximumEntryQuoteDriftBps: NonNegative,

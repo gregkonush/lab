@@ -57,7 +57,7 @@ A prior no-trade decision cannot cover an incomplete or planned execution.
 Decision creation must also fall within the cycle's durable creation, submission-open and last-update bounds, as
 required by normal cycle recovery.
 
-The source selects `jev` protocol v19 / signal state v16. Jev separately judges the current setup and whether an actual
+The source selects `jev` protocol v20 / signal state v17. Jev separately judges the current setup and whether an actual
 complete entry/stop/target trade is supported after costs within the holding deadline. Both answers must support entry:
 `setup=upward` and a supplied plan selected by `action`. An adverse or unclear setup rejects a plan, and plan abstention rejects an upward
 setup. Code supplies a bounded menu of market-price targets and per-stop net-reward scenarios whose conservative modeled
@@ -130,7 +130,7 @@ The immutable query records canonical `benchmarkSymbols`, including symbols that
 required benchmark bars or features produce source `not-ready` during snapshot acquisition, before any model request.
 Replay verifies those roles again; candidate quote/trade exclusions cannot downgrade a required benchmark failure.
 Migration 124 retires protocol v10 for new authority generations and requires flat positions, settled orders, complete
-accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v18 uses state v16.
+accounting and fresh exact reconciliation before cutover. Its historical observation state was `bayn.jev-trading-signal-state.v10`; current protocol v20 uses state v17.
 Entry break-even estimates use native close terms, instrument price rounding and session fee calculation. The common 10 bp adverse limit applies on both sides of LIMIT trading, including fractional equities. Estimated net liquidation includes that sell
 allowance, cent-rounded crypto cash fees and equity regulatory fees. Break-even bids reserve one rounding increment
 per price-dependent cash fee so a higher bid cannot become a loss at the next fee step. This does not establish
@@ -1671,7 +1671,7 @@ Historical artifacts remain available for comparison and audit.
 
 Set `BAYN_JEV_API_KEY` and `BAYN_PUBLIC_INFORMATION_PROXY` through the existing protected environment. The command requires an
 `inference` object with `mode: "measured-provider"`, `model: "jev-1.13.0"`, and
-`inputDefinition: "bayn.jev-trading-signal-state.v16"`, and positive `maximumCalls`. The input
+`inputDefinition: "bayn.jev-trading-signal-state.v17"`, and positive `maximumCalls`. The input
 binds `jevInstructionsHash` to the exact compiled instruction document. `bayn-backtest --instructions` reports it.
 Its `costs` object contains
 `inputMicrosPerMillionTokens` and `outputMicrosPerMillionTokens` as integer strings. The input also declares
@@ -1894,8 +1894,13 @@ failures with observation age, without recording account identifiers or payloads
 
 The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
 consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
-runner and active factor/editor contracts are removed. Jev remains the typed System One model; the shared Flamingo
-endpoint only edits the question document through the signed research workflow.
+runner and active factor/editor contracts are removed. Jev remains the typed System One model. The selected shared Flamingo or native OpenCode free endpoint only edits
+the question document through the signed research workflow. The isolated CPU gateway `opencode-research` in
+namespace `opencode` retains one session per study,
+with one hosted call per proposal and no paid fallback. Its actual provider input, raw response and source/configuration
+identity travel in the verified research receipt, with separate gateway and worker source revisions.
+See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
+for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and

@@ -100,7 +100,7 @@ export const makeNativeArrivalJournal = (
         const batch: NativeArrivalChunk[] = []
         let bytes = 0
         for (const chunk of pending) {
-          if (batch.length > 0 && (batch.length >= 16 || bytes + chunk.compressed.byteLength > 1024 * 1024)) break
+          if (batch.length > 0 && (batch.length >= 256 || bytes + chunk.compressed.byteLength > 8 * 1024 * 1024)) break
           batch.push(chunk)
           bytes += chunk.compressed.byteLength
         }
@@ -115,6 +115,7 @@ export const makeNativeArrivalJournal = (
       }
     })
     let reportedFailure = false
+    let closing = false
     const reportFailure = (cause: NativeArrivalCaptureError) =>
       Effect.sync(() => {
         fail(cause)
@@ -134,12 +135,26 @@ export const makeNativeArrivalJournal = (
           }),
         ),
       ),
-    ).pipe(Effect.catchTag('NativeArrivalCaptureError', reportFailure), Effect.forkScoped)
+    ).pipe(
+      Effect.catchTag('NativeArrivalCaptureError', reportFailure),
+      Effect.onExit((exit) =>
+        closing || state !== 'RECORDING'
+          ? Effect.void
+          : reportFailure(
+              new NativeArrivalCaptureError({
+                message: 'Native arrival writer stopped before owner shutdown',
+                cause: Exit.isFailure(exit) ? exit.cause : undefined,
+              }),
+            ),
+      ),
+      Effect.forkScoped,
+    )
     const ticker = yield* Effect.forever(Effect.sleep('1 second').pipe(Effect.andThen(buffer.withPermit(flush)))).pipe(
       Effect.forkScoped,
     )
     yield* Effect.addFinalizer((exit) =>
       Effect.gen(function* () {
+        closing = true
         yield* Fiber.interrupt(ticker)
         yield* Fiber.interrupt(worker)
         yield* drain

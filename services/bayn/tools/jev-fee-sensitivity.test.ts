@@ -168,14 +168,14 @@ test.each(['BTC/USD', 'ETH/USD', 'SOL/USD'])(
       const prior = result.scenarios[i - 1],
         current = result.scenarios[i]
       if (prior === undefined || current === undefined) throw new Error('fixture')
-      expect(BigInt(current.breakEvenExitBidMicros)).toBeLessThan(BigInt(prior.breakEvenExitBidMicros))
+      expect(BigInt(current.holdingExitBreakEvenBidMicros)).toBeLessThan(BigInt(prior.holdingExitBreakEvenBidMicros))
       expect(BigInt(current.receivedQuantityAtoms)).toBeGreaterThan(BigInt(prior.receivedQuantityAtoms))
     }
     expect(() =>
       hypotheticalCryptoFeeSensitivity({
         symbol,
         protocol,
-        economics: { ...economics, breakEvenExitBidUsd: 1 },
+        economics: { ...economics, holdingExitBreakEvenBidUsd: 1 },
         bidMicros: 100_000_000n,
       }),
     ).toThrow('baseline')
