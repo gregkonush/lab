@@ -17,7 +17,7 @@ let
   };
   tools = pkgs.buildEnv {
     name = "opencode-development-tools";
-    paths = [ ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo ];
+    paths = [ ciToolchain cli nodejs bun pkgs.bashInteractive pkgs.openssh pkgs.gnutar pkgs.gzip pkgs.unzip pkgs.sqlite pkgs.tini pkgs.stdenv.cc pkgs.cmake pkgs.rustc pkgs.cargo pkgs.rustfmt pkgs.clippy pkgs.ruff ];
     pathsToLink = [ "/bin" ];
     ignoreCollisions = true;
   };
