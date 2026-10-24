@@ -411,7 +411,7 @@ export function codexEventShouldRender(
   restoredHistorySequence = Number.POSITIVE_INFINITY,
 ) {
   if (!codexEventMatchesThread(event, threadId)) return false
-  if (event.method === 'thread/tokenUsage/updated') return false
+  if (event.kind === 'usage' || event.method.toLowerCase() === 'deprecationnotice') return false
   if (codexEventIsIndependentOfThreadSnapshot(event)) return true
   if (restoredHistorySequence > 0 && event.sequence <= restoredHistorySequence) return false
   return !event.itemId || !restoredItemIds.has(event.itemId) || event.sequence > restoredHistorySequence

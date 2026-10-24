@@ -494,12 +494,14 @@ describe('Codex event replay', () => {
     expect(codexEventShouldRender(approval, 'thread-2', restoredItemIds)).toBe(false)
   })
 
-  test('hides token counts during live streaming and replay while keeping account usage visible', () => {
+  test('keeps usage and developer deprecation notices out of the conversation during streaming and replay', () => {
     const tokenUsage = { ...event, kind: 'usage' as const, method: 'thread/tokenUsage/updated', itemId: '' }
     const rateLimits = { ...tokenUsage, method: 'account/rateLimits/updated' }
+    const deprecation = { ...event, kind: 'warning' as const, method: 'deprecationNotice', itemId: '' }
     for (const snapshotSequence of [0, event.sequence + 1]) {
       expect(codexEventShouldRender(tokenUsage, event.threadId, new Set(), snapshotSequence)).toBe(false)
-      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(true)
+      expect(codexEventShouldRender(rateLimits, event.threadId, new Set(), snapshotSequence)).toBe(false)
+      expect(codexEventShouldRender(deprecation, event.threadId, new Set(), snapshotSequence)).toBe(false)
     }
   })
 
@@ -512,7 +514,7 @@ describe('Codex event replay', () => {
 
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds)).toBe(false)
     expect(codexEventShouldRender(event, event.threadId, restoredItemIds, event.sequence)).toBe(false)
-    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(true)
+    expect(codexEventShouldRender(itemlessSnapshotEvent, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(renamedSnapshotItem, event.threadId, restoredItemIds, event.sequence)).toBe(false)
     expect(codexEventShouldRender(snapshotWarning, event.threadId, restoredItemIds, event.sequence)).toBe(true)
     expect(codexEventShouldRender(snapshotError, event.threadId, restoredItemIds, event.sequence)).toBe(true)

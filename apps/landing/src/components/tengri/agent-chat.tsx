@@ -131,7 +131,7 @@ class ApprovalDeliveryError extends Error {
 }
 
 function runRecoveryError(cause: unknown, fallback: string): Error {
-  if ((cause instanceof TengriRequestError && cause.status >= 500) || cause instanceof TypeError) {
+  if (retryableReadFailure(cause)) {
     return new AgentConnectionError('Reconnecting to your agent…', { cause })
   }
   return cause instanceof Error ? cause : new Error(fallback)
@@ -206,8 +206,14 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
   const draftsRef = useRef(new Map<string, { text: string; images: DraftImage[] }>())
+  const creatingDraftRef = useRef<{
+    selection: number
+    draft?: { text: string; images: DraftImage[] }
+  } | null>(null)
+  const [recoverableDrafts, setRecoverableDrafts] = useState<{ id: string; text: string; images: DraftImage[] }[]>([])
   const [submitting, setSubmitting] = useState(false)
   const [replayRecovering, setReplayRecovering] = useState(false)
+  const [threadResumeRevision, setThreadResumeRevision] = useState(0)
   const [recoveryFailed, setRecoveryFailed] = useState(false)
   const [interrupting, setInterrupting] = useState(false)
   const [loginBusy, setLoginBusy] = useState(false)
@@ -525,6 +531,8 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     autoApprovalAttempts.current.clear()
     resolvedApprovals.current.clear()
     draftsRef.current.clear()
+    creatingDraftRef.current = null
+    setRecoverableDrafts([])
     lastScrollTop.current = 0
     setPrompt('')
     setFollowingConversation(true)
@@ -681,8 +689,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   )
 
   useEffect(() => {
-    if (!account?.authenticated || !threadId || threadReady || replayRecoveryRef.current || (!models && !modelError))
-      return
+    if (!account?.authenticated || !threadId || threadReady || (!models && !modelError)) return
     const controller = new AbortController()
     threadStartupController.current = controller
     let timer = 0
@@ -704,14 +711,19 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         if (!current()) return
         commitThreadState(thread, lastTurnLifecycleSequence.current <= resumeSequence)
         setThreadReady(true)
+        replayRecoveryRef.current = false
+        setReplayRecovering(false)
         setError('')
       } catch (cause: unknown) {
         if (current()) {
           setRecoveryFailed(true)
-          setError(cause instanceof Error ? cause : 'Codex thread could not be resumed')
+          setError(runRecoveryError(cause, 'This conversation could not be loaded.'))
           if (retryableReadFailure(cause)) {
             timer = window.setTimeout(() => void resume(), retryDelay)
             retryDelay = Math.min(retryDelay * 2, 30_000)
+          } else {
+            replayRecoveryRef.current = false
+            setReplayRecovering(false)
           }
         }
       }
@@ -721,50 +733,27 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       controller.abort()
       if (threadStartupController.current === controller) threadStartupController.current = null
     }
-  }, [account?.authenticated, agentId, commitThreadState, modelError, models, threadId, threadReady])
+  }, [
+    account?.authenticated,
+    agentId,
+    commitThreadState,
+    modelError,
+    models,
+    threadId,
+    threadReady,
+    threadResumeRevision,
+  ])
 
-  const recoverThreadState = useCallback(async () => {
-    const currentThread = threadIdRef.current
-    if (!currentThread || replayRecoveryRef.current) return
+  const recoverThreadState = useCallback(() => {
+    if (!threadIdRef.current || replayRecoveryRef.current) return
     threadStartupController.current?.abort()
-    const recoverySequence = lastEventSequence.current
     replayRecoveryRef.current = true
-    const generation = ++threadResumeGeneration.current
     setThreadReady(false)
     setReplayRecovering(true)
     setRecoveryFailed(false)
     setError('')
-    try {
-      const thread = await runTengriAction<TengriCodexThread>({
-        action: 'resume-thread',
-        agentId,
-        threadId: currentThread,
-        ...optionsRef.current,
-      })
-      if (
-        !mountedRef.current ||
-        !codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
-      ) {
-        return
-      }
-      commitThreadState(thread, lastTurnLifecycleSequence.current <= recoverySequence)
-      setThreadReady(true)
-      setError('')
-    } catch (cause) {
-      if (
-        mountedRef.current &&
-        codexResumeCommitIsCurrent(generation, threadResumeGeneration.current, currentThread, threadIdRef.current)
-      ) {
-        setRecoveryFailed(true)
-        setError(cause instanceof Error ? cause : 'Codex thread state could not be refreshed')
-      }
-    } finally {
-      if (generation === threadResumeGeneration.current) {
-        replayRecoveryRef.current = false
-        if (mountedRef.current && threadIdRef.current === currentThread) setReplayRecovering(false)
-      }
-    }
-  }, [agentId, commitThreadState])
+    setThreadResumeRevision((revision) => revision + 1)
+  }, [])
 
   useEffect(() => {
     if (!accountChecked) return
@@ -1088,7 +1077,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
   }
 
   async function pasteImages(files: File[]) {
-    if (submitting || replayRecovering || (threadId && !threadReady)) return
+    if (replayRecovering || (threadId && !threadReady)) return
     const pending = files.map((file) => ({
       id: crypto.randomUUID(),
       name: file.name || 'Pasted image',
@@ -1140,6 +1129,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return
     if (activeTurnIdRef.current && !runMatchesThread) return
     const selectedConversation = conversationSelection.current
+    if (!threadId) creatingDraftRef.current = { selection: selectedConversation }
     submissionThread.current = threadId
     let submittedThread = threadId
     setSubmitting(true)
@@ -1212,15 +1202,33 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         }
       }
       if (!operation.turnId) {
-        const accepted = await runTengriAction<TengriCodexRun>({
-          action: 'send-turn',
-          agentId,
-          operationId: operation.id,
-          threadId: currentThread.id,
-          text,
-          images: inputImages,
-          ...operation.options,
-        })
+        let accepted: TengriCodexRun
+        try {
+          accepted = await runTengriAction<TengriCodexRun>({
+            action: 'send-turn',
+            agentId,
+            operationId: operation.id,
+            threadId: currentThread.id,
+            text,
+            images: inputImages,
+            ...operation.options,
+          })
+        } catch (cause) {
+          if (!retryableReadFailure(cause)) throw cause
+          try {
+            const recovered = await runTengriAction<TengriCodexRun | null>({
+              action: 'codex-run',
+              agentId,
+              runId: operation.id,
+            })
+            if (!recovered) throw cause
+            accepted = recovered
+          } catch {
+            throw cause
+          }
+        }
+        if (accepted.agentId !== agentId || accepted.threadId !== currentThread.id || accepted.runId !== operation.id)
+          throw new Error('Message confirmation returned a different conversation')
         if (accepted.state.phase === 'rejected') {
           completeCodexOperation(operationKey, operation.id)
           throw new Error(accepted.state.reason)
@@ -1230,6 +1238,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
           setRun(accepted)
           setRunId(accepted.runId)
           if (
+            !codexRunIsTerminal(accepted) &&
             'turnId' in accepted.state &&
             accepted.state.turnId &&
             !completedTurns.current.has(accepted.state.turnId)
@@ -1246,17 +1255,40 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     } catch (cause) {
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && sentOperation)
         completeCodexOperation(sentOperation.key, sentOperation.id)
-      setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
-      draftsRef.current.set(submittedThread, { text, images: draftImages })
-      if (
+      const stillSelected =
         (submittedThread && threadIdRef.current === submittedThread) ||
         conversationSelection.current === selectedConversation
-      ) {
+      if (!submittedThread && !stillSelected && creatingDraftRef.current?.selection === selectedConversation) {
+        const nextDraft = creatingDraftRef.current.draft
+        setRecoverableDrafts((current) => [
+          ...current,
+          { id: submissionId, text, images: draftImages },
+          ...(nextDraft?.text || nextDraft?.images.length ? [{ id: `${submissionId}:next`, ...nextDraft }] : []),
+        ])
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+        return
+      }
+      const draft = stillSelected
+        ? { text: promptRef.current?.value ?? '', images: imagesRef.current }
+        : draftsRef.current.get(submittedThread)
+      const restoreDraft = !draft?.text && !draft?.images.length
+      if (!submittedThread && !restoreDraft) {
+        setRecoverableDrafts((current) => [...current, { id: submissionId, text, images: draftImages }])
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+      }
+      if (restoreDraft) {
+        setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
+        draftsRef.current.set(submittedThread, { text, images: draftImages })
+      }
+      if (stillSelected) {
         setError(cause instanceof Error ? cause.message : 'Message could not be sent')
-        setPrompt(text)
-        commitImages(draftImages)
+        if (restoreDraft) {
+          setPrompt(text)
+          commitImages(draftImages)
+        }
       }
     } finally {
+      if (creatingDraftRef.current?.selection === selectedConversation) creatingDraftRef.current = null
       setSubmitting(false)
     }
   }
@@ -1271,6 +1303,11 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
     if (conversationSelection.current !== selectedConversation) {
+      if (!threadId && creatingDraftRef.current?.selection === selectedConversation) {
+        const draft = creatingDraftRef.current.draft
+        if (draft) draftsRef.current.set(thread.id, draft)
+        creatingDraftRef.current = null
+      }
       setConversations((current) =>
         upsertStoredConversation(
           agentId,
@@ -1285,6 +1322,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
       return { id: thread.id, activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
     }
     if (!threadId) {
+      creatingDraftRef.current = null
       draftsRef.current.delete('')
       const assignThread = (event: CodexBufferedEvent) =>
         event.threadId || codexEventIsRuntimeError(event) ? event : { ...event, threadId: thread.id }
@@ -1391,14 +1429,35 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
     }
   }
 
+  function recoverDraft(id: string) {
+    if (submitting || !canChangeConversation) return
+    const recovered = recoverableDrafts.find((draft) => draft.id === id)
+    if (!recovered) return
+    const displaced = threadIdRef.current ? draftsRef.current.get('') : { text: prompt, images: imagesRef.current }
+    setRecoverableDrafts((current) => [
+      ...current.filter((draft) => draft.id !== id),
+      ...(displaced?.text || displaced?.images.length ? [{ id: crypto.randomUUID(), ...displaced }] : []),
+    ])
+    showChat()
+    removeStoredThread(agentId)
+    resetTranscriptUi('')
+    draftsRef.current.delete('')
+    setPrompt(recovered.text)
+    commitImages(recovered.images)
+    focusComposerAfterConversationChange()
+  }
+
   function resetTranscriptUi(nextThreadId: string) {
+    const creatingDraft = creatingDraftRef.current
+    const leavingCreation = !threadIdRef.current && creatingDraft?.selection === conversationSelection.current
+    if (leavingCreation) creatingDraft.draft = { text: prompt, images: imagesRef.current }
     conversationSelection.current += 1
     recoverInitialRun.current = false
     if (!nextThreadId)
       retainedEvents.current = retainedEvents.current.filter(
         (event) => event.threadId || codexEventIsRuntimeError(event),
       )
-    if (!threadIdRef.current && !nextThreadId) {
+    if (leavingCreation || (!threadIdRef.current && !nextThreadId)) {
       draftsRef.current.delete('')
     } else {
       draftsRef.current.set(threadIdRef.current, { text: prompt, images: imagesRef.current })
@@ -1521,7 +1580,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
         (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
       ),
   )
-  const conversationLoading = Boolean(threadId && !threadReady && !recoveryFailed)
+  const conversationLoading = Boolean(
+    threadId && !threadReady && (!recoveryFailed || error instanceof AgentConnectionError),
+  )
   const agentStatus = connectionNotice
     ? 'Reconnecting'
     : replayRecovering
@@ -1676,6 +1737,22 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
               }}
             >
               {conversationLoading ? <ConversationSkeleton /> : null}
+              {conversationMissing ? (
+                <div
+                  role="status"
+                  aria-label="Conversation unavailable"
+                  className="flex h-full flex-col items-center justify-center gap-3 pb-16 text-center"
+                >
+                  <p className="text-copy-14 text-zinc-400">This conversation is unavailable.</p>
+                  <button
+                    type="button"
+                    className="rounded-md px-2.5 py-1.5 text-label-13 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400"
+                    onClick={() => void recoverThreadState()}
+                  >
+                    Retry
+                  </button>
+                </div>
+              ) : null}
               {(!threadId || threadReady) && transcriptCards.length === 0 && !responsePending ? (
                 <EmptyConversation
                   onSelectPrompt={(text) => {
@@ -1762,7 +1839,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
             ) : null}
           </div>
 
-          <div className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
+          <div hidden={conversationMissing} className="shrink-0 px-3 pt-2 pb-3 @[540px]/agent:px-6">
             <div className="mx-auto w-full max-w-3xl">
               {selectionWarning ? (
                 <p role="status" className="mb-2 text-label-12 text-amber-200/80">
@@ -1774,45 +1851,33 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                 state={eventStreamState}
                 reconnecting={connectionNotice && !errorMessage}
               />
-              {replayRecovering ? (
-                <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
-                  Recovering the active conversation…
-                </p>
-              ) : threadId && !threadReady && recoveryFailed ? (
-                <div className="mx-auto mb-3 w-full text-label-12">
-                  {conversationMissing ? (
-                    <p className="mb-2 text-zinc-400">
-                      This saved conversation is no longer available. Start a new conversation to continue in this
-                      workspace.
-                    </p>
-                  ) : null}
-                  <div className="flex items-center justify-center gap-3">
-                    <button
-                      type="button"
-                      className="rounded text-blue-400 outline-none hover:text-blue-300 focus-visible:ring-1 focus-visible:ring-blue-400"
-                      onClick={() => void recoverThreadState()}
-                    >
-                      Retry conversation recovery
-                    </button>
-                    {conversationMissing ? (
-                      <button
-                        type="button"
-                        disabled={!canChangeConversation}
-                        className="rounded-md border border-white/[0.08] px-2.5 py-1.5 text-zinc-300 outline-none hover:bg-white/[0.04] focus-visible:ring-1 focus-visible:ring-blue-400 disabled:opacity-35"
-                        onClick={newConversation}
-                      >
-                        Start a new conversation
-                      </button>
-                    ) : null}
-                  </div>
-                </div>
+              {recoverableDrafts.map((draft, index) => (
+                <button
+                  key={draft.id}
+                  type="button"
+                  disabled={submitting || !canChangeConversation}
+                  className="mb-2 rounded px-1 text-label-12 text-zinc-400 hover:text-zinc-200"
+                  onClick={() => recoverDraft(draft.id)}
+                >
+                  Recover unsent draft {index + 1}
+                </button>
+              ))}
+              {threadId && !threadReady && recoveryFailed && !(error instanceof AgentConnectionError) ? (
+                <button
+                  type="button"
+                  className="mb-2 rounded px-1 text-label-12 text-zinc-400 outline-none hover:text-zinc-200 focus-visible:ring-1 focus-visible:ring-blue-400"
+                  onClick={() => void recoverThreadState()}
+                >
+                  Retry
+                </button>
               ) : null}
               <form
                 aria-label="Message composer"
-                aria-busy={replayRecovering}
+                aria-busy={submittingHere || replayRecovering}
                 className="w-full rounded-2xl bg-zinc-900/60 transition-colors focus-within:bg-zinc-900/80 motion-reduce:transition-none"
                 onSubmit={(event) => {
                   event.preventDefault()
+                  promptRef.current?.focus({ preventScroll: true })
                   void send()
                 }}
               >
@@ -1821,7 +1886,7 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                     ref={promptRef}
                     data-window-default-focus
                     aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
-                    disabled={submittingHere || replayRecovering || Boolean(threadId && !threadReady)}
+                    disabled={replayRecovering || Boolean(threadId && !threadReady)}
                     value={prompt}
                     onChange={(event) => setPrompt(event.target.value)}
                     onPaste={(event) => {
@@ -1879,7 +1944,6 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                           <button
                             type="button"
                             aria-label={`Remove image ${image.name}`}
-                            disabled={submitting}
                             onClick={() =>
                               commitImages(imagesRef.current.filter((candidate) => candidate.id !== image.id))
                             }
@@ -1950,19 +2014,9 @@ function AgentChatView({ active, agentId }: { active: boolean; agentId: string }
                       Boolean(threadId && !threadReady)
                     }
                     onClick={showStopAction ? () => void interruptTurn() : undefined}
-                    className={cn(
-                      'mb-0.5 grid size-7 shrink-0 place-items-center rounded-full outline-none transition-colors focus-visible:ring-1 focus-visible:ring-blue-400 disabled:bg-zinc-800 disabled:text-zinc-500 motion-reduce:transition-none',
-                      showStopAction
-                        ? 'bg-zinc-100 text-zinc-900 hover:bg-white'
-                        : 'bg-zinc-100 text-zinc-900 hover:bg-white',
-                    )}
+                    className="mb-0.5 grid size-7 shrink-0 place-items-center rounded-full bg-zinc-100 text-zinc-900 outline-none transition-colors hover:bg-white focus-visible:ring-1 focus-visible:ring-blue-400 disabled:bg-zinc-800 disabled:text-zinc-500 motion-reduce:transition-none"
                   >
-                    {submitting || interrupting ? (
-                      <LoaderCircle
-                        className="h-3.5 w-3.5 animate-spin motion-reduce:animate-none"
-                        aria-hidden="true"
-                      />
-                    ) : showStopAction ? (
+                    {showStopAction ? (
                       <Square className="h-3 w-3 fill-current" aria-hidden="true" />
                     ) : (
                       <ArrowUp className="h-3.5 w-3.5" aria-hidden="true" />
