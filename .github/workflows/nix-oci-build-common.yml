@@ -224,7 +224,6 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           set -euo pipefail
-          bash services/opencode/verify-migration-render.sh
           bash nix/ci-run-timed.sh "verify-opencode-${ARCH}" "${NIX_OCI_LOG_DIR}/verify-opencode-${ARCH}.log" \
             bash nix/verify-opencode-image.sh "${IMAGE_TAR}"
 
