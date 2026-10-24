@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Run only after the reviewed migration revision has reached both applications.
+set -euo pipefail
+context=galactic-tailscale
+root="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
+evidence="${1:?Usage: migrate.sh <private-evidence-directory>}"
+mkdir -p "$evidence"
+chmod 700 "$evidence"
+kubectl --context "$context" -n bayn get deployment bayn-opencode -o json > "$evidence/old-deployment.json"
+jq -e '.spec.replicas == 0 and (.status.replicas // 0) == 0' "$evidence/old-deployment.json" >/dev/null
+kubectl --context "$context" -n bayn get pods -l app.kubernetes.io/name=bayn-opencode -o json > "$evidence/old-pods.json"
+jq -e '.items | length == 0' "$evidence/old-pods.json" >/dev/null
+source_pod="$(kubectl --context "$context" -n bayn get pods -l job-name=opencode-research-state-export -o json | jq -er '.items | if length == 1 then .[0].metadata.name else error("expected one source") end')"
+target_pod="$(kubectl --context "$context" -n opencode get pods -l job-name=opencode-research-state-import -o json | jq -er '.items | if length == 1 then .[0].metadata.name else error("expected one target") end')"
+kubectl --context "$context" -n bayn exec -i "$source_pod" -- python - verify /source < "$root/services/opencode/migrate_state.py" > "$evidence/before.json"
+# Save the complete archive before importing; never import a failed source stream.
+kubectl --context "$context" -n bayn exec -i "$source_pod" -- python - export /source < "$root/services/opencode/migrate_state.py" > "$evidence/state.tar"
+sha256sum "$evidence/state.tar" > "$evidence/state.tar.sha256"
+kubectl --context "$context" -n opencode exec -i "$target_pod" -- python3 /app/opencode/migrate_state.py restore /data < "$evidence/state.tar" > "$evidence/restored.json"
+kubectl --context "$context" -n opencode rollout status deployment/opencode-research --timeout=120s
+kubectl --context "$context" -n opencode exec deploy/opencode-research -c research -- python3 /app/opencode/migrate_state.py verify /var/lib/bayn-opencode > "$evidence/after.json"
+python3 - "$evidence" <<'PY'
+import hashlib,json,sys
+from pathlib import Path
+root=Path(sys.argv[1])
+before=json.loads((root/'before.json').read_text())
+after=json.loads((root/'after.json').read_text())
+restored=json.loads((root/'restored.json').read_text())
+assert hashlib.sha256(json.dumps(before,sort_keys=True).encode()).hexdigest()==restored['manifestSha256'], 'Restored manifest does not match the source'
+claims={name:entry for name,entry in before.items() if name.startswith(('studies/','attempts/'))}
+assert claims, 'Missing retained research evidence'
+assert all(after.get(name)==entry for name,entry in claims.items()), 'Retained research claims changed after startup'
+print('All restored bytes match the source; native startup retained every study mapping and exclusive attempt claim')
+PY
+kubectl --context "$context" -n bayn exec "$source_pod" -- touch /tmp/export-complete
