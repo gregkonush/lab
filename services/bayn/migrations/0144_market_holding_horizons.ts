@@ -55,6 +55,16 @@ export default Effect.gen(function* () {
     reason = 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER', version = version + 1,
     updated_at = greatest(clock_timestamp(), updated_at + interval '1 millisecond') WHERE maximum = 'PAPER'
       AND (effective = 'PAPER' OR reason = 'BLOCKED_STRATEGY_PROTOCOL_CUTOVER')`
+  yield* sql`ALTER TABLE autonomous_cycles DROP CONSTRAINT autonomous_cycles_market_hours_check,
+    ADD CONSTRAINT autonomous_cycles_market_hours_check CHECK (
+      (execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v1'
+        AND execution_calendar_source = 'alpaca-v2-calendar' AND state NOT IN ('PENDING','ACTIVE')) OR
+      (execution_calendar_schema_version = 'bayn.alpaca-market-calendar-observation.v2'
+        AND execution_calendar_source = 'alpaca-v2-calendar') OR
+      (execution_calendar_schema_version = 'bayn.continuous-market-hours.v1'
+        AND execution_calendar_source = 'alpaca-crypto-us'
+        AND execution_close_at - execution_open_at = interval '64 minutes'
+        AND submission_cutoff_at - submission_open_at = interval '1 minute')) NOT VALID`
   yield* sql`ALTER TABLE authority_generations
     DROP CONSTRAINT authority_generations_strategy_parameter_schema_version_check,
     DROP CONSTRAINT authority_generations_strategy_contract_check`
