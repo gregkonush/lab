@@ -13,6 +13,7 @@ import {
   SelectLabel,
   SelectTrigger,
   SelectValue,
+  Skeleton,
 } from '@proompteng/design/ui'
 import {
   ArrowDown,
@@ -70,7 +71,12 @@ import { codexQuestionRequest } from './codex-question-model'
 import { CodexEventCard } from './codex-event-card'
 import { groupCodexActivity } from './codex-activity'
 import { automaticApprovalDecision, readApprovalMode, writeApprovalMode, type ApprovalMode } from './approval-mode'
-import { WorkspaceFileLinkProvider } from './workspace-file-link'
+import {
+  WorkspaceFileLinkProvider,
+  WorkspaceFileTabs,
+  WorkspacePinnedResources,
+  useWorkspaceResources,
+} from './workspace-file-link'
 import { CodexCopyButton } from './codex-copy-button'
 import {
   appendCodexEvent,
@@ -113,17 +119,17 @@ type EventStreamState = 'connected' | 'connecting' | 'reconnecting'
 
 type DraftImage = { id: string; name: string; size: number; input: TengriCodexImage | null }
 
+class AgentConnectionError extends Error {}
+
 function runRecoveryError(cause: unknown, fallback: string): Error {
   if ((cause instanceof TengriRequestError && cause.status >= 500) || cause instanceof TypeError) {
-    return new Error('Reconnecting to your agent…', { cause })
+    return new AgentConnectionError('Reconnecting to your agent…', { cause })
   }
   return cause instanceof Error ? cause : new Error(fallback)
 }
 
 function codexRunActivity(state: TengriCodexRun['state']): string | null {
   switch (state.phase) {
-    case 'accepted':
-      return 'Starting'
     case 'waiting_for_guest':
       return 'Connecting'
     case 'recovering':
@@ -132,6 +138,7 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
       return 'Stopping'
     case 'needs_reconciliation':
       return "The agent's last action could not be confirmed. Check the conversation before continuing."
+    case 'accepted':
     case 'running':
     case 'waiting_for_approval':
     case 'succeeded':
@@ -142,7 +149,27 @@ function codexRunActivity(state: TengriCodexRun['state']): string | null {
   }
 }
 
+async function waitForRunCompletion(agentId: string, runId: string, threadId: string) {
+  const signal = AbortSignal.timeout(10_000)
+  while (true) {
+    const current = await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId }, signal)
+    if (current.agentId !== agentId || current.runId !== runId || current.threadId !== threadId)
+      throw new Error('Run completion returned a different conversation')
+    if (codexRunIsTerminal(current)) return current
+    await new Promise((resolve) => setTimeout(resolve, 500))
+  }
+}
+
 export function AgentChat({ active = true, agentId }: { active?: boolean; agentId: string }) {
+  return (
+    <WorkspaceFileLinkProvider key={agentId} agentId={agentId}>
+      <AgentChatView active={active} agentId={agentId} />
+    </WorkspaceFileLinkProvider>
+  )
+}
+
+function AgentChatView({ active, agentId }: { active: boolean; agentId: string }) {
+  const { showChat } = useWorkspaceResources()
   const [account, setAccount] = useState<TengriCodexAccount | null>(null)
   const [login, setLogin] = useState<TengriCodexLogin | null>(null)
   const [models, setModels] = useState<TengriCodexModel[] | null>(null)
@@ -165,6 +192,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [submittedPrompts, setSubmittedPrompts] = useState<SubmittedPrompt[]>([])
   const [approvalMode, setApprovalMode] = useState<ApprovalMode>('ask')
   const autoApprovalAttempts = useRef(new Set<string>())
+  const resolvedApprovals = useRef(new Set<string>())
   const [prompt, setPrompt] = useState('')
   const [images, setImages] = useState<DraftImage[]>([])
   const imagesRef = useRef<DraftImage[]>([])
@@ -176,7 +204,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const [loginBusy, setLoginBusy] = useState(false)
   const [resolvingApprovals, setResolvingApprovals] = useState<Set<string>>(() => new Set())
   const [error, setError] = useState<string | Error>('')
-  const errorMessage = error instanceof Error ? error.message : error
+  const [connectionNotice, setConnectionNotice] = useState(false)
+  const errorMessage =
+    error instanceof AgentConnectionError && !connectionNotice ? '' : error instanceof Error ? error.message : error
   const conversationMissing = error instanceof TengriRequestError && error.code === 'conversation_not_found'
   const [eventStreamState, setEventStreamState] = useState<EventStreamState>('connecting')
   const [followingConversation, setFollowingConversation] = useState(true)
@@ -205,6 +235,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const threadResumeGeneration = useRef(0)
   const threadStartupController = useRef<AbortController | null>(null)
   const mountedRef = useRef(true)
+  const conversationSelection = useRef(0)
+  const submissionThread = useRef('')
+  const submittingHere = submitting && submissionThread.current === threadId
+  const connectionInterrupted = eventStreamState === 'reconnecting' || error instanceof AgentConnectionError
   const selectedOptions = codexOptionsForSelection(selection, models ?? [])
   const runMatchesThread = Boolean(run && run.runId === runId && run.agentId === agentId && run.threadId === threadId)
   const runCanAcceptApprovals =
@@ -220,13 +254,29 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   const accountChecked = account !== null
   const showStopAction =
     Boolean(activeTurnId || (run && !codexRunIsTerminal(run))) && !prompt.trim() && images.length === 0
-  const runActivity = (run && codexRunActivity(run.state)) || (submitting && !activeTurnId ? 'Starting' : null)
+  const runActivity = run && codexRunActivity(run.state)
+  const responsePending = Boolean(activeTurnId || submittingHere || (run && !codexRunIsTerminal(run)))
   const readingImages = images.some((image) => image.input === null)
-  const canChangeConversation = !submitting && !interrupting && !readingImages && resolvingApprovals.size === 0
+  const canChangeConversation = !readingImages
+
+  useEffect(() => {
+    if (!connectionInterrupted) {
+      setConnectionNotice(false)
+      return
+    }
+    const timer = window.setTimeout(() => setConnectionNotice(true), 3_000)
+    return () => window.clearTimeout(timer)
+  }, [connectionInterrupted])
 
   const setCurrentActiveTurnId = useCallback((turnId: string) => {
     activeTurnIdRef.current = turnId
     setActiveTurnId(turnId)
+  }, [])
+
+  const retireApproval = useCallback((approvalId: string) => {
+    resolvedApprovals.current.add(approvalId)
+    retainedEvents.current = retainedEvents.current.filter((event) => event.approvalId !== approvalId)
+    setEvents((current) => current.filter((event) => event.approvalId !== approvalId))
   }, [])
 
   useEffect(() => {
@@ -291,7 +341,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         const recoveredFailure = lastRecoveryFailure
         setError((current) => (current === recoveredFailure ? '' : current))
         setRun(next)
-        if (next.state.phase === 'waiting_for_approval') {
+        if (next.state.phase === 'waiting_for_approval' && !completedTurns.current.has(next.state.turnId)) {
           for (const approval of next.state.approvals) {
             const raw = approval.raw as { method?: string; params?: { turnId?: string; itemId?: string } }
             const event = parseCodexEvent(
@@ -307,9 +357,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 rawJson: JSON.stringify(raw),
               }),
             )
-            if (event)
+            if (event && !resolvedApprovals.current.has(event.approvalId))
               setEvents((current) =>
-                current.some((candidate) => candidate.approvalId === event.approvalId) ? current : [...current, event],
+                resolvedApprovals.current.has(event.approvalId) ||
+                current.some((candidate) => candidate.approvalId === event.approvalId)
+                  ? current
+                  : [...current, event],
               )
           }
         }
@@ -458,6 +511,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setSubmittedPrompts([])
     setApprovalMode(readApprovalMode(agentId))
     autoApprovalAttempts.current.clear()
+    resolvedApprovals.current.clear()
     draftsRef.current.clear()
     lastScrollTop.current = 0
     setPrompt('')
@@ -716,6 +770,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         batch.reduce(
           (next, event) =>
             codexEventMatchesThread(event, threadIdRef.current) &&
+            !(event.kind === 'approval' && resolvedApprovals.current.has(event.approvalId)) &&
             (!codexEventIsIndependentOfThreadSnapshot(event) || retainedKeys.has(codexEventKey(event)))
               ? appendCodexEventAfterRestore(
                   next,
@@ -743,6 +798,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ? parsed
         : { ...parsed, threadId: parsed.threadId || currentThread }
       lastEventSequence.current = Math.max(lastEventSequence.current, event.sequence)
+      const resolvedApprovalId = codexResolvedApprovalId(event)
+      if (resolvedApprovalId) retireApproval(resolvedApprovalId)
+      if (event.kind === 'approval' && resolvedApprovals.current.has(event.approvalId)) return
       if (
         codexEventIsIndependentOfThreadSnapshot(event) ||
         codexResolvedApprovalId(event) ||
@@ -800,7 +858,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       stop()
       flush()
     }
-  }, [accountChecked, agentId, recoverThreadState, refreshAccount, setCurrentActiveTurnId])
+  }, [accountChecked, agentId, recoverThreadState, refreshAccount, retireApproval, setCurrentActiveTurnId])
 
   useEffect(() => {
     if (!active || !followingConversation || (threadId && !threadReady)) return
@@ -946,8 +1004,6 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }, [currentSubmissions, livePromptMatches, threadId])
   useEffect(() => {
     if (approvalMode !== 'auto' || !runRecovered || !runCanAcceptApprovals) return
-    const pendingIds = new Set(renderedEvents.map(({ event }) => event.approvalId))
-    for (const id of autoApprovalAttempts.current) if (!pendingIds.has(id)) autoApprovalAttempts.current.delete(id)
     for (const { event } of renderedEvents) {
       const decision = automaticApprovalDecision(event)
       if (
@@ -989,10 +1045,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           runId={runMatchesThread ? runId : ''}
           approvalId={event.approvalId}
           request={question}
-          onAnswered={() => {
-            retainedEvents.current = retainedEvents.current.filter((item) => item.approvalId !== event.approvalId)
-            setEvents((current) => current.filter((item) => item.approvalId !== event.approvalId))
-          }}
+          onAnswered={() => retireApproval(event.approvalId)}
         />
       )
     if (
@@ -1074,6 +1127,9 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     )
       return
     if (activeTurnIdRef.current && !runMatchesThread) return
+    const selectedConversation = conversationSelection.current
+    submissionThread.current = threadId
+    let submittedThread = threadId
     setSubmitting(true)
     setFollowingConversation(true)
     setError('')
@@ -1091,24 +1147,17 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     ])
     setPrompt('')
     commitImages([])
+    draftsRef.current.delete(threadId)
     let sentOperation: { key: string; id: string } | undefined
     try {
       if (!activeTurnIdRef.current && run && !codexRunIsTerminal(run)) {
-        const signal = AbortSignal.timeout(10_000)
-        while (true) {
-          const current = await runTengriAction<TengriCodexRun>(
-            { action: 'codex-run', agentId, runId: run.runId },
-            signal,
-          )
-          if (current.runId !== run.runId || current.threadId !== threadId)
-            throw new Error('Run completion returned a different conversation')
-          if (codexRunIsTerminal(current)) break
-          await new Promise((resolve) => setTimeout(resolve, 250))
-        }
+        await waitForRunCompletion(agentId, run.runId, threadId)
       }
-      const currentThread = await ensureThread()
+      const currentThread = await ensureThread(selectedConversation)
+      submittedThread = currentThread.id
+      submissionThread.current = currentThread.id
       const operationKey = `tengri-operation:${agentId}:${currentThread.id}`
-      const operation = await prepareCodexOperation(
+      let operation = await prepareCodexOperation(
         operationKey,
         { threadId: currentThread.id, text, images: inputImages },
         currentThread.activeTurnId || '',
@@ -1124,17 +1173,33 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         ),
       )
       if (operation.turnId) {
-        await runTengriAction<TengriCodexTurn>({
-          action: 'steer-turn',
-          runId,
-          agentId,
-          operationId: operation.id,
-          threadId: currentThread.id,
-          turnId: operation.turnId,
-          text,
-          images: inputImages,
-        })
-      } else {
+        try {
+          await runTengriAction<TengriCodexTurn>({
+            action: 'steer-turn',
+            runId,
+            agentId,
+            operationId: operation.id,
+            threadId: currentThread.id,
+            turnId: operation.turnId,
+            text,
+            images: inputImages,
+          })
+        } catch (cause) {
+          if (!(cause instanceof TengriRequestError) || cause.code !== 'control_not_dispatched') throw cause
+          completeCodexOperation(operationKey, operation.id)
+          await waitForRunCompletion(agentId, runId, currentThread.id)
+          completedTurns.current.add(operation.turnId)
+          if (threadIdRef.current === currentThread.id) setCurrentActiveTurnId('')
+          operation = await prepareCodexOperation(
+            operationKey,
+            { threadId: currentThread.id, text, images: inputImages },
+            '',
+            operation.options,
+          )
+          sentOperation = { key: operationKey, id: operation.id }
+        }
+      }
+      if (!operation.turnId) {
         const accepted = await runTengriAction<TengriCodexRun>({
           action: 'send-turn',
           agentId,
@@ -1148,15 +1213,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           completeCodexOperation(operationKey, operation.id)
           throw new Error(accepted.state.reason)
         }
-        setRun(accepted)
         setWorkspaceRun(accepted)
-        setRunId(accepted.runId)
-        if ('turnId' in accepted.state && accepted.state.turnId && !completedTurns.current.has(accepted.state.turnId)) {
-          setCurrentActiveTurnId(accepted.state.turnId)
+        if (threadIdRef.current === currentThread.id) {
+          setRun(accepted)
+          setRunId(accepted.runId)
+          if (
+            'turnId' in accepted.state &&
+            accepted.state.turnId &&
+            !completedTurns.current.has(accepted.state.turnId)
+          ) {
+            setCurrentActiveTurnId(accepted.state.turnId)
+          }
         }
       }
       completeCodexOperation(operationKey, operation.id)
-      draftsRef.current.delete(currentThread.id)
       // The turn was accepted, so its prompt can now title a still-untitled conversation.
       if (text) {
         setConversations((current) => promoteAcceptedConversationTitle(agentId, currentThread.id, text, current))
@@ -1165,15 +1235,21 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && sentOperation)
         completeCodexOperation(sentOperation.key, sentOperation.id)
       setSubmittedPrompts((current) => current.filter((submitted) => submitted.id !== submissionId))
-      setError(cause instanceof Error ? cause.message : 'Message could not be sent')
-      setPrompt(text)
-      commitImages(draftImages)
+      draftsRef.current.set(submittedThread, { text, images: draftImages })
+      if (
+        (submittedThread && threadIdRef.current === submittedThread) ||
+        conversationSelection.current === selectedConversation
+      ) {
+        setError(cause instanceof Error ? cause.message : 'Message could not be sent')
+        setPrompt(text)
+        commitImages(draftImages)
+      }
     } finally {
       setSubmitting(false)
     }
   }
 
-  async function ensureThread() {
+  async function ensureThread(selectedConversation: number) {
     if (threadId && threadReady) {
       setConversations((current) => touchStoredConversation(agentId, threadId, current))
       return { id: threadId, activeTurnId: activeTurnIdRef.current }
@@ -1182,6 +1258,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     const thread = threadId
       ? await runTengriAction<TengriCodexThread>({ action: 'resume-thread', agentId, threadId, ...optionsRef.current })
       : await runTengriAction<TengriCodexThread>({ action: 'create-thread', agentId, ...optionsRef.current })
+    if (conversationSelection.current !== selectedConversation) {
+      setConversations((current) =>
+        upsertStoredConversation(
+          agentId,
+          {
+            id: thread.id,
+            title: conversationTitleFromRegistry(current, thread.id),
+            updatedAt: Date.now(),
+          },
+          current,
+        ),
+      )
+      return { id: thread.id, activeTurnId: codexActiveTurnIdFromThread(thread.rawJson) }
+    }
     if (!threadId) {
       draftsRef.current.delete('')
       const assignThread = (event: CodexBufferedEvent) =>
@@ -1196,7 +1286,12 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
   }
 
   async function resolveApproval(event: TengriCodexEvent, decision: CodexApprovalDecision) {
-    if (!event.approvalId || resolvingApprovals.has(event.approvalId)) return
+    if (
+      !event.approvalId ||
+      resolvedApprovals.current.has(event.approvalId) ||
+      resolvingApprovals.has(event.approvalId)
+    )
+      return
     const key = `tengri-control:${runId}:${event.approvalId}`
     let operationId: string | undefined
     setResolvingApprovals((current) => new Set(current).add(event.approvalId))
@@ -1215,12 +1310,27 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         decision,
       })
       completeCodexOperation(key, op.id)
-      retainedEvents.current = retainedEvents.current.filter((candidate) => candidate.approvalId !== event.approvalId)
-      setEvents((current) => current.filter((candidate) => candidate.approvalId !== event.approvalId))
+      retireApproval(event.approvalId)
     } catch (cause) {
-      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId)
+      if (cause instanceof TengriRequestError && cause.code === 'control_not_dispatched' && operationId) {
         completeCodexOperation(key, operationId)
-      setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
+        try {
+          const current = await runTengriAction<TengriCodexRun>({ action: 'codex-run', agentId, runId })
+          if (
+            current.agentId === agentId &&
+            current.runId === runId &&
+            current.threadId === event.threadId &&
+            codexRunIsTerminal(current)
+          ) {
+            retireApproval(event.approvalId)
+            return
+          }
+        } catch {
+          reportBrowserFailure('codex.approval.recovery')
+        }
+      }
+      if (threadIdRef.current === event.threadId)
+        setError(cause instanceof Error ? cause.message : 'Approval could not be resolved')
     } finally {
       setResolvingApprovals((current) => {
         const next = new Set(current)
@@ -1246,6 +1356,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   async function interruptTurn() {
     if (!runMatchesThread || interrupting) return
+    const interruptedThread = threadId
     setInterrupting(true)
     setError('')
     try {
@@ -1258,13 +1369,15 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
       })
       completeCodexOperation(`tengri-stop:${runId}`, op.id)
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'Turn could not be interrupted')
+      if (threadIdRef.current === interruptedThread)
+        setError(cause instanceof Error ? cause.message : 'Turn could not be interrupted')
     } finally {
       setInterrupting(false)
     }
   }
 
   function resetTranscriptUi(nextThreadId: string) {
+    conversationSelection.current += 1
     recoverInitialRun.current = false
     if (!nextThreadId)
       retainedEvents.current = retainedEvents.current.filter(
@@ -1279,6 +1392,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
     setPrompt(draft?.text ?? '')
     commitImages(draft?.images ?? [])
     threadIdRef.current = nextThreadId
+    if (!nextThreadId) setSubmittedPrompts((current) => current.filter((submitted) => submitted.threadId))
     restoredHistoryRef.current = new Map()
     restoredItemSequencesRef.current = new Map()
     restoredHistorySequenceRef.current = 0
@@ -1315,6 +1429,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   function newConversation() {
     if (!canChangeConversation) return
+    showChat()
     removeStoredThread(agentId)
     resetTranscriptUi('')
     focusComposerAfterConversationChange()
@@ -1322,6 +1437,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
 
   function switchConversation(nextThreadId: string) {
     if (!canChangeConversation) return
+    showChat()
     if (nextThreadId === threadIdRef.current) {
       focusComposerAfterConversationChange()
       return
@@ -1390,20 +1506,20 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
         (!autoApprovalAttempts.current.has(event.approvalId) || resolvingApprovals.has(event.approvalId))
       ),
   )
-  const agentStatus =
-    eventStreamState === 'reconnecting'
-      ? 'Reconnecting'
-      : replayRecovering
-        ? 'Recovering'
-        : renderedEvents.some(({ event }) => codexQuestionRequest(event))
-          ? 'Input requested'
-          : approvalPending
-            ? 'Approval needed'
-            : activeTurnId || submitting
-              ? 'Working'
-              : eventStreamState === 'connecting'
-                ? 'Connecting'
-                : 'Ready'
+  const conversationLoading = Boolean(threadId && !threadReady && !recoveryFailed)
+  const agentStatus = connectionNotice
+    ? 'Reconnecting'
+    : replayRecovering
+      ? 'Recovering'
+      : renderedEvents.some(({ event }) => codexQuestionRequest(event))
+        ? 'Input requested'
+        : approvalPending
+          ? 'Approval needed'
+          : responsePending
+            ? 'Working'
+            : eventStreamState !== 'connected'
+              ? 'Connecting'
+              : 'Ready'
   return (
     <div ref={rootRef} className="@container/agent relative isolate flex h-full min-h-0 bg-zinc-950 text-zinc-100">
       {compactDrawerOpen ? (
@@ -1450,6 +1566,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
             <Plus className="size-3.5" aria-hidden="true" />
           </button>
         </div>
+        <WorkspacePinnedResources
+          onOpen={() => {
+            if (!sidebarWide) setSidebarOpen(false)
+          }}
+        />
         <nav
           aria-label="Conversations"
           className="tengri-chat-scrollbar min-h-0 flex-1 overflow-auto py-1 [scrollbar-gutter:stable]"
@@ -1521,7 +1642,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
           )}
         </div>
 
-        <WorkspaceFileLinkProvider agentId={agentId} conversationId={threadId}>
+        <WorkspaceFileTabs>
           <div className="relative min-h-0 flex-1">
             <div
               ref={conversationRef}
@@ -1539,7 +1660,8 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                 lastScrollTop.current = conversation.scrollTop
               }}
             >
-              {transcriptCards.length === 0 && !activeTurnId && !submitting ? (
+              {conversationLoading ? <ConversationSkeleton /> : null}
+              {(!threadId || threadReady) && transcriptCards.length === 0 && !responsePending ? (
                 <EmptyConversation
                   onSelectPrompt={(text) => {
                     setPrompt(text)
@@ -1553,9 +1675,10 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               ) : null}
               <div
                 ref={conversationContentRef}
-                className="mx-auto w-full max-w-3xl space-y-2"
+                className="mx-auto w-full max-w-3xl space-y-6"
                 role="log"
                 aria-label="Conversation"
+                aria-busy={conversationLoading || replayRecovering}
                 aria-live="polite"
                 aria-relevant="additions text"
               >
@@ -1586,7 +1709,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     {runActivity}
                   </p>
                 ) : null}
-                {activeTurnId && !approvalPending && !runActivity ? (
+                {responsePending && !approvalPending && !runActivity ? (
                   <div className="text-copy-14 text-zinc-400" role="status" aria-label="Agent activity">
                     <span className="tengri-thinking-shimmer inline-block">Thinking</span>
                   </div>
@@ -1631,7 +1754,11 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                   {selectionWarning}
                 </p>
               ) : null}
-              <StreamStatus error={errorMessage} state={eventStreamState} />
+              <StreamStatus
+                error={errorMessage}
+                state={eventStreamState}
+                reconnecting={connectionNotice && !errorMessage}
+              />
               {replayRecovering ? (
                 <p className="mx-auto mb-2 w-full text-label-12 text-zinc-400" role="status">
                   Recovering the active conversation…
@@ -1679,7 +1806,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
                     ref={promptRef}
                     data-window-default-focus
                     aria-label={activeTurnId ? 'Steer the current turn' : 'Message your agent'}
-                    disabled={submitting || replayRecovering || Boolean(threadId && !threadReady)}
+                    disabled={submittingHere || replayRecovering || Boolean(threadId && !threadReady)}
                     value={prompt}
                     onChange={(event) => setPrompt(event.target.value)}
                     onPaste={(event) => {
@@ -1830,7 +1957,7 @@ export function AgentChat({ active = true, agentId }: { active?: boolean; agentI
               </form>
             </div>
           </div>
-        </WorkspaceFileLinkProvider>
+        </WorkspaceFileTabs>
       </div>
     </div>
   )
@@ -1927,6 +2054,25 @@ export function CodexLogin({
             {error}
           </p>
         ) : null}
+      </div>
+    </div>
+  )
+}
+
+function ConversationSkeleton() {
+  return (
+    <div className="mx-auto w-full max-w-3xl space-y-8" role="status" aria-label="Loading conversation">
+      <span className="sr-only">Loading conversation…</span>
+      <div aria-hidden="true" className="space-y-8">
+        <div className="ml-auto w-2/3 space-y-2 rounded-2xl bg-zinc-900/60 p-4">
+          <Skeleton className="h-3 w-full bg-zinc-800 motion-reduce:animate-none" />
+          <Skeleton className="h-3 w-2/3 bg-zinc-800 motion-reduce:animate-none" />
+        </div>
+        <div className="space-y-3 py-2">
+          {['w-5/6', 'w-full', 'w-4/5', 'w-1/2'].map((width) => (
+            <Skeleton key={width} className={cn('h-3 bg-zinc-900 motion-reduce:animate-none', width)} />
+          ))}
+        </div>
       </div>
     </div>
   )
@@ -2152,7 +2298,15 @@ function writeStoredSelection(agentId: string, selection: TengriCodexSelection):
   }
 }
 
-function StreamStatus({ error, state }: { error: string; state: EventStreamState }) {
+function StreamStatus({
+  error,
+  state,
+  reconnecting,
+}: {
+  error: string
+  state: EventStreamState
+  reconnecting: boolean
+}) {
   return (
     <>
       <span aria-live="polite" className="sr-only" data-state={state} data-testid="agent-event-stream">
@@ -2162,7 +2316,7 @@ function StreamStatus({ error, state }: { error: string; state: EventStreamState
             ? 'Agent event stream connecting'
             : 'Agent event stream reconnecting'}
       </span>
-      {state === 'reconnecting' ? (
+      {reconnecting ? (
         <p role="status" className="mx-auto mb-2 w-full text-label-12 text-amber-200/80">
           Reconnecting to your agent…
         </p>

@@ -1,13 +1,27 @@
 import { expect, test } from 'bun:test'
 import { createHash } from 'node:crypto'
+import { gunzipSync } from 'node:zlib'
 import { NodeServices } from '@effect/platform-node'
 import { Effect, FileSystem, Redacted } from 'effect'
-import { hashBacktestPassLog, parseBacktestArgs, validateReplayDatabaseTargets } from './backtest-command'
+import {
+  compressBacktestPass,
+  hashBacktestPassLog,
+  parseBacktestArgs,
+  validateReplayDatabaseTargets,
+} from './backtest-command'
 const config = {
   operationTimeoutMs: 1000,
   postgres: { url: Redacted.make('postgresql://test:test@127.0.0.1:55432/bayn_replay'), tls: false, caPath: '/unused' },
   tigerBeetle: { clusterId: 20912n, ledger: 70912, replicaAddresses: ['127.0.0.1:53000'] },
 }
+test('concatenated compressed passes reproduce every original JSON byte and record boundary', async () => {
+  const lines = [
+    JSON.stringify({ state: 'é'.repeat(65537), fills: ['a', 'b'] }),
+    JSON.stringify({ state: 'next', fills: [] }),
+  ]
+  const bytes = await Effect.runPromise(Effect.forEach(lines, compressBacktestPass))
+  expect(gunzipSync(Buffer.concat(bytes)).toString('utf8')).toBe(lines.join('\n') + '\n')
+})
 test('pass-log hash preserves exact UTF-8 bytes across stream chunks', async () => {
   await Effect.runPromise(
     Effect.scoped(

@@ -1,6 +1,7 @@
 import { JevPositionExitPolicySchema } from '../jev/exit-policy'
 import { PgClient } from '@effect/sql-pg'
 import { Effect, Layer, Schema } from 'effect'
+import { JevExitReason, JevExitTargetSchema } from '../jev/exit'
 
 import { operationalError } from '../errors'
 import { FillSchema, OrderSide } from '../execution/contracts'
@@ -11,7 +12,7 @@ import {
   JevPurpose,
   type JevPortfolio,
 } from '../jev/portfolio'
-import { Sha256Schema, strictParseOptions } from '../schemas'
+import { Sha256Schema, UtcInstantSchema, strictParseOptions } from '../schemas'
 
 const requireMatch = Schema.decodeUnknownEffect(
   Schema.Tuple([Schema.Struct({ matches: Schema.Literal(true) })]),
@@ -61,6 +62,7 @@ export const verifyJevPortfolioSources = (sql: PgClient.PgClient, cycleId: strin
     if (
       JSON.stringify(protection.protectionIntentIds) !== JSON.stringify(portfolio.protectionIntentIds) ||
       protection.exitRequestedAt !== portfolio.exitRequestedAt ||
+      protection.profitExitRequested !== portfolio.profitExitRequested ||
       JSON.stringify(protection.protectionDisposals) !== JSON.stringify(portfolio.protectionDisposals)
     )
       return yield* operationalError({
@@ -159,6 +161,40 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
     ) requests
   `,
     )
+    const [request] = yield* Schema.decodeUnknownEffect(
+      Schema.Array(
+        Schema.Struct({
+          target: Schema.NullOr(JevExitTargetSchema),
+          requestedAt: UtcInstantSchema,
+          bound: Schema.Literal(true),
+        }),
+      ),
+      strictParseOptions,
+    )(
+      yield* sql`
+      SELECT c.exit_target AS target,
+        to_char(c.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS "requestedAt",
+        (c.exit_target IS NULL OR (c.exit_target ->> 'cycleId' = i.cycle_id
+          AND c.exit_target #>> '{evidence,portfolio,brokerState,account,accountId}' = c.account_id
+          AND EXISTS (SELECT 1 FROM autonomous_cycle_shadow_decisions d WHERE d.cycle_id = i.cycle_id
+            AND d.decision_hash = c.exit_target ->> 'entryDecisionHash'
+            AND d.document #> '{strategyDecision,exitPolicy}' = c.exit_target #> '{evidence,portfolio,exitPolicy}'))) AS bound
+      FROM native_protection_cancel_commands c JOIN intents i USING (intent_id)
+      WHERE i.cycle_id = ${cycleId} ORDER BY c.requested_at, c.broker_order_id COLLATE "C" LIMIT 1
+    `,
+    )
+    if (
+      request?.target !== undefined &&
+      request.target !== null &&
+      (request.target.cycleId !== cycleId ||
+        request.target.entryDecisionHash !== entryDecisionHash ||
+        request.target.observedAt > request.requestedAt)
+    )
+      return yield* operationalError({
+        component: 'database',
+        operation: 'jev-position',
+        message: 'Protection cancellation exit evidence differs from its durable entry binding',
+      })
     const [disposals] = yield* Schema.decodeUnknownEffect(
       Schema.Tuple([JevInventoryDebitSchema]),
       strictParseOptions,
@@ -172,6 +208,14 @@ const readProtectionEvidence = (sql: PgClient.PgClient, cycleId: string, entryDe
     return {
       protectionIntentIds: rows.map((row) => row.intentId),
       exitRequestedAt: latch.exitRequestedAt,
+      profitExitRequested:
+        request !== undefined &&
+        request.requestedAt === latch.exitRequestedAt &&
+        request.target !== null &&
+        (request.target.reason === JevExitReason.ProfitTarget ||
+          (request.target.reason === JevExitReason.ProtectionReleased &&
+            request.target.evidence.portfolio.purpose === JevPurpose.Manage &&
+            request.target.evidence.portfolio.profitExitRequested)),
       protectionDisposals: disposals,
     }
   })

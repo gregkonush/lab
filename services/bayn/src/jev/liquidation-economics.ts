@@ -17,19 +17,11 @@ interface LiquidationInput {
   readonly quantityAtoms: bigint
 }
 
-export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicros: bigint }) =>
+export const jevExitLimitValue = (input: LiquidationInput & { readonly limitPriceMicros: bigint }) =>
   Result.gen(function* () {
-    const market = instrumentMarket(input.symbol)
-    const pricing = yield* deriveExecutionIntentPricing({
-      symbol: input.symbol,
-      side: OrderSide.Sell,
-      orderType: OrderType.Limit,
-      timeInForce: cashSpotLimitTimeInForce(market),
-      quantityAtoms: input.quantityAtoms,
-      referencePriceMicros: input.bidMicros,
-      limitSlippageBps: BigInt(input.protocol.maximumEntryLimitSlippageBps),
-    })
-    const proceedsMicros = (pricing.expectedExecutionPriceMicros * input.quantityAtoms) / quantityScale
+    if (input.limitPriceMicros <= 0n || input.quantityAtoms <= 0n)
+      return yield* Result.fail(new JevContractError({ message: 'An exit limit and quantity must be positive' }))
+    const proceedsMicros = (input.limitPriceMicros * input.quantityAtoms) / quantityScale
     const fees = yield* calculateSessionFees(
       [{ symbol: input.symbol, side: 'sell', quantityAtoms: input.quantityAtoms, notionalMicros: proceedsMicros }],
       input.protocol.executionModel,
@@ -59,26 +51,63 @@ export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicr
     }
   }).pipe(
     Result.mapError(
+      (cause) => new JevContractError({ message: 'Jev exit-limit economics could not be estimated', cause }),
+    ),
+  )
+
+export const jevLiquidationValue = (input: LiquidationInput & { readonly bidMicros: bigint }) =>
+  Result.gen(function* () {
+    const pricing = yield* deriveExecutionIntentPricing({
+      symbol: input.symbol,
+      side: OrderSide.Sell,
+      orderType: OrderType.Limit,
+      timeInForce: cashSpotLimitTimeInForce(instrumentMarket(input.symbol)),
+      quantityAtoms: input.quantityAtoms,
+      referencePriceMicros: input.bidMicros,
+      limitSlippageBps: BigInt(input.protocol.maximumEntryLimitSlippageBps),
+    })
+    return yield* jevExitLimitValue({ ...input, limitPriceMicros: pricing.expectedExecutionPriceMicros })
+  }).pipe(
+    Result.mapError(
       (cause) => new JevContractError({ message: 'Jev liquidation economics could not be estimated', cause }),
     ),
   )
 
-export const jevBreakEvenExitBid = (
-  input: LiquidationInput & { readonly acquisitionCostMicros: bigint; readonly upperBidMicros: bigint },
+const breakEvenExitPrice = (
+  acquisitionCostMicros: bigint,
+  upperPriceMicros: bigint,
+  value: (price: bigint) => ReturnType<typeof jevExitLimitValue>,
+  unavailableMessage: string,
 ) =>
   Result.gen(function* () {
     let low = 1n
-    let high = input.upperBidMicros
-    if ((yield* jevLiquidationValue({ ...input, bidMicros: high })).conservativeNetMicros < input.acquisitionCostMicros)
-      return yield* Result.fail(new JevContractError({ message: 'Liquidation has no bounded break-even bid' }))
+    let high = upperPriceMicros
+    if ((yield* value(high)).conservativeNetMicros < acquisitionCostMicros)
+      return yield* Result.fail(new JevContractError({ message: unavailableMessage }))
     while (low < high) {
       const middle = (low + high) / 2n
-      if (
-        (yield* jevLiquidationValue({ ...input, bidMicros: middle })).conservativeNetMicros >=
-        input.acquisitionCostMicros
-      )
-        high = middle
+      if ((yield* value(middle)).conservativeNetMicros >= acquisitionCostMicros) high = middle
       else low = middle + 1n
     }
     return low
   })
+
+export const jevBreakEvenExitBid = (
+  input: LiquidationInput & { readonly acquisitionCostMicros: bigint; readonly upperBidMicros: bigint },
+) =>
+  breakEvenExitPrice(
+    input.acquisitionCostMicros,
+    input.upperBidMicros,
+    (bidMicros) => jevLiquidationValue({ ...input, bidMicros }),
+    'Liquidation has no bounded break-even bid',
+  )
+
+export const jevBreakEvenExitLimitPrice = (
+  input: LiquidationInput & { readonly acquisitionCostMicros: bigint; readonly upperLimitPriceMicros: bigint },
+) =>
+  breakEvenExitPrice(
+    input.acquisitionCostMicros,
+    input.upperLimitPriceMicros,
+    (limitPriceMicros) => jevExitLimitValue({ ...input, limitPriceMicros }),
+    'Exit limit has no bounded break-even price',
+  )

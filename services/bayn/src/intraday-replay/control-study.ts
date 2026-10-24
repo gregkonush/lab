@@ -73,7 +73,8 @@ export type ControlStudyManagement =
     }
 
 export const ControlStudyInputSchema = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.control-study-input.v8'),
+  schemaVersion: Schema.Literal('bayn.control-study-input.v9'),
+  costObjective: Schema.Literals(['ALL_COSTS', 'KNOWN_COST_DIAGNOSTIC']),
   entry: Schema.Enum(ControlEntryMode),
   management: Schema.Enum(ControlManagementMode),
   backtest: BacktestInputSchema,
@@ -237,7 +238,7 @@ export const runControlSession = (input: {
   readonly session: MarketCalendarSession
   readonly calendar: MarketCalendarObservation
   readonly openingCapital: ControlCapital
-  readonly dataCostMicros: string
+  readonly dataCostMicros: string | null
   readonly targetWeight: number
   readonly turnoverPolicy?: EntryTurnoverPolicy
   readonly decisionLatencyMs: number
@@ -367,7 +368,7 @@ export const runControlSession = (input: {
       return Result.succeed(undefined)
     }
     const openingCash = BigInt(input.openingCapital.cashMicros)
-    const dataCost = BigInt(input.dataCostMicros)
+    const dataCost = BigInt(input.dataCostMicros ?? '0')
     const openingNetEquity = openingCash - BigInt(input.openingCapital.accruedExternalCostMicros)
     const accruedExternalCost = BigInt(input.openingCapital.accruedExternalCostMicros) + dataCost
     const firstCallIndex = jevBinding === null ? 0 : (yield* jevBinding.binding.journal.calls).length
@@ -837,6 +838,7 @@ export const runControlSession = (input: {
       ...(missingExecutionQuotes > 0 ? ['MISSING_EXECUTION_QUOTES'] : []),
       ...(marks.some((entry) => entry.netEquityAfterKnownCostsMicros === null) ? ['MISSING_VALUATION'] : []),
       ...(portfolio.ledger.positions.length > 0 ? ['UNCLOSED_POSITION'] : []),
+      ...(input.dataCostMicros === null ? ['UNPRICED_DATA_ALLOCATION'] : []),
       ...(sessionModelCosts.unresolvedCallCount > 0 ? ['UNPRICED_MODEL_CALLS'] : []),
       ...(atMs > closeMs ? ['MANAGEMENT_AFTER_CLOSE'] : []),
     ]
@@ -860,6 +862,7 @@ export const runControlSession = (input: {
       completedEpisodes: portfolio.episodes.length,
       filledNotionalMicros: String(portfolio.tradedNotionalMicros),
       netPnlAfterKnownCostsMicros: netPnl,
+      allCostNetPnlMicros: input.dataCostMicros === null || sessionModelCosts.unresolvedCallCount > 0 ? null : netPnl,
       netAfterAdditional10BpsMicros:
         netPnl === null ? null : String(BigInt(netPnl) - (portfolio.tradedNotionalMicros + 999n) / 1000n),
       executionFeesMicros: portfolio.ledger.executionFeesMicros,
@@ -896,8 +899,12 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
   Result.gen(function* () {
     const input = yield* Schema.decodeUnknownResult(ControlStudyInputSchema, strictParseOptions)(raw)
     const prepared = yield* prepareBacktest(input.backtest, receipt)
+    if (prepared.brokerSessions.length === 0)
+      return yield* Result.fail(
+        new ControlStudyFailure({ message: 'Control interval must contain a complete regular broker session' }),
+      )
     const dataCostMicros = prepared.input.allocatedDataCostPerSessionMicros
-    if (dataCostMicros === null)
+    if (dataCostMicros === null && (input.costObjective !== 'KNOWN_COST_DIAGNOSTIC' || input.ridge !== undefined))
       return yield* Result.fail(
         new ControlStudyFailure({ message: 'Control net outcomes require a priced data allocation' }),
       )
@@ -905,7 +912,7 @@ export const prepareControlStudy = (raw: unknown, receipt: BacktestSourceReceipt
     if (
       falsification &&
       (prepared.input.cadence.pollIntervalMs !== residualShockDefinition.pollIntervalMs ||
-        prepared.protocol.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
+        equityMarketProfile.maximumEntrySpreadBps !== residualShockDefinition.maximumSpreadBps ||
         controlExitDefinition.protectiveStopBps !== residualShockDefinition.protectiveStopBps ||
         prepared.protocol.maximumHoldingMinutes !== 15 ||
         prepared.protocol.flattenBeforeCloseMinutes !== residualShockDefinition.flattenMinutesBeforeClose)
@@ -1119,7 +1126,7 @@ export const runControlStudy = (
       sessions.push(...results)
     }
     const report = {
-      schemaVersion: 'bayn.control-study-report.v6',
+      schemaVersion: 'bayn.control-study-report.v7',
       ...(boundRidge === null
         ? {}
         : {
@@ -1138,6 +1145,8 @@ export const runControlStudy = (
             ),
           }),
       classification: 'DEVELOPMENT_CONTROL_PORTFOLIOS',
+      costObjective: input.costObjective,
+      qualification: 'UNQUALIFIED',
       runId,
       definition,
       input,

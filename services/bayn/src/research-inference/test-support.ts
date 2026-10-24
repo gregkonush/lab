@@ -1,18 +1,23 @@
 import { Result } from 'effect'
 import { sha256 } from '../hash'
 import {
-  alphaCheckpoint,
-  alphaModel,
   decodeResearchRun,
-  harnessEditorCheckpoint,
-  harnessEditorModel,
-  HarnessPurpose,
+  decodeRetainedResearchRun,
+  editorModel,
+  editorCheckpoint,
+  hashResearch,
+  ResearchOutcome,
+  researchRequest,
+  researchServingIdentity,
+  sealResearchReceipt,
+  type RetainedResearchRun,
 } from './contract'
 
-export const researchFixture = () => {
+export const editorFixture = () => {
   const run = Result.getOrThrow(
     decodeResearchRun({
-      schemaVersion: 'bayn.research-run.v1',
+      schemaVersion: 'bayn.jev-editor.v1',
+      purpose: 'prompt-edit',
       sourceRevision: 'a'.repeat(40),
       studyHash: 'b'.repeat(64),
       armManifestHashes: ['c'.repeat(64)],
@@ -21,49 +26,31 @@ export const researchFixture = () => {
       registeredAt: '1970-01-01T00:00:00.000Z',
       deadlineAt: '1970-01-01T00:00:30.000Z',
       attempt: 0,
-      promptTemplate: 'Select factors using the supplied semantic descriptions.',
+      promptTemplate: 'Revise only the conditional complete-plan question using development execution evidence.',
       context: {
-        producerManifestHash: 'e'.repeat(64),
-        preparationAttemptHashes: ['f'.repeat(64)],
         memory: {
           sha256: sha256('synthetic memory'),
           text: 'synthetic memory',
           availableAt: '1970-01-01T00:00:00.000Z',
         },
-        factors: [
-          {
-            id: 'alpha001',
-            formulaHash: '1'.repeat(64),
-            implementationRevision: '2'.repeat(40),
-            performance: {
-              sha256: '3'.repeat(64),
-              availableAt: '1970-01-01T00:00:00.000Z',
-              labelsMaturedAt: '1970-01-01T00:00:00.000Z',
-            },
-            description: 'synthetic factor description',
-            descriptionHash: sha256('synthetic factor description'),
-            availableAt: '1970-01-01T00:00:00.000Z',
-          },
-        ],
       },
       policy: {
-        model: alphaModel,
-        checkpoint: alphaCheckpoint,
+        model: editorModel,
+        checkpoint: editorCheckpoint,
         servingImage: 'sha256:7ef5a35d1ef8ce2cf9d671dd91eec6e367c5849262e0362b4d3d4a26be0d87d2',
-        tokenizerRevision: alphaCheckpoint,
-        chatTemplateRevision: alphaCheckpoint,
-        temperature: 0,
-        top_p: 0.7,
-        top_k: -1,
+        tokenizerRevision: editorCheckpoint,
+        chatTemplateRevision: editorCheckpoint,
+        temperature: 0.7,
+        top_p: 0.8,
+        top_k: 20,
         min_p: 0,
         seed: 1,
         presence_penalty: 0,
         frequency_penalty: 0,
         repetition_penalty: 1,
-        enable_thinking: true,
+        enable_thinking: false,
         max_tokens: 4096,
         stop: [],
-        maximumFactors: 1,
       },
       costBasis: {
         sourceEvidenceHash: '4'.repeat(64),
@@ -74,37 +61,51 @@ export const researchFixture = () => {
       },
     }),
   )
-  if (run.schemaVersion !== 'bayn.research-run.v1') throw new Error('Invalid factor fixture')
-  return run
+  if ('harness' in run.policy) throw new Error('Expected the Flamingo test policy')
+  return { ...run, policy: run.policy }
 }
-export const harnessEditorFixture = () => {
-  const historical = researchFixture()
-  const { maximumFactors: _historicalLimit, ...policy } = historical.policy
-  const run = Result.getOrThrow(
-    decodeResearchRun({
-      ...historical,
-      schemaVersion: 'bayn.jev-harness2-editor.v3',
-      purpose: HarnessPurpose.PromptEdit,
-      promptTemplate: 'Revise only the Jev conditional plan instruction using the supplied development evidence.',
-      context: { memory: historical.context.memory },
+
+export const retainedEditorFixture = () => {
+  const run = editorFixture()
+  const checkpoint = 'b968826d9c46dd6066d109eabc6255188de91218'
+  return Result.getOrThrow(
+    decodeRetainedResearchRun({
+      ...run,
       policy: {
-        ...policy,
-        model: harnessEditorModel,
-        checkpoint: harnessEditorCheckpoint,
-        tokenizerRevision: harnessEditorCheckpoint,
-        chatTemplateRevision: harnessEditorCheckpoint,
-        temperature: 0.7,
-        top_p: 0.8,
-        top_k: 20,
-        enable_thinking: false,
+        ...run.policy,
+        model: 'qwen3-jev-editor-b968826d9c46',
+        checkpoint,
+        tokenizerRevision: checkpoint,
+        chatTemplateRevision: checkpoint,
       },
     }),
   )
-  if (run.schemaVersion !== 'bayn.jev-harness2-editor.v3') throw new Error('Invalid editor fixture')
-  return run
 }
 
-export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>', model: string = alphaModel) =>
+export const retainedReceiptFixture = (run: RetainedResearchRun) => {
+  const wire = streamFixture('{"entry":"Assess"}', run.policy.model)
+  return Result.getOrThrow(
+    sealResearchReceipt(run, {
+      runId: Result.getOrThrow(hashResearch(run)),
+      workerSourceRevision: null,
+      requestHash: Result.getOrThrow(hashResearch(researchRequest(run))),
+      startedAtMs: 0,
+      completedAtMs: 1001,
+      firstTokenAtMs: 1,
+      outcome: ResearchOutcome.Complete,
+      httpStatus: 200,
+      servingIdentity: researchServingIdentity(run.policy),
+      serverRequestId: 'chatcmpl-synthetic',
+      responseBase64: Buffer.from(wire).toString('base64'),
+      responseHash: sha256(wire),
+      responseText: '{"entry":"Assess"}',
+      instructions: { entry: 'Assess' },
+      usage: { prompt_tokens: 10, completion_tokens: 20, total_tokens: 30 },
+    }),
+  )
+}
+
+export const streamFixture = (content = '{"entry":"Assess"}', model: string = editorModel) =>
   [
     {
       id: 'chatcmpl-synthetic',
@@ -140,10 +141,7 @@ export const streamFixture = (content = '<alpha_list>alpha001</alpha_list>', mod
     .map((chunk) => `data: ${JSON.stringify(chunk)}\n\n`)
     .join('') + 'data: [DONE]\n\n'
 
-export const fullTokenBudgetStreamFixture = (
-  model: string = alphaModel,
-  content = '<alpha_list>alpha001</alpha_list>',
-) => {
+export const fullTokenBudgetStreamFixture = (model: string = editorModel, content = '{"entry":"Assess"}') => {
   const chunk = (completion: number, delta: Record<string, string>, finish: string | null = null) => ({
     id: 'chatcmpl-synthetic',
     object: 'chat.completion.chunk',
