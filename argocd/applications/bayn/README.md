@@ -185,30 +185,27 @@ and credentials during recovery, and keep the expanded database size during a co
 
 ## Jev protocol activation
 
-The implementation uses `bayn.jev.protocol.v21`, `bayn.jev.executable-profit-limit.behavior.v1`,
-trading-signal state v19, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
+The implementation uses `bayn.jev.protocol.v22`, `bayn.jev.executable-profit-limit.behavior.v1`,
+trading-signal state v20, batch v6 and pinned `jev-1.13.0`, with the existing 15-minute holding limit.
 Crypto candidate and benchmark relative returns use matching completed-bar endpoints. Current candidate quote
-indicators remain separate, and fresh executable quotes still determine pricing, funding and fees.
+indicators remain separate, and fresh executable quotes still determine pricing, funding and fees. Crypto breakout
+uses the fresh bid against the completed range high; an older contextual trade cannot cap that current quote metric.
 Jev separately classifies the current setup and judges a complete funded entry/stop/target trade after costs within its holding deadline. Both answers must support entry; either judgment can abstain. Its options label hypothetical future order prices
 separately from observed market evidence. The selected complete plan binds those terms to the order and existing account
 limits. [Strategy protection](../../../docs/bayn/strategy-protection.md) defines the model contract, venue capabilities
 and remaining economic assumptions. Native children and protective disposals share ordinary reconciliation and accounting.
 
-Migration 144 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
+Migration 145 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
-history. The strategy protocol hash is `91ee179be3c096b91037620e8763b856744602fd86ba8c14b467f15e19d94f8c`.
-The protocol cutover uses OBSERVE authority. All three runtime manifests use read-only broker access with no capital
-authority, activation request or build lineage. After the v21 image is
-published and verified, the matching same-account PAPER request is sealed and reviewed through GitOps against that image. Its sealed identity, activation generation and all three runtime build lineages move
-together through Kargo. The request retains the existing broker account, monetary limits and risk-policy hash;
-account losses, peak equity and turnover history remain in place.
+history. The strategy protocol hash is `d88530748288c895b348f0c4bdfcb1b13f305f5ce120f664ad2c5aa932ca1c7f`.
+The protocol cutover uses explicit OBSERVE manifests with read-only broker access, no standalone capital permission,
+and no retired activation request or lineage. After the v22 image is published and verified, a matching same-account
+PAPER research request is sealed and reviewed against that image. The sealed identity, activation generation and all
+three build lineages move together through Kargo. The account, monetary limits and risk policy remain unchanged.
 
-The retired v20 PAPER request is `933a611d7eebc8a1348cb615550b3374eddec41f64cb90b3a2be23ea39ea838a`.
-It binds reviewed source `0bd754692dc5c281fb77725ddd47d704237c9098` and verified image
-`sha256:b015e9ec3c22dfda4c21b19a4278c79938a8440a76d942b9c16c292dcdda828a` after the completed OBSERVE cutover.
-That request is retained in Git history and is absent from the current SealedSecret. The native hook still requires
-fresh flat/exact accounting before the new v21 PAPER activation. The signal repair does not establish profitable
-entries or a natural round trip; those require runtime broker and accounting evidence after activation.
+The native hook requires fresh flat/exact accounting before realizing v22 PAPER authority. Correct signal arithmetic
+and successful activation do not establish profitable entries or a natural round trip. Those require subsequent
+runtime broker fills, posted fees and accounting evidence. Previous v21 grants and execution records remain in history.
 
 Image promotion does not grant capital authority. A reviewed sealed PAPER request carries its authored activation
 through subsequent compatible image promotions; it does not require another rotation after each build. A future
