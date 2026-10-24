@@ -190,7 +190,11 @@ export const advancePositionProtection = (request: {
       const order = open[0]
       if (order?.intentId === undefined || capability._tag === 'RecoveryOnly') return wait('PROTECTION_CANCEL_PENDING')
       const advanced = yield* capability.executionProgram
-        .cancelProtectionOrder(order.intentId, order.brokerOrderId)
+        .cancelProtectionOrder(
+          order.intentId,
+          order.brokerOrderId,
+          management._tag === 'Exit' ? management.target : undefined,
+        )
         .pipe(
           Effect.catchTag('BrokerMutationError', (cause) =>
             Effect.logWarning('Protective cancellation requires broker reconciliation').pipe(

@@ -29,8 +29,9 @@ without enabling retired decoders or new legacy inference.
 
 ## OpenCode free inference
 
-`bayn-opencode` runs the pinned native OpenCode 2.1.3 CLI beside the research worker, on CPU, inside the existing
-Bayn image and Kargo release. Its internal proposal endpoint is reachable only from the research worker. The native
+`opencode-research` runs the pinned native OpenCode 2.1.3 CLI on CPU in the standalone `opencode`
+Application/namespace and its own image/Kargo release. Personal development uses a separate workload and PVC.
+Bayn workers retain the Bayn image and release. Its internal proposal endpoint is reachable only from the research worker. The native
 API and provider relay listen on loopback. The pod has no broker, Jev, database, research approval, storage API or
 Kubernetes credential. A protected PVC holds native session history and exclusive attempt claims across restarts.
 
@@ -52,7 +53,7 @@ unregistered calls and hidden extra model calls fail. An attempt that requires a
 OpenCode's free-tier availability and models can change, so an unavailable free model stops the attempt.
 
 Receipts retain the actual native provider request bytes, their hash, the original provider SSE, model usage,
-configuration hash, native session ID, observed provider first-token time, exact server/worker source revision and zero provider charge. Hosted weights,
+configuration hash, native session ID, observed provider first-token time, both actual server and worker source revisions and zero provider charge. Hosted weights,
 tokenizer and server image are not observable and are not assigned fictional self-hosted identities. The frozen
 native evaluator revision remains independent of the research worker revision. CPU operating allocations remain
 separate; a free provider does not make total research or Jev evaluation cost zero. Failed or timed-out claims cannot
@@ -123,6 +124,11 @@ Search fitness is explicitly native P&L after **known** execution, inference and
 data or operating allocations remain null and produce `KNOWN_COSTS_ONLY`; they are never reported as zero expenses
 or all-cost profit. Unpriced model requests, unclosed inventory, inexact accounting, unresolved mutations and invalid
 native evidence cannot supply fitness. Retain exclusions and unavailable decisions in the diagnostics.
+
+An HTTP 402 response from the native Jev provider is retained before the current replay pass fails. The research
+command stops instead of dispatching later opportunities against an account requiring payment. Calls already in
+flight retain their original outcomes and costs; missing metering remains unresolved. The failed reservation is not
+refunded or retried.
 
 `maximumSearchEvaluations` is GEPA's library budget. The outer native-call budget additionally reserves the full
 per-evaluation provider cap across search, held-out evaluation, unchanged repeats and failed work. Editor calls have
