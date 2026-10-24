@@ -533,6 +533,17 @@ async function mockTengri(page: Page, options: MockOptions = {}) {
         agent = { ...readyAgent, displayName: String(action.displayName) }
         result = agent
         break
+      case 'stat-file': {
+        const path = String(action.path)
+        result = files.find((entry) => entry.path === path) ?? {
+          name: path.slice(path.lastIndexOf('/') + 1),
+          path,
+          directory: path === '/workspace',
+          size: 0,
+          modifiedAt: '',
+        }
+        break
+      }
       case 'list-files':
         result = {
           path: action.path,
@@ -8458,6 +8469,34 @@ test('opens folder resources as directories and preserves pins across reloads', 
     mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/src/empty.md'),
   ).toBe(false)
   await chat.screenshot({ path: test.info().outputPath('folder-resource.png') })
+})
+
+test('opens a readable resource without requiring its oversized parent listing', async ({ page }) => {
+  const mock = await mockTengri(page)
+  await page.route('**/api/tengri', async (route) => {
+    if (route.request().method() !== 'POST') return route.fallback()
+    const action = route.request().postDataJSON()
+    if (action.action !== 'list-files' || action.path !== '/workspace') return route.fallback()
+    await route.fulfill({
+      status: 413,
+      json: { error: 'Directory contains too many entries', code: 'resource_too_large' },
+    })
+  })
+  await page.addInitScript(() =>
+    sessionStorage.setItem(
+      'tengri-resources:microvm-ada',
+      JSON.stringify({ tabs: [{ path: '/workspace/README.md' }], activePath: '/workspace/README.md' }),
+    ),
+  )
+  await page.goto('/')
+  const preview = page.getByRole('region', { name: 'Tengri window' }).getByRole('region', { name: 'File preview' })
+  await expect(preview).toContainText('A persistent Firecracker workspace.')
+  expect(mock.actions.some((action) => action.action === 'stat-file' && action.path === '/workspace/README.md')).toBe(
+    true,
+  )
+  expect(mock.actions.some((action) => action.action === 'read-file' && action.path === '/workspace/README.md')).toBe(
+    true,
+  )
 })
 
 test('shares resource pins across windows while keeping tab selection independent', async ({ page }) => {

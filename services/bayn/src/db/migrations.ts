@@ -1,3 +1,4 @@
+import currentQuoteBreakout from '../../migrations/0145_current_quote_breakout'
 import alignedSignalPeriods from '../../migrations/0144_aligned_signal_periods'
 import executableProfitLimits from '../../migrations/0143_executable_profit_limits'
 import nativeArrivalAppendLocality from '../../migrations/0142_native_arrival_append_locality'
@@ -146,6 +147,7 @@ import brokerCashSettlements from '../../migrations/0112_broker_cash_settlements
 import partialIocCompletion from '../../migrations/0064_partial_ioc_completion'
 
 export const migrationLoader = PgMigrator.fromRecord({
+  '145_current_quote_breakout': currentQuoteBreakout,
   '143_executable_profit_limits': executableProfitLimits,
   '144_aligned_signal_periods': alignedSignalPeriods,
   '142_native_arrival_append_locality': nativeArrivalAppendLocality,

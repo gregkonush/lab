@@ -73,24 +73,25 @@ resident guest RAM. A fenced cold replacement resets the root from the image. Ho
 
 The public browser surface uses strict action schemas rather than exposing arbitrary app-server calls:
 
-| Browser action        | Internal gRPC            | Guest app-server operation            |
-| --------------------- | ------------------------ | ------------------------------------- |
-| `codex-account`       | `GetCodexAccount`        | `account/read`                        |
-| `codex-login-status`  | `GetCodexLogin`          | Nanoagent active-login snapshot       |
-| `codex-login`         | `StartCodexLogin`        | `account/login/start`                 |
-| `codex-models`        | `ListCodexModels`        | `model/list`                          |
-| `list-threads`        | `ListCodexThreads`       | `thread/list`                         |
-| `set-thread-archived` | `SetCodexThreadArchived` | `thread/archive`, `thread/unarchive`  |
-| `create-thread`       | `CreateCodexThread`      | `thread/start`                        |
-| `resume-thread`       | `ResumeCodexThread`      | `thread/resume`                       |
-| `active-codex-run`    | `GetActiveCodexRun`      | Restate workspace claim and run state |
-| `codex-run`           | `GetCodexRun`            | Restate run state                     |
-| `send-turn`           | `SendCodexInput`         | durable admission, then `turn/start`  |
-| `steer-turn`          | `SteerCodexInput`        | `turn/steer`                          |
-| `interrupt-turn`      | `InterruptCodexTurn`     | `turn/interrupt`                      |
-| `resolve-approval`    | `ResolveCodexApproval`   | pending action approval response      |
-| `answer-questions`    | `ResolveCodexApproval`   | typed user-input/elicitation response |
-| event stream          | `WatchCodexEvents`       | replayable app-server notifications   |
+| Browser action        | Internal gRPC            | Guest operation                        |
+| --------------------- | ------------------------ | -------------------------------------- |
+| `codex-account`       | `GetCodexAccount`        | `account/read`                         |
+| `codex-login-status`  | `GetCodexLogin`          | Nanoagent active-login snapshot        |
+| `codex-login`         | `StartCodexLogin`        | `account/login/start`                  |
+| `codex-models`        | `ListCodexModels`        | `model/list`                           |
+| `stat-file`           | `StatFile`               | path metadata, without sibling listing |
+| `list-threads`        | `ListCodexThreads`       | `thread/list`                          |
+| `set-thread-archived` | `SetCodexThreadArchived` | `thread/archive`, `thread/unarchive`   |
+| `create-thread`       | `CreateCodexThread`      | `thread/start`                         |
+| `resume-thread`       | `ResumeCodexThread`      | `thread/resume`                        |
+| `active-codex-run`    | `GetActiveCodexRun`      | Restate workspace claim and run state  |
+| `codex-run`           | `GetCodexRun`            | Restate run state                      |
+| `send-turn`           | `SendCodexInput`         | durable admission, then `turn/start`   |
+| `steer-turn`          | `SteerCodexInput`        | `turn/steer`                           |
+| `interrupt-turn`      | `InterruptCodexTurn`     | `turn/interrupt`                       |
+| `resolve-approval`    | `ResolveCodexApproval`   | pending action approval response       |
+| `answer-questions`    | `ResolveCodexApproval`   | typed user-input/elicitation response  |
+| event stream          | `WatchCodexEvents`       | replayable app-server notifications    |
 
 Caller-supplied IDs and prompts are bounded and validated at the BFF and control-plane boundaries. Accepted inputs
 and controls retain their UUID across retries. Restate owns their orchestration; the guest records native intent before

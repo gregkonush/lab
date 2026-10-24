@@ -56,8 +56,8 @@ use proto::{
     MoveFileRequest, PreviewSession, ReadFileRequest, ReadFileResponse,
     ResolveCodexApprovalRequest, ResumeCodexThreadRequest, RevokePreviewSessionRequest,
     SearchFilesRequest, SearchFilesResponse, SendCodexInputRequest, SetCodexThreadArchivedRequest,
-    StartCodexLoginRequest, SteerCodexInputRequest, TerminalSession, TerminalTicket,
-    TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
+    StartCodexLoginRequest, StatFileRequest, SteerCodexInputRequest, TerminalSession,
+    TerminalTicket, TerminateTerminalRequest, UpdatePowerSettingsRequest, WatchAgentRequest,
     WatchCodexEventsRequest, WatchFilesRequest, WriteFileRequest, WriteFileResponse,
     micro_vm_control_plane_server::MicroVmControlPlane,
 };
@@ -479,6 +479,21 @@ impl MicroVmControlPlane for ControlPlane {
         Err(Status::aborted(
             "agent settings changed concurrently; retry the request",
         ))
+    }
+
+    async fn stat_file(
+        &self,
+        request: Request<StatFileRequest>,
+    ) -> Result<Response<FileEntry>, Status> {
+        let principal = self.authorize(&request, "StatFile").await?;
+        let request = request.into_inner();
+        let result = self
+            .guest(&principal, &request.agent_id, &request.path)
+            .await?
+            .stat_file(&request.path)
+            .await
+            .map_err(map_guest_error)?;
+        Ok(Response::new(file_entry(result)))
     }
 
     async fn list_files(

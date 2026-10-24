@@ -34,6 +34,7 @@ import {
   sendCodexTurn,
   setCodexThreadArchived,
   sleepAgent,
+  statFile,
   startCodexLogin,
   steerCodexTurn,
   terminateTerminal,
@@ -121,6 +122,9 @@ async function runAction(request: Request) {
         break
       case 'update-power-settings':
         result = await updatePowerSettings(identity, action.agentId, action.power)
+        break
+      case 'stat-file':
+        result = await statFile(identity, action.agentId, action.path, request.signal)
         break
       case 'list-files':
         result = await listFiles(identity, action.agentId, action.path)

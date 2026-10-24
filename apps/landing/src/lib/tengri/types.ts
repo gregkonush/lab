@@ -165,6 +165,7 @@ export type TengriAction =
   | { action: 'sleep-agent'; agentId: string; workspaceUid: string }
   | { action: 'resume-agent'; agentId: string; workspaceUid: string }
   | { action: 'update-power-settings'; agentId: string; power: TengriPowerSettings }
+  | { action: 'stat-file'; agentId: string; path: string }
   | { action: 'list-files'; agentId: string; path: string }
   | { action: 'read-file'; agentId: string; path: string }
   | { action: 'write-file'; agentId: string; path: string; content: string; expectedRevision: string }

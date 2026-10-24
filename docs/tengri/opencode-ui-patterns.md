@@ -58,8 +58,9 @@ and discards a reply after its workspace scope changes.
 See [tab persistence](https://github.com/anomalyco/opencode/blob/dbd99a940b8d92b403a77a0ce169e9a6861ba073/packages/app/src/shell/tabs/tabs.tsx#L77)
 and the [file tree](https://github.com/anomalyco/opencode/blob/dbd99a940b8d92b403a77a0ce169e9a6861ba073/packages/app/src/workspaces/files/tree-store.ts#L39).
 
-Tengri keeps window tabs separate from workspace pins. A resource link now checks filesystem metadata before choosing
-a directory listing, image, or text preview. A folder named `empty.md` remains a folder. Directory views support
+Tengri keeps window tabs separate from workspace pins. A resource link uses a direct filesystem metadata lookup before
+choosing a directory listing, image, or text preview. It does not enumerate siblings, so a readable file in a directory
+larger than the listing limit still opens. A folder named `empty.md` remains a folder. Directory views support
 children, parent navigation, refresh, empty folders, and reload through pins. Workspace-root and trailing-slash links
 normalize to canonical paths. Inactive tabs remain unfetched, and abandoned requests are cancelled.
 
@@ -67,7 +68,9 @@ normalize to canonical paths. Inactive tabs remain unfetched, and abandoned requ
 
 Browser regressions cover delayed durable finalization, recovered completed/failed/interrupted turns, unrelated turn
 completion, navigation during submission, archive/restore at desktop and mobile widths, retained drafts, a separate
-browser context, pagination, write failures, lost archive confirmations, and directory resources. The pinned Codex
+browser context, pagination, write failures, lost archive confirmations, and directory resources. A real signed guest
+RPC test keeps the 10,000-entry listing limit while reading metadata and file bytes independently; hidden paths and
+escaping symlinks remain rejected. The pinned Codex
 contract test exercises actual native archive/list/restore behavior and verifies retained history. It also checks that
 archiving an active native turn is rejected. Release and authenticated live evidence remain part of the
 [durable execution plan](durable-agent-execution-plan.md).

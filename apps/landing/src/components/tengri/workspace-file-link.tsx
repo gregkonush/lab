@@ -321,15 +321,15 @@ const FilePreview = memo(function FilePreview({
     if (!active || result || error) return
     const controller = new AbortController()
     async function load() {
-      const root = file.path === FINDER_WORKSPACE_PATH
-      const listing = await runTengriAction<TengriFileList>(
-        { action: 'list-files', agentId, path: root ? file.path : parentPath },
+      const metadata = await runTengriAction<TengriFileEntry>(
+        { action: 'stat-file', agentId, path: file.path },
         controller.signal,
       )
-      if (root || listing.entries.some((entry) => entry.path === file.path && entry.directory)) {
-        const folder = root
-          ? listing
-          : await runTengriAction<TengriFileList>({ action: 'list-files', agentId, path: file.path }, controller.signal)
+      if (metadata.directory) {
+        const folder = await runTengriAction<TengriFileList>(
+          { action: 'list-files', agentId, path: file.path },
+          controller.signal,
+        )
         if (!controller.signal.aborted) setResult({ kind: 'directory', entries: folder.entries })
       } else if (isWorkspaceImagePath(file.path)) {
         if (!controller.signal.aborted) setResult({ kind: 'image' })
@@ -347,7 +347,7 @@ const FilePreview = memo(function FilePreview({
       if (!controller.signal.aborted) setError(cause instanceof Error ? cause.message : 'Could not open this resource.')
     })
     return () => controller.abort()
-  }, [agentId, file.path, parentPath, attempt, active, result, error])
+  }, [agentId, file.path, attempt, active, result, error])
   useEffect(() => {
     selectedLine.current?.scrollIntoView({ block: 'nearest' })
   }, [result, source, active])

@@ -11,6 +11,7 @@ service MicroVMControlPlane {
   rpc WatchAgent(WatchAgentRequest) returns (stream Agent);
   rpc UpdatePowerSettings(UpdatePowerSettingsRequest) returns (Agent);
 
+  rpc StatFile(StatFileRequest) returns (FileEntry);
   rpc ListFiles(ListFilesRequest) returns (ListFilesResponse);
   rpc ReadFile(ReadFileRequest) returns (ReadFileResponse);
   rpc WriteFile(WriteFileRequest) returns (WriteFileResponse);
@@ -136,6 +137,7 @@ message FileEntry {
   string modified_at = 5;
 }
 
+message StatFileRequest { string agent_id = 1; string path = 2; }
 message ListFilesRequest { string agent_id = 1; string path = 2; }
 message ListFilesResponse { string path = 1; repeated FileEntry entries = 2; }
 message ReadFileRequest { string agent_id = 1; string path = 2; }

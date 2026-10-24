@@ -63,6 +63,11 @@
   },
   {
     "surface": "controller",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
+  },
+  {
+    "surface": "controller",
     "operation": "ListFiles",
     "action": "ACTION_FILES_OBSERVE"
   },
@@ -236,6 +241,11 @@
     "surface": "guest",
     "operation": "OpenBrowser",
     "action": "ACTION_BROWSER_CONTROL"
+  },
+  {
+    "surface": "guest",
+    "operation": "StatFile",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "guest",
@@ -432,6 +442,11 @@
     "surface": "bff",
     "operation": "update-power-settings",
     "action": "ACTION_WORKSPACE_POWER_CONFIGURE"
+  },
+  {
+    "surface": "bff",
+    "operation": "stat-file",
+    "action": "ACTION_FILES_OBSERVE"
   },
   {
     "surface": "bff",

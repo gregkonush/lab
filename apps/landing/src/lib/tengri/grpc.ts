@@ -279,6 +279,12 @@ export async function deleteAgent(identity: TengriIdentity, id: string, workspac
   throw new TengriUnavailableError('Workspace cleanup is still pending. Retry to recover its current state.', 504)
 }
 
+export async function statFile(identity: TengriIdentity, agentId: string, filePath: string, signal?: AbortSignal) {
+  return normalizeFileEntry(
+    await unary<RawRecord>('statFile', { agentId, path: filePath }, identity, TENGRI_UNARY_TIMEOUT_MS, signal),
+  )
+}
+
 export async function listFiles(identity: TengriIdentity, agentId: string, filePath: string) {
   const response = await unary<{ path?: string; entries?: RawRecord[] }>(
     'listFiles',
