@@ -724,16 +724,68 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
     let cpu_before = fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?;
     let io_before = optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await;
+    let memory_before = cgroup_memory().await?;
+    let memory_pressure_before =
+        optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await;
+    let vmm_tasks = vmm_diagnostic_tasks().await?;
+    let diagnostic_started = Instant::now();
+    let stop_diagnostics = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop_diagnostics.clone();
+    let diagnostics = tokio::spawn(async move {
+        let mut samples = Vec::new();
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let _ = tokio::time::timeout(Duration::from_secs(12), async {
+            for _ in 0..240 {
+                interval.tick().await;
+                if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+                let mut tasks = Vec::new();
+                for path in &vmm_tasks {
+                    tasks.push(json!({
+                        "tid":path.file_name().unwrap().to_string_lossy(),
+                        "stat":optional_counter(&path.join("stat")).await,
+                        "schedstat":optional_counter(&path.join("schedstat")).await,
+                        "wait":optional_counter(&path.join("wchan")).await,
+                    }));
+                }
+                samples.push(json!({
+                    "atMs":at_ms,"collectedInMs":diagnostic_started.elapsed().as_secs_f64()*1000.0-at_ms,
+                    "tasks":tasks,
+                }));
+            }
+        })
+        .await;
+        samples
+    });
     terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
     terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
     let mut heartbeats = Vec::with_capacity(50);
+    let mut heartbeat_windows = Vec::with_capacity(50);
     let mut peak_workers = 0;
     for _ in 0..50 {
-        heartbeats.push(terminal.ping().await?.as_secs_f64() * 1000.0);
+        let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+        let duration_ms = terminal.ping().await?.as_secs_f64() * 1000.0;
+        heartbeats.push(duration_ms);
+        heartbeat_windows.push(json!({"atMs":at_ms,"durationMs":duration_ms}));
         peak_workers = peak_workers.max(uring_workers().await?);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     terminal.marker(b"\x1eTENGRI_IO_END_124\x1f").await?;
+    stop_diagnostics.store(true, std::sync::atomic::Ordering::Relaxed);
+    let samples = diagnostics.await.context("VMM diagnostic task failed")?;
+    fs::write(
+        "/work/io-responsiveness.json",
+        serde_json::to_vec(&json!({
+            "heartbeats":heartbeat_windows,"samples":samples,"memoryBefore":memory_before,
+            "memoryAfter":cgroup_memory().await?,"memoryPressureBefore":memory_pressure_before,
+            "memoryPressureAfter":optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await,
+            "schedulerStatsEnabled":optional_counter(Path::new("/proc/sys/kernel/sched_schedstats")).await,
+        }))?,
+    )
+    .await?;
     heartbeats.sort_by(f64::total_cmp);
     let p95_ms = heartbeats[47];
     let pids_limit = fs::read_to_string("/sys/fs/cgroup/pids.max").await?;
@@ -773,6 +825,42 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
         })
         .await?;
     Ok(responsiveness)
+}
+
+async fn vmm_diagnostic_tasks() -> anyhow::Result<Vec<PathBuf>> {
+    let mut processes = fs::read_dir("/proc").await?;
+    while let Some(process) = processes.next_entry().await? {
+        if process
+            .file_name()
+            .to_string_lossy()
+            .parse::<u32>()
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(command) = fs::read(process.path().join("cmdline")).await else {
+            continue;
+        };
+        if !command.starts_with(b"/usr/local/bin/firecracker\0") {
+            continue;
+        }
+        let mut selected = Vec::new();
+        let mut tasks = fs::read_dir(process.path().join("task")).await?;
+        while let Some(task) = tasks.next_entry().await? {
+            let Ok(name) = fs::read_to_string(task.path().join("comm")).await else {
+                continue;
+            };
+            if task.file_name() == process.file_name() || name.starts_with("fc_vcpu") {
+                selected.push(task.path());
+            }
+        }
+        ensure!(
+            selected.len() == 5,
+            "expected one VMM main thread and four vCPUs"
+        );
+        return Ok(selected);
+    }
+    anyhow::bail!("awake guest has no Firecracker process")
 }
 
 async fn optional_counter(path: &Path) -> serde_json::Value {

@@ -44,7 +44,7 @@ import { JevOutcome, makeJevEvaluationReceipt } from '../jev/evidence'
 import { JevResolutionStatus } from '../jev/resolution'
 import { JevFailure } from '../jev/contract'
 import { decodeJevPortfolio, JevPositionStore, JevPurpose } from '../jev/portfolio'
-import { clientOrderIdForIntentId } from '../execution/intents/domain'
+import { clientOrderIdForIntentId, IntentStore } from '../execution/intents/domain'
 import { WriterFence, WriterFenceLive } from '../execution/writer-fence'
 import { IntentStoreLive } from '../execution/intents/postgres'
 import { MutationStoreLive } from '../execution/mutations/program'
@@ -55,7 +55,7 @@ import type { IntradayMarketDataService } from '../market-data/intraday/model'
 import { ExecutionCycleClosureStoreLive } from './execution-cycle-closure-postgres'
 import { nativeJevFixture as fixtureForAccount, nativeJevInference } from '../jev/native.test-support'
 import { evaluateJevObservation, evaluateJevPositionManagement } from '../jev/runtime'
-import { JevExitReason } from '../jev/exit'
+import { JevExitReason, jevProfitTargetLimitFloors } from '../jev/exit'
 import { equityMarketProfile } from '../jev/markets'
 import { decodeJevProtocol, jevBehaviorHash, defaultJevProtocolDocument } from '../jev/protocol'
 import { makeStrategyProtocolHashResult, makeRuntimeProvenanceResult } from '../contracts'
@@ -532,6 +532,96 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
       }),
     )
   })
+
+  test.each([JevExitReason.ProfitTarget, JevExitReason.ProtectiveStop])(
+    'protection cancellation retains its original %s cause through durable recovery',
+    async (reason) => {
+      await runtime.runPromise(
+        Effect.gen(function* () {
+          const { portfolio, managed } = yield* seedManagedPosition({ nativeProtection: 'strategy' })
+          const cycle = Option.getOrThrow(yield* (yield* CycleStore).read(nativeInput.cycleId))
+          const input = {
+            cycle,
+            entryDecisionHash: portfolio.entryDecisionHash,
+            authorityGenerationHash: nativeInput.authorityGenerationHash,
+            protocol: fixture.protocol,
+            calendar: managed.snapshot.manifest.calendar,
+            brokerState: portfolio.brokerState,
+            marketData: {
+              check: Effect.void,
+              verifyReference: fixtureStreamingReference,
+              loadSnapshot: (query: Parameters<IntradayMarketDataService['loadSnapshot']>[0]) =>
+                Effect.succeed(
+                  streamingFixtureFromRaw(
+                    makeIntradayMomentumTestSnapshot(
+                      fixture.protocol,
+                      { ...query, archiveWatermarks: [] },
+                      { AAPL: reason === JevExitReason.ProfitTarget ? 0.08 : -0.02 },
+                    ),
+                    query,
+                  ).snapshot,
+                ),
+            },
+          }
+          const management = yield* evaluateJevPositionManagement(input)
+          if (management._tag !== 'Exit') throw new Error('Expected verified exit trigger')
+          expect(management.target.reason).toBe(reason)
+          const intentId = portfolio.entryIntentIds[0]
+          const levels = portfolio.exitPolicy.plans['AAPL']?.levels
+          if (intentId === undefined || levels === undefined) throw new Error('Expected immutable protection')
+          const sql = yield* PgClient.PgClient
+          const eventId = '7'.repeat(64)
+          const brokerOrderId = 'protective-child'
+          const observedAt = management.target.observedAt
+          yield* sql.withTransaction(
+            Effect.gen(function* () {
+              yield* sql`INSERT INTO broker_events(event_id,schema_version,content_hash,event_kind,broker,account_id,
+          source_event_id,source_sequence,occurred_at,observed_at)
+          VALUES(${eventId},'bayn.paper-broker-event.v1',${eventId},'ORDER','ALPACA',${replayAccountId},
+            ${brokerOrderId},100,${observedAt},${observedAt})`
+              yield* sql`INSERT INTO orders(event_id,account_id,schema_version,broker_order_id,client_order_id,intent_id,
+          symbol,side,order_type,time_in_force,quantity_atoms,filled_quantity_atoms,limit_price_micros,stop_price_micros,status)
+          VALUES(${eventId},${replayAccountId},'bayn.order.v3',${brokerOrderId},'protective-child-client',${intentId},
+            'AAPL','SELL','STOP_LIMIT','DAY',5000000000,0,${levels.stopLimitPriceMicros},${levels.stopPriceMicros},'NEW')`
+            }),
+          )
+          const store = yield* IntentStore
+          expect(
+            yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, {
+              ...management.target,
+              entryDecisionHash: '9'.repeat(64),
+            }),
+          ).toBe(false)
+          expect(yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)).toBe(true)
+          expect(yield* store.beginProtectionCancel(intentId, brokerOrderId, observedAt, management.target)).toBe(false)
+          const [{ count }] = yield* Schema.decodeUnknownEffect(
+            Schema.Tuple([Schema.Struct({ count: Schema.Number })]),
+          )(
+            yield* sql`SELECT count(*)::int AS count FROM native_protection_cancel_commands WHERE exit_target = ${JSON.stringify(management.target)}::jsonb`,
+          )
+          expect(count).toBe(1)
+          const recovered = yield* (yield* JevPositionStore).read({
+            cycleId: cycle.identity.cycleId,
+            entryDecisionHash: portfolio.entryDecisionHash,
+            brokerState: portfolio.brokerState,
+          })
+          expect(recovered.exitRequestedAt).toBe(observedAt)
+          expect(recovered.profitExitRequested).toBe(reason === JevExitReason.ProfitTarget)
+          const resumed = yield* evaluateJevPositionManagement(input)
+          if (resumed._tag !== 'Exit') throw new Error('Expected durable exit recovery')
+          expect(resumed.target.reason).toBe(JevExitReason.ProtectionReleased)
+          const floors = Result.getOrThrow(
+            jevProfitTargetLimitFloors(resumed.target, observedAt, [
+              { symbol: 'AAPL', referencePriceMicros: String(BigInt(levels.profitLimitPriceMicros) - 10_000n) },
+            ]),
+          )
+          expect(floors).toEqual(
+            reason === JevExitReason.ProfitTarget ? { AAPL: BigInt(levels.profitLimitPriceMicros) } : {},
+          )
+        }).pipe(atObservation),
+      )
+    },
+  )
 
   test('close intent classification is restricted to the persisted intent and its owning cycle', async () => {
     await runtime.runPromise(
@@ -1043,7 +1133,7 @@ describePostgres('PostgreSQL native Jev execution decisions', () => {
         yield* insert('jev', '9'.repeat(64), 2)
         expect(
           yield* sql`SELECT strategy_parameter_schema_version FROM authority_generations WHERE generation_hash = ${'9'.repeat(64)}`,
-        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v19' }])
+        ).toEqual([{ strategy_parameter_schema_version: 'bayn.jev.protocol.v20' }])
         expect(
           Result.isFailure(
             yield* sql`UPDATE authority_generations SET strategy_parameter_schema_version = 'bayn.jev.protocol.v1' WHERE generation_hash = ${'9'.repeat(64)}`.pipe(

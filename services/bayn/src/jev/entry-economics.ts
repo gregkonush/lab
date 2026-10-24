@@ -8,7 +8,7 @@ import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
-import { jevBreakEvenExitBid, jevLiquidationValue } from './liquidation-economics'
+import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 import type { JevFundedExitPlan, JevStrategyExitPlan } from './strategy-exit-plan'
 
@@ -60,6 +60,13 @@ export const jevEntryEconomics = (input: {
       acquisitionCostMicros: acquisitionCost,
       upperBidMicros: maximumEntryPrice * 2n,
     })
+    const breakEvenLimit = yield* jevBreakEvenExitLimitPrice({
+      protocol,
+      symbol,
+      quantityAtoms: received,
+      acquisitionCostMicros: acquisitionCost,
+      upperLimitPriceMicros: maximumEntryPrice * 2n,
+    })
     return {
       maximumEntryPriceMicros: maximumEntryPrice.toString(),
       maximumQuantityAtoms: quantity.toString(),
@@ -69,8 +76,10 @@ export const jevEntryEconomics = (input: {
       maximumEntryPriceUsd: Number(maximumEntryPrice) / 1_000_000,
       assumedEntryQuantity: Number(quantity) / Number(quantityScale),
       estimatedEntryFeesUsd: Number(fees.totalMicros) / 1_000_000,
-      breakEvenExitBidUsd: Number(breakEvenBid) / 1_000_000,
-      requiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
+      holdingExitBreakEvenBidUsd: Number(breakEvenBid) / 1_000_000,
+      holdingExitRequiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
+      takeProfitBreakEvenLimitUsd: Number(breakEvenLimit) / 1_000_000,
+      takeProfitRequiredBidRiseBps: Number(((breakEvenLimit - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       maximumHoldingMinutes: protocol.maximumHoldingMinutes,
       maximumEntryQuoteDriftBps: protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps: protocol.maximumEntryLimitSlippageBps,
@@ -90,8 +99,8 @@ export const fundJevTradePlan = (input: {
   Result.gen(function* () {
     const { protocol, economics, levels } = input
     const liquidation = { protocol, symbol: levels.symbol, quantityAtoms: BigInt(economics.receivedQuantityAtoms) }
-    const stop = yield* jevLiquidationValue({ ...liquidation, bidMicros: BigInt(levels.stopPriceMicros) })
-    const target = yield* jevLiquidationValue({ ...liquidation, bidMicros: BigInt(levels.profitLimitPriceMicros) })
+    const stop = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.stopLimitPriceMicros) })
+    const target = yield* jevExitLimitValue({ ...liquidation, limitPriceMicros: BigInt(levels.profitLimitPriceMicros) })
     const acquisition = BigInt(economics.acquisitionCostMicros)
     if (
       stop.conservativeNetMicros <= 0n ||

@@ -31,6 +31,7 @@ import {
   strictParseOptions,
 } from '../../schemas'
 import { WriterFenceError } from '../writer-fence'
+import type { JevExitTarget } from '../../jev/exit'
 
 export const IntentPlanSchema = Schema.Struct({
   schemaVersion: Schema.Literal(intentPlanSchemaVersion),
@@ -343,6 +344,7 @@ export interface IntentStoreService {
     intentId: string,
     brokerOrderId: string,
     observedAt: string,
+    exitTarget: JevExitTarget | undefined,
   ) => Effect.Effect<boolean, IntentStoreError | WriterFenceError>
 }
 
