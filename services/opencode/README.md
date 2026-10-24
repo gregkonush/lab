@@ -21,36 +21,42 @@ keeps its read-only root filesystem.
 
 Flamingo (`flamingo/qwen36-flamingo`) is the default. Native tools remain enabled.
 The full native integration catalog remains available through Connect and Models.
-Choose OpenAI > Sign in with ChatGPT to use a supported ChatGPT plan. Other
+For remote sign-in, choose OpenAI > Codex device code (legacy) to use a supported ChatGPT plan. Other
 providers need their own credentials or credits; a catalog entry does not grant
 access or make paid inference free. Provider credentials are stored only in the
 personal home. No personal provider credentials are mounted into Bayn research.
 
-The server creates a private 256-bit password once. Run `bash services/opencode/pair.sh`
-from an administrator's checkout to create a one-time browser link. The helper
-uses the deployed server's authenticated `/api/pair` endpoint. The password stays
-inside the pod, and the printed link expires after five minutes. Paste the link
-into the browser's **Connect to a server** screen. Keep both the password and
-pairing links out of logs and commits. Unauthenticated requests to the
-server API and pairing endpoint must fail. Tailnet membership and the scoped
-Ingress NetworkPolicy provide a separate network boundary; Funnel is disabled.
+The server creates a private 256-bit password once. Use the native API command
+from an administrator's checkout to create a one-time browser link:
+
+```bash
+kubectl --context galactic-tailscale -n opencode exec deployment/opencode -c opencode -- \
+  sh -c '
+    export OPENCODE_PASSWORD="$(cat "$HOME/server-password")"
+    opencode api --server http://127.0.0.1:4096 post /api/pair
+  ' | jq -r '"https://opencode.ide-newton.ts.net/auth/connect/" + .code'
+```
+
+The explicit `--server` targets the deployed process. The password stays inside
+the pod, and the printed link expires after five minutes. Paste it into the
+browser's **Connect to a server** screen. Keep passwords and pairing links out of
+logs and commits. Unauthenticated API and pairing requests must fail. Tailnet
+membership and the scoped Ingress NetworkPolicy provide a separate network
+boundary; Funnel is disabled.
 
 ## Connect ChatGPT from a remote browser
 
-1. In **Settings > Providers**, connect **OpenAI > Sign in with ChatGPT** and
-   complete the OpenAI account verification in your browser.
-2. When OpenAI returns to a localhost callback page, copy its complete address.
-   Run `bash services/opencode/complete-chatgpt-login.sh` from an administrator's
-   checkout and paste it into the hidden prompt. Keep this URL out of chat,
-   shell history and logs.
+1. In **Settings > Providers**, connect **OpenAI > Codex device code (legacy)**.
+2. Open the authorization link, enter the displayed device code and complete
+   OpenAI's account verification in your browser.
 3. Return to OpenCode and confirm **ChatGPT connected** before selecting a model.
 
-The [pinned upstream provider](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/plugin/provider/chatgpt.ts)
-binds a random loopback callback inside the pod. The helper verifies that the port
-belongs to the deployed OpenCode process, then delivers the callback to it.
-Native OpenCode retains state, PKCE, client identity and ID-token verification.
-Credentials remain in the personal PVC. **Codex device code (legacy)** is also
-available when you prefer a sign-in without a loopback browser callback.
+The [native device-code method](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/plugin/provider/openai.ts#L172-L231)
+polls OpenAI from the server and needs no browser callback to the pod. The separate
+[Sign in with ChatGPT method](https://github.com/anomalyco/opencode/blob/v2.1.3/packages/core/src/plugin/provider/chatgpt.ts#L147-L149)
+hardcodes a random loopback callback. Server hostname and client `--server`
+settings do not change that callback. Existing working accounts can stay connected;
+native OpenCode stores and refreshes their credentials in the personal PVC.
 
 ## Retained research state
 
