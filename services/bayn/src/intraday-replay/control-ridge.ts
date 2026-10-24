@@ -1,6 +1,5 @@
 import { ControlPolicy, controlExitDefinition } from './control-portfolio'
 import { equityMarketProfile } from '../jev/markets'
-import { MarketKind } from '../instruments'
 import { intradayMinimumCompletedHistoryMs } from '../strategy/intraday-market'
 import { brokerCalendarResponseHash } from '../market-hours'
 
@@ -83,7 +82,7 @@ export const ridgeExecutionLabelDefinition = (context: RidgeExecutionContext, al
     maximumQuoteAgeMs: context.protocol.maximumQuoteAgeMs,
   },
   exits: {
-    maximumHoldingMinutes: context.protocol.holdingMinutes[MarketKind.Equity],
+    maximumHoldingMinutes: context.protocol.maximumHoldingMinutes,
     protectiveStopBps: controlExitDefinition.protectiveStopBps,
     sessionCloseMinutesBeforeClose: context.protocol.entryCutoffMinutesBeforeClose,
     lifecycle: 'One position, persistent partial-exit retries, consumed quote liquidity, and serial current cash.',

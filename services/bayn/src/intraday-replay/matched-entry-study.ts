@@ -1,6 +1,6 @@
 import { controlExitDefinition } from './control-portfolio'
 import { cryptoTakerFeeSchedule } from '../strategy/execution-model/fees'
-import { jevHoldingMinutesForSymbol, jevMarketForFeed } from '../jev/markets'
+import { jevMarketForFeed } from '../jev/markets'
 import { isContinuousMarket, observationSession, continuousExecutionPolicy, type MarketHours } from '../market-hours'
 import { exchangeSessions } from '../market-hours'
 import { Effect, FileSystem, Result, Schema } from 'effect'
@@ -469,7 +469,7 @@ export const runMatchedEntryStudy = (
         return yield* new SignalStudyFailure({ message: 'Retained protocol differs from registration' })
       const protocol = batch.observation.protocol
       if (
-        protocol.holdingMinutes[jevMarketForFeed(manifest.feed).market] !== 15 ||
+        protocol.maximumHoldingMinutes !== 15 ||
         controlExitDefinition.protectiveStopBps !== 50 ||
         controlExitDefinition.profitTargetNetBps !== 100 ||
         protocol.flattenBeforeCloseMinutes !== 5
@@ -599,7 +599,7 @@ export const runMatchedEntryStudy = (
       const studied = input.study.batches.find((candidate) => candidate.batchPlan.batchId === batch.plan.batchId)
       if (
         decision.contentHash !== retained.decisionHash ||
-        native?.schemaVersion !== 'bayn.jev-entry-target.v7' ||
+        native?.schemaVersion !== 'bayn.jev-entry-target.v6' ||
         native.evidence.batchPlan.batchId !== batch.plan.batchId ||
         native.evidence.batchPlan.observationHash !== batch.plan.observationHash ||
         decision.bindings.snapshotContentHash !== batch.snapshot.manifest.contentHash ||
@@ -723,7 +723,7 @@ export const runMatchedEntryStudy = (
           closeMs: isContinuousMarket(manifest.calendar)
             ? Date.parse(at) +
               registration.latencyMs +
-              jevHoldingMinutesForSymbol(batch.observation.protocol, symbol) * 60_000 +
+              batch.observation.protocol.maximumHoldingMinutes * 60_000 +
               continuousExecutionPolicy.closeRecoveryMs
             : Date.parse(session.closeAt),
         }

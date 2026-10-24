@@ -124,10 +124,13 @@ export const decideJevEntry = (input: unknown) =>
     )
     const selectedSymbols = selected.map(({ symbol }) => symbol)
     return {
-      schemaVersion: 'bayn.jev-entry-target.v7' as const,
+      schemaVersion: 'bayn.jev-entry-target.v6' as const,
       strategy: 'jev' as const,
       entryPlanRejections,
-      exitPolicy: jevPositionExitPolicy(Object.fromEntries(selected.map(({ symbol, exitPlan }) => [symbol, exitPlan]))),
+      exitPolicy: jevPositionExitPolicy(
+        observation.protocol,
+        Object.fromEntries(selected.map(({ symbol, exitPlan }) => [symbol, exitPlan])),
+      ),
       sessionDate: yield* Schema.decodeUnknownResult(IsoDateSchema)(observation.snapshot.manifest.sessionDate),
       snapshotId: observation.snapshot.manifest.snapshotId,
       observedAt: observation.observedAt,
@@ -145,7 +148,7 @@ export const decideJevEntry = (input: unknown) =>
   }).pipe(Result.mapError((cause) => new JevContractError({ message: 'Jev entry target could not be derived', cause })))
 
 const TargetBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev-entry-target.v7'),
+  schemaVersion: Schema.Literal('bayn.jev-entry-target.v6'),
   strategy: Schema.Literal('jev'),
   entryPlanRejections: Schema.Record(
     SymbolSchema,

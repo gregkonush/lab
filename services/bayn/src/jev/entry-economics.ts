@@ -8,7 +8,6 @@ import { quantityScale } from '../quantity'
 import { calculateSessionFees, receivedCryptoFee } from '../strategy/execution-model/fees'
 import { JevContractError } from './contract'
 import { maximumAllocatedBuyQuantities } from './entry-sizing'
-import { jevHoldingMinutesForSymbol } from './markets'
 import { jevBreakEvenExitBid, jevBreakEvenExitLimitPrice, jevExitLimitValue } from './liquidation-economics'
 import type { JevProtocol } from './protocol'
 import type { JevFundedExitPlan, JevStrategyExitPlan } from './strategy-exit-plan'
@@ -81,7 +80,7 @@ export const jevEntryEconomics = (input: {
       holdingExitRequiredBidRiseBps: Number(((breakEvenBid - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
       takeProfitBreakEvenLimitUsd: Number(breakEvenLimit) / 1_000_000,
       takeProfitRequiredBidRiseBps: Number(((breakEvenLimit - input.bidMicros) * 10_000_000n) / input.bidMicros) / 1000,
-      maximumHoldingMinutes: jevHoldingMinutesForSymbol(protocol, symbol),
+      maximumHoldingMinutes: protocol.maximumHoldingMinutes,
       maximumEntryQuoteDriftBps: protocol.maximumEntryQuoteDriftBps,
       maximumEntryLimitSlippageBps: protocol.maximumEntryLimitSlippageBps,
       operatingCostCoverage: 'UNKNOWN',

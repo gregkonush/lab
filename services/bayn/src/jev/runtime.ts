@@ -401,8 +401,7 @@ export const evaluateJevPositionManagement = (input: {
       const position = portfolio.brokerState.positions.find(({ quantityAtoms }) => BigInt(quantityAtoms) > 0n)
       if (firstFill === undefined || position === undefined)
         return yield* new JevContractError({ message: 'Managed position is missing its validated fill or cost basis' })
-      const plan = yield* Effect.fromResult(jevManagedExitPlan(portfolio))
-      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, plan.levels.maximumHoldingMinutes)
+      maximumHoldDueAt = jevMaximumHoldDueAt(firstFill.occurredAt, portfolio.exitPolicy.maximumHoldingMinutes)
       maximumHoldEvaluatedAt = observedAt
       maximumHoldEvidence = { ...evidence, trigger: { reason: JevExitReason.MaximumHold } }
       if (Date.parse(observedAt) >= Date.parse(maximumHoldDueAt)) {

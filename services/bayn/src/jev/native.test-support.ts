@@ -3,7 +3,7 @@ import { jevEntryEconomics, fundJevTradePlan } from './entry-economics'
 import { JevEntrySetup } from './trade-plan-choices'
 import { makeJevTradingSignalRequest } from './trading-signals'
 import type { VerifiedStrategyMarketSnapshot } from '../market-data/streaming/snapshot'
-import { equityMarketProfile, jevHoldingMinutesForSymbol } from './markets'
+import { equityMarketProfile } from './markets'
 import { exchangeSessions } from '../market-hours'
 import { Result, Schema } from 'effect'
 import { IsoDateSchema } from '../schemas'
@@ -229,7 +229,7 @@ export const nativeJevFixture = (
                     symbol: 'AAPL',
                     sourceStartAt: new Date(Date.parse(at) - 30 * 60000).toISOString(),
                     sourceEndAt: new Date(Date.parse(at) - 3 * 60000).toISOString(),
-                    maximumHoldingMinutes: jevHoldingMinutesForSymbol(protocol, 'AAPL'),
+                    maximumHoldingMinutes: protocol.maximumHoldingMinutes,
                     maximumEntryPriceMicros: economics.maximumEntryPriceMicros,
                     stopPriceMicros: '99000000',
                     stopLimitPriceMicros: '98910000',
@@ -238,7 +238,7 @@ export const nativeJevFixture = (
                 }),
               )
               if (funded === null) throw new Error('Managed fixture requires funded model prices')
-              return jevPositionExitPolicy({ AAPL: funded.exitPlan })
+              return jevPositionExitPolicy(protocol, { AAPL: funded.exitPlan })
             })(),
             entryIntentIds: [intentId],
             protectionIntentIds: [],

@@ -1,6 +1,5 @@
 import { JevMarketProfilesSchema, jevMarketProfiles, jevUniverse, jevCandidateSymbols } from './markets'
 import { IntradayCandidateEvidencePolicy } from '../market-data/intraday/model'
-import { MarketKind } from '../instruments'
 import { Result, Schema } from 'effect'
 
 import { ExecutionModelV6Schema } from '../execution-model-contract'
@@ -18,14 +17,14 @@ const Minutes = PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(60))
 const Weight = UnitIntervalSchema.check(Schema.isGreaterThan(0))
 
 const ProtocolBase = Schema.Struct({
-  schemaVersion: Schema.Literal('bayn.jev.protocol.v21'),
+  schemaVersion: Schema.Literal('bayn.jev.protocol.v20'),
   entrySizingPolicy: Schema.Literal('capital-weighted-session-limit'),
   entrySelectionPolicy: Schema.Literal('supported-setup-and-economic-plan'),
   maximumEntryQuoteDriftBps: Schema.Literal(10),
   maximumEntryLimitSlippageBps: Schema.Literal(10),
   entrySignalPolicy: Schema.Literal('model-selected-entry-and-protection'),
   model: Schema.Literal(jevModel),
-  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v18'),
+  inputDefinition: Schema.Literal('bayn.jev-trading-signal-state.v17'),
   marketProfiles: JevMarketProfilesSchema,
   universe: Schema.Array(SymbolSchema),
   candidateSymbols: Schema.Array(SymbolSchema).check(Schema.isMinLength(1), Schema.isMaxLength(18)),
@@ -43,10 +42,8 @@ const ProtocolBase = Schema.Struct({
   maximumGrossWeight: Weight,
   maximumSymbolWeight: Weight,
   inferenceValidityMs: PositiveIntegerSchema.check(Schema.isLessThanOrEqualTo(10_000)),
-  holdingMinutes: Schema.Struct({
-    [MarketKind.Equity]: Minutes,
-    [MarketKind.Crypto]: Minutes,
-  }),
+  horizonMinutes: Minutes,
+  maximumHoldingMinutes: Minutes,
   allocation: Schema.Literal('equal-weight'),
   executionModel: ExecutionModelV6Schema,
 })
@@ -70,6 +67,14 @@ export const JevProtocolSchema = ProtocolBase.check(
       issues.push({ path: ['maximumSymbolWeight'], issue: 'cannot exceed the gross allocation' })
     if (protocol.decisionDelaySeconds * 1000 + protocol.maximumDecisionLagMs > maximumIntradayObservationLagMs)
       issues.push({ path: ['maximumDecisionLagMs'], issue: 'must fit the verified observation lag' })
+    if (
+      protocol.horizonMinutes !== protocol.maximumHoldingMinutes ||
+      protocol.maximumHoldingMinutes > protocol.lookbackMinutes
+    )
+      issues.push({
+        path: ['horizonMinutes'],
+        issue: 'must equal the holding horizon and fit its completed source window',
+      })
     const expectedModel = canonicalHashV1Result(intradayExecutionModel)
     const actualModel = canonicalHashV1Result(protocol.executionModel)
     if (
@@ -85,14 +90,14 @@ export const JevProtocolSchema = ProtocolBase.check(
 export type JevProtocol = typeof JevProtocolSchema.Type
 
 export const defaultJevProtocolDocument = Object.freeze({
-  schemaVersion: 'bayn.jev.protocol.v21',
+  schemaVersion: 'bayn.jev.protocol.v20',
   entrySizingPolicy: 'capital-weighted-session-limit',
   entrySelectionPolicy: 'supported-setup-and-economic-plan',
   maximumEntryQuoteDriftBps: 10,
   maximumEntryLimitSlippageBps: 10,
   entrySignalPolicy: 'model-selected-entry-and-protection',
   model: jevModel,
-  inputDefinition: 'bayn.jev-trading-signal-state.v18',
+  inputDefinition: 'bayn.jev-trading-signal-state.v17',
   marketProfiles: jevMarketProfiles,
   universe: jevUniverse,
   candidateSymbols: jevCandidateSymbols,
@@ -110,7 +115,8 @@ export const defaultJevProtocolDocument = Object.freeze({
   maximumGrossWeight: 0.2,
   maximumSymbolWeight: 0.2,
   inferenceValidityMs: 10_000,
-  holdingMinutes: { [MarketKind.Equity]: 15, [MarketKind.Crypto]: 60 },
+  horizonMinutes: 15,
+  maximumHoldingMinutes: 15,
   allocation: 'equal-weight',
   executionModel: intradayExecutionModel,
 } as const)
