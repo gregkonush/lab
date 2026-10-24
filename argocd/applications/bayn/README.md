@@ -197,6 +197,11 @@ funded plan owns the holding deadline. Migration 144 preserves financial history
 guards, requires a flat, settled, fully accounted and freshly reconciled cutover, and restricts prior PAPER authority
 to OBSERVE. Do not replace the v20 activation with a v21 mandate until strategy validation, required release gates
 and the matching published image are verified. Source tests or image promotion alone establish no natural trade.
+The candidate runtime metadata matches the v21 image; the sealed capital request and its authored lineages still
+bind v20. The required PAPER identity check rejects this mismatch. Keep the source change in draft until the
+qualified cutover can retire that request and its lineages through explicit OBSERVE, then seal the matching
+same-account mandate against the published image. Do not change identity annotations without matching ciphertext
+or relax the PAPER identity check to promote this candidate.
 
 Migration 143 requires terminal mutation cycles, flat settled inventory, complete accounting and fresh exact
 reconciliation. It rotates prior PAPER authority through native OBSERVE recovery while preserving loss and turnover
