@@ -50,6 +50,7 @@ func main() {
 		return
 	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
+	slog.SetDefault(logger)
 	if len(os.Args) == 2 && os.Args[1] == "guest-init" {
 		if err := runGuestInit(logger); err != nil {
 			logger.Error("guest init stopped", "error", err)
@@ -63,7 +64,21 @@ func main() {
 	}
 }
 
-func run(logger *slog.Logger) error {
+func run(logger *slog.Logger) (runErr error) {
+	closeTelemetry, err := initializeTelemetry("api")
+	if err != nil {
+		return fmt.Errorf("configure telemetry: %w", err)
+	}
+	defer closeTelemetry()
+	defer func() {
+		if runErr != nil {
+			reportGuestError(context.Background(), "guest.startup", "failed")
+		}
+	}()
+	guestAuthorization, err := loadGuestRPCAdmission()
+	if err != nil {
+		return err
+	}
 	microVMID := strings.TrimSpace(os.Getenv("MICROVM_ID"))
 	bootstrapToken, err := loadBootstrapToken()
 	if err != nil {
@@ -126,6 +141,7 @@ func run(logger *slog.Logger) error {
 	}
 
 	api, err := newAPIServer(apiConfig{
+		guestAuthorization:  guestAuthorization,
 		bootstrapToken:      bootstrapToken,
 		codeServerBinary:    os.Getenv("CODE_SERVER_BINARY"),
 		codeServerBootstrap: os.Getenv("CODE_SERVER_BOOTSTRAP_COMMAND"),
@@ -145,7 +161,7 @@ func run(logger *slog.Logger) error {
 	defer api.close()
 
 	server := &http.Server{
-		Handler:           newHandler(api),
+		Handler:           observeGuestHTTP(newHandler(api)),
 		Protocols:         guestHTTPProtocols(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       2 * time.Minute,

@@ -15,6 +15,15 @@ spec.loader.exec_module(cleanup)
 
 
 class CleanupTest(unittest.TestCase):
+    def test_cooperative_deadline_reports_unfinished_quarantine(self):
+        orphan = self.blob(b"deadline candidate")
+        plan = self.prepare()
+        with patch.object(cleanup.time, "monotonic", side_effect=[0, 0.5, 2]):
+            result = self.collect(plan, seconds=1)
+        self.assertEqual(result["quarantinedBlobs"], 0)
+        self.assertTrue(result["collectionTimedOut"])
+        self.assertTrue(self.store.blob(orphan).exists())
+
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
         self.addCleanup(self.directory.cleanup)
@@ -107,6 +116,25 @@ class CleanupTest(unittest.TestCase):
         self.assertTrue(self.store.blob(recent).exists())
         self.assertEqual(self.prepare()["blobs"], [])
 
+    def test_prepare_does_not_restat_retained_layers_after_graph_validation(self):
+        orphan = self.blob(b"old orphan")
+        retained = self.store.blob(self.layer)
+        original_signature = cleanup.signature
+        reads = 0
+
+        def read_signature(path):
+            nonlocal reads
+            if path == retained:
+                reads += 1
+                if reads > 1:
+                    raise OSError("redundant retained-blob metadata read")
+            return original_signature(path)
+
+        with patch.object(cleanup, "signature", side_effect=read_signature):
+            plan = self.prepare()
+        self.assertEqual(reads, 1)
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+
     def test_new_tag_and_fresh_kargo_reference_rescue_prepared_candidates(self):
         layer = self.blob(b"previously orphaned layer")
         image = self.image_manifest(layer)
@@ -141,6 +169,69 @@ class CleanupTest(unittest.TestCase):
         layer = self.blob(b"old shared base")
         self.image_manifest(layer, recent=True)
         self.assertEqual(self.prepare()["blobs"], [])
+
+    def test_deleted_untagged_revision_does_not_block_cleanup(self):
+        orphan = self.blob(b"layer from a deleted manifest")
+        deleted = self.image_manifest(orphan, recent=True)
+        self.store.blob(deleted).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [orphan])
+        result = self.collect(plan)
+        self.assertEqual(result["quarantinedBlobs"], 1)
+        self.assertTrue(self.store.blob(self.image).exists())
+        self.assertTrue(self.store.blob(self.layer).exists())
+
+    def test_reuploaded_untagged_manifest_rescues_prepared_layers(self):
+        layer = self.blob(b"layer from a reuploaded manifest")
+        image = self.image_manifest(layer, recent=True)
+        raw = self.store.blob(image).read_bytes()
+        self.store.blob(image).unlink()
+        plan = self.prepare()
+        self.assertEqual([row["digest"] for row in plan["blobs"]], [layer])
+        self.blob(raw)
+        self.assertEqual(self.collect(plan)["quarantinedBlobs"], 0)
+        self.assertTrue(self.store.blob(layer).exists())
+
+    def test_missing_recent_tagged_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"tagged layer"), recent=True)
+        self.tag("release", deleted)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_missing_recent_protected_manifest_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"protected layer"), recent=True)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare(self.references + ["registry.example/lab/test@" + deleted])
+
+    def test_missing_recent_index_child_still_fails_closed(self):
+        deleted = self.image_manifest(self.blob(b"platform layer"), recent=True)
+        index = self.manifest(
+            {
+                "schemaVersion": 2,
+                "mediaType": "application/vnd.oci.image.index.v1+json",
+                "manifests": [self.descriptor(self.image), self.descriptor(deleted)],
+            }
+        )
+        self.tag("latest", index)
+        self.store.blob(deleted).unlink()
+        with self.assertRaises(FileNotFoundError):
+            self.prepare()
+
+    def test_unreadable_recent_untagged_manifest_is_not_ignored(self):
+        image = self.image_manifest(self.blob(b"unreadable layer"), recent=True)
+        unreadable = self.store.blob(image)
+        original = cleanup.signature
+
+        def read_signature(path):
+            if path == unreadable:
+                raise PermissionError("Cannot read a recent manifest")
+            return original(path)
+
+        with patch.object(cleanup, "signature", side_effect=read_signature):
+            with self.assertRaises(PermissionError):
+                self.prepare()
 
     def test_retention_uses_upload_time_keeps_five_unknown_recent_and_protected(self):
         for number in range(8):

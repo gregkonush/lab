@@ -63,7 +63,13 @@ def run(context, directory):
     emit("prepared", **prepare.run(context, plan_path, reference_path))
     plan = json.loads(plan_path.read_text())
     if not plan["blobs"] and not plan["deleteTags"]:
-        emit("complete", deletedTags=0, deletedBlobs=0, deletedBytes=0)
+        emit(
+            "complete",
+            collectionTimedOut=False,
+            deletedTags=0,
+            deletedBlobs=0,
+            deletedBytes=0,
+        )
         return
     reference_path.write_text(json.dumps(references(context)))
     operation = Collection(context, seconds=240, max_blobs=2000)
@@ -72,6 +78,7 @@ def run(context, directory):
     emit("collected", **result)
     emit(
         "complete",
+        collectionTimedOut=result["collectionTimedOut"],
         **purge.run(context, result["quarantineId"], directory / "purge.log"),
     )
 

@@ -229,6 +229,29 @@ test('critical Ceph alerts opt into the configured email route', () => {
   for (const rule of criticalRules) expect(rule.labels).toMatchObject({ severity: 'critical', notify: 'email' })
 })
 
+test('warnings require explicit email opt-in and use the existing receiver with a four-hour repeat', () => {
+  const externalSecret = YAML.parse(
+    readRepoFile('argocd/applications/observability/observability-alertmanager-email-externalsecret.yaml'),
+  )
+  const alertmanager = YAML.parse(externalSecret.spec.target.template.data['alertmanager_fallback_config.yaml'])
+  const route = alertmanager.route.routes.find((entry: { matchers: string[] }) =>
+    entry.matchers.includes('severity = "warning"'),
+  )
+  expect(route).toEqual({
+    receiver: 'critical-email',
+    matchers: ['severity = "warning"', 'notify = "email"'],
+    group_wait: '10s',
+    group_interval: '2m',
+    repeat_interval: '4h',
+    continue: false,
+  })
+  expect(alertmanager.route.receiver).toBe('default-receiver')
+  expect(alertmanager.receivers.map((entry: { name: string }) => entry.name)).toEqual([
+    'default-receiver',
+    'critical-email',
+  ])
+})
+
 test('Mimir email UI links select its provisioned Grafana Alertmanager without redirecting API paths', () => {
   const mimir = YAML.parse(readRepoFile('argocd/applications/observability/mimir-values.yaml'))
   const grafana = YAML.parse(readRepoFile('argocd/applications/observability/grafana-values.yaml'))
@@ -295,7 +318,7 @@ test('alert email uses Brevo SMTP credentials from the existing secret store', (
   ])
 })
 
-test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub or recovery overrides', () => {
+test('Ceph bounded scrubs retain calibrated capacity without ineffective scrub or recovery overrides', () => {
   const values = YAML.parse(readRepoFile('argocd/applications/rook-ceph/cluster-values.yaml'))
   const config = values.cephClusterSpec.cephConfig
   for (const key of [
@@ -306,10 +329,10 @@ test('Ceph scrub catch-up retains calibrated capacity without ineffective scrub 
     'osd_scrub_sleep',
   ])
     expect(config.osd[key]).toBeUndefined()
-  expect(config.osd.osd_mclock_profile).toBe('custom')
+  expect(config.osd.osd_mclock_profile).toBe('high_client_ops')
   expect(config.osd.osd_scrub_begin_hour).toBe('0')
   expect(config.osd.osd_scrub_end_hour).toBe('0')
-  expect(config.osd.osd_max_scrubs).toBe('3')
+  expect(config.osd.osd_max_scrubs).toBe('1')
   expect([0, 1, 2, 3, 4, 5].map((id) => config[`osd.${id}`].osd_mclock_max_capacity_iops_hdd)).toEqual([
     '210',
     '250',

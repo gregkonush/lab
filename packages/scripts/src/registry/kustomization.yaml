@@ -7,5 +7,6 @@ configMapGenerator:
       - collect.py
       - prepare.py
       - protected_references.py
+      - protected_resources.json
       - purge.py
       - scheduled.py

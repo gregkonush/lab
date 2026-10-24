@@ -127,7 +127,7 @@ class Collection:
                 },
                 "strategic",
             )
-            self.rollout(time.monotonic() + 90)
+            self.rollout(time.monotonic() + 300)
         pvc = self.get("registry", "pvc", "registry-data")
         if pvc["metadata"]["uid"] != pvc_uid or pvc["spec"]["volumeName"] != pv:
             raise RuntimeError(
@@ -234,6 +234,8 @@ class Collection:
             },
         }
         held, frozen = False, False
+        timeout_error = None
+        collection_result = None
         helper_path = plan_path.with_suffix(".pod.json")
         helper_path.write_text(json.dumps(helper))
         try:
@@ -361,50 +363,100 @@ class Collection:
                 raise TimeoutError(
                     "No collection budget remains after read-only rollout"
                 )
-            result = subprocess.run(
-                self.kubectl
-                + [
-                    "-n",
-                    "registry",
-                    "exec",
-                    self.name,
-                    "-c",
-                    "collector",
-                    "--",
-                    "python3",
-                    "/dev/shm/cleanup.py",
-                    "collect",
-                    "--plan",
-                    "/dev/shm/plan.json",
-                    "--references",
-                    "/dev/shm/references.json",
-                    "--workers",
-                    "32",
-                    "--seconds",
-                    str(remaining - 10),
-                    "--max-blobs",
-                    str(self.max_blobs),
-                    "--quarantine-id",
-                    self.name,
-                ],
-                text=True,
-                capture_output=True,
-                timeout=remaining,
-            )
-            plan_path.with_suffix(".collection.log").write_text(result.stderr)
-            if result.returncode:
-                raise RuntimeError("Collection failed: " + result.stderr[-2000:])
-            return json.loads(result.stdout)
+            try:
+                result = subprocess.run(
+                    self.kubectl
+                    + [
+                        "-n",
+                        "registry",
+                        "exec",
+                        self.name,
+                        "-c",
+                        "collector",
+                        "--",
+                        "python3",
+                        "/dev/shm/cleanup.py",
+                        "collect",
+                        "--plan",
+                        "/dev/shm/plan.json",
+                        "--references",
+                        "/dev/shm/references.json",
+                        "--workers",
+                        "32",
+                        "--seconds",
+                        str(remaining - 10),
+                        "--max-blobs",
+                        str(self.max_blobs),
+                        "--quarantine-id",
+                        self.name,
+                    ],
+                    text=True,
+                    capture_output=True,
+                    timeout=remaining,
+                )
+            except subprocess.TimeoutExpired as error:
+                timeout_error = error
+                diagnostics = error.stderr or ""
+                if isinstance(diagnostics, bytes):
+                    diagnostics = diagnostics.decode(errors="replace")
+                plan_path.with_suffix(".collection.log").write_text(
+                    str(error) + "\n" + diagnostics
+                )
+            else:
+                plan_path.with_suffix(".collection.log").write_text(result.stderr)
+                if result.returncode:
+                    raise RuntimeError("Collection failed: " + result.stderr[-2000:])
+                collection_result = json.loads(result.stdout)
         finally:
-            self.restore(
-                app["metadata"]["uid"],
-                deployment["metadata"]["uid"],
-                pvc["metadata"]["uid"],
-                pvc["spec"]["volumeName"],
-                node,
-                held,
-                frozen,
+            try:
+                self.restore(
+                    app["metadata"]["uid"],
+                    deployment["metadata"]["uid"],
+                    pvc["metadata"]["uid"],
+                    pvc["spec"]["volumeName"],
+                    node,
+                    held,
+                    frozen,
+                )
+            except Exception as error:
+                if timeout_error is not None:
+                    raise error from timeout_error
+                raise
+        if timeout_error is not None:
+            from prepare import CONTAINER, maintenance_pod
+
+            pod = maintenance_pod(self)["metadata"]["name"]
+            receipt = json.loads(
+                self.command(
+                    [
+                        "-n",
+                        "registry",
+                        "exec",
+                        pod,
+                        "-c",
+                        CONTAINER,
+                        "--",
+                        "python3",
+                        "-c",
+                        "import json,pathlib; p=pathlib.Path("
+                        + repr("/quarantine/" + self.name + "/receipt.json")
+                        + "); print(json.dumps(json.loads(p.read_text()) if p.is_file() else None))",
+                    ]
+                )
             )
+            if receipt is None:
+                raise timeout_error
+            if (
+                not isinstance(receipt, dict)
+                or receipt.get("version") != 2
+                or not isinstance(receipt.get("blobs"), list)
+                or not isinstance(receipt.get("tags"), list)
+            ):
+                raise ValueError(
+                    "Invalid quarantine receipt; refuse partial collection"
+                ) from timeout_error
+            return {"quarantineId": self.name, "collectionTimedOut": True}
+        return collection_result
 
 
 def main():

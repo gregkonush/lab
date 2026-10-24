@@ -7,7 +7,7 @@ spec:
   timeZone: America/Los_Angeles
   suspend: false
   concurrencyPolicy: Forbid
-  startingDeadlineSeconds: 1800
+  startingDeadlineSeconds: 86400
   successfulJobsHistoryLimit: 1
   failedJobsHistoryLimit: 3
   jobTemplate:
@@ -22,7 +22,7 @@ spec:
         spec:
           serviceAccountName: registry-cleanup
           restartPolicy: Never
-          terminationGracePeriodSeconds: 180
+          terminationGracePeriodSeconds: 420
           nodeSelector:
             kubernetes.io/arch: amd64
           securityContext:

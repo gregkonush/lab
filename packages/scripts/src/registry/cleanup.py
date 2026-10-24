@@ -133,6 +133,10 @@ class Store:
             digest = path.read_text().strip()
             if encoded(digest) != value:
                 raise ValueError(f"Revision link disagrees with its name: {path}")
+            try:
+                signature(self.blob(digest))
+            except FileNotFoundError:
+                return None
             return digest
 
         emit(
@@ -298,12 +302,14 @@ class Store:
             for directory in prefix.iterdir():
                 digest = "sha256:" + directory.name
                 encoded(digest)
+                if digest in marked:
+                    continue
                 path = directory / "data"
                 try:
                     value = signature(path)
                 except FileNotFoundError:
                     continue
-                if digest not in marked and value[3] < cutoff_ns:
+                if value[3] < cutoff_ns:
                     result.append({"digest": digest, "signature": value})
             return result
 
@@ -448,14 +454,17 @@ class Store:
         # Rename preserves allocated blocks. Their slow physical release happens after writes reopen.
         with ThreadPoolExecutor(max_workers=min(self.workers, 16)) as pool:
             sizes = list(pool.map(move, rows))
+        quarantined_blobs = sum(size is not None for size in sizes)
         return {
             "deletedTags": deleted_tags,
             "quarantineId": quarantine_id,
-            "quarantinedBlobs": sum(size is not None for size in sizes),
+            "quarantinedBlobs": quarantined_blobs,
             "quarantinedBytes": sum(size for size in sizes if size is not None),
+            "collectionTimedOut": deleted_tags < len(deletes)
+            or quarantined_blobs < len(rows),
             "remainingCandidates": len(plan["blobs"])
             - already_missing
-            - sum(size is not None for size in sizes),
+            - quarantined_blobs,
         }
 
     def purge(self, quarantine_id):

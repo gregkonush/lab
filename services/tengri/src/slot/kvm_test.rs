@@ -1,6 +1,6 @@
 use std::{
     io::{BufRead, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     time::{Duration, Instant},
 };
@@ -13,8 +13,10 @@ use tokio::{fs, net::TcpListener, sync::mpsc};
 use tokio_stream::wrappers::ReceiverStream;
 
 use super::{
-    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState, client::SlotClient, runner,
-    supervisor,
+    Claim, FIRECRACKER_VERSION, SlotConfig, SlotIdentity, SlotState,
+    client::SlotClient,
+    probe_output::{EDITOR_READY, ProbeOutput, editor_probe_command},
+    runner, supervisor,
 };
 use crate::{
     guest::rpc::{RpcClient, proto},
@@ -45,6 +47,15 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             .lines()
             .any(|line| line == "CapEff:\t0000000000000000"),
         "fixture retained capabilities"
+    );
+    let cpu_max = fs::read_to_string("/sys/fs/cgroup/cpu.max").await?;
+    let (quota, period) = cpu_max
+        .trim()
+        .split_once(' ')
+        .context("invalid CPU quota")?;
+    ensure!(
+        quota.parse::<u64>()? * 1000 == period.parse::<u64>()? * u64::from(crate::crd::CPU_MILLIS),
+        "native qualification requires the production four-CPU quota"
     );
     let samples: usize = std::env::var("TENGRI_KVM_SAMPLES")
         .context("set the explicit sample count")?
@@ -83,7 +94,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let slot_identity = WorkloadIdentity::from_endpoint_with_id(
         endpoint,
         "proompteng.ai".parse()?,
-        "spiffe://proompteng.ai/ns/tengri/slot/pod/interop-agent".parse()?,
+        "spiffe://proompteng.ai/ns/tengri/slot/pod/33333333-3333-4333-8333-333333333333".parse()?,
     )
     .await?;
     let directory = PathBuf::from("/work/slot");
@@ -96,13 +107,13 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     fs::write(
         &configuration,
         serde_json::to_vec(
-            &json!({"podUid":"interop-agent", "token":token, "initializeHome":true}),
+            &json!({"podUid":"33333333-3333-4333-8333-333333333333", "token":token, "initializeHome":true, "verificationKey":base64::Engine::encode(&base64::engine::general_purpose::STANDARD, tengri::guest_authorization::GuestSigner::from_seed(&std::array::from_fn::<_, 32, _>(|i| i as u8))?.public_key()), "recoveryGeneration":1}),
         )?,
     )
     .await?;
     for (source, destination) in [
         (&configuration, "/etc/tengri-slot.json"),
-        (&PathBuf::from("/etc/resolv.conf"), "/etc/resolv.conf"),
+        (&PathBuf::from("/guest/resolv.conf"), "/etc/resolv.conf"),
     ] {
         let result = tokio::process::Command::new("debugfs")
             .args(["-w", "-R"])
@@ -134,7 +145,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     let kernel = PathBuf::from("/guest/vmlinux");
     let config = SlotConfig {
         identity: SlotIdentity {
-            pod_uid: "interop-agent".into(),
+            pod_uid: "33333333-3333-4333-8333-333333333333".into(),
             pvc_uid: "private-fixture-home".into(),
             image: std::env::var("TENGRI_GUEST_IMAGE")?,
             kernel_sha256: format!("{:x}", Sha256::digest(fs::read(&kernel).await?)),
@@ -153,12 +164,40 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     };
     let runner_task = tokio::spawn(runner::serve(config));
     let tls = slot_identity.slot_server_tls("tengri")?;
+    let database = std::sync::Arc::new(crate::control::Database::shared_fixture().await);
+    let supervisor_database = std::sync::Arc::new(
+        crate::control::Database::connect(
+            &std::env::var("TENGRI_DATABASE_DSN")?
+                .replace("user=tengri_controller", "user=tengri_supervisor"),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_PASSWORD_FILE")?),
+            std::path::Path::new(&std::env::var("TENGRI_DATABASE_CA_FILE")?),
+            "tengri_supervisor",
+        )
+        .await?,
+    );
+    supervisor_database.verify_schema().await?;
+    let fence = database
+        .acquire(uuid::Uuid::new_v4())
+        .await?
+        .context("fixture leadership unavailable")?;
+    let renew_database = database.clone();
+    let renew_task = tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+            assert!(
+                renew_database.renew(fence).await.unwrap(),
+                "fixture leader expired"
+            );
+        }
+    });
     let supervisor_task = tokio::spawn(supervisor::serve(
         TcpListener::bind("127.0.0.1:8443").await?,
         tls,
+        supervisor_database,
+        super::admission::GuestAdmission::fixture(),
     ));
     let pod: Pod = serde_json::from_value(
-        json!({"metadata":{"uid":"interop-agent"},"status":{"podIP":"127.0.0.1"}}),
+        json!({"metadata":{"uid":"33333333-3333-4333-8333-333333333333"},"status":{"podIP":"127.0.0.1"}}),
     )?;
     let client = SlotClient::new(
         &identity,
@@ -186,8 +225,9 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     }
     let claim = Claim {
         microvm_id: "fixture-agent".into(),
-        microvm_uid: "fixture-owner-uid".into(),
+        microvm_uid: "11111111-1111-4111-8111-111111111111".into(),
         epoch: 1,
+        runtime_epoch: "44444444-4444-4444-8444-444444444444".into(),
     };
     eprintln!(
         "real KVM create CPU before:\n{}",
@@ -200,15 +240,20 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             started.elapsed().as_secs_f64() * 1000.0
         );
     };
-    client.lifecycle("restore", &claim).await?;
+    client.fixture_restore(&claim, fence).await?;
     stage("restore");
-    let rpc = guest(&identity, &claim, &token)?;
-    rpc.verify_identity("interop-agent").await?;
-    rpc.write_file("/continuity.txt", b"private-home-continuity", "missing")
+    let rpc = guest(&identity, &claim, &token, database.clone())?;
+    rpc.verify_identity("33333333-3333-4333-8333-333333333333")
         .await?;
+    rpc.write_file(
+        "/workspace/continuity.txt",
+        b"private-home-continuity",
+        "missing",
+    )
+    .await?;
     stage("files");
     let terminal = rpc
-        .create_terminal("fixture-terminal-continuity", "/", 80, 24)
+        .create_terminal("fixture-terminal-continuity", "/workspace", 80, 24)
         .await?
         .session;
     let (pid, reconnect) = terminal_round_trip(&rpc, &terminal.id, "", 1).await?;
@@ -222,8 +267,8 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
     );
     let (_, file, _) = tokio::try_join!(
-        rpc.verify_identity("interop-agent"),
-        rpc.read_file("/continuity.txt"),
+        rpc.verify_identity("33333333-3333-4333-8333-333333333333"),
+        rpc.read_file("/workspace/continuity.txt"),
         rpc.codex_call("model/list", json!({})),
     )?;
     ensure!(
@@ -232,17 +277,17 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     );
     eprintln!("real KVM concurrent guest requests passed");
     let mut foreign = claim.clone();
-    foreign.microvm_uid = "another-owner-uid".into();
+    foreign.microvm_uid = "66666666-6666-4666-8666-666666666666".into();
     ensure!(
-        guest(&identity, &foreign, &token)?
-            .verify_identity("interop-agent")
+        guest(&identity, &foreign, &token, database.clone())?
+            .verify_identity("33333333-3333-4333-8333-333333333333")
             .await
             .is_err(),
         "foreign owner accessed the guest"
     );
     for action in ["sleep", "stop"] {
         ensure!(
-            client.lifecycle(action, &foreign).await.is_err(),
+            client.lifecycle(action, &foreign, fence).await.is_err(),
             "foreign owner changed the guest lifecycle"
         );
         ensure!(
@@ -251,7 +296,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         );
     }
     rpc.write_file(
-        "/kvm-admin.sh",
+        "/workspace/kvm-admin.sh",
         &fs::read("/fixture/test-guest-admin.sh").await?,
         "missing",
     )
@@ -274,7 +319,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let awake_memory = cgroup_memory().await?;
         let vmm_rss = firecracker_rss().await?.context("awake guest has no VMM")?;
         let save_started = Instant::now();
-        let sleeping = client.lifecycle("sleep", &claim).await?;
+        let sleeping = client.lifecycle("sleep", &claim, fence).await?;
         let sleep_ms = save_started.elapsed().as_secs_f64() * 1000.0;
         ensure!(
             matches!(sleeping.state, SlotState::Sleeping { .. }),
@@ -289,7 +334,7 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         let mut wrong = claim.clone();
         wrong.epoch += 1;
         ensure!(
-            client.lifecycle("restore", &wrong).await.is_err(),
+            client.fixture_restore(&wrong, fence).await.is_err(),
             "wrong epoch restored the guest"
         );
         if index == 0 {
@@ -300,6 +345,16 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO before:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory before: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
         let started = Instant::now();
         let stage = |name: &str| {
             eprintln!(
@@ -308,12 +363,13 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
                 started.elapsed().as_secs_f64() * 1000.0
             );
         };
-        client.lifecycle("restore", &claim).await?;
+        client.fixture_restore(&claim, fence).await?;
         stage("restore");
-        let rpc = guest(&identity, &claim, &token)?;
-        rpc.verify_identity("interop-agent").await?;
+        let rpc = guest(&identity, &claim, &token, database.clone())?;
+        rpc.verify_identity("33333333-3333-4333-8333-333333333333")
+            .await?;
         ensure!(
-            rpc.read_file("/continuity.txt").await?.content == b"private-home-continuity",
+            rpc.read_file("/workspace/continuity.txt").await?.content == b"private-home-continuity",
             "retained file changed"
         );
         stage("files");
@@ -332,8 +388,18 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
             index + 1,
             fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?
         );
+        eprintln!(
+            "real KVM resume {} IO after:\n{}",
+            index + 1,
+            optional_counter(Path::new("/sys/fs/cgroup/io.stat")).await
+        );
+        eprintln!(
+            "real KVM resume {} memory after: {}",
+            index + 1,
+            cgroup_memory().await?
+        );
     }
-    let rpc = guest(&identity, &claim, &token)?;
+    let rpc = guest(&identity, &claim, &token, database.clone())?;
     rpc.open_browser().await?;
     let browser_mcp = rpc
         .codex_call("mcpServerStatus/list", json!({"limit":50}))
@@ -354,17 +420,20 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
         client.status().await?.state.serves(&claim),
         "disk error lost the current owner"
     );
-    rpc.verify_identity("interop-agent").await?;
-    client.lifecycle("stop", &claim).await?;
-    timings.sort_by(f64::total_cmp);
-    let p95 = (samples >= 50).then(|| timings[(samples * 95).div_ceil(100) - 1]);
-    let resume_budget_ms = p95.unwrap_or(timings[samples - 1]);
+    rpc.verify_identity("33333333-3333-4333-8333-333333333333")
+        .await?;
+    client.lifecycle("stop", &claim, fence).await?;
+    let mut sorted_timings = timings.clone();
+    sorted_timings.sort_by(f64::total_cmp);
+    let p95 = (samples >= 50).then(|| sorted_timings[(samples * 95).div_ceil(100) - 1]);
+    let resume_budget_ms = p95.unwrap_or(sorted_timings[samples - 1]);
     fs::write("/work/result.json", serde_json::to_vec_pretty(&json!({
         "boundary":"slot mTLS request through real guest file, PTY and initialized Codex RPC",
         "excludes":["BFF authentication", "Kubernetes API latency", "six concurrent guests", "fresh creation distribution", "raw PVC allocation"],
         "validationMode":if p95.is_some() { "benchmark" } else { "smoke" },
+        "cpuMax":cpu_max.trim(),
         "createSamples":1,"createMs":create_ms,"resumeSamples":samples,
-        "resumeP50Ms":timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":timings[samples - 1],"resumeMs":timings,
+        "resumeP50Ms":sorted_timings[(samples * 50).div_ceil(100) - 1],"resumeP95Ms":p95,"resumeMaxMs":sorted_timings[samples - 1],"resumeMs":timings,
         "sleepVmmGone":true,"snapshotResidentBytes":0,"sameShellPid":pid,"fileContinuity":true,
         "memoryAndSleep":memory,"guestAdministration":true,"concurrentGuestRequests":true,
         "browserStarted":true,"browserComputerToolInstalled":true,
@@ -372,6 +441,8 @@ async fn real_guest_restores_files_codex_and_the_same_shell_without_resident_sna
     }))?).await?;
     runner_task.abort();
     supervisor_task.abort();
+    renew_task.abort();
+    database.release(fence).await?;
     ensure!(
         create_ms < 1000.0,
         "slot prepared creation is {create_ms:.2} ms"
@@ -436,12 +507,23 @@ async fn guest_administration(rpc: &RpcClient, id: &str, token: &str) -> anyhow:
     Ok(ready.token)
 }
 
-fn guest(identity: &WorkloadIdentity, claim: &Claim, token: &str) -> anyhow::Result<RpcClient> {
-    let tls = identity.guest_tls(identity.guest_id("tengri", "interop-agent")?)?;
+fn guest(
+    identity: &WorkloadIdentity,
+    claim: &Claim,
+    token: &str,
+    database: std::sync::Arc<crate::control::Database>,
+) -> anyhow::Result<RpcClient> {
+    let tls =
+        identity.guest_tls(identity.guest_id("tengri", "33333333-3333-4333-8333-333333333333")?)?;
     let channel = identity.guest_channel("127.0.0.1:8443".parse()?, tls)?;
-    let mut rpc = RpcClient::new(channel, token)?;
-    rpc.bind_claim(claim.clone());
-    Ok(rpc)
+    RpcClient::fixture_for_runtime(
+        channel,
+        token,
+        claim.clone(),
+        "33333333-3333-4333-8333-333333333333".into(),
+        database,
+    )
+    .map_err(Into::into)
 }
 
 async fn terminal_round_trip(
@@ -508,11 +590,15 @@ async fn terminal_round_trip(
 struct TerminalProbe {
     sender: mpsc::Sender<proto::TerminalInput>,
     stream: tonic::Streaming<proto::TerminalOutput>,
+    output: ProbeOutput,
 }
 
 impl TerminalProbe {
     async fn open(rpc: &RpcClient, name: &str) -> anyhow::Result<Self> {
-        let terminal = rpc.create_terminal(name, "/", 100, 30).await?.session;
+        let terminal = rpc
+            .create_terminal(name, "/workspace", 100, 30)
+            .await?
+            .session;
         let (sender, receiver) = mpsc::channel(4);
         sender
             .send(proto::TerminalInput {
@@ -535,7 +621,11 @@ impl TerminalProbe {
             matches!(first.event, Some(proto::terminal_output::Event::Ready(_))),
             "probe terminal was not ready"
         );
-        Ok(Self { sender, stream })
+        Ok(Self {
+            sender,
+            stream,
+            output: ProbeOutput::default(),
+        })
     }
 
     async fn input(&self, command: &[u8]) -> anyhow::Result<()> {
@@ -549,16 +639,15 @@ impl TerminalProbe {
 
     async fn marker(&mut self, marker: &[u8]) -> anyhow::Result<()> {
         tokio::time::timeout(Duration::from_secs(15), async {
-            let mut output = Vec::new();
-            while let Some(message) = self.stream.message().await? {
+            loop {
+                if self.output.take_marker(marker) {
+                    return Ok(());
+                }
+                let message = self
+                    .message()
+                    .await?
+                    .context("probe terminal closed before marker")?;
                 match message.event {
-                    Some(proto::terminal_output::Event::Output(data)) => {
-                        output.extend(data.data);
-                        ensure!(output.len() <= 1 << 20, "probe output exceeded its limit");
-                        if output.windows(marker.len()).any(|window| window == marker) {
-                            return Ok(());
-                        }
-                    }
                     Some(proto::terminal_output::Event::Error(error)) => {
                         anyhow::bail!("probe terminal: {error}")
                     }
@@ -568,10 +657,28 @@ impl TerminalProbe {
                     _ => {}
                 }
             }
-            anyhow::bail!("probe terminal closed before marker")
         })
         .await
-        .context("probe marker timed out")?
+        .with_context(|| {
+            format!(
+                "probe marker {:?} timed out; terminal output tail: {:?}",
+                String::from_utf8_lossy(marker),
+                self.output.diagnostic_tail()
+            )
+        })?
+    }
+
+    async fn message(&mut self) -> anyhow::Result<Option<proto::TerminalOutput>> {
+        let message = self.stream.message().await?;
+        if let Some(proto::terminal_output::Event::Output(data)) =
+            message.as_ref().and_then(|message| message.event.as_ref())
+        {
+            let replies = self.output.append(&data.data)?;
+            if !replies.is_empty() {
+                self.input(&replies).await?;
+            }
+        }
+        Ok(message)
     }
 
     async fn ping(&mut self) -> anyhow::Result<Duration> {
@@ -582,7 +689,7 @@ impl TerminalProbe {
             })
             .await?;
         tokio::time::timeout(Duration::from_secs(2), async {
-            while let Some(message) = self.stream.message().await? {
+            while let Some(message) = self.message().await? {
                 match message.event {
                     Some(proto::terminal_output::Event::Pong(_)) => return Ok(started.elapsed()),
                     Some(proto::terminal_output::Event::Error(error)) => {
@@ -610,24 +717,87 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
     terminal.marker(b"\x1eTENGRI_OUTPUT_READY\x1f").await?;
     let first_output_ms = started.elapsed().as_secs_f64() * 1000.0;
     let started = Instant::now();
-    terminal.input(b"nvim /tmp/tengri-kvm-editor.txt +\"lua vim.schedule(function() vim.cmd('redraw'); io.stderr:write(string.char(30)..'TENGRI_EDITOR_READY'..string.char(31)); io.stderr:flush() end)\"; printf '\\036TENGRI_EDITOR_EXIT\\037'\n").await?;
-    terminal.marker(b"\x1eTENGRI_EDITOR_READY\x1f").await?;
+    terminal.input(&editor_probe_command()).await?;
+    terminal.marker(EDITOR_READY).await?;
     let editor_ms = started.elapsed().as_secs_f64() * 1000.0;
     terminal.input(b"\x1b:qall!\r").await?;
     terminal.marker(b"\x1eTENGRI_EDITOR_EXIT\x1f").await?;
+    let cpu_before = fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?;
+    let io_before = optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await;
+    let memory_before = cgroup_memory().await?;
+    let memory_pressure_before =
+        optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await;
+    let vmm_tasks = vmm_diagnostic_tasks().await?;
+    let diagnostic_started = Instant::now();
+    let stop_diagnostics = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let stopped = stop_diagnostics.clone();
+    let diagnostics = tokio::spawn(async move {
+        let mut samples = Vec::new();
+        let mut interval = tokio::time::interval(Duration::from_millis(50));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let _ = tokio::time::timeout(Duration::from_secs(12), async {
+            for _ in 0..240 {
+                interval.tick().await;
+                if stopped.load(std::sync::atomic::Ordering::Relaxed) {
+                    break;
+                }
+                let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+                let mut tasks = Vec::new();
+                for path in &vmm_tasks {
+                    tasks.push(json!({
+                        "tid":path.file_name().unwrap().to_string_lossy(),
+                        "stat":optional_counter(&path.join("stat")).await,
+                        "schedstat":optional_counter(&path.join("schedstat")).await,
+                        "wait":optional_counter(&path.join("wchan")).await,
+                    }));
+                }
+                samples.push(json!({
+                    "atMs":at_ms,"collectedInMs":diagnostic_started.elapsed().as_secs_f64()*1000.0-at_ms,
+                    "tasks":tasks,
+                }));
+            }
+        })
+        .await;
+        samples
+    });
     terminal.input(b"timeout 8s sh -c 'while :; do dd if=/dev/zero of=/workspace/.tengri-kvm-io bs=1M count=16 conv=fdatasync status=none || exit 1; done' >/tmp/tengri-kvm-io.log 2>&1 & TENGRI_IO=$!; printf '\\036TENGRI_IO_READY\\037'; wait \"$TENGRI_IO\"; TENGRI_IO_RESULT=$?; rm -f /workspace/.tengri-kvm-io; printf '\\036TENGRI_IO_END_%s\\037' \"$TENGRI_IO_RESULT\"\n").await?;
     terminal.marker(b"\x1eTENGRI_IO_READY\x1f").await?;
     let mut heartbeats = Vec::with_capacity(50);
+    let mut heartbeat_windows = Vec::with_capacity(50);
     let mut peak_workers = 0;
     for _ in 0..50 {
-        heartbeats.push(terminal.ping().await?.as_secs_f64() * 1000.0);
+        let at_ms = diagnostic_started.elapsed().as_secs_f64() * 1000.0;
+        let duration_ms = terminal.ping().await?.as_secs_f64() * 1000.0;
+        heartbeats.push(duration_ms);
+        heartbeat_windows.push(json!({"atMs":at_ms,"durationMs":duration_ms}));
         peak_workers = peak_workers.max(uring_workers().await?);
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     terminal.marker(b"\x1eTENGRI_IO_END_124\x1f").await?;
+    stop_diagnostics.store(true, std::sync::atomic::Ordering::Relaxed);
+    let samples = diagnostics.await.context("VMM diagnostic task failed")?;
+    fs::write(
+        "/work/io-responsiveness.json",
+        serde_json::to_vec(&json!({
+            "heartbeats":heartbeat_windows,"samples":samples,"memoryBefore":memory_before,
+            "memoryAfter":cgroup_memory().await?,"memoryPressureBefore":memory_pressure_before,
+            "memoryPressureAfter":optional_counter(Path::new("/sys/fs/cgroup/memory.pressure")).await,
+            "schedulerStatsEnabled":optional_counter(Path::new("/proc/sys/kernel/sched_schedstats")).await,
+        }))?,
+    )
+    .await?;
     heartbeats.sort_by(f64::total_cmp);
     let p95_ms = heartbeats[47];
     let pids_limit = fs::read_to_string("/sys/fs/cgroup/pids.max").await?;
+    let responsiveness = json!({
+        "terminalFirstOutputMs":first_output_ms,"neovimFirstScreenMs":editor_ms,
+        "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
+        "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":pids_limit.trim().parse::<u64>()?,
+        "cpuBefore":cpu_before,"cpuAfter":fs::read_to_string("/sys/fs/cgroup/cpu.stat").await?,
+        "ioBefore":io_before,"ioAfter":optional_counter(Path::new("/sys/fs/cgroup/io.pressure")).await,
+        "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"
+    });
+    eprintln!("real KVM responsiveness: {responsiveness}");
     ensure!(
         pids_limit.trim() == "512",
         "fixture PID limit is not enforced"
@@ -654,12 +824,60 @@ async fn responsiveness(rpc: &RpcClient) -> anyhow::Result<serde_json::Value> {
             action: Some(proto::terminal_input::Action::Terminate(proto::Empty {})),
         })
         .await?;
-    Ok(
-        json!({"terminalFirstOutputMs":first_output_ms,"neovimFirstScreenMs":editor_ms,
-        "heartbeatSamples":50,"heartbeatP95Ms":p95_ms,"heartbeatMaxMs":heartbeats[49],
-        "heartbeatMs":heartbeats,"peakUringWorkers":peak_workers,"workerCgroupVerified":true,"pidsMax":512,
-        "storageActivity":"eight seconds of repeated 16 MiB guest writes with fdatasync on the fixture home disk"}),
-    )
+    Ok(responsiveness)
+}
+
+async fn vmm_diagnostic_tasks() -> anyhow::Result<Vec<PathBuf>> {
+    let mut processes = fs::read_dir("/proc").await?;
+    while let Some(process) = processes.next_entry().await? {
+        if process
+            .file_name()
+            .to_string_lossy()
+            .parse::<u32>()
+            .is_err()
+        {
+            continue;
+        }
+        let Ok(command) = fs::read(process.path().join("cmdline")).await else {
+            continue;
+        };
+        if !command.starts_with(b"/usr/local/bin/firecracker\0") {
+            continue;
+        }
+        let mut selected = Vec::new();
+        let mut tasks = fs::read_dir(process.path().join("task")).await?;
+        while let Some(task) = tasks.next_entry().await? {
+            let Ok(name) = fs::read_to_string(task.path().join("comm")).await else {
+                continue;
+            };
+            if task.file_name() == process.file_name() || name.starts_with("fc_vcpu") {
+                selected.push(task.path());
+            }
+        }
+        ensure!(
+            selected.len() == 5,
+            "expected one VMM main thread and four vCPUs"
+        );
+        return Ok(selected);
+    }
+    anyhow::bail!("awake guest has no Firecracker process")
+}
+
+async fn optional_counter(path: &Path) -> serde_json::Value {
+    match fs::read_to_string(path).await {
+        Ok(value) => json!({ "value": value }),
+        Err(error) => json!({
+            "unavailable": { "kind": format!("{:?}", error.kind()), "message": error.to_string() }
+        }),
+    }
+}
+
+#[tokio::test]
+async fn missing_optional_counter_reports_its_absence_without_failing() {
+    let path = std::env::temp_dir().join(format!("tengri-missing-psi-{}", uuid::Uuid::new_v4()));
+    let diagnostic = optional_counter(&path).await;
+    assert_eq!(diagnostic["unavailable"]["kind"], "NotFound");
+    assert!(diagnostic["unavailable"]["message"].is_string());
 }
 
 async fn uring_workers() -> anyhow::Result<usize> {
@@ -703,6 +921,16 @@ async fn uring_workers() -> anyhow::Result<usize> {
 
 async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
     let mut terminal = TerminalProbe::open(rpc, "fixture-disk-error").await?;
+    // Start the privileged probe before faulting the guest home.
+    terminal
+        .input(b"exec sudo -n /usr/bin/env -i PATH=/usr/bin:/bin:/usr/sbin:/sbin HOME=/tmp LC_ALL=C /bin/bash --noprofile --norc -c 'printf \"\\036TENGRI_ROOT_READY\\037\"; exec /bin/bash --noprofile --norc -i'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_ROOT_READY\x1f").await?;
+    // Quiesce home writers so an outstanding write cannot extend the truncated fixture disk.
+    terminal
+        .input(b"cd / && test \"$EUID\" -eq 0 && fsfreeze -f /home/nanoagent && printf '\\036TENGRI_DISK_READY\\037'\n")
+        .await?;
+    terminal.marker(b"\x1eTENGRI_DISK_READY\x1f").await?;
     // Fault only the disposable fixture disk, after continuity and browser acceptance.
     fs::OpenOptions::new()
         .write(true)
@@ -710,7 +938,7 @@ async fn disk_read_error(rpc: &RpcClient) -> anyhow::Result<()> {
         .await?
         .set_len(0)
         .await?;
-    terminal.input(b"LC_ALL=C sudo -n /usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
+    terminal.input(b"/usr/bin/dd if=/dev/vdb of=/dev/null bs=4096 skip=1024 count=1 iflag=direct 2>/tmp/tengri-kvm-disk-error; TENGRI_READ_RESULT=$?; if [ \"$TENGRI_READ_RESULT\" -ne 0 ] && /usr/bin/grep -q 'Input/output error' /tmp/tengri-kvm-disk-error; then printf '\\036TENGRI_DISK_ERROR_OK\\037'; else /usr/bin/cat /tmp/tengri-kvm-disk-error; printf '\\036TENGRI_DISK_ERROR_FAILED\\037'; fi\n").await?;
     terminal.marker(b"\x1eTENGRI_DISK_ERROR_OK\x1f").await?;
     terminal.ping().await?;
     Ok(())
@@ -744,7 +972,18 @@ async fn cgroup_memory() -> anyhow::Result<serde_json::Value> {
     for line in status.lines() {
         let mut fields = line.split_whitespace();
         let key = fields.next().context("empty cgroup counter")?;
-        if ["anon", "file", "file_dirty", "file_writeback"].contains(&key) {
+        if [
+            "anon",
+            "file",
+            "file_dirty",
+            "file_writeback",
+            "pgfault",
+            "pgmajfault",
+            "pgscan",
+            "pgsteal",
+        ]
+        .contains(&key)
+        {
             values.insert(
                 key.into(),
                 json!(

@@ -5,6 +5,10 @@ set -euo pipefail
 : "${TENGRI_KVM_GUEST_IMAGE:?set the paired real guest boot image}"
 : "${TENGRI_KVM_OUTPUT:?set an absolute local result directory}"
 : "${TENGRI_KVM_SECCOMP:?set an absolute native runner seccomp profile}"
+: "${TENGRI_KVM_NETWORK:?run services/ofz/test-control.sh kvm to provision the shared SQL fixture}"
+: "${TENGRI_KVM_DATABASE_HOST:?shared SQL fixture host required}"
+: "${TENGRI_DATABASE_CA_FILE:?shared SQL fixture CA required}"
+: "${TENGRI_DATABASE_PASSWORD_FILE:?shared SQL fixture password file required}"
 if ! [[ "$TENGRI_KVM_OUTPUT" == /* && "${TENGRI_KVM_SAMPLES:-3}" =~ ^[1-9][0-9]*$ ]] || \
   (( ${TENGRI_KVM_SAMPLES:-3} < 3 )); then
   printf 'KVM acceptance requires an absolute output directory and at least three cycles\n' >&2
@@ -24,6 +28,7 @@ work_volume="${fixture_name}-work"
 cleanup() {
   docker logs "$fixture_name" > "$TENGRI_KVM_OUTPUT/test.log" 2>&1 || true
   docker cp "$fixture_name:/work/result.json" "$TENGRI_KVM_OUTPUT/result.json" >/dev/null 2>&1 || true
+  docker cp "$fixture_name:/work/io-responsiveness.json" "$TENGRI_KVM_OUTPUT/io-responsiveness.json" >/dev/null 2>&1 || true
   docker cp "$fixture_name:/work/slot/firecracker.log" "$TENGRI_KVM_OUTPUT/firecracker.log" >/dev/null 2>&1 || true
   docker rm --force "$fixture_name" >/dev/null 2>&1 || true
   docker volume rm "$artifacts_volume" "$work_volume" >/dev/null 2>&1 || true
@@ -34,16 +39,31 @@ docker volume create "$work_volume" >/dev/null
 docker run --rm --user 0:0 --cap-drop ALL --read-only \
   --mount "type=volume,source=${artifacts_volume},target=/artifacts" \
   --entrypoint /bin/cp "$TENGRI_KVM_GUEST_IMAGE" /guest/rootfs.ext4 /guest/vmlinux /artifacts/
+# The boot-artifact volume also carries this disposable fixture's TLS files and guest DNS configuration.
+for fixture_file in ca.crt runtime.password resolv.conf; do
+  case "$fixture_file" in
+    ca.crt) cat "$TENGRI_DATABASE_CA_FILE" ;;
+    runtime.password) cat "$TENGRI_DATABASE_PASSWORD_FILE" ;;
+    resolv.conf) printf 'nameserver 1.1.1.1\nnameserver 8.8.8.8\n' ;;
+  esac |
+  docker run --rm -i --user 0:0 --cap-drop ALL --read-only \
+    --mount "type=volume,source=${artifacts_volume},target=/artifacts" \
+    --entrypoint /bin/sh "$TENGRI_KVM_TEST_IMAGE" -ec \
+    'umask 022; cat > "$1"; chmod 0444 "$1"' sh "/artifacts/$fixture_file"
+done
 guest_digest="$(docker image inspect --format '{{.Id}}' "$TENGRI_KVM_GUEST_IMAGE")"
-docker run --name "$fixture_name" --cpus=1 --memory=9g --memory-swap=9g --pids-limit=512 \
+docker run --name "$fixture_name" --network "$TENGRI_KVM_NETWORK" --cpus=4 --memory=9g --memory-swap=9g --pids-limit=512 \
   --read-only --cap-drop ALL --cap-add NET_ADMIN --cap-add SETUID --cap-add SETGID \
   --security-opt no-new-privileges=true --device /dev/kvm --device /dev/net/tun \
   --security-opt "seccomp=${TENGRI_KVM_SECCOMP}" \
-  --dns 1.1.1.1 --dns 8.8.8.8 \
   --tmpfs /tmp:rw,nosuid,nodev,size=128m --tmpfs /run/tengri:rw,nosuid,nodev,size=1m,uid=0,gid=65532,mode=0770 \
   --mount "type=volume,source=${artifacts_volume},target=/guest,readonly" \
   --mount "type=volume,source=${work_volume},target=/work" \
   --env NANOAGENT_RPC_FIXTURE=/fixture/nanoagent-tests \
+  --env TENGRI_RUNTIME_STATE_FIXTURE=1 \
+  --env "TENGRI_DATABASE_DSN=host=$TENGRI_KVM_DATABASE_HOST port=5432 dbname=tengri_control user=tengri_controller sslmode=require" \
+  --env TENGRI_DATABASE_PASSWORD_FILE=/guest/runtime.password \
+  --env TENGRI_DATABASE_CA_FILE=/guest/ca.crt \
   --env "TENGRI_KVM_NETWORK_MTU=${fixture_network_mtu}" \
   --env "TENGRI_GUEST_IMAGE=${guest_digest}" --env "TENGRI_KVM_SAMPLES=${TENGRI_KVM_SAMPLES:-3}" \
   "$TENGRI_KVM_TEST_IMAGE"

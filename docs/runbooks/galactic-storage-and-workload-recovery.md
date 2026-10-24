@@ -191,13 +191,15 @@ lifetime.
 ### Scrub progress during recovery
 
 [`cluster-values.yaml`](../../argocd/applications/rook-ceph/cluster-values.yaml) allows new scrubs during recovery with
-`osd_scrub_during_recovery: "true"`. The custom mClock profile reserves 60% for clients, 10% for recovery, and 30% for
+`osd_scrub_during_recovery: "true"`. The built-in `high_client_ops` profile retains capacity for
 background best effort. Scrub shares the last class with backfill, snap trimming, and PG deletion. `osd_max_scrubs`
-allows three local scrub reservations and three remote reservations per OSD. Scrubs can start throughout the day and week.
+allows one local scrub reservation and one remote reservation per OSD. Scrubs can start throughout the day and week.
+The former three-reservation catch-up setting adds concurrent scans on the same HDDs that serve synchronous database
+WAL. Keep concurrency bounded while retaining periodic integrity checks, recovery-time scrubs, and debt alerts.
 
 A PG marked `scrubbing` can still wait for a replica reservation. Inspect `scrub_schedule` in `ceph pg dump pgs -f json`
 and `ceph tell osd.<id> dump_scrub_reservations -f json` to distinguish scans from reservation waits. After a concurrency
-change, require `osd_max_scrubs: 3` and `remote_scrub_reservations.max_allowed: 3` from every running OSD. This setting
+change, require `osd_max_scrubs: 1` and `remote_scrub_reservations.max_allowed: 1` from every running OSD. This setting
 updates at runtime and does not require OSD restarts.
 
 Roll out a reviewed, merged values change through the existing Rook Argo application. This option updates at runtime;
@@ -212,10 +214,10 @@ for osd in 0 1 2 3 4 5; do
     | jq -e '.osd_scrub_during_recovery == "true"'
   kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
     ceph tell "osd.$osd" config get osd_max_scrubs -f json \
-    | jq -e '.osd_max_scrubs == "3"'
+    | jq -e '.osd_max_scrubs == "1"'
   kubectl --context galactic-lan -n rook-ceph exec deployment/rook-ceph-tools -c rook-ceph-tools -- \
     ceph tell "osd.$osd" dump_scrub_reservations -f json \
-    | jq -e '.osd_max_scrubs == 3 and .remote_scrub_reservations.max_allowed == 3'
+    | jq -e '.osd_max_scrubs == 1 and .remote_scrub_reservations.max_allowed == 1'
 done
 ```
 
@@ -224,8 +226,11 @@ value fails the command. The monitor config store alone is insufficient.
 
 Compare scrub completion timestamps with `ceph pg dump pgs -f json`, OSD commit latency with `ceph osd perf`, and
 affected application latency before and after an authorized rollout. More scrub concurrency adds HDD contention;
-an active scrub alone does not prove that debt is shrinking. If increased concurrency worsens application latency without
-more completed scrubs, revert `osd_max_scrubs` to `"1"` through GitOps. If scrubs during recovery cause a regression,
+an active scrub alone does not prove that debt is shrinking. Lowering the limit lets existing scrubs finish; wait for their
+reservations to drain before comparing steady-state windows. Compare WAL fsync deltas, synchronous replication waits,
+and application deadline failures alongside scrub completion counts. Fewer concurrent scrubs alone do not prove that
+database latency or trading has recovered. If the lower limit causes unacceptable scrub debt without an application
+benefit, restore `osd_max_scrubs` to `"3"` through a reviewed GitOps change. If scrubs during recovery cause a regression,
 revert `osd_scrub_during_recovery` to `"false"` through GitOps. Existing scrubs finish, while recovery blocks new periodic
 scrubs. Keep scrub intervals and warnings enabled. See
 [Ceph's scrub configuration](https://docs.ceph.com/en/tentacle/rados/configuration/osd-config-ref/#osd-max-scrubs).

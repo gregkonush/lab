@@ -128,8 +128,8 @@ read/queue metrics to qualify any later scheduler change.
 
 Ceph's monitor configuration database is persistent. Removing an entry from GitOps is not proof that an old live
 override has disappeared. The normal source configuration deliberately omits the five keys below. The mClock
-profile remains `custom`, with the measured per-OSD IOPS values unchanged. Preserve the committed scheduler shares and
-scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
+profile is `high_client_ops`, with the measured per-OSD IOPS values unchanged. Remove prior custom scheduler overrides
+through the explicitly authorized profile-migration procedure, and preserve scrub concurrency documented in [the scrub catch-up posture](rook-ceph-on-talos.md#scrub-catch-up-posture).
 
 Before the one-time authorized cleanup, save the relevant rows from `ceph config dump -f json` and each OSD's
 effective configuration outside Git. Require `HEALTH_OK`, all OSDs up/in, and all PGs active+clean with no recovery,
@@ -150,7 +150,7 @@ values are `osd_mclock_override_recovery_settings=false`, `osd_recovery_max_acti
 `osd_recovery_max_active_hdd=3`, `osd_max_backfills=1`, and `osd_scrub_sleep=0`.
 The zero generic recovery value selects the media-specific defaults; it does not disable recovery.
 
-Scrubs remain eligible all day with `osd_max_scrubs=3`. mClock disables `osd_scrub_sleep`, so retaining
+Scrubs remain eligible all day with `osd_max_scrubs=1` to bound HDD contention for database WAL. mClock disables `osd_scrub_sleep`, so retaining
 `0.1` would misrepresent the effective behavior. Removing these overrides is configuration hygiene, not a claim of
 measured throughput gain. Do not alter IOPS capacities without a separately controlled calibration.
 
