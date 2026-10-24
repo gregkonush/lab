@@ -32,6 +32,7 @@ resources:
   - bayn-research-authority-sealedsecret.yaml
   - research-worker.yaml
   - opencode.yaml
+  - opencode-migration.yaml
   - research-networkpolicy.yaml
 configMapGenerator:
   - name: bayn-telemetry

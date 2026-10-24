@@ -1895,9 +1895,12 @@ failures with observation age, without recording account identifiers or payloads
 The [GEPA optimizer](../../docs/bayn/jev-optimization.md) proposes the same actual-entry complete-plan instruction
 consumed by native Jev. It uses one pinned GEPA engine and explicit native financial outcomes. The former Harness2
 runner and active factor/editor contracts are removed. Jev remains the typed System One model. The selected shared Flamingo or native OpenCode free endpoint only edits
-the question document through the signed research workflow. The CPU OpenCode server retains one session per study,
+the question document through the signed research workflow. The isolated CPU gateway `opencode-research` in
+namespace `opencode` retains one session per study,
 with one hosted call per proposal and no paid fallback. Its actual provider input, raw response and source/configuration
-identity travel in the verified research receipt. See the runbook for native session and budget enforcement.
+identity travel in the verified research receipt, with separate gateway and worker source revisions.
+See the runbook for native session and budget enforcement and the [standalone server](../opencode/README.md)
+for development access and the verified state migration.
 
 The published image supplies `bayn-gepa`, `bayn-gepa-native`, `bayn-jev-evaluate` and `bayn-control-study`.
 Research variants change one validated data module and retain exact source, dependency, request/response, cost and

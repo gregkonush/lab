@@ -13,7 +13,7 @@ let
   release = releases.${pkgs.stdenv.hostPlatform.system};
 in
 pkgs.stdenv.mkDerivation {
-  pname = "bayn-opencode";
+  pname = "opencode";
   version = "2.1.3";
   src = pkgs.fetchurl {
     url = "https://registry.npmjs.org/@opencode/cli-linux-${release.architecture}/-/cli-linux-${release.architecture}-2.1.3.tgz";

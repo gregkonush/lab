@@ -8,7 +8,7 @@
 }:
 
 let
-  openCode = import ./bayn-opencode.nix { inherit pkgs lib; };
+  openCode = import ./opencode-cli.nix { inherit pkgs lib; };
   imageRepository = "registry.ide-newton.ts.net/lab/bayn";
   # SHA-256 identity for bayn.jev.executable-profit-limit.behavior.v1, verified by the production executable.
   strategyBehaviorHash = "191394ca45a010a3cc7b12b3794a8540f0495a4f7b0cb708612e8ed1d9338dc2";
@@ -93,10 +93,7 @@ let
     (buildDefine "__BAYN_BUILD_EXECUTION_RISK_POLICY_HASH__" executionRiskPolicyHash)
   ];
   dependencySource = import ./bun-workspace-deps-source.nix { inherit lib repoRoot; };
-  depsHash = {
-    x86_64-linux = "sha256-TY+rJMR1vTCP84/kFDIRPurtGaCepT6lGy4Zjkx9ouA=";
-    aarch64-linux = "sha256-CqZAxmjpRsJYuztoHliGnPJQCX0GuiMGH9NiZIR5H+E=";
-  };
+  depsHash = import ./bayn-deps-hash.nix;
   buildCommands = [
     "bun --cwd=services/bayn run tsc"
     "BAYN_TEST_OPENCODE_BINARY=${openCode}/bin/opencode bun test services/bayn/src/opencode/server.integration.test.ts"
@@ -104,7 +101,6 @@ let
     "bun services/bayn/tools/record-jev-compiler-dependencies.ts --output services/bayn/dist/backtest-command.js --source ${lib.escapeShellArg repoRevision} ${buildDefines}"
     "node services/bayn/dist/verify-build-contract.js"
     "node services/bayn/dist/research-command.js --help"
-    "grep -F -- ${lib.escapeShellArg repoRevision} services/bayn/dist/opencode-command.js"
     "node services/bayn/dist/jev-evaluation-command.js --help"
     "node services/bayn/dist/dual-signal-command.js --help"
     "node services/bayn/dist/backtest-command.js --help"
@@ -125,6 +121,7 @@ let
   runtimeInstallPhase = ''
     mkdir -p "$out/app/services/bayn/dist"
     cp "$TMPDIR/work/services/bayn/dist/"*.js "$out/app/services/bayn/dist/"
+    rm "$out/app/services/bayn/dist/opencode-command.js"
     cp "$TMPDIR/work/services/bayn/dist/jev-compiler-dependencies.json" "$out/app/services/bayn/dist/jev-compiler-dependencies.json"
     cp "$TMPDIR/work/services/bayn/package.json" "$out/app/services/bayn/package.json"
     mkdir -p "$out/app/services/bayn/gepa"
@@ -172,7 +169,6 @@ import ./bun-workspace-service.nix {
   workingDir = "/app/services/bayn";
   includeBunRuntime = false;
   extraContents = [
-    openCode
     nodejs
     pkgs.cacert
     forwardPerformanceCommand
